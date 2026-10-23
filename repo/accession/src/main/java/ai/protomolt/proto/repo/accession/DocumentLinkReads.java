@@ -29,7 +29,8 @@ import java.util.OptionalLong;
  * The link reads of requirements §17. {@code ListLinks} decodes a revision's CORE
  * part with its retained schema and reports each static target's state for the
  * reader; {@code ResolveLink} runs a dynamic link's selector as a #527 listing in
- * the linking document's account, under the reader's access; {@code ListBacklinks}
+ * the linking document's account, under the reader's access, expanding a concept
+ * filter against the mounted schemes when it runs; {@code ListBacklinks}
  * reads the catalog edge table and keeps only edges whose linking document the
  * reader can read, before pagination, so a page never carries an edge the caller
  * cannot see.
@@ -127,8 +128,10 @@ public final class DocumentLinkReads {
             var listed = lists.list(caller, ListDocumentsRequest.newBuilder().setAccountId(request.getAddress().getAccountId())
                     .setIncludeTombstoned(false).setPageSize(request.getPageSize()).setPageToken(request.getPageToken())
                     .setFilter(dynamic.getFilter()).setSort(dynamic.getSort()).build());
-            return ResolveLinkResponse.newBuilder().addAllDocuments(listed.getDocumentsList())
-                    .setNextPageToken(listed.getNextPageToken()).build();
+            var response = ResolveLinkResponse.newBuilder().addAllDocuments(listed.getDocumentsList())
+                    .setNextPageToken(listed.getNextPageToken());
+            if (listed.hasConceptEvidence()) response.setConceptEvidence(listed.getConceptEvidence());
+            return response.build();
         });
     }
 

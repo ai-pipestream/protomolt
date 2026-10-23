@@ -14,6 +14,8 @@ dependencies {
     implementation project(':protomolt-repo-admission')
     implementation project(':protomolt-protobuf-validation')
     implementation project(':protomolt-authz-grpc')
+    // A concept filter expands against the host's mounted concept schemes.
+    api project(':protomolt-config')
     implementation libs.grpc.api
     implementation libs.grpc.stub
     implementation libs.grpc.protobuf

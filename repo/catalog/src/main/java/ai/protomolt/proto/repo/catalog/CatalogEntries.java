@@ -122,6 +122,21 @@ public final class CatalogEntries {
                 ? Optional.of("relation and target call number exceed " + MAX_LINK_KEY_BYTES + " bytes") : Optional.empty();
     }
 
+    /**
+     * Why the catalog's tag table could not hold a concept tag, if it could not. The
+     * field path is bounded as a link's is, since it is part of the primary key; the
+     * scheme and concept ids are bounded by ConceptRef's own rules.
+     *
+     * @param fieldPath the tag's field path
+     * @return the problem, empty when the tag fits
+     */
+    public static Optional<String> unstorableConcept(String fieldPath) {
+        if (utf8Length(fieldPath) > MAX_LINK_FIELD_PATH_BYTES)
+            return Optional.of("field path exceeds " + MAX_LINK_FIELD_PATH_BYTES + " bytes");
+        if (fieldPath.indexOf('\0') >= 0) return Optional.of("field path contains a NUL character");
+        return Optional.empty();
+    }
+
     /** One lookup value the catalog cannot store, named by its path in the document. */
     public record Unstorable(String fieldPath, String message) {}
 

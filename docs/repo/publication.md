@@ -251,6 +251,44 @@ until then.
   the reader can read, optionally of one relation, ordered by linking call
   number, field path and ordinal.
 
+### Concept tags
+
+A concept tag is a value of a `ConceptRef` field in CORE, including the typed
+`structured_data` payload, whose field rules bind it to concept schemes
+(`concept_schemes`, well-known types "Concept schemes (SKOS)"). A save decides
+each tag's membership against the concept schemes the host mounts
+(`DocumentSaves` takes the host's `ConceptSchemeCatalog`; the served
+repository gets them from `RepoServices.withConceptSchemes` and mounts none
+without it): a concept the mounted scheme lacks is `concept.member` and a
+bound scheme the host has not mounted is `concept.unmounted`, both
+`VALIDATION_FAILED`. A tag is read as the canonical `ConceptRef` and held to
+its own rules, whatever a self-contained payload schema declares under that
+name: a value whose ids are not strings at fields 1 and 2 is `concept.shape`,
+and one that does not re-parse cleanly or breaks the canonical rules fails the
+save as content. Reads and catalog
+rebuilds decode stored content without deciding membership again, so a host
+that has not mounted a scheme still reads what was admitted. Tags in a typed
+nested `Any` are read as links are, without a path segment for the `Any`. A
+tag outside CORE, one a map value reaches through a typed `Any`, or one whose
+field path is over 1024 UTF-8 bytes (`concept-catalog-storable`) fails the
+save.
+
+Tags project into `catalog_document_concepts` under the same
+`(field_path, ordinal)` identity as links: current revision only, replaced by
+a save that writes or sources CORE, kept by one that carries it, cleared by a
+tombstone or purge, and rebuilt by `CatalogEntryRebuild`. Only the tagged ids
+are stored.
+
+`DocumentFilter.concept` (a `ConceptRef` plus a `ConceptExpansion`) is
+expanded against the mounted schemes when each page runs (`DocumentLists`
+takes the host's `ConceptSchemeMounts`), then matched against the stored
+pairs, in `ListDocuments` and in `ResolveLink` for a dynamic link whose filter
+has one. The page's `concept_evidence` names each consulted scheme's mounted
+version and the mappings skipped. A host without mounts, or a queried scheme
+that is not mounted, is `FAILED_PRECONDITION`; a concept the scheme lacks, or
+an expansion over the mount's bound, is `INVALID_ARGUMENT`. A scheme change
+needs no catalog rewrite.
+
 ## Admission: schema, validation and opaque content
 
 Every save is admitted before anything is written:

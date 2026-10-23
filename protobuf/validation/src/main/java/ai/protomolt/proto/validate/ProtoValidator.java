@@ -850,8 +850,17 @@ public final class ProtoValidator {
             throw conceptSchemesUnderMap(field.getFullName(), "the map value at " + path);
         }
         Descriptor type = ref.getDescriptorForType();
-        String schemeId = (String) ref.getField(type.findFieldByName("scheme_id"));
-        String conceptId = (String) ref.getField(type.findFieldByName("concept_id"));
+        FieldDescriptor schemeField = type.findFieldByName("scheme_id");
+        FieldDescriptor conceptField = type.findFieldByName("concept_id");
+        if (!conceptRefId(schemeField, 1) || !conceptRefId(conceptField, 2)) {
+            // A self-contained schema can declare its own type under ConceptRef's full name.
+            violations.add(violation(path, "concept.shape",
+                    "a concept_schemes value must be " + CONCEPT_REF_TYPE
+                            + " with string scheme_id = 1 and string concept_id = 2"));
+            return;
+        }
+        String schemeId = (String) ref.getField(schemeField);
+        String conceptId = (String) ref.getField(conceptField);
         if (schemeId.isEmpty() || conceptId.isEmpty()) {
             return;
         }
@@ -859,6 +868,9 @@ public final class ProtoValidator {
             violations.add(violation(path, "concept.scheme",
                     "scheme \"" + schemeId + "\" is not one of the field's bound schemes "
                             + bound));
+            return;
+        }
+        if (!conceptSchemes.decidesMembership()) {
             return;
         }
         ConceptSchemeCatalog.Mounted mounted = conceptSchemes.scheme(schemeId).orElse(null);
@@ -873,6 +885,12 @@ public final class ProtoValidator {
                     "\"" + conceptId + "\" is not a concept of scheme \"" + schemeId
                             + "\" at version " + mounted.version()));
         }
+    }
+
+    /** Whether a ConceptRef id field has the canonical shape: a singular string at {@code number}. */
+    private static boolean conceptRefId(FieldDescriptor field, int number) {
+        return field != null && field.getNumber() == number && !field.isRepeated()
+                && field.getJavaType() == FieldDescriptor.JavaType.STRING;
     }
 
     /**

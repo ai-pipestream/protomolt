@@ -1,6 +1,7 @@
 package ai.protomolt.proto.repo.service;
 
 import ai.protomolt.proto.authz.AuthenticatedCaller;
+import ai.protomolt.proto.config.ConceptSchemeMounts;
 import ai.protomolt.proto.repo.accession.AccessionGrpcService;
 import ai.protomolt.proto.repo.accession.DocumentDeletes;
 import ai.protomolt.proto.repo.accession.DocumentLists;
@@ -11,6 +12,7 @@ import ai.protomolt.proto.repo.accession.DocumentUploads;
 import ai.protomolt.proto.repo.accession.OutboxRelay;
 import ai.protomolt.proto.repo.admission.BuiltinDocumentSchema;
 import ai.protomolt.proto.repo.admission.DocumentSchemaAdmission;
+import ai.protomolt.proto.repo.admission.DocumentSchemas;
 import ai.protomolt.proto.repo.blob.spi.BlobStore;
 import ai.protomolt.proto.repo.catalog.CatalogConfig;
 import ai.protomolt.proto.repo.catalog.PostgresCatalog;
@@ -22,6 +24,7 @@ import ai.protomolt.proto.repo.spi.RepositoryCaller;
 import ai.protomolt.proto.repo.stack.BlobStoreStack;
 import ai.protomolt.proto.repo.stack.Stack;
 import ai.protomolt.proto.repo.v2.StackRecord;
+import ai.protomolt.proto.validate.spi.ConceptSchemeCatalog;
 import java.time.Clock;
 import java.util.Map;
 import java.util.Optional;
@@ -61,11 +64,14 @@ final class RepoV2Wiring {
      * @param admittedSchemas the module-contributed schema definitions, read per admission
      * @param bindCaller the composition's v2 caller binding
      * @param readBudget the host read byte budget verified reads reserve on
+     * @param conceptSchemes the host's mounted concept schemes, read per save and per
+     *        concept-filtered page; {@link ConceptSchemeMounts#empty()} when none are configured
      */
     static Wired wire(RepoServiceConfig config, OwnedResources owned, DriveLedger driveLedger,
             BlobStore blobStore, String selectedDriveProvider, String catalogSchema,
             Supplier<Map<String, DocumentSchemaAdmission.Definition>> admittedSchemas,
-            Function<AuthenticatedCaller, RepositoryCaller> bindCaller, ReadByteBudget readBudget) {
+            Function<AuthenticatedCaller, RepositoryCaller> bindCaller, ReadByteBudget readBudget,
+            Supplier<ConceptSchemeMounts> conceptSchemes) {
         // The parts-based v2 document service. The catalog shares the ledger's
         // database in its own schema; the ledger's Flyway history occupies the
         // default one.
@@ -103,13 +109,19 @@ final class RepoV2Wiring {
                     // Module-contributed schemas (the fleet document model).
                     return admittedSchemas.get().get(selection.typeUrl());
                 };
+        // Bound concept tags are decided against the mounts the host has at
+        // the save (requirements §17); with none mounted they refuse
+        // fail-closed. Listings, and ResolveLink through them, expand concept
+        // filters against the same mounts.
+        ConceptSchemeCatalog mountedConcepts = schemeId -> conceptSchemes.get().scheme(schemeId);
         // The save budget, sized like the read budget: a unary save reserves its
         // admitted serialized fragments and raw blob bytes from admission until
         // the revision commits, and a streamed upload reserves per received
         // chunk. An over-budget save is RESOURCE_EXHAUSTED before any stack
         // write, the same answer the read path gives.
         var v2Saves = new DocumentSaves(catalog, v2Drives, builtinSchemas,
-                limits, new ReadByteBudget(config.readBudgetBytes()), Clock.systemUTC());
+                limits, new ReadByteBudget(config.readBudgetBytes()), Clock.systemUTC(),
+                DocumentSchemas.compiled(), false, mountedConcepts);
         var v2Uploads = new DocumentUploads(v2Saves);
         var accession = new AccessionGrpcService(v2Saves, v2Uploads,
                 new DocumentReads(catalog, v2Drives, limits,
@@ -118,7 +130,7 @@ final class RepoV2Wiring {
                         // before anything is allocated.
                         readBudget, Clock.systemUTC()),
                 new DocumentDeletes(catalog, Clock.systemUTC()),
-                new DocumentLists(catalog),
+                new DocumentLists(catalog, conceptSchemes),
                 new DocumentPurges(catalog, v2Drives,
                         (identity, tenant) -> new PurgeAuthorization.Decision(false, false),
                         Clock.systemUTC()),

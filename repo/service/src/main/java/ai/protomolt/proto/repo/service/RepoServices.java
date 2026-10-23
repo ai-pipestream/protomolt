@@ -153,6 +153,27 @@ public final class RepoServices implements AutoCloseable {
         return this;
     }
 
+    /** The host's mounted concept schemes; none until a composition root supplies them. */
+    private volatile ai.protomolt.proto.config.ConceptSchemeMounts conceptSchemes =
+            ai.protomolt.proto.config.ConceptSchemeMounts.empty();
+
+    /**
+     * Mounts the concept schemes that decide bound {@code ConceptRef} tags at save and
+     * expand {@code DocumentFilter.concept} in {@code ListDocuments} and
+     * {@code ResolveLink} (requirements §17). Until a composition root calls this, the
+     * host mounts none: a bound tag refuses fail-closed ({@code concept.unmounted}) and a
+     * concept filter is FAILED_PRECONDITION. Composition roots call this after
+     * {@code build} and before any transport starts serving, typically with
+     * {@link ai.protomolt.proto.config.ConceptSchemeMounts#follow} over the host's config lane.
+     *
+     * @param mounts the mounted schemes
+     * @return this instance, for chaining
+     */
+    public RepoServices withConceptSchemes(ai.protomolt.proto.config.ConceptSchemeMounts mounts) {
+        this.conceptSchemes = java.util.Objects.requireNonNull(mounts);
+        return this;
+    }
+
     /**
      * Binds scoped callers to the accounts and ACL identities {@code resolver} names. The
      * document, drive and archive services all read the same binding. Until a composition
@@ -270,7 +291,8 @@ public final class RepoServices implements AutoCloseable {
             this.driveOperations = new ai.protomolt.proto.repo.engine.DriveOperations(driveLedger, driveProvisioner);
             RepoV2Wiring.Wired v2 = bounded == null
                     ? RepoV2Wiring.wire(config, owned, driveLedger, blobStore, selectedDriveProvider,
-                            V2_CATALOG_SCHEMA, () -> admittedSchemas, stepSave::bindCaller, readBudget)
+                            V2_CATALOG_SCHEMA, () -> admittedSchemas, stepSave::bindCaller, readBudget,
+                            () -> conceptSchemes)
                     : null;
             this.catalog = v2 == null ? null : v2.catalog();
             this.v2Uploads = v2 == null ? null : v2.uploads();

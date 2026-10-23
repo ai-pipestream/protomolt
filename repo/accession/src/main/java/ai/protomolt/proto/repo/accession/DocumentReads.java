@@ -4,6 +4,7 @@ import ai.protomolt.proto.repo.catalog.CatalogDataLoss;
 import ai.protomolt.proto.repo.catalog.CatalogException;
 import ai.protomolt.proto.repo.admission.DocumentAdmissionReservations;
 import ai.protomolt.proto.repo.admission.DocumentCandidateAdmission;
+import ai.protomolt.proto.repo.admission.DocumentConcepts;
 import ai.protomolt.proto.repo.admission.DocumentLinks;
 import ai.protomolt.proto.repo.admission.DocumentRetainedDefinitions;
 import ai.protomolt.proto.repo.admission.DocumentSchemaAdmission;
@@ -424,10 +425,12 @@ public final class DocumentReads {
      * Decodes one stored fragment with the schemas its revision retained: the part's
      * fragment schema and every recorded Any occurrence's schema, through the same
      * admission engine a save runs. The occurrences found must be the ones recorded.
+     * Concept membership is not decided again: it was decided against the mounts at
+     * admission, and a reader's mounts must not turn stored content into data loss.
      *
-     * @return the links the fragment holds (requirements §17); empty outside CORE
+     * @return the links and concept tags the fragment holds (requirements §17); empty outside CORE
      */
-    List<DocumentLinks.Link> decodeRetained(StoredManifest stored, PartSelector part, ByteString bytes) {
+    Retained decodeRetained(StoredManifest stored, PartSelector part, ByteString bytes) {
         var validation = stored.getValidation();
         var binding = validation.getPartSchemasList().stream().filter(schema -> schema.getPart().equals(part)).findFirst()
                 .orElseThrow(() -> new AccessionException(Status.Code.DATA_LOSS, "Part has no retained schema binding", null));
@@ -452,7 +455,8 @@ public final class DocumentReads {
                         occurrence.getOccurrence().getStepsList(), occurrence.getTypeUrl()));
             try (var result = DocumentCandidateAdmission.check(new DocumentCandidateAdmission.Request(
                     stored.getAddress().getDocId(), List.of(fragment), container, attested),
-                    selection -> byTypeUrl.get(selection.typeUrl()), limits, reservations, clock.instant(), () -> {})) {
+                    selection -> byTypeUrl.get(selection.typeUrl()), limits, reservations, clock.instant(), () -> {},
+                    DocumentSchemaAdmission.ADMITTED_VALIDATOR)) {
                 if (result instanceof DocumentCandidateAdmission.Rejected rejected)
                     throw lost("Stored part fails its retained rules: " + rejected.violations().getFirst().message(), null);
                 var accepted = (DocumentCandidateAdmission.Accepted) result;
@@ -470,7 +474,7 @@ public final class DocumentReads {
                             occurrence.getSha256(), occurrence.getLength()));
                 if (!new HashSet<>(accepted.opaque()).equals(expectedOpaque))
                     throw lost("Stored part's opaque occurrences differ from the retained record", null);
-                return accepted.links();
+                return new Retained(accepted.links(), accepted.concepts());
             }
         } catch (DocumentSchemaAdmission.DataLoss | DocumentCandidateAdmission.SchemaMissing
                  | DocumentCandidateAdmission.OpaqueMismatch
@@ -482,6 +486,14 @@ public final class DocumentReads {
                     + budget.getMessage(), null, budget);
         }
     }
+
+    /**
+     * What a stored fragment holds for the catalog projections (requirements §17).
+     *
+     * @param links its links
+     * @param concepts its concept tags
+     */
+    record Retained(List<DocumentLinks.Link> links, List<DocumentConcepts.Tag> concepts) {}
 
     /** The catalog these reads resolve against. */
     Catalog catalog() { return catalog; }
@@ -502,7 +514,7 @@ public final class DocumentReads {
                 .orElseThrow(() -> lost("Revision " + stored.getRevision() + " has no CORE object", null));
         requirePartWithinCeiling(core.getRef());
         try (var lease = Objects.requireNonNull(reservations.reserve(core.getRef().getLength()), "reservation lease")) {
-            return decodeRetained(stored, DocumentSaves.CORE_SELECTOR, read(core.getRef()));
+            return decodeRetained(stored, DocumentSaves.CORE_SELECTOR, read(core.getRef())).links();
         }
     }
 

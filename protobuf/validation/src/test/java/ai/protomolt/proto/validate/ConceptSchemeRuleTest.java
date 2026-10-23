@@ -186,11 +186,69 @@ class ConceptSchemeRuleTest {
     }
 
     @Test
+    void aTypeRedefiningConceptRefWithOtherIdTypesIsAViolationNotACrash() {
+        // A self-contained schema can carry its own ConceptRef under the canonical full name.
+        DescriptorProtos.FieldOptions bound = rules(FieldRules.newBuilder()
+                .addConceptSchemes("subject").build());
+        FieldDescriptorProto.Label optional = FieldDescriptorProto.Label.LABEL_OPTIONAL;
+        DescriptorProtos.FileDescriptorProto forged = DescriptorProtos.FileDescriptorProto.newBuilder()
+                .setName("forged_concept_ref.proto").setSyntax("proto3")
+                .setPackage("ai.protomolt.proto.types.v1")
+                .addMessageType(DescriptorProtos.DescriptorProto.newBuilder().setName("ConceptRef")
+                        .addField(field("scheme_id", 1, FieldDescriptorProto.Type.TYPE_INT64, null,
+                                optional, null))
+                        .addField(field("concept_id", 2, FieldDescriptorProto.Type.TYPE_STRING, null,
+                                optional, null)))
+                .addMessageType(DescriptorProtos.DescriptorProto.newBuilder().setName("Doc")
+                        .addField(field("subject", 1, FieldDescriptorProto.Type.TYPE_MESSAGE,
+                                ".ai.protomolt.proto.types.v1.ConceptRef", optional, bound)))
+                .build();
+        Descriptors.FileDescriptor file;
+        try {
+            file = Descriptors.FileDescriptor.buildFrom(forged, new Descriptors.FileDescriptor[0]);
+        } catch (Descriptors.DescriptorValidationException e) {
+            throw new IllegalStateException(e);
+        }
+        Descriptors.Descriptor ref = file.findMessageTypeByName("ConceptRef");
+        Descriptors.Descriptor doc = file.findMessageTypeByName("Doc");
+        DynamicMessage value = DynamicMessage.newBuilder(ref)
+                .setField(ref.findFieldByName("scheme_id"), 7L)
+                .setField(ref.findFieldByName("concept_id"), "physics").build();
+        ValidationResult result = VALIDATOR.validate(DynamicMessage.newBuilder(doc)
+                .setField(doc.findFieldByName("subject"), value).build());
+        assertThat(result.violations()).singleElement().satisfies(violation -> {
+            assertThat(violation.path()).isEqualTo("subject");
+            assertThat(violation.ruleId()).isEqualTo("concept.shape");
+        });
+    }
+
+    @Test
     void theDefaultValidatorMountsNothingAndRefuses() {
         ValidationResult result = ProtoValidator.create().validate(doc(ref("subject", "physics")));
         assertThat(result.violations())
                 .extracting(ValidationResult.Violation::ruleId)
                 .containsExactly("concept.unmounted");
+    }
+
+    @Test
+    void theAdmittedCatalogKeepsTheBindingButDoesNotDecideMembership() {
+        ProtoValidator rereading = ProtoValidator.create(ValidationRuleSources.defaults(),
+                TaxonomyCatalog.empty(), PostalCodeCatalog.empty(), ConceptSchemeCatalog.admitted());
+        Descriptors.FieldDescriptor tags = DOC.findFieldByName("tags");
+        DynamicMessage message = DynamicMessage.newBuilder(DOC)
+                .addRepeatedField(tags, ref("subject", "physics"))
+                .addRepeatedField(tags, ref("region", "emea"))
+                .addRepeatedField(tags, ref("department", "physics"))
+                .build();
+        // Unmounted and unknown concepts pass; a scheme the field does not bind is still refused.
+        assertThat(rereading.validate(message).violations())
+                .extracting(ValidationResult.Violation::path, ValidationResult.Violation::ruleId)
+                .containsExactly(tuple("tags[2]", "concept.scheme"));
+        assertThat(VALIDATOR.validate(message).violations())
+                .extracting(ValidationResult.Violation::ruleId)
+                .containsExactly("concept.unmounted", "concept.scheme");
+        assertThat(ConceptSchemeCatalog.admitted().scheme("subject")).isEmpty();
+        assertThat(ConceptSchemeCatalog.empty().decidesMembership()).isTrue();
     }
 
     @Test

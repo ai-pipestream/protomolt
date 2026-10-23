@@ -26,6 +26,7 @@ import ai.protomolt.proto.repo.v2.StackRecord;
 import ai.protomolt.proto.repo.v2.StackRef;
 import ai.protomolt.proto.repo.v2.StoredManifest;
 import ai.protomolt.proto.repo.v2.WriterGrant;
+import ai.protomolt.proto.types.ConceptRef;
 import com.google.protobuf.ByteString;
 import com.google.protobuf.InvalidProtocolBufferException;
 import com.google.protobuf.UnsafeByteOperations;
@@ -309,6 +310,14 @@ public final class PostgresCatalog implements Catalog {
                     + " AND m.key = ? AND m.value = ?)");
             binds.add(match.getKey()); binds.add(match.getValue());
         }
+        if (filter.hasConcept()) {
+            // Any pair of the expanded set; the pairs travel as two parallel text arrays.
+            where.append(" AND EXISTS (SELECT 1 FROM catalog_document_concepts c"
+                    + " JOIN unnest(?::text[], ?::text[]) AS q(scheme_id, concept_id)"
+                    + " ON c.scheme_id = q.scheme_id AND c.concept_id = q.concept_id WHERE c.document_id = d.document_id)");
+            binds.add(listing.concepts().stream().map(ConceptRef::getSchemeId).toArray(String[]::new));
+            binds.add(listing.concepts().stream().map(ConceptRef::getConceptId).toArray(String[]::new));
+        }
         switch (filter.getOwnerCase()) {
             case OWNER_DATASOURCE_ID -> { where.append(" AND owner_datasource_id = ?"); binds.add(filter.getOwnerDatasourceId()); }
             case OWNER_MODULE_ID -> { where.append(" AND owner_module_id = ?"); binds.add(filter.getOwnerModuleId()); }
@@ -340,7 +349,10 @@ public final class PostgresCatalog implements Catalog {
         binds.add(limit);
         return inTransaction("Document listing", connection -> {
             try (var select = connection.prepareStatement(sql)) {
-                for (int i = 0; i < binds.size(); i++) select.setObject(i + 1, binds.get(i));
+                for (int i = 0; i < binds.size(); i++) {
+                    if (binds.get(i) instanceof String[] values) select.setArray(i + 1, connection.createArrayOf("text", values));
+                    else select.setObject(i + 1, binds.get(i));
+                }
                 var result = new ArrayList<CatalogRecords.ListedDocument>();
                 try (var rows = select.executeQuery()) {
                     while (rows.next()) {
@@ -369,10 +381,11 @@ public final class PostgresCatalog implements Catalog {
     }
 
     @Override public boolean rewriteEntry(NodeAddress address, long revision, Optional<DocumentLookup> lookup,
-            List<CatalogRecords.Link> links) {
-        if (lookup.isEmpty() && !links.isEmpty())
-            throw new IllegalArgumentException("Link rows go with the lookup of a CORE part");
+            List<CatalogRecords.Link> links, List<CatalogRecords.ConceptTag> concepts) {
+        if (lookup.isEmpty() && (!links.isEmpty() || !concepts.isEmpty()))
+            throw new IllegalArgumentException("Link and concept rows go with the lookup of a CORE part");
         CatalogRecords.requireDistinct(links);
+        CatalogRecords.requireDistinctTags(concepts);
         return inTransaction("Catalog entry rebuild", connection -> {
             final long documentId;
             try (var select = connection.prepareStatement("""
@@ -407,7 +420,50 @@ public final class PostgresCatalog implements Catalog {
             }
             writeMetadata(connection, documentId, lookup);
             writeLinks(connection, documentId, links);
+            writeConcepts(connection, documentId, concepts);
             return true;
+        });
+    }
+
+    /** Replaces the document's concept rows; an empty list clears them. */
+    private static void writeConcepts(Connection connection, long documentId, List<CatalogRecords.ConceptTag> concepts)
+            throws SQLException {
+        try (var delete = connection.prepareStatement("DELETE FROM catalog_document_concepts WHERE document_id = ?")) {
+            delete.setLong(1, documentId);
+            delete.executeUpdate();
+        }
+        if (concepts.isEmpty()) return;
+        try (var insert = connection.prepareStatement("""
+                INSERT INTO catalog_document_concepts (document_id, field_path, ordinal, scheme_id, concept_id)
+                VALUES (?, ?, ?, ?, ?)""")) {
+            for (var tag : concepts) {
+                insert.setLong(1, documentId);
+                insert.setString(2, tag.fieldPath());
+                insert.setInt(3, tag.ordinal());
+                insert.setString(4, tag.schemeId());
+                insert.setString(5, tag.conceptId());
+                insert.addBatch();
+            }
+            insert.executeBatch();
+        }
+    }
+
+    @Override public List<CatalogRecords.ConceptTag> concepts(NodeAddress address) {
+        return inTransaction("Concept rows", connection -> {
+            try (var select = connection.prepareStatement("""
+                    SELECT c.field_path, c.ordinal, c.scheme_id, c.concept_id
+                    FROM catalog_document_concepts c JOIN catalog_documents d ON d.document_id = c.document_id
+                    WHERE NOT d.purged AND d.account_id = ? AND d.graph_id = ? AND d.graph_address_id = ? AND d.doc_id = ?
+                    ORDER BY c.field_path COLLATE "C", c.ordinal""")) {
+                bindAddress(select, 1, address);
+                var result = new ArrayList<CatalogRecords.ConceptTag>();
+                try (var rows = select.executeQuery()) {
+                    while (rows.next())
+                        result.add(new CatalogRecords.ConceptTag(rows.getString(1), rows.getInt(2), rows.getString(3),
+                                rows.getString(4)));
+                }
+                return List.copyOf(result);
+            }
         });
     }
 
@@ -783,6 +839,7 @@ public final class PostgresCatalog implements Catalog {
                     long documentId = rows.getLong(1);
                     writeMetadata(connection, documentId, lookup);
                     writeLinks(connection, documentId, commit.links());
+                    writeConcepts(connection, documentId, commit.concepts());
                     return Optional.of(new Applied(documentId, lookup));
                 }
             }
@@ -824,11 +881,12 @@ public final class PostgresCatalog implements Catalog {
             try (var rows = update.executeQuery()) {
                 if (!rows.next()) return Optional.empty();
                 long documentId = rows.getLong(1);
-                // A carried CORE keeps its metadata and link rows; a write or source replaces
-                // them, and a tombstone, which carries neither, clears them.
+                // A carried CORE keeps its metadata, link and concept rows; a write or source
+                // replaces them, and a tombstone, which carries none, clears them.
                 if (!carried) {
                     writeMetadata(connection, documentId, lookup);
                     writeLinks(connection, documentId, commit.links());
+                    writeConcepts(connection, documentId, commit.concepts());
                 }
                 return Optional.of(new Applied(documentId, lookup));
             }

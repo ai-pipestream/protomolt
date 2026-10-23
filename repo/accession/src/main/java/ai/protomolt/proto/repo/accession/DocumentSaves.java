@@ -3,6 +3,7 @@ package ai.protomolt.proto.repo.accession;
 import ai.protomolt.proto.repo.admission.BuiltinDocumentSchema;
 import ai.protomolt.proto.repo.admission.DocumentAdmissionReservations;
 import ai.protomolt.proto.repo.admission.DocumentCandidateAdmission;
+import ai.protomolt.proto.repo.admission.DocumentConcepts;
 import ai.protomolt.proto.repo.admission.DocumentLinks;
 import ai.protomolt.proto.repo.admission.DocumentSchemaAdmission;
 import ai.protomolt.proto.repo.admission.DocumentSchemaRetention;
@@ -33,6 +34,7 @@ import ai.protomolt.proto.repo.v1.RepositorySchemaOccurrenceStep;
 import ai.protomolt.proto.repo.v1.WriteProvenance;
 import ai.protomolt.proto.repo.v2.*;
 import ai.protomolt.proto.validate.ProtoValidator;
+import ai.protomolt.proto.validate.spi.ConceptSchemeCatalog;
 import com.google.protobuf.ByteString;
 import com.google.protobuf.Descriptors;
 import com.google.protobuf.DynamicMessage;
@@ -207,6 +209,7 @@ public final class DocumentSaves {
     private final Map<String, Descriptors.Descriptor> types = new ConcurrentHashMap<>();
     private final WriterAuthority authority;
     private final boolean opaqueAllowed;
+    private final ProtoValidator contentValidator;
 
     /** A host without a schema registry: the compiled contract is the only Document version. */
     public DocumentSaves(Catalog catalog, Drives drives, DocumentSchemaAdmission.Resolver resolver,
@@ -237,6 +240,20 @@ public final class DocumentSaves {
     public DocumentSaves(Catalog catalog, Drives drives, DocumentSchemaAdmission.Resolver resolver,
             DocumentSchemaAdmission.Limits limits, DocumentAdmissionReservations reservations, Clock clock,
             DocumentSchemas schemas, boolean opaqueAllowed) {
+        this(catalog, drives, resolver, limits, reservations, clock, schemas, opaqueAllowed, ConceptSchemeCatalog.empty());
+    }
+
+    /**
+     * @param schemas the latest registered {@code Document} version, asked on every save
+     * @param opaqueAllowed host policy: attested opaque occurrences may be accessioned
+     * @param conceptSchemes the host's mounted concept schemes, which decide the membership
+     *        of every concept_schemes-bound value a save admits; with none mounted, a bound
+     *        value is refused ({@code concept.unmounted})
+     */
+    public DocumentSaves(Catalog catalog, Drives drives, DocumentSchemaAdmission.Resolver resolver,
+            DocumentSchemaAdmission.Limits limits, DocumentAdmissionReservations reservations, Clock clock,
+            DocumentSchemas schemas, boolean opaqueAllowed, ConceptSchemeCatalog conceptSchemes) {
+        this.contentValidator = DocumentSchemaAdmission.contentValidator(Objects.requireNonNull(conceptSchemes));
         this.catalog = Objects.requireNonNull(catalog);
         this.drives = Objects.requireNonNull(drives);
         this.resolver = Objects.requireNonNull(resolver);
@@ -907,6 +924,7 @@ public final class DocumentSaves {
         RepositorySchemaAssetReference fragmentSchema = null;
         var admissionOpaque = new ArrayList<DocumentCandidateAdmission.OpaqueFound>();
         List<DocumentLinks.Link> coreLinks = List.of();
+        List<DocumentConcepts.Tag> coreConcepts = List.of();
         if (!admitted.isEmpty()) {
             var attested = new HashSet<DocumentCandidateAdmission.AttestedOpaque>();
             for (var resolved : resolvedOpaque.values())
@@ -915,7 +933,7 @@ public final class DocumentSaves {
                         resolved.attestation().getOccurrence().getStepsList(), resolved.attestation().getTypeUrl()));
             try (var result = DocumentCandidateAdmission.check(
                     new DocumentCandidateAdmission.Request(address.getDocId(), admitted, container, attested),
-                    resolver, limits, reservations, clock.instant(), () -> {})) {
+                    resolver, limits, reservations, clock.instant(), () -> {}, contentValidator)) {
                 if (result instanceof DocumentCandidateAdmission.Rejected rejected) {
                     var violations = rejected.violations().stream().map(v -> FieldViolation.newBuilder()
                             .setPart(violated(v, admittedSelectors)).setFieldPath(v.fieldPath())
@@ -935,6 +953,7 @@ public final class DocumentSaves {
                 var accepted = (DocumentCandidateAdmission.Accepted) result;
                 admissionOpaque.addAll(accepted.opaque());
                 coreLinks = accepted.links();
+                coreConcepts = accepted.concepts();
                 fragmentSchema = accepted.container();
                 for (var occurrence : accepted.occurrences())
                     validation.addResolvedOccurrences(ResolvedOccurrence.newBuilder()
@@ -1032,6 +1051,13 @@ public final class DocumentSaves {
             return reject(caller, request, address, intentSha, authorized, linkRefusal.get().reason(),
                     linkRefusal.get().message(), linkRefusal.get().violations());
         var linkRows = DocumentLinkReads.rows(coreLinks);
+        // S11c: concept tags (requirements §17) must fit the catalog's tag index, refused by name.
+        var unstorableTags = coreConcepts.stream().flatMap(tag -> CatalogEntries.unstorableConcept(tag.fieldPath()).stream()
+                .map(problem -> FieldViolation.newBuilder().setPart(CORE_SELECTOR).setFieldPath(tag.at())
+                        .setRuleId("concept-catalog-storable").setMessage(problem).build())).toList();
+        if (!unstorableTags.isEmpty())
+            return reject(caller, request, address, intentSha, authorized, RejectionReason.REJECTION_REASON_VALIDATION_FAILED,
+                    "A concept tag does not fit the catalog", unstorableTags);
 
         // S12: write new bytes to the drive's stack, before the commit transaction. Each raw
         // blob is its own object, bound to its blob ID on the BLOBS entry (decision 45).
@@ -1146,7 +1172,7 @@ public final class DocumentSaves {
         var result = catalog.commit(new CatalogRecords.Commit(address, request.getOperationId(), intentSha,
                 request.getExpected(), stored, outcome, event, newObjects, carriedObjects, artifacts,
                 authorized.grantIds(), authorized.credential(), lookup,
-                lookup.isPresent() ? linkRows : List.of()));
+                lookup.isPresent() ? linkRows : List.of(), lookup.isPresent() ? conceptRows(coreConcepts) : List.of()));
         return switch (result) {
             case CatalogRecords.Committed ignored -> SaveDocumentResponse.newBuilder()
                     .setOperationId(request.getOperationId()).setAccession(accession).build();
@@ -1708,6 +1734,12 @@ public final class DocumentSaves {
                 throw malformedException("A document's account, datasource and connector are fixed when it is created");
         }
         return ownership;
+    }
+
+    /** The catalog rows of a CORE part's concept tags. */
+    static List<CatalogRecords.ConceptTag> conceptRows(List<DocumentConcepts.Tag> tags) {
+        return tags.stream().map(tag -> new CatalogRecords.ConceptTag(tag.fieldPath(), tag.ordinal(), tag.schemeId(),
+                tag.conceptId())).toList();
     }
 
     /**

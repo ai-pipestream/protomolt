@@ -7,6 +7,9 @@ import ai.protomolt.proto.repo.v1.*;
 import ai.protomolt.proto.validate.ProtoValidator;
 import ai.protomolt.proto.validate.protovalidate.ProtovalidateRuleSource;
 import ai.protomolt.proto.validate.source.ProtomoltRuleSource;
+import ai.protomolt.proto.validate.spi.ConceptSchemeCatalog;
+import ai.protomolt.proto.validate.spi.PostalCodeCatalog;
+import ai.protomolt.proto.validate.spi.TaxonomyCatalog;
 import com.google.protobuf.ByteString;
 import com.google.protobuf.InvalidProtocolBufferException;
 import java.util.*;
@@ -21,10 +24,27 @@ import java.util.concurrent.CancellationException;
 public final class DocumentSchemaAdmission {
     /** Fixed rule dialects and structural ceilings, independent of ServiceLoader state. */
     public static final String PROFILE = "protomolt-retained-schema-admission/v1";
-    static final ProtoValidator VALIDATOR = ProtoValidator.create(
-            List.of(new ProtomoltRuleSource(), new ProtovalidateRuleSource()),
-            ai.protomolt.proto.validate.spi.TaxonomyCatalog.empty(),
-            ai.protomolt.proto.validate.spi.PostalCodeCatalog.empty());
+    static final ProtoValidator VALIDATOR = contentValidator(ConceptSchemeCatalog.empty());
+    /**
+     * The content validator for re-reading stored content: concept bindings still hold,
+     * but membership, decided against the mounts when the content was admitted, is not
+     * decided again (see {@link ConceptSchemeCatalog#admitted()}).
+     */
+    public static final ProtoValidator ADMITTED_VALIDATOR = contentValidator(ConceptSchemeCatalog.admitted());
+
+    /**
+     * The fixed rule dialects with no taxonomy or postal catalog, deciding concept
+     * membership against {@code conceptSchemes}. A host builds one for its saves over
+     * its mounted schemes and keeps it, since the validator caches compiled rules.
+     *
+     * @param conceptSchemes the mounted concept schemes
+     * @return the content validator
+     */
+    public static ProtoValidator contentValidator(ConceptSchemeCatalog conceptSchemes) {
+        return ProtoValidator.create(
+                List.of(new ProtomoltRuleSource(), new ProtovalidateRuleSource()),
+                TaxonomyCatalog.empty(), PostalCodeCatalog.empty(), conceptSchemes);
+    }
     /** Fixed configuration of this loaded admission implementation, not caller-supplied provenance. */
     public record RuntimeProfile(String validationProfile, String catalogConfiguration) {}
     /** Method invocation reads the loaded implementation; public string constants may be inlined by consumers. */

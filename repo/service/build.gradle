@@ -11,6 +11,9 @@ dependencies {
     api project(':protomolt-repo-spi')
     api project(':protomolt-repo-admission')
     api project(':protomolt-authz')
+    // RepoServices.withConceptSchemes takes the host's mounted concept schemes,
+    // which decide bound tags at save and expand concept filters at query.
+    api project(':protomolt-config')
     implementation project(':protomolt-repo-blob-s3')
     implementation project(':protomolt-repo-blob-redis')
     implementation project(':protomolt-repo-blob-cache')
