@@ -3,8 +3,12 @@ package ai.protomolt.proto.repo.accession;
 import ai.protomolt.proto.repo.spi.RepositoryCaller;
 import ai.protomolt.proto.repo.v1.Blob;
 import ai.protomolt.proto.repo.v1.BlobBag;
+import ai.protomolt.proto.repo.v1.Access;
+import ai.protomolt.proto.repo.v1.AccessRule;
 import ai.protomolt.proto.repo.v1.Document;
+import ai.protomolt.proto.repo.v1.DocumentSecurity;
 import ai.protomolt.proto.repo.v1.OwnershipContext;
+import ai.protomolt.proto.repo.v1.Principal;
 import ai.protomolt.proto.repo.v1.SearchMetadata;
 import ai.protomolt.proto.repo.v2.DocumentPart;
 import ai.protomolt.proto.repo.v2.DocumentTarget;
@@ -26,6 +30,7 @@ import java.io.IOException;
 import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
+import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.Locale;
 import java.util.Map;
@@ -246,6 +251,7 @@ public final class UploadHttpHandler implements HttpHandler {
             }
             var expectedRevision = parseExpectedRevision(
                     param(query, headers, PARAM_EXPECTED_REVISION, HEADER_EXPECTED_REVISION));
+            var security = uploadSecurity(caller.get(), accountId, datasourceId, docId, expectedRevision);
 
             var header = buildUploadHeader(
                     operationId,
@@ -259,7 +265,8 @@ public final class UploadHttpHandler implements HttpHandler {
                     contentType,
                     contentLength,
                     declaredSha256,
-                    expectedRevision);
+                    expectedRevision,
+                    security);
 
             try (var body = exchange.getRequestBody()) {
                 var result = uploads.uploadResult(caller.get(), header, body);
@@ -290,6 +297,34 @@ public final class UploadHttpHandler implements HttpHandler {
         } finally {
             exchange.close();
         }
+    }
+
+    /**
+     * The access rules an upload writes into the document's ownership. Process authority
+     * writes none, so its documents stay readable by process authority only. A scoped caller
+     * replacing a revision keeps that revision's rules: the route has no way to send rules,
+     * and dropping them would lock out every reader the document named. A scoped caller
+     * creating a document grants READ and WRITE to each ACL identity it presents, so it can
+     * read and delete what it saved; one presenting no identity writes none.
+     */
+    private Optional<DocumentSecurity> uploadSecurity(RepositoryCaller caller, String accountId,
+            String datasourceId, String docId, ExpectedRevision expected) {
+        if (caller.processAuthority()) return Optional.empty();
+        if (expected.hasRevision()) {
+            return uploads.intakeRevisionSecurity(caller, accountId, datasourceId, docId, expected.getRevision());
+        }
+        if (caller.identities().isEmpty()) return Optional.empty();
+        var rules = DocumentSecurity.newBuilder();
+        caller.identities().stream()
+                .sorted(Comparator.comparing(Principal::getIdentityType).thenComparing(Principal::getIdentity))
+                .forEach(identity -> {
+                    for (Access access : new Access[] {Access.ACCESS_READ, Access.ACCESS_WRITE}) {
+                        rules.addPermissions(AccessRule.newBuilder().setIdentityType(identity.getIdentityType())
+                                .setIdentity(identity.getIdentity()).setDisplayName(caller.principalName())
+                                .setAccess(access));
+                    }
+                });
+        return Optional.of(rules.build());
     }
 
     private static boolean authenticate(Headers headers, byte[] expectedTokenBytes) {
@@ -371,10 +406,12 @@ public final class UploadHttpHandler implements HttpHandler {
             String contentType,
             long contentLength,
             String declaredSha256,
-            ExpectedRevision expectedRevision) {
+            ExpectedRevision expectedRevision,
+            Optional<DocumentSecurity> security) {
         var ownership = OwnershipContext.newBuilder()
                 .setAccountId(accountId)
                 .setDatasourceId(datasourceId);
+        security.ifPresent(ownership::setSecurity);
         var intake = IntakeOrigin.newBuilder()
                 .setDatasourceId(datasourceId);
         if (!isBlank(connectorId)) {

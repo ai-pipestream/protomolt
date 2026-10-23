@@ -14,7 +14,13 @@ import ai.protomolt.proto.repo.v2.GetOperationOutcomeResponse;
 import ai.protomolt.proto.repo.v2.GetSchemaDescriptorRequest;
 import ai.protomolt.proto.repo.v2.GetSchemaDescriptorResponse;
 import ai.protomolt.proto.repo.v2.ItemError;
+import ai.protomolt.proto.repo.v2.ListBacklinksRequest;
+import ai.protomolt.proto.repo.v2.ListBacklinksResponse;
+import ai.protomolt.proto.repo.v2.ListLinksRequest;
+import ai.protomolt.proto.repo.v2.ListLinksResponse;
 import ai.protomolt.proto.repo.v2.ListRevisionsRequest;
+import ai.protomolt.proto.repo.v2.ResolveLinkRequest;
+import ai.protomolt.proto.repo.v2.ResolveLinkResponse;
 import ai.protomolt.proto.repo.v2.ListRevisionsResponse;
 import ai.protomolt.proto.repo.v2.DeleteDocumentRequest;
 import ai.protomolt.proto.repo.v2.DeleteDocumentResponse;
@@ -51,7 +57,7 @@ import java.util.function.Supplier;
 /**
  * gRPC adapter for the implemented v2 DocumentService RPCs: unary saves and
  * reads, retained schema descriptor reads, streamed upload/read, delete, purge,
- * listing, and the slice 6 bulk streams. Refusals carry the errors.proto detail
+ * listing, link reads, and the slice 6 bulk streams. Refusals carry the errors.proto detail
  * message in the status details; on a bulk stream the same refusal is one item's {@link ItemError},
  * so a failed item never aborts the stream for the others. Bulk items are
  * answered in request order, one at a time, under a synchronized observer:
@@ -65,6 +71,7 @@ public final class AccessionGrpcService extends DocumentServiceGrpc.DocumentServ
     private final DocumentDeletes deletes;
     private final DocumentLists lists;
     private final DocumentPurges purges;
+    private final DocumentLinkReads links;
     private final Function<AuthenticatedCaller, RepositoryCaller> bindings;
 
     /**
@@ -88,6 +95,8 @@ public final class AccessionGrpcService extends DocumentServiceGrpc.DocumentServ
         this.deletes = deletes;
         this.lists = lists;
         this.purges = purges;
+        // Dynamic link resolution is a listing, so link reads mount with the listing.
+        this.links = lists == null ? null : new DocumentLinkReads(reads, lists);
         this.bindings = Objects.requireNonNull(bindings);
     }
 
@@ -213,6 +222,21 @@ public final class AccessionGrpcService extends DocumentServiceGrpc.DocumentServ
     @Override public void listDocuments(ListDocumentsRequest request, StreamObserver<ListDocumentsResponse> observer) {
         if (lists == null) { observer.onError(Status.UNIMPLEMENTED.asRuntimeException()); return; }
         respond(observer, () -> lists.list(caller(), request));
+    }
+
+    @Override public void listLinks(ListLinksRequest request, StreamObserver<ListLinksResponse> observer) {
+        if (links == null) { observer.onError(Status.UNIMPLEMENTED.asRuntimeException()); return; }
+        respond(observer, () -> links.listLinks(caller(), request));
+    }
+
+    @Override public void resolveLink(ResolveLinkRequest request, StreamObserver<ResolveLinkResponse> observer) {
+        if (links == null) { observer.onError(Status.UNIMPLEMENTED.asRuntimeException()); return; }
+        respond(observer, () -> links.resolveLink(caller(), request));
+    }
+
+    @Override public void listBacklinks(ListBacklinksRequest request, StreamObserver<ListBacklinksResponse> observer) {
+        if (links == null) { observer.onError(Status.UNIMPLEMENTED.asRuntimeException()); return; }
+        respond(observer, () -> links.listBacklinks(caller(), request));
     }
 
     @Override public void purgeDocument(ai.protomolt.proto.repo.v2.PurgeDocumentRequest request,

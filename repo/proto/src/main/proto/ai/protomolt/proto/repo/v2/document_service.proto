@@ -9,6 +9,7 @@ import "ai/protomolt/proto/repo/v2/errors.proto";
 import "ai/protomolt/proto/repo/v2/events.proto";
 import "ai/protomolt/proto/repo/v2/manifest.proto";
 import "ai/protomolt/proto/projection/v1/projection.proto";
+import "ai/protomolt/proto/types/v1/concepts.proto";
 import "ai/protomolt/proto/validate/v1/validate.proto";
 import "google/protobuf/timestamp.proto";
 
@@ -83,6 +84,19 @@ service DocumentService {
 
   // Current documents in a scope.
   rpc ListDocuments(ListDocumentsRequest) returns (ListDocumentsResponse);
+
+  // The links a revision's CORE part holds (requirements §17), decoded with the
+  // schema the revision retained. A static link carries its target's state for
+  // this reader; a dynamic link carries its selector, resolved by ResolveLink.
+  rpc ListLinks(ListLinksRequest) returns (ListLinksResponse);
+
+  // One page of a dynamic link's targets: its selector run as a listing in the
+  // linking document's account, under the reader's access, at read time.
+  rpc ResolveLink(ResolveLinkRequest) returns (ResolveLinkResponse);
+
+  // Static links into a document from the current revisions of documents the
+  // reader can read, ordered by linking call number, field path and ordinal.
+  rpc ListBacklinks(ListBacklinksRequest) returns (ListBacklinksResponse);
 }
 
 // ============================================================================
@@ -832,6 +846,58 @@ message DocumentFilter {
     // A step owner from this module.
     string owner_module_id = 15 [(ai.protomolt.proto.validate.v1.field).string = {min_len: 1, max_len: 200, pattern: ".*\\S.*"}];
   }
+  // Documents whose current revision is tagged with the concept or with one
+  // its expansion reaches (requirements §17, "Subject tags").
+  ConceptFilter concept = 16;
+}
+
+// A concept filter. The catalog stores only the tagged concept ids; the query
+// is expanded against the concept schemes mounted on the host when it runs,
+// so a scheme change needs no catalog rewrite. The queried scheme must be
+// mounted (FAILED_PRECONDITION otherwise) and must hold the concept, and the
+// expansion must stay within the mount's bound (INVALID_ARGUMENT otherwise).
+message ConceptFilter {
+  // The queried concept.
+  ai.protomolt.proto.types.v1.ConceptRef concept = 1 [(ai.protomolt.proto.validate.v1.field).required = true];
+  // The optional expansion steps; absent expands through the default steps only.
+  ai.protomolt.proto.types.v1.ConceptExpansion expansion = 2;
+}
+
+// What a concept filter's expansion read, so a listing can be reproduced: the
+// mounted version of every scheme it consulted and the mappings it skipped.
+message ConceptFilterEvidence {
+  // How many concepts the filter matched against.
+  int32 expanded_concepts = 1 [(ai.protomolt.proto.validate.v1.field).int32.gt = 0];
+  // Each consulted scheme and its mounted version, by scheme id.
+  repeated MountedConceptScheme mounted_schemes = 2 [(ai.protomolt.proto.validate.v1.field).repeated.min_items = 1];
+  // Mappings followed but skipped: the target scheme is not mounted or lacks the id.
+  repeated UnresolvedConceptMapping unresolved_mappings = 3;
+}
+
+// One consulted concept scheme.
+message MountedConceptScheme {
+  // The scheme id.
+  string scheme_id = 1 [(ai.protomolt.proto.validate.v1.field) = {
+    required: true
+    string: {slug: true, max_len: 200}
+  }];
+  // The config source's version of the mounted document.
+  string version = 2 [(ai.protomolt.proto.validate.v1.field).required = true];
+}
+
+// A cross-scheme mapping an expansion could not follow.
+message UnresolvedConceptMapping {
+  // The concept carrying the mapping.
+  ai.protomolt.proto.types.v1.ConceptRef from = 1 [(ai.protomolt.proto.validate.v1.field).required = true];
+  // The mapping field: exact_match or close_match.
+  string relation = 2 [(ai.protomolt.proto.validate.v1.field) = {
+    required: true
+    string: {min_len: 1, max_len: 50}
+  }];
+  // The mapping's target.
+  ai.protomolt.proto.types.v1.ConceptRef target = 3 [(ai.protomolt.proto.validate.v1.field).required = true];
+  // Why it did not resolve.
+  string reason = 4 [(ai.protomolt.proto.validate.v1.field).required = true];
 }
 
 // One metadata entry a listed document must carry.
@@ -896,6 +962,10 @@ message DocumentLookup {
   string datasource_id = 11 [(ai.protomolt.proto.projection.v1.from) = {paths: {path: "ownership.datasource_id"}}];
   // OwnershipContext.connector_id.
   optional string connector_id = 12 [(ai.protomolt.proto.projection.v1.from) = {paths: {path: "ownership.connector_id"}}];
+  // The protobuf full name in structured_data's type URL; unset when the
+  // document has no structured_data. A static link's target_types check reads
+  // it from the catalog, so no part bytes are fetched.
+  optional string structured_data_type = 13;
 }
 
 // One document in a listing.
@@ -921,6 +991,170 @@ message DocumentSummary {
 message ListDocumentsResponse {
   // The documents.
   repeated DocumentSummary documents = 1;
+  // Empty on the last page.
+  string next_page_token = 2;
+  // Set when the filter has a concept: the expansion this page matched against.
+  ConceptFilterEvidence concept_evidence = 3;
+}
+
+// ============================================================================
+// Links (§17)
+// ============================================================================
+
+// The links of one revision.
+message ListLinksRequest {
+  // The linking document.
+  ai.protomolt.proto.repo.v1.NodeAddress address = 1 [(ai.protomolt.proto.validate.v1.field).required = true];
+  // Unset means current.
+  RevisionSelector revision = 2;
+}
+
+// A static link's target as this reader sees it. At most one state is set;
+// neither means the target is current and readable.
+message StaticLinkState {
+  option (ai.protomolt.proto.validate.v1.message).cel = {
+    id: "static-link-one-state"
+    message: "a static link target is tombstoned, unavailable or neither"
+    expression: "!(this.target_tombstoned && this.target_unavailable)"
+  };
+  // The target's call number, as the link names it.
+  ai.protomolt.proto.repo.v1.NodeAddress address = 1 [(ai.protomolt.proto.validate.v1.field).required = true];
+  // The pinned revision; absent means the target's current revision.
+  optional int64 pinned_revision = 2 [(ai.protomolt.proto.validate.v1.field).int64.gt = 0];
+  // The target's current revision is a tombstone and the reader can read it.
+  bool target_tombstoned = 3;
+  // The target is missing, purged or not readable by this reader: one state,
+  // so a link does not reveal what access hides.
+  bool target_unavailable = 4;
+}
+
+// A dynamic link's selector, unevaluated.
+message DynamicLinkSelector {
+  // The listing filter.
+  DocumentFilter filter = 1 [(ai.protomolt.proto.validate.v1.field).required = true];
+  // The listing order.
+  DocumentSort sort = 2;
+}
+
+// One link, read from the revision's CORE part.
+message ResolvedLink {
+  option (ai.protomolt.proto.validate.v1.message).cel = {
+    id: "resolved-link-target-required"
+    message: "a resolved link has a static or a dynamic target"
+    expression: "has(this.static_target) || has(this.dynamic_target)"
+  };
+  // Descriptor path of the link field, for example "structured_data.cites";
+  // an element of an enclosing repeated field or map carries its index or key.
+  string field_path = 1 [(ai.protomolt.proto.validate.v1.field) = {
+    required: true
+    string: {min_len: 1, max_len: 1024}
+  }];
+  // Element index in a repeated link field; 0 for a singular one.
+  int32 ordinal = 2 [(ai.protomolt.proto.validate.v1.field).int32.gte = 0];
+  // The link field's relation.
+  string relation = 3 [(ai.protomolt.proto.validate.v1.field) = {
+    required: true
+    string: {link_relation: true}
+  }];
+  // The link's display text.
+  optional string label = 4;
+  // Exactly one target kind.
+  oneof target {
+    // A fixed target and its state.
+    StaticLinkState static_target = 5;
+    // A selector; ResolveLink evaluates it.
+    DynamicLinkSelector dynamic_target = 6;
+  }
+}
+
+// A revision's links.
+message ListLinksResponse {
+  // The revision read.
+  int64 revision = 1 [(ai.protomolt.proto.validate.v1.field) = {
+    required: true
+    int64: {gt: 0}
+  }];
+  // In descriptor walk order: field number order, then element order.
+  repeated ResolvedLink links = 2;
+}
+
+// One page of a dynamic link's targets.
+message ResolveLinkRequest {
+  // The linking document.
+  ai.protomolt.proto.repo.v1.NodeAddress address = 1 [(ai.protomolt.proto.validate.v1.field).required = true];
+  // Unset means current.
+  RevisionSelector revision = 2;
+  // The link field's path, as ListLinks returns it. A stored path is at most
+  // 1024 UTF-8 bytes, so this bound addresses every link.
+  string field_path = 3 [(ai.protomolt.proto.validate.v1.field) = {
+    required: true
+    string: {min_len: 1, max_len: 1024}
+  }];
+  // The element index, as ListLinks returns it.
+  int32 ordinal = 4 [(ai.protomolt.proto.validate.v1.field).int32.gte = 0];
+  // Targets per page.
+  int32 page_size = 5 [(ai.protomolt.proto.validate.v1.field) = {
+    required: true
+    int32: {gt: 0, lte: 1000}
+  }];
+  // From the previous page; empty for the first.
+  string page_token = 6;
+}
+
+// A page of a dynamic link's targets. Tombstoned documents never match.
+message ResolveLinkResponse {
+  // The current documents the selector matches and the reader can read.
+  repeated DocumentSummary documents = 1;
+  // Empty on the last page.
+  string next_page_token = 2;
+  // Set when the selector's filter has a concept: the expansion this page matched against.
+  ConceptFilterEvidence concept_evidence = 3;
+}
+
+// Links into one document.
+message ListBacklinksRequest {
+  // The linked-to document.
+  ai.protomolt.proto.repo.v1.NodeAddress target = 1 [(ai.protomolt.proto.validate.v1.field).required = true];
+  // Only links with this relation. Absent means every relation.
+  optional string relation = 2 [(ai.protomolt.proto.validate.v1.field).string.link_relation = true];
+  // Links per page.
+  int32 page_size = 3 [(ai.protomolt.proto.validate.v1.field) = {
+    required: true
+    int32: {gt: 0, lte: 1000}
+  }];
+  // From the previous page; empty for the first. Bound to the target and relation.
+  string page_token = 4;
+}
+
+// One static link into the target, from a linking document's current revision.
+message Backlink {
+  // The linking document.
+  ai.protomolt.proto.repo.v1.NodeAddress address = 1 [(ai.protomolt.proto.validate.v1.field).required = true];
+  // The linking document's current revision.
+  int64 revision = 2 [(ai.protomolt.proto.validate.v1.field) = {
+    required: true
+    int64: {gt: 0}
+  }];
+  // Descriptor path of the link field.
+  string field_path = 3 [(ai.protomolt.proto.validate.v1.field) = {
+    required: true
+    string: {min_len: 1, max_len: 1024}
+  }];
+  // Element index in a repeated link field; 0 for a singular one.
+  int32 ordinal = 4 [(ai.protomolt.proto.validate.v1.field).int32.gte = 0];
+  // The link field's relation.
+  string relation = 5 [(ai.protomolt.proto.validate.v1.field) = {
+    required: true
+    string: {link_relation: true}
+  }];
+  // The revision the link pins; absent means the target's current revision.
+  optional int64 pinned_revision = 6 [(ai.protomolt.proto.validate.v1.field).int64.gt = 0];
+}
+
+// A page of links into the target.
+message ListBacklinksResponse {
+  // Linking call number, then field path, then ordinal.
+  repeated Backlink backlinks = 1;
   // Empty on the last page.
   string next_page_token = 2;
 }

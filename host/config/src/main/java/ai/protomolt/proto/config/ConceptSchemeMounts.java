@@ -65,6 +65,18 @@ public final class ConceptSchemeMounts implements ConceptSchemeCatalog {
     }
 
     /**
+     * Mounts that follow no scheme, for a host that has none configured. Nothing ever
+     * mounts: a bound field refuses fail-closed ({@code concept.unmounted}) and a query
+     * on any scheme is refused as unmounted, exactly as a followed scheme behaves before
+     * its first document applies.
+     *
+     * @return the empty mounts
+     */
+    public static ConceptSchemeMounts empty() {
+        return new ConceptSchemeMounts(DEFAULT_MAX_EXPANDED_CONCEPTS);
+    }
+
+    /**
      * As {@link #follow(DistributedConfig, Collection, int)} with
      * {@link #DEFAULT_MAX_EXPANDED_CONCEPTS}.
      *

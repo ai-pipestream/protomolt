@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { create } from '@bufbuild/protobuf'
 import { describe, expect, it, vi } from 'vitest'
+import { IntakeWriterScopeSchema } from '@/gen/ai/protomolt/proto/authz/v1/account_bindings_pb'
 import { ConsoleSessionStatusSchema, type ConsoleSessionStatus } from '@/gen/ai/protomolt/proto/authz/v1/console_session_pb'
 import { REPOSITORY_SESSION, REPOSITORY_SIGN_IN } from '@/repository/clients'
 import { mountRepositoryView, settle } from '@/repository/repositoryViewKit'
@@ -54,6 +55,20 @@ describe('RepositoryAccountsView', () => {
     expect(failure).toContain('HTTP 503')
     expect(failure).toContain('identity provider unreachable')
     expect(wrapper.find('[data-testid="signed-out"]').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('says per account whether the session reads only or writes as an intake owner', async () => {
+    const { wrapper } = await mountWith(async () =>
+      create(ConsoleSessionStatusSchema, {
+        authenticated: true,
+        principal: 'ada',
+        accountIds: ['acct-a', 'acct-b'],
+        intakeWriters: [create(IntakeWriterScopeSchema, { accountId: 'acct-a', datasourceId: 'ds-files', connectorId: 'crawler', allowCreate: true })],
+      }),
+    )
+    expect(wrapper.get('[data-testid="account-acct-a"]').text()).toContain('Writes as ds-files via crawler (create and update)')
+    expect(wrapper.get('[data-testid="account-acct-b"]').text()).toContain('Read only')
     wrapper.unmount()
   })
 })

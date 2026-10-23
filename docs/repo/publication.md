@@ -210,6 +210,85 @@ marking what the selection actually returned.
   drive-scoped listing: drives are a write-time storage choice, not part of
   a document's identity.
 
+### Links
+
+A link is a `DocumentLink` field in CORE, including the typed
+`structured_data` payload, whose descriptor carries the
+`(ai.protomolt.proto.repo.v2.link)` option (`repo/v2/links.proto`). The option
+names the relation and, optionally, the `structured_data` types a static target
+may hold. A `DocumentLink` field without the option, the option on any other
+field, or a link anywhere under a map value refuses the save as
+`VALIDATION_FAILED`.
+
+A link is named by `(field_path, ordinal)`: field names from the CORE root
+joined by `.`, with `[i]` after each repeated ancestor
+(`structured_data.sections[0].cites`), and the index inside a repeated link
+field. A typed `Any` nested in `structured_data` is entered without a segment
+of its own (`structured_data.nested.cites`); an opaque one is not read. On a save that writes or sources CORE, each static target must be in
+the same account, exist unpurged, be readable by the saving caller and hold
+the pinned revision when one is named, or the save is rejected
+`LINK_TARGET_NOT_FOUND`; when the field lists `target_types`, the addressed
+revision's admitted type must be listed, or it is `LINK_TARGET_TYPE`. Both are
+recorded `FAILED_PRECONDITION` outcomes. A tombstoned target is accepted and
+the link dangles. A dynamic target's filter must set a field and be
+consistent; it is not evaluated at save. A pinned revision must be a
+document revision, not a tombstone. A link must also fit the catalog's edge
+table: a field path of at most 1024 UTF-8 bytes, and a relation plus target
+call number of at most 2048; a larger one is refused `VALIDATION_FAILED` with
+rule `link-catalog-storable`. Revisions committed before the link migration
+have no recorded `structured_data_type` until `CatalogEntryRebuild` runs, so a
+link with `target_types` to such a document is refused `LINK_TARGET_TYPE`
+until then.
+
+- **`ListLinks`** — a revision's links, decoded with its retained schema. A
+  static link reports `target_tombstoned` or `target_unavailable` (missing,
+  purged or unreadable, one state) for this reader; a dynamic link returns
+  its selector.
+- **`ResolveLink`** — one page of a dynamic link's targets: its filter and
+  sort run as `ListDocuments` in the linking document's account under the
+  reader's access, tombstones excluded. A static link is `FAILED_PRECONDITION`.
+- **`ListBacklinks`** — static links into a document from current revisions
+  the reader can read, optionally of one relation, ordered by linking call
+  number, field path and ordinal.
+
+### Concept tags
+
+A concept tag is a value of a `ConceptRef` field in CORE, including the typed
+`structured_data` payload, whose field rules bind it to concept schemes
+(`concept_schemes`, well-known types "Concept schemes (SKOS)"). A save decides
+each tag's membership against the concept schemes the host mounts
+(`DocumentSaves` takes the host's `ConceptSchemeCatalog`; the served
+repository gets them from `RepoServices.withConceptSchemes` and mounts none
+without it): a concept the mounted scheme lacks is `concept.member` and a
+bound scheme the host has not mounted is `concept.unmounted`, both
+`VALIDATION_FAILED`. A tag is read as the canonical `ConceptRef` and held to
+its own rules, whatever a self-contained payload schema declares under that
+name: a value whose ids are not strings at fields 1 and 2 is `concept.shape`,
+and one that does not re-parse cleanly or breaks the canonical rules fails the
+save as content. Reads and catalog
+rebuilds decode stored content without deciding membership again, so a host
+that has not mounted a scheme still reads what was admitted. Tags in a typed
+nested `Any` are read as links are, without a path segment for the `Any`. A
+tag outside CORE, one a map value reaches through a typed `Any`, or one whose
+field path is over 1024 UTF-8 bytes (`concept-catalog-storable`) fails the
+save.
+
+Tags project into `catalog_document_concepts` under the same
+`(field_path, ordinal)` identity as links: current revision only, replaced by
+a save that writes or sources CORE, kept by one that carries it, cleared by a
+tombstone or purge, and rebuilt by `CatalogEntryRebuild`. Only the tagged ids
+are stored.
+
+`DocumentFilter.concept` (a `ConceptRef` plus a `ConceptExpansion`) is
+expanded against the mounted schemes when each page runs (`DocumentLists`
+takes the host's `ConceptSchemeMounts`), then matched against the stored
+pairs, in `ListDocuments` and in `ResolveLink` for a dynamic link whose filter
+has one. The page's `concept_evidence` names each consulted scheme's mounted
+version and the mappings skipped. A host without mounts, or a queried scheme
+that is not mounted, is `FAILED_PRECONDITION`; a concept the scheme lacks, or
+an expansion over the mount's bound, is `INVALID_ARGUMENT`. A scheme change
+needs no catalog rewrite.
+
 ## Admission: schema, validation and opaque content
 
 Every save is admitted before anything is written:

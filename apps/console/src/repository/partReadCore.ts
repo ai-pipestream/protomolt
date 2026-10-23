@@ -6,7 +6,7 @@
  * revision's validation record binds, which is checked again here before use.
  * A revision with no binding for the part is shown as raw bytes, saying why.
  */
-import { create, createFileRegistry, equals, fromBinary, type DescMessage, type Message } from '@bufbuild/protobuf'
+import { create, createFileRegistry, equals, fromBinary, type DescMessage, type FileRegistry, type Message } from '@bufbuild/protobuf'
 import { FileDescriptorSetSchema } from '@bufbuild/protobuf/wkt'
 import type { Client } from '@connectrpc/connect'
 import type { NodeAddress } from '@/gen/ai/protomolt/proto/repo/v1/address_pb'
@@ -118,6 +118,29 @@ export async function readPart(
   return { revision: manifest.revision, bytes }
 }
 
+/**
+ * The descriptor set a revision retained under `descriptorSha256`, as a
+ * registry. The bytes GetSchemaDescriptor returns are hashed again here and
+ * refused when they do not match the digest asked for.
+ */
+export async function retainedRegistry(
+  client: Client<typeof DocumentService>,
+  address: NodeAddress,
+  revision: bigint,
+  descriptorSha256: string,
+  signal: AbortSignal,
+): Promise<FileRegistry> {
+  const response = await client.getSchemaDescriptor(
+    create(GetSchemaDescriptorRequestSchema, { address, revision: revisionSelector(revision), descriptorSha256 }),
+    { signal },
+  )
+  const actual = new Sha256().update(response.descriptorSet).hex()
+  if (actual !== descriptorSha256) {
+    throw new Error(`The descriptor set hashes to ${actual}, but revision ${revision} retained ${descriptorSha256}.`)
+  }
+  return createFileRegistry(fromBinary(FileDescriptorSetSchema, response.descriptorSet))
+}
+
 /** A part decoded with its retained schema, or the reason it is shown raw. */
 export type DecodedPart =
   | { kind: 'decoded'; desc: DescMessage; message: Message; typeUrl: string; descriptorSha256: string }
@@ -150,19 +173,7 @@ export async function decodePart(
   }
   const schema = binding.fragmentSchema
   if (schema === undefined) throw new Error(`The fragment schema binding for ${partLabel(selector)} has no reference.`)
-  const response = await client.getSchemaDescriptor(
-    create(GetSchemaDescriptorRequestSchema, {
-      address,
-      revision: revisionSelector(revision),
-      descriptorSha256: schema.descriptorSha256,
-    }),
-    { signal },
-  )
-  const actual = new Sha256().update(response.descriptorSet).hex()
-  if (actual !== schema.descriptorSha256) {
-    throw new Error(`The descriptor set hashes to ${actual}, but revision ${revision} retained ${schema.descriptorSha256}.`)
-  }
-  const registry = createFileRegistry(fromBinary(FileDescriptorSetSchema, response.descriptorSet))
+  const registry = await retainedRegistry(client, address, revision, schema.descriptorSha256, signal)
   const typeName = typeNameOf(schema.typeUrl)
   const desc = registry.getMessage(typeName)
   if (desc === undefined) {

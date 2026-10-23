@@ -32,6 +32,38 @@ public interface ConceptSchemeCatalog {
     }
 
     /**
+     * Whether this catalog decides membership. Only {@link #admitted()} answers false.
+     *
+     * @return true when a bound value's concept is checked against the mounted scheme
+     */
+    default boolean decidesMembership() {
+        return true;
+    }
+
+    /**
+     * A catalog for re-reading content that was admitted earlier. The schema half of the
+     * rule still holds (a value's scheme must be one the field binds), but membership is
+     * mount configuration that was decided when the content was admitted, so it is not
+     * decided again: a reader whose host has not mounted the scheme, or mounts another
+     * version, still reads what was stored. Never use it to admit new content.
+     *
+     * @return the re-read catalog
+     */
+    static ConceptSchemeCatalog admitted() {
+        return new ConceptSchemeCatalog() {
+            @Override
+            public Optional<Mounted> scheme(String schemeId) {
+                return Optional.empty();
+            }
+
+            @Override
+            public boolean decidesMembership() {
+                return false;
+            }
+        };
+    }
+
+    /**
      * One mounted scheme's membership.
      *
      * @param schemeId the scheme id, the remainder of its config subject

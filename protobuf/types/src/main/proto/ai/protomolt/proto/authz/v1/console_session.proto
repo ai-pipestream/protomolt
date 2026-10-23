@@ -7,6 +7,7 @@ option java_package = "ai.protomolt.proto.authz";
 option java_outer_classname = "ConsoleSessionProto";
 
 import "google/protobuf/timestamp.proto";
+import "ai/protomolt/proto/authz/v1/account_bindings.proto";
 import "ai/protomolt/proto/validate/v1/validate.proto";
 
 // A host's record of one signed-in browser session: the principal an OIDC
@@ -81,11 +82,15 @@ message ConsoleSessionStatus {
   ];
   // When the session expires; absent when unauthenticated.
   google.protobuf.Timestamp expires_at = 4;
+  // The intake owners the session may upload and delete as, from the
+  // principal's account binding; empty when the session only reads.
+  repeated IntakeWriterScope intake_writers = 5;
 }
 
 // Why a sign-in did not complete; the callback route sends the browser back
 // to the console's sign-in page naming one of these.
 enum SignInFailure {
+  // SIGN_IN_FAILURE_UNSPECIFIED indicates no specific failure reason was recorded.
   SIGN_IN_FAILURE_UNSPECIFIED = 0;
   // The callback's state matched no pending login of this browser.
   SIGN_IN_FAILURE_STATE_MISMATCH = 1;

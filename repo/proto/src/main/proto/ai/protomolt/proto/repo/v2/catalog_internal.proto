@@ -381,6 +381,23 @@ message CatalogPageToken {
   optional string after_title = 10;
 }
 
+// Internal binary continuation token of a backlink listing, bound to its
+// target and relation filter.
+message BacklinkPageToken {
+  // Token format.
+  uint32 version = 1;
+  // The linked-to document.
+  ai.protomolt.proto.repo.v1.NodeAddress target = 2;
+  // The relation filter; absent for every relation.
+  optional string relation = 3;
+  // The linking document of the last returned edge.
+  ai.protomolt.proto.repo.v1.NodeAddress after = 4;
+  // The field path of the last returned edge.
+  string after_field_path = 5;
+  // The ordinal of the last returned edge.
+  int32 after_ordinal = 6;
+}
+
 // Durable purge targets recorded before any provider deletion.
 message CatalogPurge {
   // First authorized request; retries bind purge_id and address.

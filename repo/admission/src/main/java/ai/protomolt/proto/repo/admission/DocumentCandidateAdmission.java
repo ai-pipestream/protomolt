@@ -7,14 +7,19 @@ import ai.protomolt.proto.repo.v1.DocumentPart;
 import ai.protomolt.proto.repo.v1.DocumentPublicationSlot;
 import ai.protomolt.proto.repo.v1.RepositorySchemaAssetReference;
 import ai.protomolt.proto.repo.v1.RepositorySchemaOccurrenceStep;
+import ai.protomolt.proto.validate.ProtoValidator;
 import com.google.protobuf.ByteString;
+import com.google.protobuf.Descriptors.Descriptor;
+import com.google.protobuf.Descriptors.FieldDescriptor;
 import com.google.protobuf.DynamicMessage;
 import com.google.protobuf.InvalidProtocolBufferException;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.concurrent.CancellationException;
 
 /**
@@ -120,17 +125,33 @@ public final class DocumentCandidateAdmission {
         private final Map<String, ByteString> artifacts;
         private final DocumentAdmissionResources resources;
         private final List<OpaqueFound> opaque;
+        private final List<DocumentLinks.Link> links;
+        private final List<DocumentConcepts.Tag> concepts;
 
         private Accepted(RepositorySchemaAssetReference container, List<Occurrence> occurrences,
-                Map<String, ByteString> artifacts, DocumentAdmissionResources resources, List<OpaqueFound> opaque) {
+                Map<String, ByteString> artifacts, DocumentAdmissionResources resources, List<OpaqueFound> opaque,
+                List<DocumentLinks.Link> links, List<DocumentConcepts.Tag> concepts) {
             this.container = container; this.occurrences = List.copyOf(occurrences);
             this.artifacts = Map.copyOf(artifacts); this.resources = resources; this.opaque = List.copyOf(opaque);
+            this.links = List.copyOf(links); this.concepts = List.copyOf(concepts);
         }
         public RepositorySchemaAssetReference container() { return container; }
         public List<Occurrence> occurrences() { return occurrences; }
         public Map<String, ByteString> artifacts() { return artifacts; }
         /** Attested occurrences accepted undecoded; empty for a fully typed candidate. */
         public List<OpaqueFound> opaque() { return opaque; }
+        /**
+         * The links of the admitted CORE fragment (requirements §17): its own link
+         * fields and those of each typed Any root it holds, structured_data among
+         * them, in field order. Empty when no CORE fragment was admitted.
+         */
+        public List<DocumentLinks.Link> links() { return links; }
+        /**
+         * The concept tags of the admitted CORE fragment (requirements §17): values of
+         * its concept_schemes-bound ConceptRef fields and those of each typed Any root
+         * it holds, in field order. Empty when no CORE fragment was admitted.
+         */
+        public List<DocumentConcepts.Tag> concepts() { return concepts; }
         @Override public void close() { resources.close(); }
     }
 
@@ -203,12 +224,26 @@ public final class DocumentCandidateAdmission {
     }
 
     /**
-     * Admit the written fragments. The resolver returns null for an unregistered
-     * type and throws {@link SchemaUnavailable} for an outage.
+     * Admit the written fragments under the fixed admission validator, which mounts no
+     * concept scheme, so a bound concept tag is refused. The resolver returns null for an unregistered type and
+     * throws {@link SchemaUnavailable} for an outage.
      */
     public static Result check(Request request, DocumentSchemaAdmission.Resolver resolver,
             DocumentSchemaAdmission.Limits limits, DocumentAdmissionReservations reservations,
             Instant evaluatedAt, Runnable control) throws InvalidProtocolBufferException {
+        return check(request, resolver, limits, reservations, evaluatedAt, control, DocumentSchemaAdmission.VALIDATOR);
+    }
+
+    /**
+     * Admit the written fragments under a content validator from
+     * {@link DocumentSchemaAdmission#contentValidator}: the host's mounted concept
+     * schemes for a save, {@link DocumentSchemaAdmission#ADMITTED_VALIDATOR} to
+     * re-read stored content.
+     */
+    public static Result check(Request request, DocumentSchemaAdmission.Resolver resolver,
+            DocumentSchemaAdmission.Limits limits, DocumentAdmissionReservations reservations,
+            Instant evaluatedAt, Runnable control, ProtoValidator validator) throws InvalidProtocolBufferException {
+        Objects.requireNonNull(validator);
         Objects.requireNonNull(request); Objects.requireNonNull(resolver); Objects.requireNonNull(limits);
         Objects.requireNonNull(reservations); Objects.requireNonNull(evaluatedAt); Objects.requireNonNull(control);
         Runnable active = () -> {
@@ -239,6 +274,11 @@ public final class DocumentCandidateAdmission {
             // Fragments decode with the container version, not the compiled Document: a field
             // that version does not know is SCHEMA_MISSING, never dropped (decision 35).
             var type = container.schema().type();
+            // One set of link-schema checks for the whole candidate: each type is checked once.
+            var linkSchemas = new DocumentLinks.SchemaChecks(active);
+            requireLinks(linkSchemas, type, "container");
+            var links = new ArrayList<DocumentLinks.Link>();
+            var concepts = new ArrayList<DocumentConcepts.Tag>();
             var written = DynamicMessage.newBuilder(type);
             long total = 0;
             var seen = new java.util.HashSet<List<Object>>();
@@ -261,6 +301,18 @@ public final class DocumentCandidateAdmission {
                     if (input.getTotalBytesRead() != fragment.bytes().size())
                         throw new InvalidProtocolBufferException("Fragment was not completely consumed");
                     requireNoUnknownFields(parsed, fragment.part(), "", 0, active);
+                    // Links are CORE content (requirements §17); a link value in any other part is refused.
+                    var found = DocumentLinks.extract(parsed, "");
+                    if (!found.isEmpty() && fragment.part() != DocumentPart.DOCUMENT_PART_CORE)
+                        throw new ContentRefused(fragment.part() + " fragment holds link " + found.getFirst().fieldPath()
+                                + "; links belong in CORE", null);
+                    links.addAll(found);
+                    // Concept tags share the CORE-rooted occurrence identity of links.
+                    var tags = DocumentConcepts.extract(parsed, "");
+                    if (!tags.isEmpty() && fragment.part() != DocumentPart.DOCUMENT_PART_CORE)
+                        throw new ContentRefused(fragment.part() + " fragment holds concept tag " + tags.getFirst().fieldPath()
+                                + "; concept tags belong in CORE", null);
+                    concepts.addAll(tags);
                     switch (fragment.part()) {
                         case DOCUMENT_PART_CHUNKS -> DocumentFragmentConfinement.requireConfinedSegmentation(parsed,
                                 fragment.key().get(0), request.docId());
@@ -283,7 +335,7 @@ public final class DocumentCandidateAdmission {
             }
 
             var violations = new ArrayList<Violation>();
-            var result = DocumentSchemaAdmission.VALIDATOR.validate(view, evaluatedAt);
+            var result = validator.validate(view, evaluatedAt);
             for (var violation : result.violations())
                 violations.add(new Violation(partOf(violation.path()), violation.path(), violation.ruleId(), violation.message()));
             var containerKey = new DocumentPayloadCheck.SchemaKey(request.container().metadata().getTypeUrl(),
@@ -333,7 +385,7 @@ public final class DocumentCandidateAdmission {
                     final DocumentPayloadAssessment assessment;
                     try {
                         assessment = DocumentPayloadCheck.assessContextualAssets(selected, envelope, envelope.getTypeUrl(),
-                                DocumentSchemaAdmission.VALIDATOR,
+                                validator,
                                 new DocumentPayloadCheck.Limits((int) decodedRemaining, limits.maxWireValues(),
                                         limits.maxWireDepth(), 4096, 65536), active,
                                 nested -> select(definitions, strict, new DocumentSchemaAdmission.Selection(0, locator,
@@ -363,6 +415,31 @@ public final class DocumentCandidateAdmission {
                     List<DocumentSchemaOccurrences.Occurrence> found;
                     if (assessment instanceof DocumentPayloadAssessment.Accepted accepted) {
                         found = accepted.checked().payload().occurrences();
+                        var decoded = accepted.checked().payload().decoded();
+                        requireLinks(linkSchemas, decoded.getDescriptorForType(), envelope.getTypeUrl());
+                        var nestedPayloads = nestedPayloads(found, definitions, active);
+                        final List<DocumentLinks.Link> rootLinks;
+                        try {
+                            rootLinks = DocumentLinks.extract(decoded, rootPath(type, root.access()),
+                                    rootOccurrence(found), nestedPayloads, linkSchemas);
+                        } catch (DocumentLinks.SchemaRefused refused) {
+                            throw new ContentRefused("link schema of " + envelope.getTypeUrl() + ": " + refused.getMessage(), refused);
+                        }
+                        if (!rootLinks.isEmpty() && fragment.part() != DocumentPart.DOCUMENT_PART_CORE)
+                            throw new ContentRefused(fragment.part() + " payload " + envelope.getTypeUrl()
+                                    + " holds link " + rootLinks.getFirst().fieldPath() + "; links belong in CORE", null);
+                        links.addAll(rootLinks);
+                        final List<DocumentConcepts.Tag> rootTags;
+                        try {
+                            rootTags = DocumentConcepts.extract(decoded, rootPath(type, root.access()),
+                                    rootOccurrence(found), nestedPayloads, active);
+                        } catch (DocumentConcepts.TagRefused refused) {
+                            throw new ContentRefused("concept tags of " + envelope.getTypeUrl() + ": " + refused.getMessage(), refused);
+                        }
+                        if (!rootTags.isEmpty() && fragment.part() != DocumentPart.DOCUMENT_PART_CORE)
+                            throw new ContentRefused(fragment.part() + " payload " + envelope.getTypeUrl()
+                                    + " holds concept tag " + rootTags.getFirst().fieldPath() + "; concept tags belong in CORE", null);
+                        concepts.addAll(rootTags);
                         decodedRemaining -= accepted.checked().payload().decodedBytes();
                         for (var terminal : accepted.checked().payload().opaqueTerminals()) {
                             var steps = new ArrayList<>(locator.getAccessList());
@@ -397,7 +474,7 @@ public final class DocumentCandidateAdmission {
             active.run();
             if (!violations.isEmpty()) return new Rejected(violations);
             var accepted = new Accepted(definitions.references.get(containerKey).toProto(), occurrences,
-                    definitions.artifacts, resources, opaqueFound);
+                    definitions.artifacts, resources, opaqueFound, links, concepts);
             transferred = true;
             return accepted;
         } catch (DocumentAdmissionResources.ReservationFailure failed) {
@@ -405,6 +482,87 @@ public final class DocumentCandidateAdmission {
         } finally {
             if (!transferred) resources.close();
         }
+    }
+
+    /** Checks the link declarations reachable from a type; a broken one refuses the content. */
+    private static void requireLinks(DocumentLinks.SchemaChecks checks, Descriptor type, String where) {
+        try {
+            checks.declares(type);
+        } catch (DocumentLinks.SchemaRefused refused) {
+            throw new ContentRefused("link schema of " + where + ": " + refused.getMessage(), refused);
+        }
+    }
+
+    /** The occurrence path of an accepted root payload: its own boundary, the first step of every nested path. */
+    private static List<DocumentSchemaOccurrences.Step> rootOccurrence(List<DocumentSchemaOccurrences.Occurrence> occurrences) {
+        for (var occurrence : occurrences)
+            if (occurrence.path().size() == 1) return occurrence.path();
+        throw new IllegalStateException("accepted payload has no root occurrence");
+    }
+
+    /**
+     * Decodes the nested Any values of one root for the link and tag walks, each with the
+     * exact schema admission resolved for that occurrence. An Any is found by its occurrence
+     * path, never by its bytes: identical bytes elsewhere, typed or opaque, lend it
+     * nothing. An attested opaque occurrence has no resolved schema at its path, so it
+     * is not decoded and its links and tags are not read.
+     */
+    private static DocumentLinks.Unpacker nestedPayloads(List<DocumentSchemaOccurrences.Occurrence> occurrences,
+            DocumentSchemaDefinitions definitions, Runnable control) {
+        record Resolved(DocumentSchemaOccurrences.Boundary boundary, Descriptor type) {}
+        var resolved = new HashMap<List<DocumentSchemaOccurrences.Step>, Resolved>();
+        for (var occurrence : occurrences) {
+            var path = occurrence.path();
+            if (!(path.getLast() instanceof DocumentSchemaOccurrences.Boundary boundary))
+                throw new IllegalStateException("occurrence path does not end at an Any boundary");
+            var schema = definitions.schemas.get(new DocumentPayloadCheck.SchemaKey(boundary.typeUrl(), boundary.artifactSha256()));
+            if (schema == null) throw new IllegalStateException("occurrence schema was not selected");
+            resolved.put(List.copyOf(path.subList(0, path.size() - 1)), new Resolved(boundary, schema.type()));
+        }
+        return (at, typeUrl, value) -> {
+            var found = resolved.get(at);
+            if (found == null) return Optional.empty();
+            var boundary = found.boundary();
+            if (!boundary.typeUrl().equals(typeUrl) || boundary.valueSizeBytes() != value.size()
+                    || !boundary.valueSha256().equals(DocumentSchemaOccurrences.sha256(value, control)))
+                throw new IllegalStateException("An admitted Any occurrence does not match the value at its path");
+            try {
+                return Optional.of(new DocumentLinks.Entered(DynamicMessage.parseFrom(found.type(), value), boundary));
+            } catch (InvalidProtocolBufferException impossible) {
+                throw new IllegalStateException("An admitted Any value failed to decode", impossible);
+            }
+        };
+    }
+
+    /** The field path of an Any root: its access steps named against the container type. */
+    static String rootPath(Descriptor container,
+            List<DocumentSchemaOccurrences.Step> access) {
+        var path = new StringBuilder();
+        var current = container;
+        FieldDescriptor field = null;
+        for (var step : access) {
+            switch (step) {
+                case DocumentSchemaOccurrences.Field named -> {
+                    field = current == null ? null : current.findFieldByNumber(named.number());
+                    if (field == null) throw new IllegalStateException("Any root access names an undeclared field " + named.number());
+                    if (!path.isEmpty()) path.append('.');
+                    path.append(field.getName());
+                    current = field.getJavaType() == FieldDescriptor.JavaType.MESSAGE
+                            && !field.isMapField() ? field.getMessageType() : null;
+                }
+                case DocumentSchemaOccurrences.Index index -> path.append('[').append(index.index()).append(']');
+                case DocumentSchemaOccurrences.MapKey key -> {
+                    path.append(DocumentLinks.subscript(key.value()));
+                    var value = field == null ? null : field.getMessageType().findFieldByName("value");
+                    current = value != null && value.getJavaType() == FieldDescriptor.JavaType.MESSAGE
+                            ? value.getMessageType() : null;
+                }
+                case DocumentSchemaOccurrences.Boundary boundary ->
+                        throw new IllegalStateException("Any root access crosses a boundary");
+            }
+        }
+        if (path.isEmpty()) throw new IllegalStateException("Any root access is empty");
+        return path.toString();
     }
 
     /**
@@ -444,7 +602,7 @@ public final class DocumentCandidateAdmission {
      *
      * @throws HostFailure when the definition does not bind
      */
-    public static com.google.protobuf.Descriptors.Descriptor containerType(DocumentSchemaAdmission.Definition container) {
+    public static Descriptor containerType(DocumentSchemaAdmission.Definition container) {
         try {
             return DocumentSchemaAssetBinding.bind(container.metadata(), container.descriptors(),
                     new ai.protomolt.proto.descriptors.ClosedDescriptorSet.Limits(16 * 1024 * 1024, 256, 4096, 64), () -> {})
@@ -464,7 +622,7 @@ public final class DocumentCandidateAdmission {
         if (message.getDescriptorForType().getFullName().equals("google.protobuf.Any")) return;
         for (var entry : message.getAllFields().entrySet()) {
             var field = entry.getKey();
-            if (field.getJavaType() != com.google.protobuf.Descriptors.FieldDescriptor.JavaType.MESSAGE) continue;
+            if (field.getJavaType() != FieldDescriptor.JavaType.MESSAGE) continue;
             String child = path.isEmpty() ? field.getName() : path + "." + field.getName();
             if (field.isRepeated()) {
                 for (var element : (List<?>) entry.getValue())

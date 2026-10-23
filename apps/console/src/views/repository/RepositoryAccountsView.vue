@@ -31,7 +31,9 @@
                   :key="accountId"
                   :to="accountRoute(accountId)"
                   :title="accountId"
+                  :subtitle="writesIn(accountId)"
                   prepend-icon="mdi-domain"
+                  :data-testid="`account-${accountId}`"
                 />
               </v-list>
               <div v-else class="text-body-2 text-medium-emphasis" data-testid="no-accounts">
@@ -74,6 +76,7 @@ import type { ConsoleSessionStatus } from '@/gen/ai/protomolt/proto/authz/v1/con
 import { useRepositorySession, useSignIn } from '@/repository/clients'
 import { rpcFailure, type RpcFailure } from '@/repository/rpcErrorCore'
 import { SessionApiError } from '@/services/session'
+import { scopeLabel, scopesIn } from '@/repository/sessionWritersCore'
 
 const router = useRouter()
 const sessions = useRepositorySession()
@@ -82,6 +85,12 @@ const session = shallowRef<ConsoleSessionStatus | null>(null)
 const loading = ref(false)
 const failure = ref<RpcFailure | null>(null)
 const typedAccount = ref('')
+
+// Whether the session may upload and delete here, from its account binding.
+function writesIn(accountId: string): string {
+  const scopes = scopesIn(session.value?.intakeWriters ?? [], accountId)
+  return scopes.length === 0 ? 'Read only' : `Writes as ${scopes.map(scopeLabel).join('; ')}`
+}
 
 function accountRoute(accountId: string) {
   return { name: 'repository-account', params: { accountId } }

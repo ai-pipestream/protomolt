@@ -18,7 +18,9 @@ import java.util.stream.Collectors;
  * declared rules must hold, principal names must be unique, and no ACL identity may repeat
  * within a binding (document access rules match identities case-insensitively, so case
  * variants are the same identity) or claim the {@code public} type, which every caller
- * already matches. A document failing here refuses loudly naming the defect.
+ * already matches. An intake writer scope must name one of its binding's accounts, and no
+ * owner (account, datasource, connector) may be listed twice. A document failing here
+ * refuses loudly naming the defect.
  */
 public final class AccountBindingPolicies {
 
@@ -64,6 +66,24 @@ public final class AccountBindingPolicies {
                     throw new IllegalArgumentException("principal '" + binding.getPrincipal()
                             + "' binds ACL identity " + identity.getIdentityType() + " '"
                             + identity.getIdentity() + "' twice");
+                }
+            }
+            Set<String> writers = new HashSet<>();
+            for (IntakeWriterScope writer : binding.getIntakeWritersList()) {
+                if (!binding.getAccountIdsList().contains(writer.getAccountId())) {
+                    throw new IllegalArgumentException("principal '" + binding.getPrincipal()
+                            + "' writes as datasource '" + writer.getDatasourceId() + "' in account '"
+                            + writer.getAccountId() + "', which it is not bound to");
+                }
+                // One owner per account, datasource and connector: two entries differing only in
+                // allow_create would leave the creation right ambiguous.
+                String owner = writer.getAccountId() + "\u0000" + writer.getDatasourceId() + "\u0000"
+                        + (writer.hasConnectorId() ? writer.getConnectorId() : "");
+                if (!writers.add(owner)) {
+                    throw new IllegalArgumentException("principal '" + binding.getPrincipal()
+                            + "' lists intake writer '" + writer.getDatasourceId()
+                            + (writer.hasConnectorId() ? "' via connector '" + writer.getConnectorId() : "")
+                            + "' in account '" + writer.getAccountId() + "' twice");
                 }
             }
         }

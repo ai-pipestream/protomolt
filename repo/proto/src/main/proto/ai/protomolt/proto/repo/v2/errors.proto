@@ -21,7 +21,8 @@ option java_package = "ai.protomolt.proto.repo.v2";
 //                                         UPLOAD_MISMATCH (recorded)
 //   FAILED_PRECONDITION SaveRejection     SCHEMA_MISSING, SOURCE_PURGED,
 //                                         SOURCE_NOT_FOUND, SEGMENTATION_MISMATCH,
-//                                         OPAQUE_UNOWNED (recorded); OWNER_UNKNOWN
+//                                         OPAQUE_UNOWNED, LINK_TARGET_NOT_FOUND,
+//                                         LINK_TARGET_TYPE (recorded); OWNER_UNKNOWN
 //                                         (not recorded)
 //   PERMISSION_DENIED   SaveRejection     OPAQUE_NOT_ALLOWED (recorded);
 //                                         WRITE_DENIED (not recorded)
@@ -101,6 +102,13 @@ enum RejectionReason {
   // The caller holds no active grant matching the owner, its credential is
   // not current, or the grant is revoked. Never names another credential's grants.
   REJECTION_REASON_WRITE_DENIED = 12;
+  // A static link's target is in another account, does not exist, is purged,
+  // is not readable by the saving caller, or names a revision that does not
+  // exist. One reason, so a save does not reveal what access hides.
+  REJECTION_REASON_LINK_TARGET_NOT_FOUND = 13;
+  // A static link's target holds a structured_data type its link field does
+  // not list in target_types.
+  REJECTION_REASON_LINK_TARGET_TYPE = 14;
 }
 
 // One rule violation.

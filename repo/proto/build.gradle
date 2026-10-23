@@ -18,6 +18,8 @@ dependencies {
     api project(':protomolt-asset-proto')
     // SearchMetadata.body declares the screened sensitivity class.
     api project(':protomolt-protobuf-metadata')
+    // DocumentFilter's concept filter names a ConceptRef and a ConceptExpansion.
+    api project(':protomolt-protobuf-types')
 
     // Contract fixtures exercise validate.v1 on generated and dynamic messages and
     // verify the OpenAPI-facing JSON Schema projection.

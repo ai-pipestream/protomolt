@@ -53,14 +53,19 @@ message Concept {
   repeated string broader = 5 [(ai.protomolt.proto.validate.v1.field).repeated.unique = true];
   // Associated concepts in this scheme; symmetric, not hierarchical.
   repeated string related = 6 [(ai.protomolt.proto.validate.v1.field).repeated.unique = true];
-  // Cross-scheme mappings. Each target names another scheme.
+  // Cross-scheme mapping, same meaning. Each target names another scheme.
   repeated ConceptRef exact_match = 7;
+  // Cross-scheme mapping, nearly the same meaning.
   repeated ConceptRef close_match = 8;
+  // Cross-scheme mapping to a more general concept.
   repeated ConceptRef broad_match = 9;
+  // Cross-scheme mapping to a more specific concept.
   repeated ConceptRef narrow_match = 10;
+  // Cross-scheme mapping to an associated concept.
   repeated ConceptRef related_match = 11;
   // Notes, at most one definition per language.
   repeated LangLabel definition = 12;
+  // Usage notes: when this concept applies and when it does not.
   repeated LangLabel scope_note = 13;
   // Retired: still a member, still matched, not offered for new tags.
   bool deprecated = 14;
@@ -77,6 +82,7 @@ message Concept {
 
 // One skos:notation value: the literal and the IRI of its datatype.
 message ConceptNotation {
+  // The notation literal.
   string value = 1 [(ai.protomolt.proto.validate.v1.field) = {
     required: true
     string: {min_len: 1, max_len: 1000}
@@ -90,10 +96,12 @@ message ConceptNotation {
 
 // Text in one language.
 message LangLabel {
+  // The BCP 47 language tag.
   string language = 1 [(ai.protomolt.proto.validate.v1.field) = {
     required: true
     string: {language_tag: true}
   }];
+  // The label text.
   string text = 2 [(ai.protomolt.proto.validate.v1.field) = {
     required: true
     string: {min_len: 1, max_len: 1000}
@@ -103,10 +111,12 @@ message LangLabel {
 // A document tag, and a mapping target: scheme and concept id. A field of
 // this type binds its values to schemes with the concept_schemes field rule.
 message ConceptRef {
+  // The slug of the scheme the concept lives in.
   string scheme_id = 1 [(ai.protomolt.proto.validate.v1.field) = {
     required: true
     string: {slug: true, max_len: 200}
   }];
+  // The id of the concept inside that scheme.
   string concept_id = 2 [(ai.protomolt.proto.validate.v1.field) = {
     required: true
     string: {path_safe_name: true, max_len: 200}

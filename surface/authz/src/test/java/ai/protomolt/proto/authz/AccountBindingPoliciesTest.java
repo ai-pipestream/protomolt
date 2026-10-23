@@ -66,6 +66,42 @@ class AccountBindingPoliciesTest {
     }
 
     @Test
+    void anIntakeWriterMustNameABoundAccountAndAppearOnce() {
+        IntakeWriterScope files = IntakeWriterScope.newBuilder()
+                .setAccountId("acct-a").setDatasourceId("ds-files").setAllowCreate(true).build();
+        AccountBindings writes = AccountBindings.newBuilder()
+                .addBindings(AccountBinding.newBuilder().setPrincipal("alice").addAccountIds("acct-a")
+                        .addIntakeWriters(files)
+                        .addIntakeWriters(files.toBuilder().setConnectorId("crawler").setAllowCreate(false)))
+                .build();
+        assertThat(AccountBindingPolicies.requireWellFormed(writes)).isSameAs(writes);
+
+        AccountBindings elsewhere = AccountBindings.newBuilder()
+                .addBindings(AccountBinding.newBuilder().setPrincipal("alice").addAccountIds("acct-a")
+                        .addIntakeWriters(files.toBuilder().setAccountId("acct-b")))
+                .build();
+        assertThatThrownBy(() -> AccountBindingPolicies.requireWellFormed(elsewhere))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("principal 'alice' writes as datasource 'ds-files' in account 'acct-b',"
+                        + " which it is not bound to");
+
+        AccountBindings twice = AccountBindings.newBuilder()
+                .addBindings(AccountBinding.newBuilder().setPrincipal("alice").addAccountIds("acct-a")
+                        .addIntakeWriters(files).addIntakeWriters(files.toBuilder().setAllowCreate(false)))
+                .build();
+        assertThatThrownBy(() -> AccountBindingPolicies.requireWellFormed(twice))
+                .hasMessage("principal 'alice' lists intake writer 'ds-files' in account 'acct-a' twice");
+
+        AccountBindings blank = AccountBindings.newBuilder()
+                .addBindings(AccountBinding.newBuilder().setPrincipal("alice").addAccountIds("acct-a")
+                        .addIntakeWriters(IntakeWriterScope.newBuilder().setAccountId("acct-a")))
+                .build();
+        assertThatThrownBy(() -> AccountBindingPolicies.requireWellFormed(blank))
+                .hasMessageStartingWith("account bindings are invalid: ")
+                .hasMessageContaining("datasource_id");
+    }
+
+    @Test
     void aDuplicatePrincipalRefusesByName() {
         AccountBindings duplicate = bindings().toBuilder()
                 .addBindings(AccountBinding.newBuilder().setPrincipal("search-bot").addAccountIds("acct-c"))

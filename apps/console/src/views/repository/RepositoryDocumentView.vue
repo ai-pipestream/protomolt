@@ -57,7 +57,9 @@
         <v-tab value="parts">Parts</v-tab>
         <v-tab value="metadata">Metadata</v-tab>
         <v-tab value="validation">Validation</v-tab>
+        <v-tab value="links" data-testid="tab-links">Links</v-tab>
         <v-tab value="history" data-testid="tab-history">History</v-tab>
+        <v-tab v-if="compare !== null" value="compare" data-testid="tab-compare">Compare</v-tab>
         <v-tab value="files" data-testid="tab-files">Files</v-tab>
       </v-tabs>
 
@@ -201,8 +203,20 @@
           </v-card>
         </v-window-item>
 
+        <v-window-item value="links">
+          <DocumentLinks :address="address!" :revision="pinned!" :tombstone="manifest.tombstone" />
+        </v-window-item>
+
         <v-window-item value="history">
-          <RevisionHistory :address="address!" :shown-revision="pinned" @open="openRevision" />
+          <RevisionHistory :address="address!" :shown-revision="pinned" @open="openRevision" @compare="openCompare" />
+        </v-window-item>
+
+        <v-window-item v-if="compare !== null" value="compare">
+          <v-alert v-if="compare === pinned" type="warning" variant="tonal" density="compact" class="mb-3" data-testid="compare-same">
+            Revision {{ compare }} is the revision shown; open another revision from History to compare with it.
+          </v-alert>
+          <RevisionCompare v-else :address="address!" :base="compare" :target="pinned!"
+                           @base="openCompare" @swap="swapCompare" @close="openCompare(null)" />
         </v-window-item>
 
         <v-window-item value="files">
@@ -221,6 +235,8 @@ import { Code, ConnectError } from '@connectrpc/connect'
 import ProtoMessageNode from '@/components/ProtoMessageNode.vue'
 import BlobFiles from '@/components/repository/BlobFiles.vue'
 import DeleteDocumentDialog from '@/components/repository/DeleteDocumentDialog.vue'
+import DocumentLinks from '@/components/repository/DocumentLinks.vue'
+import RevisionCompare from '@/components/repository/RevisionCompare.vue'
 import RevisionHistory from '@/components/repository/RevisionHistory.vue'
 import RpcFailureAlert from '@/components/repository/RpcFailureAlert.vue'
 import type { NodeAddress } from '@/gen/ai/protomolt/proto/repo/v1/address_pb'
@@ -268,6 +284,8 @@ const routeError = ref<string | null>(null)
 const call = ref<CallNumber | null>(null)
 const address = shallowRef<NodeAddress | null>(null)
 const requested = ref<bigint | null>(null)
+// The base revision of a comparison, from the route's compare query; the shown revision is the other side.
+const compare = ref<bigint | null>(null)
 const pinned = ref<bigint | null>(null)
 const manifest = shallowRef<DocumentManifest | null>(null)
 const validation = shallowRef<RevisionValidation | null>(null)
@@ -359,10 +377,14 @@ async function load() {
   try {
     target = nodeAddress(callNumber)
     requested.value = parseRevision(queryText('revision'))
+    compare.value = parseCompare(queryText('compare'))
   } catch (error) {
+    compare.value = null
     routeError.value = (error as Error).message
     return
   }
+  if (compare.value !== null) tab.value = 'compare'
+  else if (tab.value === 'compare') tab.value = 'parts'
   address.value = target
   call.value = callNumber
   // The deletion notice belongs to the tombstone it opened, and goes with any other page.
@@ -460,6 +482,32 @@ async function readPartAt(index: number) {
   } finally {
     if (!signal.aborted) partBusy.value = null
   }
+}
+
+function parseCompare(raw: string): bigint | null {
+  try {
+    return parseRevision(raw)
+  } catch (error) {
+    throw new Error(`Compare: ${(error as Error).message}`)
+  }
+}
+
+/** Compares the shown revision with `revision`, or ends the comparison when it is null. */
+function openCompare(revision: bigint | null) {
+  const query = { ...route.query }
+  if (revision === null) delete query.compare
+  else query.compare = revision.toString()
+  // The shown side stays the revision on screen, so a newer save cannot slip into the comparison.
+  if (revision !== null && pinned.value !== null) query.revision = pinned.value.toString()
+  void router.push({ name: 'repository-document', query })
+}
+
+function swapCompare() {
+  if (compare.value === null || pinned.value === null) return
+  void router.push({
+    name: 'repository-document',
+    query: { ...route.query, revision: compare.value.toString(), compare: pinned.value.toString() },
+  })
 }
 
 function openRevision(revision: bigint | null) {
