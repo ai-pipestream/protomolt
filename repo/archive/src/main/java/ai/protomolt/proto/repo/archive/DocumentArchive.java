@@ -370,8 +370,12 @@ public final class DocumentArchive {
         try {
             saved = documents.saveDocument(save.build());
         } catch (StatusRuntimeException failure) {
-            Recorded winner = afterLostRace(address, operationId, contentSha256, failure);
+            Recorded winner = afterLostRace(address, operationId, contentSha256, derivedLastWriteWins, failure);
             return putResponse(winner.revision(), operationId, winner.unchanged(), true);
+        }
+        if (saved.getReplayed() && derivedLastWriteWins) {
+            // v2 replayed another attempt of this operation that committed after our lookup.
+            requireStillCurrent(address, operationId, saved.getAccession().getRevision());
         }
         GetDocumentResponse committed = read(address, revision(saved.getAccession().getRevision()), CORE_AND_BLOBS);
         return putResponse(committed, operationId, saved.getUnchanged(), saved.getReplayed());
@@ -660,10 +664,13 @@ public final class DocumentArchive {
     /**
      * A failed save of an operation that may have raced another attempt of itself:
      * the outcome lookup runs once more, and a recorded matching outcome is the
-     * answer. Anything else is the original failure, unchanged.
+     * answer. Anything else is the original failure, unchanged. A derived
+     * last-write-wins ID keeps the currency rule of the first lookup: when the
+     * winner's version has already been replaced, the answer is the
+     * {@code FAILED_PRECONDITION} of {@link #requireStillCurrent}, not a replay.
      */
     Recorded afterLostRace(NodeAddress address, String operationId, String contentSha256,
-            StatusRuntimeException failure) {
+            boolean derivedLastWriteWins, StatusRuntimeException failure) {
         Status.Code code = failure.getStatus().getCode();
         if (code != Status.Code.ABORTED && code != Status.Code.ALREADY_EXISTS) {
             throw failure;
@@ -676,7 +683,11 @@ public final class DocumentArchive {
             failure.addSuppressed(lookupFailure);
             throw failure;
         }
-        return winner.orElseThrow(() -> failure);
+        Recorded recorded = winner.orElseThrow(() -> failure);
+        if (derivedLastWriteWins) {
+            requireStillCurrent(address, operationId, recorded.revision().getManifest().getRevision());
+        }
+        return recorded;
     }
 
     private static StatusRuntimeException recordedRejection(SaveRejection rejection) {
@@ -880,10 +891,12 @@ public final class DocumentArchive {
 
     /**
      * The v2 upload header to send, and what finishing the upload needs.
-     * {@code checkBytes} is set when the header named no {@code expected_sha256}:
-     * a lost race is then replayed only for the same bytes.
+     * {@code derivedLastWriteWins} carries the currency rule into a lost race
+     * (see {@link #afterLostRace}). {@code checkBytes} is set when the header
+     * named no {@code expected_sha256}: a lost race is then replayed only for the
+     * same bytes.
      */
-    record Pending(NodeAddress address, String operationId, String contentSha256,
+    record Pending(NodeAddress address, String operationId, String contentSha256, boolean derivedLastWriteWins,
             RenditionDescriptor rendition, UploadHeader header, boolean checkBytes) implements UploadStart {
     }
 
@@ -982,11 +995,16 @@ public final class DocumentArchive {
         }
         save.setDocument(document);
         upload.setSave(save);
-        return new Pending(address, operationId, contentSha256, rendition, upload.build(), checkBytes);
+        return new Pending(address, operationId, contentSha256, derivedLastWriteWins, rendition, upload.build(),
+                checkBytes);
     }
 
     /** The archive receipt of a committed (or raced and replayed) upload. */
     UploadRenditionResponse finishUpload(Pending pending, SaveDocumentResponse saved) {
+        if (saved.getReplayed() && pending.derivedLastWriteWins()) {
+            // v2 replayed another attempt of this operation that committed after our lookup.
+            requireStillCurrent(pending.address(), pending.operationId(), saved.getAccession().getRevision());
+        }
         GetDocumentResponse committed = read(pending.address(), revision(saved.getAccession().getRevision()),
                 CORE_AND_BLOBS);
         return uploadResponse(committed, pending.rendition(), pending.operationId(), saved.getReplayed());

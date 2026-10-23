@@ -48,7 +48,12 @@ import ai.protomolt.proto.repo.v2.ListRevisionsRequest;
 import ai.protomolt.proto.repo.v2.SaveRejection;
 import com.google.protobuf.ByteString;
 import com.google.protobuf.Timestamp;
+import io.grpc.CallOptions;
+import io.grpc.Channel;
+import io.grpc.ClientCall;
+import io.grpc.ClientInterceptor;
 import io.grpc.ManagedChannel;
+import io.grpc.MethodDescriptor;
 import io.grpc.Server;
 import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
@@ -64,7 +69,13 @@ import java.util.Optional;
 import java.util.Random;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 import org.assertj.core.api.ThrowableAssert.ThrowingCallable;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
@@ -102,6 +113,12 @@ class DocumentArchiveIT {
     static ArchiveServiceGrpc.ArchiveServiceBlockingStub archive;
     static ArchiveServiceGrpc.ArchiveServiceStub asyncArchive;
     static DocumentServiceGrpc.DocumentServiceBlockingStub documents;
+    static final Gate GATE = new Gate();
+    static ManagedChannel gatedDocumentsChannel;
+    static Server gatedArchiveServer;
+    static ManagedChannel gatedArchiveChannel;
+    static ArchiveServiceGrpc.ArchiveServiceBlockingStub gatedArchive;
+    static ArchiveServiceGrpc.ArchiveServiceStub gatedAsyncArchive;
 
     @BeforeAll
     static void boot() throws Exception {
@@ -126,10 +143,22 @@ class DocumentArchiveIT {
         archiveChannel = InProcessChannelBuilder.forName("archive-v2-it-archive").build();
         archive = ArchiveServiceGrpc.newBlockingStub(archiveChannel);
         asyncArchive = ArchiveServiceGrpc.newStub(archiveChannel);
+
+        // A second archive whose v2 calls pass the gate, for races arranged step by step.
+        gatedDocumentsChannel = InProcessChannelBuilder.forName("archive-v2-it").intercept(GATE).build();
+        gatedArchiveServer = InProcessServerBuilder.forName("archive-v2-it-gated")
+                .addService(new DocumentArchiveGrpcService(gatedDocumentsChannel, bindings, Clock.systemUTC()))
+                .build().start();
+        gatedArchiveChannel = InProcessChannelBuilder.forName("archive-v2-it-gated").build();
+        gatedArchive = ArchiveServiceGrpc.newBlockingStub(gatedArchiveChannel);
+        gatedAsyncArchive = ArchiveServiceGrpc.newStub(gatedArchiveChannel);
     }
 
     @AfterAll
     static void shutdown() {
+        gatedArchiveChannel.shutdownNow();
+        gatedArchiveServer.shutdownNow();
+        gatedDocumentsChannel.shutdownNow();
         archiveChannel.shutdownNow();
         archiveServer.shutdownNow();
         documentsChannel.shutdownNow();
@@ -581,6 +610,181 @@ class DocumentArchiveIT {
         }
     }
 
+    // ------------------------------------------------------- arranged races
+
+    /**
+     * Holds the next v2 call of one method until released, so a test can commit
+     * other writes between an archive write's outcome lookup and its save.
+     */
+    static final class Gate implements ClientInterceptor {
+        private final AtomicReference<String> armed = new AtomicReference<>();
+        private volatile CountDownLatch arrived = new CountDownLatch(0);
+        private volatile CountDownLatch release = new CountDownLatch(0);
+
+        void arm(MethodDescriptor<?, ?> method) {
+            arrived = new CountDownLatch(1);
+            release = new CountDownLatch(1);
+            armed.set(method.getFullMethodName());
+        }
+
+        void awaitArrival() throws InterruptedException {
+            assertThat(arrived.await(30, TimeUnit.SECONDS)).as("the gated v2 call arrives").isTrue();
+        }
+
+        void release() {
+            release.countDown();
+        }
+
+        @Override
+        public <Q, R> ClientCall<Q, R> interceptCall(MethodDescriptor<Q, R> method, CallOptions options, Channel next) {
+            if (armed.compareAndSet(method.getFullMethodName(), null)) {
+                arrived.countDown();
+                try {
+                    release.await(30, TimeUnit.SECONDS);
+                } catch (InterruptedException interrupted) {
+                    Thread.currentThread().interrupt();
+                }
+            }
+            return next.newCall(method, options);
+        }
+    }
+
+    /** The result of a background call, its gRPC failure thrown as itself. */
+    static <T> T result(Future<T> call) throws Exception {
+        try {
+            return call.get(60, TimeUnit.SECONDS);
+        } catch (ExecutionException failure) {
+            if (failure.getCause() instanceof StatusRuntimeException status) {
+                throw status;
+            }
+            throw failure;
+        }
+    }
+
+    /**
+     * Codex #15554, PutEntry: attempt A1 of a derived operation finds no outcome,
+     * reads an empty entry and is held before its save. Writer X commits version
+     * 1, attempt A2 of the same operation reads it and commits version 2, and
+     * writer B commits version 3. A1's save then fails against A2's recorded
+     * intent, and its lost-race lookup finds version 2, which B has replaced:
+     * A1 is refused as superseded instead of replaying version 2. The same race
+     * with a supplied operation ID still replays.
+     */
+    @Test
+    void aLostRaceOfASupersededDerivedPutIsRefused() throws Exception {
+        assertLostRace(firstPut(entry(RETAINED)).build());
+    }
+
+    @Test
+    void aLostRaceOfASuppliedIdPutStillReplays() throws Exception {
+        EntryAddress address = entry(RETAINED);
+        PutEntryResponse answer = assertLostRace(firstPut(address).setOperationId("raced-" + address.getEntryId()).build());
+        assertThat(answer.getReplayed()).isTrue();
+        assertThat(answer.getVersion()).isEqualTo(2);
+    }
+
+    /** Runs the race above for {@code a}: the derived ID is refused, a supplied ID's answer is returned. */
+    private PutEntryResponse assertLostRace(PutEntryRequest a) throws Exception {
+        ExecutorService pool = Executors.newSingleThreadExecutor();
+        try {
+            GATE.arm(DocumentServiceGrpc.getSaveDocumentMethod());
+            Future<PutEntryResponse> a1 = pool.submit(() -> gatedArchive.putEntry(a));
+            GATE.awaitArrival();
+            archive.putEntry(a.toBuilder().clearOperationId().setTitle("Writer X").build());
+            PutEntryResponse a2 = archive.putEntry(a);
+            assertThat(a2.getVersion()).isEqualTo(2);
+            assertThat(a2.getReplayed()).isFalse();
+            archive.putEntry(a.toBuilder().clearOperationId().setTitle("Writer B").build());
+            GATE.release();
+            if (!a.getOperationId().isEmpty()) {
+                return result(a1);
+            }
+            assertSuperseded(() -> result(a1), a2.getOperationId(), 2, "version 3", 3);
+            assertThat(revisions(a.getAddress())).isEqualTo(3);
+            return null;
+        } finally {
+            GATE.release();
+            pool.shutdownNow();
+        }
+    }
+
+    /**
+     * The PutEntry race where A1 and A2 send the same save: both read version 1,
+     * A2 commits version 2, and B replaces it with version 3. v2 answers A1's
+     * identical save with a replay of version 2 rather than a failure, and a
+     * derived ID is refused as superseded there too.
+     */
+    @Test
+    void aReplayedRaceOfASupersededDerivedPutIsRefused() throws Exception {
+        EntryAddress address = entry(RETAINED);
+        PutEntryRequest a = firstPut(address).build();
+        archive.putEntry(a.toBuilder().setTitle("Writer X").build());
+        ExecutorService pool = Executors.newSingleThreadExecutor();
+        try {
+            GATE.arm(DocumentServiceGrpc.getSaveDocumentMethod());
+            Future<PutEntryResponse> a1 = pool.submit(() -> gatedArchive.putEntry(a));
+            GATE.awaitArrival();
+            PutEntryResponse a2 = archive.putEntry(a);
+            assertThat(a2.getVersion()).isEqualTo(2);
+            archive.putEntry(a.toBuilder().setTitle("Writer B").build());
+            GATE.release();
+            assertSuperseded(() -> result(a1), a2.getOperationId(), 2, "version 3", 3);
+            assertThat(revisions(address)).isEqualTo(3);
+        } finally {
+            GATE.release();
+            pool.shutdownNow();
+        }
+    }
+
+    /**
+     * Codex #15554, UploadRendition: the races above for a derived upload ID. With
+     * an empty entry, A1's save fails against A2's recorded intent and takes the
+     * lost-race lookup; with writer X first, A1 and A2 send the same save and v2
+     * replays A2's version. Both are refused once B has replaced that version.
+     */
+    @Test
+    void aLostRaceOfASupersededDerivedUploadIsRefused() throws Exception {
+        assertUploadRace(false);
+    }
+
+    @Test
+    void aReplayedRaceOfASupersededDerivedUploadIsRefused() throws Exception {
+        assertUploadRace(true);
+    }
+
+    private void assertUploadRace(boolean writerXFirst) throws Exception {
+        EntryAddress address = entry(RETAINED);
+        ByteString a = randomBytes(5_000, 41);
+        ByteString x = randomBytes(5_000, 42);
+        ByteString b = randomBytes(5_000, 43);
+        UploadRenditionHeader headerA = UploadRenditionHeader.newBuilder().setAddress(address)
+                .setRendition(RenditionDescriptor.newBuilder().setName("scan").setSubKey("0001").setMediaType("image/tiff"))
+                .setSizeBytes(a.size()).setExpectedSha256(RenditionReads.sha256Hex(a)).build();
+        UploadRenditionHeader headerX = headerA.toBuilder().setExpectedSha256(RenditionReads.sha256Hex(x)).build();
+        if (writerXFirst) {
+            upload(headerX, x, 1_000);
+        }
+        ExecutorService pool = Executors.newSingleThreadExecutor();
+        try {
+            GATE.arm(DocumentServiceGrpc.getUploadDocumentMethod());
+            Future<UploadRenditionResponse> a1 = pool.submit(() -> upload(gatedAsyncArchive, headerA, a, 1_000));
+            GATE.awaitArrival();
+            if (!writerXFirst) {
+                upload(headerX, x, 1_000);
+            }
+            UploadRenditionResponse a2 = upload(headerA, a, 1_000);
+            assertThat(a2.getVersion()).isEqualTo(2);
+            assertThat(a2.getReplayed()).isFalse();
+            upload(headerA.toBuilder().setExpectedSha256(RenditionReads.sha256Hex(b)).build(), b, 1_000);
+            GATE.release();
+            assertSuperseded(() -> result(a1), a2.getOperationId(), 2, "version 3", 3);
+            assertThat(revisions(address)).isEqualTo(3);
+        } finally {
+            GATE.release();
+            pool.shutdownNow();
+        }
+    }
+
     @Test
     void aSuppliedIdReusedWithOtherContentIsAlreadyExists() {
         EntryAddress address = entry(RETAINED);
@@ -693,8 +897,13 @@ class DocumentArchiveIT {
     // ------------------------------------------------------------- uploads
 
     static UploadRenditionResponse upload(UploadRenditionHeader header, ByteString bytes, int chunk) throws Exception {
+        return upload(asyncArchive, header, bytes, chunk);
+    }
+
+    static UploadRenditionResponse upload(ArchiveServiceGrpc.ArchiveServiceStub stub, UploadRenditionHeader header,
+            ByteString bytes, int chunk) throws Exception {
         var result = new CompletableFuture<UploadRenditionResponse>();
-        StreamObserver<UploadRenditionRequest> requests = asyncArchive.uploadRendition(new StreamObserver<>() {
+        StreamObserver<UploadRenditionRequest> requests = stub.uploadRendition(new StreamObserver<>() {
             @Override
             public void onNext(UploadRenditionResponse value) {
                 result.complete(value);

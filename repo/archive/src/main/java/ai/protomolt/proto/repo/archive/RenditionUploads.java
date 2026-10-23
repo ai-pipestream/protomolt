@@ -242,8 +242,8 @@ public final class RenditionUploads {
                     }
                 }
                 response = archive.uploadResponse(
-                        archive.afterLostRace(pending.address(), pending.operationId(), pending.contentSha256(), status)
-                                .revision(),
+                        archive.afterLostRace(pending.address(), pending.operationId(), pending.contentSha256(),
+                                pending.derivedLastWriteWins(), status).revision(),
                         pending.rendition(), pending.operationId(), true);
                 if (sha256 != null) {
                     DocumentArchive.requireRecordedBytes(response, sha256, size);
