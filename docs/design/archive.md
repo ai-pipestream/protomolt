@@ -401,15 +401,17 @@ cite them:
    commits a new revision and never takes the unchanged path: a DELETE-only
    save, or an unchanged CORE PUT beside the removal of a populated PARSED
    part, applies the removal. For an unchanged save the commit transaction
-   runs steps 1, 2 and 4 of §7 only: it records the operation outcome (the
-   expected revision's `Accession` with a new `RecordedOutcome` field
-   `bool unchanged = 5` set to true, answered as a new
-   `SaveDocumentResponse.unchanged = true`) and inserts no accession,
-   writes no outbox event and leaves the current-revision pointer alone.
-   Because the discriminator is persisted with the outcome, a same-key
-   retry replays `unchanged = true` from the recorded outcome, which the
-   archive answers as `deduplicated = true`, and does not advance
-   `current_revision`.
+   runs steps 1, 2 and 4 of §7 only: it records the operation outcome as a
+   new arm of the `RecordedOutcome.result` oneof, `Accession unchanged = 5`
+   beside `Accession accession = 1` and `SaveRejection rejection = 2`,
+   holding the expected revision's `Accession` (the message's
+   `recorded-outcome-required` rule admits it as a third arm). The save is
+   answered with a new `SaveDocumentResponse.unchanged = true`, a separate
+   response field. It inserts no accession, writes no outbox event and
+   leaves the current-revision pointer alone. Because the unchanged arm is
+   the persisted outcome, a same-key retry replays it as
+   `SaveDocumentResponse.unchanged = true`, which the archive answers as
+   `deduplicated = true`, and does not advance `current_revision`.
    Authorization, the in-transaction grant recheck and validation of the
    request structure run exactly as for any save, and the expected-revision
    check makes it race-safe: a writer that commits first turns the same
@@ -663,7 +665,7 @@ the translator holds no rules v2 does not also enforce.
 |---|---|
 | `operation_id` | `PutEntryRequest.operation_id`, or derived (section 5) |
 | `target.address` | the call number of section 1 |
-| `expected` | `expected_version > 0`: `revision = expected_version`; `0`: the current revision read by the translator, or `none` when the entry does not exist |
+| `expected` | `expected_version > 0`: `revision = expected_version`; `0`: the current revision read by the translator; for a deleted entry, the deletion's revision, since v2 keeps the tombstone as the current revision and answers `none` with `ABORTED`; `none` only when `ListRevisions` finds no revision |
 | `document` | CORE fields of section 2; `blob_bag.blobs.blob` with every written rendition inline and every other current blob listed by `blob_id` only (prerequisite 1); `parser_results` from `parsed` |
 | `writes` | `PUT` CORE; `PUT` BLOBS when any blob rendition is written; `PUT` PARSED when `parsed` is written |
 | `owner` | `SaveOwner` of section 1 |
@@ -674,7 +676,8 @@ the translator holds no rules v2 does not also enforce.
 `UploadRendition` becomes one `UploadDocument`: the header frame carries the
 same `SaveDocumentRequest` with `UploadHeader.blob_id` naming the streamed
 blob (or `encoded_part{selector: PARSED}` for `parsed`), `declared_length =
-size_bytes` and `expected_sha256` unchanged; chunks become data frames. v2
+size_bytes` and `expected_sha256` unchanged; chunks become data frames. Its
+`expected` follows the `PutEntry` row above, deleted entries included. v2
 already streams through a digest, refuses length and digest mismatches and
 leaves an uncommitted object unreferenced, so the archive's staging key and
 settle copy are retired.
@@ -749,6 +752,12 @@ settle copy are retired.
   - the same retries with no intervening writer;
   - a supplied ID reused with different content after a committed, an
     unchanged and a rejected outcome, each `ALREADY_EXISTS`;
+  - B deletes the entry, and a `PutEntry` or `UploadRendition` with
+    `expected_version = 0` and a new ID commits a revision over the deletion
+    (the translator sends the deletion's revision), never `ABORTED`;
+  - an `UploadRendition` with a supplied ID and no `expected_sha256`, retried
+    with other bytes of the same length, is `ALREADY_EXISTS` and stores
+    nothing; retried with the same bytes, it replays;
   - a save whose CORE PUT matches the expected revision beside a DELETE or
     EMPTY of a populated PARSED part, and a DELETE-only save, each commit a
     new revision with the removal applied and `deduplicated = false`.
@@ -831,6 +840,14 @@ message ArchiveOperationKey {
   `expected_sha256` is `INVALID_ARGUMENT` naming both fields: without either,
   the content is unknown when the ID is needed, and a random ID is never the
   fallback.
+- **A supplied `operation_id` with a blank `expected_sha256`** leaves the
+  upload's content digest blind to its bytes. When the outcome lookup finds
+  a recorded outcome for that digest, the translator uploads nothing: it
+  digests the data frames as they pass and replays the outcome only when
+  their SHA-256 and length equal the rendition the outcome names. Other
+  bytes are `ALREADY_EXISTS` naming `operation_id`. An upload of this kind
+  that loses a race to an attempt of the same operation is checked the same
+  way before the winner's outcome is replayed.
 - **Cross-language fixtures** pin the encoding and three derived IDs before the
   implementation is approved, as §7 requires for canonical intent encoding.
 - A supplied `operation_id` shares the account's v2 operation namespace with
