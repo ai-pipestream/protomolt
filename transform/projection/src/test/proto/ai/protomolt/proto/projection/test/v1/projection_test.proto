@@ -10,6 +10,7 @@ option java_package = "ai.protomolt.proto.projection.test";
 option java_outer_classname = "ProjectionTestProto";
 
 import "ai/protomolt/proto/projection/v1/projection.proto";
+import "google/protobuf/empty.proto";
 import "google/protobuf/struct.proto";
 import "google/protobuf/timestamp.proto";
 
@@ -380,4 +381,326 @@ message EvolvingProjection {
   };
   // CEL must compile against each supplied source schema, not just its name.
   string rendered = 1 [(ai.protomolt.proto.projection.v1.from) = {cel: "string(source.value)"}];
+}
+
+// Nested projection fixtures. The source side mirrors the stored v2 document
+// shape: a blob bag whose oneof holds either one blob or a list of blobs. The
+// target side is an archive-style view whose renditions are a different
+// message type, so each blob must be projected, not copied.
+
+// Checksum algorithms, read by the rendition CEL that labels a checksum.
+enum BlobChecksumType {
+  // Unset; no algorithm recorded.
+  BLOB_CHECKSUM_TYPE_UNSPECIFIED = 0;
+  // SHA-256, the only algorithm the rendition fixture labels.
+  BLOB_CHECKSUM_TYPE_SHA256 = 3;
+}
+
+// One stored binary, shaped like the v2 Blob.
+message Blob {
+  // Identity of the stored object.
+  string blob_id = 1;
+  // Where the content lives; the rendition reports which arm is set.
+  oneof content {
+    // Inline bytes.
+    bytes data = 3;
+    // Key of externally stored content.
+    string storage_key = 4;
+  }
+  // Media type, absent for some blobs so the rendition fallback fires.
+  optional string mime_type = 5;
+  // Original file name, preferred over the blob id as the rendition name.
+  optional string filename = 6;
+  // Size of the content in bytes.
+  int64 size_bytes = 8;
+  // Checksum value, labelled by algorithm in the rendition.
+  optional string checksum = 9;
+  // Algorithm of the checksum.
+  BlobChecksumType checksum_type = 10;
+}
+
+// The repeated arm of the blob bag.
+message Blobs {
+  // The blobs, in stored order.
+  repeated Blob blob = 1;
+}
+
+// Either one blob or a list of blobs, shaped like the v2 BlobBag.
+message BlobBag {
+  // Exactly one arm is set.
+  oneof blob_data {
+    // A single blob.
+    Blob blob = 1;
+    // Several blobs.
+    Blobs blobs = 2;
+  }
+}
+
+// A note attached to a stored document. It is a message type no rendition
+// declares as a source, so feeding it to a rendition field must fail.
+message Note {
+  // Free text.
+  string text = 1;
+}
+
+// A stored document carrying blobs plus the fields the view tests read.
+message StoredDocument {
+  // Document identity.
+  string doc_id = 1;
+  // The stored blobs.
+  BlobBag blob_bag = 2;
+  // Renditions already in view shape, copied as is by a pass-through field.
+  repeated Rendition renditions = 3;
+  // Notes, the wrong element type for a rendition field.
+  repeated Note notes = 4;
+  // A blob carried outside the bag, copied as is by a same-type field.
+  Blob cover = 5;
+}
+
+// The view of one blob. It declares Blob as its source, which is what lets a
+// parent field of this type take Blob values.
+message Rendition {
+  option (ai.protomolt.proto.projection.v1.sources) = {
+    source: "ai.protomolt.proto.projection.test.v1.Blob"
+  };
+
+  // File name when the blob has one, else its id: a CEL choice over presence.
+  string name = 1 [(ai.protomolt.proto.projection.v1.from) = {
+    cel: "has(source.filename) ? source.filename : source.blob_id"
+  }];
+  // Copied by path.
+  string blob_id = 2 [(ai.protomolt.proto.projection.v1.from) = {
+    paths: {path: "blob_id"}
+  }];
+  // Copied by path, with a literal fallback when the blob records none.
+  string mime_type = 3 [
+    (ai.protomolt.proto.projection.v1.from) = {
+      paths: {path: "mime_type"}
+    },
+    (ai.protomolt.proto.projection.v1.default_from) = {
+      literal: {string_value: "application/octet-stream"}
+    }
+  ];
+  // Copied by path.
+  int64 size_bytes = 4 [(ai.protomolt.proto.projection.v1.from) = {
+    paths: {path: "size_bytes"}
+  }];
+  // The checksum labelled with its algorithm, built by CEL. CEL reads enums
+  // as integers; 3 is BLOB_CHECKSUM_TYPE_SHA256.
+  string checksum = 5 [(ai.protomolt.proto.projection.v1.from) = {
+    cel: "has(source.checksum) && source.checksum_type == 3 ? 'sha256:' + source.checksum : ''"
+  }];
+  // Whether the content is inline, read from the oneof.
+  bool inline = 6 [(ai.protomolt.proto.projection.v1.from) = {
+    cel: "has(source.data)"
+  }];
+}
+
+// An archive-style view of a stored document: lists of one message type built
+// from lists of another, singular and repeated, by path and by CEL.
+message ArchiveEntryView {
+  option (ai.protomolt.proto.projection.v1.sources) = {
+    source: "ai.protomolt.proto.projection.test.v1.StoredDocument"
+  };
+
+  // Copied by path.
+  string entry_id = 1 [(ai.protomolt.proto.projection.v1.from) = {
+    paths: {path: "doc_id"}
+  }];
+  // Every blob of the repeated arm, projected element by element.
+  repeated Rendition renditions = 2 [(ai.protomolt.proto.projection.v1.from) = {
+    paths: {path: "blob_bag.blobs.blob"}
+  }];
+  // The single-blob arm, projected as one message.
+  Rendition primary = 3 [(ai.protomolt.proto.projection.v1.from) = {
+    paths: {path: "blob_bag.blob"}
+  }];
+  // A CEL-filtered list of blobs, projected element by element.
+  repeated Rendition large_renditions = 4 [(ai.protomolt.proto.projection.v1.from) = {
+    cel: "source.blob_bag.blobs.blob.filter(b, b.size_bytes > 1024)"
+  }];
+  // Renditions already in view shape: same type, copied as is.
+  repeated Rendition carried = 5 [(ai.protomolt.proto.projection.v1.from) = {
+    paths: {path: "renditions"}
+  }];
+  // Raw blobs into a field of their own type, which declares no sources.
+  repeated Blob raw_blobs = 6 [(ai.protomolt.proto.projection.v1.from) = {
+    paths: {path: "blob_bag.blobs.blob"}
+  }];
+  // A singular blob into a field of its own type.
+  Blob cover = 7 [(ai.protomolt.proto.projection.v1.from) = {
+    paths: {path: "cover"}
+  }];
+}
+
+// A paths-only parent whose child uses CEL, so the parent source mask shows
+// that the child's reads are covered by the parent path.
+message RenditionListView {
+  option (ai.protomolt.proto.projection.v1.sources) = {
+    source: "ai.protomolt.proto.projection.test.v1.StoredDocument"
+  };
+
+  // The repeated blob arm, projected element by element.
+  repeated Rendition renditions = 1 [(ai.protomolt.proto.projection.v1.from) = {
+    paths: {path: "blob_bag.blobs.blob"}
+  }];
+}
+
+// Feeds notes into a rendition field. Notes are neither renditions nor a
+// declared rendition source, so projection must refuse them.
+message MisfedEntryView {
+  option (ai.protomolt.proto.projection.v1.sources) = {
+    source: "ai.protomolt.proto.projection.test.v1.StoredDocument"
+  };
+
+  // The wrong element type for this field.
+  repeated Rendition renditions = 1 [(ai.protomolt.proto.projection.v1.from) = {
+    paths: {path: "notes"}
+  }];
+}
+
+// A child whose CEL compiles against no declared source.
+message BrokenRendition {
+  option (ai.protomolt.proto.projection.v1.sources) = {
+    source: "ai.protomolt.proto.projection.test.v1.Blob"
+  };
+
+  // Names a field Blob does not have.
+  string boom = 1 [(ai.protomolt.proto.projection.v1.from) = {
+    cel: "source.no_such_field"
+  }];
+}
+
+// A parent whose child is broken. Building the parent must fail eagerly.
+message BrokenChildParent {
+  option (ai.protomolt.proto.projection.v1.sources) = {
+    source: "ai.protomolt.proto.projection.test.v1.StoredDocument"
+  };
+
+  // Feeds the broken child.
+  repeated BrokenRendition renditions = 1 [(ai.protomolt.proto.projection.v1.from) = {
+    paths: {path: "blob_bag.blobs.blob"}
+  }];
+}
+
+// A recursive source: a tree of labelled nodes.
+message TreeNode {
+  // Node label.
+  string label = 1;
+  // Child nodes.
+  repeated TreeNode children = 2;
+}
+
+// A recursive target projected from the tree. Its child projection is itself,
+// so compilation must terminate and projection must recurse.
+message TreeView {
+  option (ai.protomolt.proto.projection.v1.sources) = {
+    source: "ai.protomolt.proto.projection.test.v1.TreeNode"
+  };
+
+  // Upper-cased label, so a projected node is distinguishable from a copied one.
+  string label = 1 [(ai.protomolt.proto.projection.v1.from) = {
+    cel: "source.label.upperAscii()"
+  }];
+  // Child nodes, projected through this same projection.
+  repeated TreeView children = 2 [(ai.protomolt.proto.projection.v1.from) = {
+    paths: {path: "children"}
+  }];
+}
+
+// A target whose child maps the source to itself. It compiles, but projecting
+// it would never end, so projection must refuse it.
+message Loop {
+  option (ai.protomolt.proto.projection.v1.sources) = {
+    source: "google.protobuf.Empty"
+  };
+
+  // The same source again, into the same target type.
+  Loop child = 1 [(ai.protomolt.proto.projection.v1.from) = {cel: "source"}];
+}
+
+// First half of a two-target cycle: hands its source to MutualB.
+message MutualA {
+  option (ai.protomolt.proto.projection.v1.sources) = {
+    source: "google.protobuf.Empty"
+  };
+
+  // The same source, into the other target.
+  MutualB next = 1 [(ai.protomolt.proto.projection.v1.from) = {cel: "source"}];
+}
+
+// Second half of the cycle: hands the same source back to MutualA.
+message MutualB {
+  option (ai.protomolt.proto.projection.v1.sources) = {
+    source: "google.protobuf.Empty"
+  };
+
+  // The same source, back into the first target.
+  MutualA next = 1 [(ai.protomolt.proto.projection.v1.from) = {cel: "source"}];
+}
+
+// Part states as a stored manifest records them.
+enum PartState {
+  // Unset.
+  PART_STATE_UNSPECIFIED = 0;
+  // Written in this revision.
+  PART_STATE_WRITTEN = 1;
+  // Carried forward from an earlier revision.
+  PART_STATE_CARRIED = 2;
+}
+
+// Rendition states as a view reports them. The numbers match PartState and
+// the names do not, so a match proves conversion by number.
+enum RenditionState {
+  // Unset.
+  RENDITION_STATE_UNSPECIFIED = 0;
+  // Stored by this version.
+  RENDITION_STATE_STORED = 1;
+  // Inherited from an earlier version.
+  RENDITION_STATE_INHERITED = 2;
+}
+
+// A stored part with a state, and a state that may be absent.
+message StoredPart {
+  // Always set in the tests.
+  PartState state = 1;
+  // Left unset to exercise the numeric fallback.
+  optional PartState maybe_state = 2;
+}
+
+// Rendition states projected from part states of another enum type.
+message RenditionStatus {
+  option (ai.protomolt.proto.projection.v1.sources) = {
+    source: "ai.protomolt.proto.projection.test.v1.StoredPart"
+  };
+
+  // PartState read by path, converted by number.
+  RenditionState state = 1 [(ai.protomolt.proto.projection.v1.from) = {
+    paths: {path: "state"}
+  }];
+  // The optional state, or the numeric literal 1 when it is absent.
+  RenditionState state_or_stored = 2 [
+    (ai.protomolt.proto.projection.v1.from) = {
+      paths: {path: "maybe_state"}
+    },
+    (ai.protomolt.proto.projection.v1.default_from) = {
+      literal: {number_value: 1}
+    }
+  ];
+  // PartState read by CEL, which yields the enum's number.
+  RenditionState via_cel = 3 [(ai.protomolt.proto.projection.v1.from) = {
+    cel: "source.state"
+  }];
+}
+
+// A numeric literal that is not a RenditionState number.
+message BadEnumLiteral {
+  option (ai.protomolt.proto.projection.v1.sources) = {
+    source: "ai.protomolt.proto.projection.test.v1.StoredPart"
+  };
+
+  // 9 names no value, so projection must fail naming this field.
+  RenditionState state = 1 [(ai.protomolt.proto.projection.v1.default_from) = {
+    literal: {number_value: 9}
+  }];
 }

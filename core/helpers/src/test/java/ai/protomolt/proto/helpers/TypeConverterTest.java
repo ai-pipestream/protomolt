@@ -3,6 +3,7 @@ package ai.protomolt.proto.helpers;
 import com.google.protobuf.*;
 import com.google.protobuf.Descriptors.Descriptor;
 import com.google.protobuf.Descriptors.DescriptorValidationException;
+import com.google.protobuf.Descriptors.EnumValueDescriptor;
 import com.google.protobuf.Descriptors.FieldDescriptor;
 import com.google.protobuf.Descriptors.FileDescriptor;
 import com.google.protobuf.Message;
@@ -579,5 +580,99 @@ public class TypeConverterTest {
                 .build();
 
         return FileDescriptor.buildFrom(fileProto, new FileDescriptor[]{});
+    }
+
+    /**
+     * One message with one enum field, both in {@code pkg}. Values are name, number pairs.
+     */
+    private static FieldDescriptor enumField(String pkg, Object... values) throws DescriptorValidationException {
+        DescriptorProtos.EnumDescriptorProto.Builder enumProto =
+                DescriptorProtos.EnumDescriptorProto.newBuilder().setName("State");
+        for (int n = 0; n < values.length; n += 2) {
+            enumProto.addValue(DescriptorProtos.EnumValueDescriptorProto.newBuilder()
+                    .setName((String) values[n]).setNumber((Integer) values[n + 1]));
+        }
+        DescriptorProtos.FileDescriptorProto fileProto = DescriptorProtos.FileDescriptorProto.newBuilder()
+                .setName(pkg + "/state.proto")
+                .setPackage(pkg)
+                .addEnumType(enumProto)
+                .addMessageType(DescriptorProto.newBuilder()
+                        .setName("Holder")
+                        .addField(FieldDescriptorProto.newBuilder()
+                                .setName("state").setNumber(1)
+                                .setType(FieldDescriptorProto.Type.TYPE_ENUM)
+                                .setTypeName("." + pkg + ".State")))
+                .build();
+        return FileDescriptor.buildFrom(fileProto, new FileDescriptor[]{})
+                .findMessageTypeByName("Holder").findFieldByName("state");
+    }
+
+    private static EnumValueDescriptor enumValue(FieldDescriptor field, String name) {
+        return field.getEnumType().findValueByName(name);
+    }
+
+    @Test
+    void enumOfTheFieldTypePassesThroughUnchanged() throws DescriptorValidationException {
+        FieldDescriptor field = enumField("same", "UNSET", 0, "WRITTEN", 1);
+        EnumValueDescriptor written = enumValue(field, "WRITTEN");
+        assertSame(written, converter.convertToFieldType(written, field));
+    }
+
+    @Test
+    void enumOfAnotherTypeConvertsByNumber() throws DescriptorValidationException {
+        FieldDescriptor source = enumField("part", "PART_UNSET", 0, "PART_WRITTEN", 1, "PART_CARRIED", 2);
+        FieldDescriptor target = enumField("rendition", "RENDITION_UNSET", 0, "RENDITION_STORED", 1,
+                "RENDITION_INHERITED", 2);
+        assertSame(enumValue(target, "RENDITION_INHERITED"),
+                converter.convertToFieldType(enumValue(source, "PART_CARRIED"), target));
+    }
+
+    @Test
+    void enumNamesThatCollideAtDifferentNumbersConvertByNumber() throws DescriptorValidationException {
+        FieldDescriptor source = enumField("before", "UNSET", 0, "RED", 1, "GREEN", 2);
+        FieldDescriptor target = enumField("after", "UNSET", 0, "GREEN", 1, "RED", 2);
+        // RED is 1 on the wire, so it lands on the target's 1 even though the target has a RED at 2.
+        assertSame(enumValue(target, "GREEN"),
+                converter.convertToFieldType(enumValue(source, "RED"), target));
+        assertSame(enumValue(target, "RED"),
+                converter.convertToFieldType(enumValue(source, "GREEN"), target));
+    }
+
+    @Test
+    void enumWhoseNameExistsOnlyAtAnotherNumberIsRejected() throws DescriptorValidationException {
+        FieldDescriptor source = enumField("old", "UNSET", 0, "GREEN", 1);
+        FieldDescriptor target = enumField("renumbered", "UNSET", 0, "GREEN", 5);
+        IllegalArgumentException ex = assertThrows(IllegalArgumentException.class,
+                () -> converter.convertToFieldType(enumValue(source, "GREEN"), target));
+        assertTrue(ex.getMessage().contains("old.State.GREEN (1)"), ex.getMessage());
+        assertTrue(ex.getMessage().contains("renumbered.State"), ex.getMessage());
+    }
+
+    @Test
+    void enumWithNoMatchingNumberIsRejected() throws DescriptorValidationException {
+        FieldDescriptor source = enumField("wide", "UNSET", 0, "EXTRA", 9);
+        FieldDescriptor target = enumField("narrow", "UNSET", 0, "ONLY", 1);
+        IllegalArgumentException ex = assertThrows(IllegalArgumentException.class,
+                () -> converter.convertToFieldType(enumValue(source, "EXTRA"), target));
+        assertTrue(ex.getMessage().contains("wide.State.EXTRA"), ex.getMessage());
+        assertTrue(ex.getMessage().contains("narrow.Holder.state"));
+    }
+
+    @Test
+    void integralNumbersConvertToTheEnumValueWithThatNumber() throws DescriptorValidationException {
+        FieldDescriptor field = enumField("num", "UNSET", 0, "ONE", 1, "TWO", 2);
+        assertSame(enumValue(field, "ONE"), converter.convertToFieldType(1, field));
+        assertSame(enumValue(field, "TWO"), converter.convertToFieldType(2L, field));
+        // google.protobuf.Value literals arrive as doubles.
+        assertSame(enumValue(field, "ONE"), converter.convertToFieldType(1.0, field));
+    }
+
+    @Test
+    void numbersThatAreNotAnEnumValueAreRejected() throws DescriptorValidationException {
+        FieldDescriptor field = enumField("num2", "UNSET", 0, "ONE", 1);
+        IllegalArgumentException unknown = assertThrows(IllegalArgumentException.class,
+                () -> converter.convertToFieldType(7, field));
+        assertTrue(unknown.getMessage().contains("num2.State"));
+        assertThrows(IllegalArgumentException.class, () -> converter.convertToFieldType(1.5, field));
     }
 }
