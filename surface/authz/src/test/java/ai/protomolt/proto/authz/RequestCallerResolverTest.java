@@ -125,6 +125,30 @@ class RequestCallerResolverTest {
         assertThatThrownBy(() -> composed.resolve(headers(Map.of()))).isSameAs(outage);
     }
 
+    @Test void aBearerOutageFailsClosedEvenWhenAValidSessionCookieFollows() {
+        var outage = new IllegalStateException("synthetic-credential-store-outage");
+        var sessionAsked = new AtomicInteger();
+        RequestCallerResolver session = request -> {
+            sessionAsked.incrementAndGet();
+            return request.values("cookie").isEmpty() ? Optional.empty() : Optional.of(BOUND);
+        };
+        var composed = RequestCallerResolver.firstOf(List.of(
+                RequestCallerResolver.bearer(OPERATOR, token -> { throw outage; }), session));
+
+        // Both credentials present: a non-operator Bearer whose store is away refuses
+        // the request as an outage instead of falling through, so a cookie cannot
+        // route around a credential check that could not run.
+        assertThatThrownBy(() -> composed.resolve(headers(Map.of(
+                "Authorization", List.of("Bearer " + SCOPED),
+                "Cookie", List.of("session=x")))))
+                .isSameAs(outage);
+        assertThat(sessionAsked).hasValue(0);
+
+        // The same cookie without the Bearer resolves through the session store.
+        assertThat(composed.resolve(headers(Map.of("Cookie", List.of("session=x"))))).containsSame(BOUND);
+        assertThat(sessionAsked).hasValue(1);
+    }
+
     @Test void firstOfRefusesAnEmptyOrNullList() {
         assertThatThrownBy(() -> RequestCallerResolver.firstOf(List.of()))
                 .isInstanceOf(IllegalArgumentException.class);
