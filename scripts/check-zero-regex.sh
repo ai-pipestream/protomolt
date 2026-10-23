@@ -1,31 +1,41 @@
 #!/usr/bin/env bash
 # Enforce the zero-regex rule (#532) in production Java sources: no java.util.regex
-# and no regex-interpreting String methods in tracked **/src/main/**/*.java files.
+# and no regex-interpreting String methods in **/src/main/**/*.java files, tracked or
+# untracked (ignored build outputs stay out, as in check-test-naming.sh).
 #
-# What is flagged, line by line, whatever the argument is (literal, constant, variable):
+# What is flagged, line by line, whatever the argument is (literal, constant, variable,
+# parenthesized expression), with legal whitespace tolerated around the dot and the
+# opening parenthesis:
 #   - any mention of java.util.regex (imports or qualified use)
 #   - Pattern.compile( , Pattern.matches( , Pattern.quote(
 #   - .split( , .replaceAll( , .replaceFirst( , .matches(
 #
-# How known non-regex look-alikes stay out without loosening the check:
-#   - comment and javadoc lines are skipped (lines whose first non-blank characters
-#     are //, *, or /*)
-#   - .replaceAll(( and .replaceAll(x -> are skipped: a lambda argument is the
-#     Map/List replaceAll, which never interprets a regex
-#   - .matches( with an unquoted comma in its argument list is skipped: String.matches
-#     takes one argument, so a two-argument matches is a custom method (PostalMasks);
-#     a comma inside a quoted regex such as "a{1,2}" does not trigger the skip
+# How known non-regex look-alikes stay out without loosening the check. The skips are
+# token-level: the non-regex call is removed from the line and whatever remains is
+# scanned again, so a line carrying both a collection lambda and a real regex call
+# still fails.
+#   - comment-only lines are skipped (//, javadoc continuations, and block comments);
+#     code after a closing block comment on the same line is still scanned
+#   - replaceAll with a lambda argument ((k, v) -> or x ->) is the Map/List form,
+#     which never interprets a regex; a merely parenthesized first argument such as
+#     replaceAll((expression), "_") is the String overload and is flagged
+#   - matches with an unquoted comma in its argument list is a custom two-argument
+#     method (PostalMasks); a comma inside a quoted regex such as "a{1,2}" still flags
 #   - a line ending in "// zero-regex: allowed" is exempt; used for single-argument
 #     custom matchers that are textually identical to String.matches (NIO PathMatcher,
 #     FormatGrammar, ByteMatcher, metric row cursors), each marked at the call site
 #
-# Allowlist: two permanent files, then temporary entries tied to open PRs that are
-# removing the remaining sites; drop each temporary block when its PR merges.
+# Allowlist: two permanent files. Temporary entries tied to open PRs may be added
+# below with the PR number; drop each when its PR merges.
 #
 # Self-test: run with --self-test to exercise the detector against fixtures with
-# known violations (literal and variable arguments) and known false positives.
+# known violations and known false positives.
 set -euo pipefail
 cd "$(dirname "$0")/.."
+
+# The grep and awk token pattern; kept identical in both so a line grep finds is
+# re-tested the same way after the token-level removals.
+PATTERN='java\.util\.regex|Pattern[[:space:]]*\.[[:space:]]*(compile|matches|quote)[[:space:]]*\(|\.[[:space:]]*(split|replaceAll|replaceFirst|matches)[[:space:]]*\('
 
 # Permanent:
 #   protobuf/validation ValueChecks evaluates user-supplied protovalidate
@@ -35,8 +45,6 @@ cd "$(dirname "$0")/.."
 allowlist=(
   'protobuf/validation/src/main/java/ai/protomolt/proto/validate/ValueChecks.java'
   'search/console/src/main/java/ai/protomolt/proto/search/console/SearchConsolePage.java'
-  # Temporary, PR #568 (nested message projection) rewrites this file; remove when merged:
-  'transform/projection/src/main/java/ai/protomolt/proto/projection/MessageProjection.java'
 )
 
 allowed() {
@@ -50,11 +58,29 @@ allowed() {
 # Prints the offending lines of one file; prints nothing when the file is clean.
 scan_file() {
   local file="$1"
-  grep -nE 'java\.util\.regex|Pattern\.(compile|matches|quote)\(|\.(split|replaceAll|replaceFirst|matches)\(' "$file" 2>/dev/null \
-    | grep -vE '^[0-9]+:[[:space:]]*(//|\*|/\*)' \
-    | grep -vE '\.replaceAll\((\(|[A-Za-z_][A-Za-z0-9_]*[[:space:]]*->)' \
-    | grep -vE "\.matches\([^(),\"']*," \
-    | grep -v 'zero-regex: allowed' || true
+  # The pattern rides in through the environment: awk -v would reprocess the
+  # backslash escapes, ENVIRON hands the text over untouched.
+  grep -nE "$PATTERN" "$file" 2>/dev/null | ZERO_REGEX_PATTERN="$PATTERN" awk '
+    BEGIN { pattern = ENVIRON["ZERO_REGEX_PATTERN"] }
+    /zero-regex: allowed/ { next }
+    {
+      text = $0
+      sub(/^[0-9]+:[[:space:]]*/, "", text)
+      if (text ~ /^\/\//) next
+      if (text ~ /^\*/) next
+      if (text ~ /^\/\*/) {
+        # A leading block comment: drop it (comments do not nest) and keep
+        # scanning any code after the closing */; a comment spanning the whole
+        # line, or continuing past it, carries no code to scan.
+        if (index(text, "*/") == 0) next
+        sub(/^\/\*.*\*\//, "", text)
+      }
+      # Token-level skips: remove the non-regex calls, then re-test the rest.
+      gsub(/\.[[:space:]]*replaceAll[[:space:]]*\(\([^)]*\)[[:space:]]*->/, "", text)
+      gsub(/\.[[:space:]]*replaceAll[[:space:]]*\([A-Za-z_][A-Za-z0-9_]*[[:space:]]*->/, "", text)
+      gsub(/\.[[:space:]]*matches[[:space:]]*\([^(),"'"'"']*,/, "", text)
+      if (text ~ pattern) print $0
+    }' || true
 }
 
 self_test() {
@@ -71,11 +97,17 @@ class Violation {
     boolean c = "x".matches(DELIM);
     String d = "x".replaceAll(DELIM, "_");
     String e = "x".replaceFirst(DELIM, "_");
+    String f = "x".replaceAll(("a"), "_");
+    String g = "x".replaceAll(("a" + "b"), "_");
+    String[] h = "a,b". split(",");
+    String[] i = "a,b".split (",");
+    /* block */ String[] j = "a,b".split(",");
+    boolean k = "aa".matches("a{1,2}");
 }
 EOF
   hits="$(scan_file "$dir/Violation.java")"
-  if [[ "$(printf '%s\n' "$hits" | grep -c .)" -ne 5 ]]; then
-    echo 'self-test FAIL: expected all five violation fixture lines flagged, got:' >&2
+  if [[ "$(printf '%s\n' "$hits" | grep -c .)" -ne 11 ]]; then
+    echo 'self-test FAIL: expected all eleven violation fixture lines flagged, got:' >&2
     echo "$hits" >&2
     return 1
   fi
@@ -86,6 +118,7 @@ EOF
  */
 class FalsePositive {
     // a comment about value.replaceAll("x", "y") stays unflagged
+    /* a block comment about value.split(",") stays unflagged */
     void run(java.util.Map<String, String> map, java.util.List<String> list,
              java.nio.file.PathMatcher m, java.nio.file.Path p, Cursor filter, int doc,
              String code, String mask) {
@@ -107,14 +140,16 @@ EOF
     return 1
   fi
 
-  cat > "$dir/QuotedComma.java" <<'EOF'
-class QuotedComma {
-    boolean counted = "aa".matches("a{1,2}");
+  cat > "$dir/MixedLine.java" <<'EOF'
+class MixedLine {
+    void run(java.util.Map<String, String> map, String s) {
+        map.replaceAll((k, v) -> v); String[] x = s.split(",");
+    }
 }
 EOF
-  hits="$(scan_file "$dir/QuotedComma.java")"
+  hits="$(scan_file "$dir/MixedLine.java")"
   if [[ -z "$hits" ]]; then
-    echo 'self-test FAIL: a quoted-comma regex slipped through the multi-argument skip' >&2
+    echo 'self-test FAIL: a collection lambda on the same line hid a real split' >&2
     return 1
   fi
   echo 'zero-regex self-test OK'
@@ -139,7 +174,7 @@ while IFS= read -r -d '' file; do
     done <<< "$hits"
     status=1
   fi
-done < <(git ls-files --cached -z -- ':(glob)**/src/main/**/*.java')
+done < <(git ls-files --cached --others --exclude-standard -z -- ':(glob)**/src/main/**/*.java')
 
 if (( status == 0 )); then
   printf 'Zero-regex check OK\n'
