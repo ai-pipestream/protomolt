@@ -400,6 +400,27 @@ class DocumentLinksIT {
         }
     }
 
+    @Test void aStaticTargetRefusalKeepsCollectedDynamicFilterViolations() throws Exception {
+        try (var f = new AccessionFixture()) {
+            var saves = saves(f);
+            var empty = DynamicTarget.newBuilder().setFilter(DocumentFilter.getDefaultInstance()).build();
+            var missing = citation(c -> c.setField(CITATION.findFieldByName("cites"),
+                    link(fixed(address(ACCOUNT, "nope"), null))));
+            var rejection = SemanticPartsIT.rejected(() -> saves.save(processAuthority(), save("kept",
+                    address(ACCOUNT, "kept"), document("kept", citation(c -> {
+                        c.setField(CITATION.findFieldByName("related"),
+                                link(DocumentLink.newBuilder().setDynamicTarget(empty).build()));
+                        c.setField(CITATION.findFieldByName("nested"), packed(missing));
+                    }), "reader"))),
+                    Status.Code.FAILED_PRECONDITION, RejectionReason.REJECTION_REASON_LINK_TARGET_NOT_FOUND);
+            assertThat(rejection.getMessage()).isEqualTo("The target of link structured_data.nested.cites is not found");
+            assertThat(rejection.getViolationsList()).extracting(FieldViolation::getFieldPath, FieldViolation::getRuleId)
+                    .containsExactly(tuple("structured_data.related", "link-dynamic-filter-required"));
+            assertThat(recorded(f, "kept")).isEqualTo(RejectionReason.REJECTION_REASON_LINK_TARGET_NOT_FOUND);
+            assertThat(f.catalog.current(address(ACCOUNT, "kept"))).isEmpty();
+        }
+    }
+
     // ------------------------------------------------------------------ backlinks, carry-forward, rebuild
 
     @Test void backlinksShowOnlyLinkersTheReaderCanRead() throws Exception {
