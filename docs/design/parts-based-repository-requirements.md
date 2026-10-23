@@ -549,9 +549,15 @@ correctness and RustFS for performance measurements.
 
 ## 16. Open questions
 
-1. **Archive subsystem.** `ArchiveLedger` and its migrations form a second storage model
-   with its own versions and renditions. Fold raw-file archival into documents, or keep it
-   separate and frozen?
+1. **Archive subsystem (answered, #535).** `ArchiveLedger` and its migrations form a
+   second storage model with its own versions and renditions. Answer: keep `ArchiveService`
+   as its own service, and store its entries as v2 documents. Archive reads are protomolt
+   projections of v2 reads; archive writes are a thin translator into one `SaveDocument`
+   or `UploadDocument`, gated by §9 validation. Versions are revisions, history stays in
+   the catalog, and provider object versioning is not used (§6). The ledger, its
+   migrations, and its own backup and purge paths retire once the replacement passes §15
+   on archive traffic. The design of record, including the seven additive v2 changes it
+   needs, is "The archive over v2 documents" in `docs/design/archive.md`.
 2. **Consumers of the semantic shape.** Replacing `SemanticProcessingResult` (including
    `embedding_config_id`) needs an inventory of its consumers first: the chunker,
    embedders, search indexers, the Qdrant point mapper and Kafka Connect.
