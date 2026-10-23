@@ -132,6 +132,9 @@
         </div>
       </v-card-text>
     </v-card>
+
+    <OperationOutcomeInspector v-if="form.accountId" :account-id="form.accountId"
+                               :initial-operation-id="queryText('operationId')" />
   </div>
 </template>
 
@@ -139,6 +142,7 @@
 import { computed, inject, onMounted, reactive, ref, shallowRef } from 'vue'
 import { useRoute } from 'vue-router'
 import { create } from '@bufbuild/protobuf'
+import OperationOutcomeInspector from '@/components/repository/OperationOutcomeInspector.vue'
 import RpcFailureAlert from '@/components/repository/RpcFailureAlert.vue'
 import type { NodeAddress } from '@/gen/ai/protomolt/proto/repo/v1/address_pb'
 import { ListDrivesRequestSchema } from '@/gen/ai/protomolt/proto/repo/v1/drive_pb'

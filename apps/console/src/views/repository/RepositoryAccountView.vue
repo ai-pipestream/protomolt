@@ -68,6 +68,8 @@
       </v-card-text>
     </v-card>
 
+    <OperationOutcomeInspector :key="accountId" :account-id="accountId" :initial-operation-id="initialOperationId" />
+
     <v-card class="mb-4">
       <v-card-title class="text-subtitle-2">Documents</v-card-title>
       <v-card-text>
@@ -215,6 +217,7 @@ import { computed, onMounted, reactive, ref, shallowRef, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { create } from '@bufbuild/protobuf'
 import ConceptEvidence from '@/components/repository/ConceptEvidence.vue'
+import OperationOutcomeInspector from '@/components/repository/OperationOutcomeInspector.vue'
 import RpcFailureAlert from '@/components/repository/RpcFailureAlert.vue'
 import type { Archive } from '@/gen/ai/protomolt/proto/repo/archive/v1/archive_pb'
 import { ListArchivesRequestSchema } from '@/gen/ai/protomolt/proto/repo/archive/v1/archive_service_pb'
@@ -244,6 +247,7 @@ const clients = useRepositoryClients()
 const route = useRoute()
 const router = useRouter()
 const accountId = computed(() => String(route.params.accountId))
+const initialOperationId = typeof route.query.operationId === 'string' ? route.query.operationId : ''
 
 const sortItems = [
   { title: 'Call number', value: DocumentSortField.UNSPECIFIED },
