@@ -164,6 +164,24 @@ message PutEntryRequest {
   // Where the asset came from, when it arrived from object storage.
   // Validated strictly: an origin without its coordinates is refused.
   ai.protomolt.proto.asset.v1.ObjectStoreOrigin origin = 11;
+  // Retry identity. Blank: derived deterministically (UUIDv5, see
+  // ArchiveOperationKey) from the entry address, the requested
+  // expected_version and the request content; never random. A supplied ID
+  // shares the account's v2 operation namespace with DocumentService saves.
+  //
+  // A derived ID cannot tell a retry from a second write of the same
+  // content. With expected_version 0, a request whose derived ID is already
+  // recorded at a version that is no longer current is FAILED_PRECONDITION,
+  // naming both versions: replaying it would report a write that is not
+  // current, and saving it again would let a stale retry overwrite a later
+  // writer. To write that content again, send expected_version equal to the
+  // current version, or a new operation_id. A supplied ID always replays.
+  string operation_id = 12 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      string: {min_len: 1, max_len: 200}
+      ignore_if_zero: true
+    }
+  ];
   // Extensible key-value labels; replaces the entry's map when non-empty.
   map<string, string> metadata = 99;
 }
@@ -184,6 +202,12 @@ message PutEntryResponse {
   bool deduplicated = 5;
   // The stored version's manifest.
   VersionManifest manifest = 6;
+  // The operation the save was recorded under: the request's, or the
+  // derived one.
+  string operation_id = 7;
+  // True when this is the recorded outcome of an earlier identical save
+  // under the same operation_id: nothing was saved by this call.
+  bool replayed = 8;
 }
 
 // The first frame of an UploadRendition stream: everything about the
@@ -224,6 +248,24 @@ message UploadRenditionHeader {
   ai.protomolt.proto.asset.v1.FormatFact declared = 6;
   // Where the asset came from, when it arrived from object storage.
   ai.protomolt.proto.asset.v1.ObjectStoreOrigin origin = 7;
+  // Retry identity, as on PutEntryRequest, including its rule for a derived
+  // ID recorded at a version that is no longer current. Blank requires
+  // expected_sha256: the header must carry the operation ID before any byte
+  // arrives.
+  string operation_id = 8 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      string: {min_len: 1, max_len: 200}
+      ignore_if_zero: true
+    }
+  ];
+  // Optimistic concurrency, as on PutEntryRequest: when non-zero, the upload
+  // lands only if the entry's current version equals this value (ABORTED
+  // otherwise). Zero = no check (last write wins).
+  int64 expected_version = 9 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      int64: {gte: 0}
+    }
+  ];
 }
 
 // One frame of an UploadRendition stream: the header first, then chunks.
@@ -253,6 +295,11 @@ message UploadRenditionResponse {
   string object_key = 5;
   // The new version's root checksum.
   string root_checksum = 6;
+  // The operation the upload was recorded under.
+  string operation_id = 7;
+  // True when this is the recorded outcome of an earlier identical upload
+  // under the same operation_id: nothing was saved by this call.
+  bool replayed = 8;
 }
 
 // Request to read one entry version, whole or in part.
@@ -514,6 +561,33 @@ message ListVersionsResponse {
   repeated VersionManifest versions = 1;
   // Token to fetch the next page; empty when the listing is exhausted.
   string next_continuation_token = 2;
+  // The page as version summaries, newest first: what the archive over v2
+  // documents returns in place of versions. A summary carries no rendition
+  // rows; GetEntryManifest at a version reads them.
+  repeated VersionSummary summaries = 3;
+}
+
+// The UUIDv5 name an archive write's operation ID derives from when the
+// caller supplies none: operation_id = UUIDv5(namespace, encoded key) per
+// RFC 9562, SHA-1 over the 16 namespace bytes followed by this message's
+// binary encoding (fields in number order). The namespace is the fixed
+// constant 6e947da6-c6b8-49a7-9c65-fdf26dbd03e2, never configuration. The
+// key is protobuf, not a joined string, so no character in an entry_id can
+// make two keys encode alike.
+message ArchiveOperationKey {
+  // The command: "archive.put-entry" or "archive.upload-rendition".
+  string operation_kind = 1;
+  // The entry the write targets.
+  EntryAddress address = 2;
+  // The caller's requested expected_version, 0 for last write wins; never
+  // the revision the translator later reads, so a retry derives the same ID.
+  int64 expected_version = 3;
+  // Lowercase hex SHA-256 of the request content: the request's binary
+  // encoding with operation_id and expected_version cleared, renditions
+  // sorted by (name, sub_key) and metadata entries in unsigned UTF-8 key
+  // order. For an upload, the header's encoding with operation_id and
+  // expected_version cleared and expected_sha256 kept.
+  string content_sha256 = 4;
 }
 
 // Request to classify one entry: declare (or re-declare) the format, and

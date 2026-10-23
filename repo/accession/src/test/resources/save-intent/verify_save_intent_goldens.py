@@ -26,7 +26,8 @@ STRING = "string"
 SCHEMA = {
     "SaveIntent": {1: VARINT, 2: "NodeAddress", 3: "ExpectedRevision", 4: VARINT,
                    5: "IntentWrite", 6: "PartSource", 7: STRING, 8: "SaveOwner",
-                   9: "IntentMetadata", 10: "OpaqueAttestation", 11: STRING, 12: "SourceRevision"},
+                   9: "IntentMetadata", 10: "OpaqueAttestation", 11: STRING, 12: "SourceRevision",
+                   13: VARINT},
     "NodeAddress": {1: STRING, 2: STRING, 3: STRING, 4: STRING},
     "ExpectedRevision": {1: VARINT, 2: VARINT},
     "IntentWrite": {1: "PartWrite", 2: STRING, 3: VARINT},

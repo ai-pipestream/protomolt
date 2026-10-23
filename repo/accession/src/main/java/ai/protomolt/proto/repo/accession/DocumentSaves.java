@@ -25,6 +25,7 @@ import ai.protomolt.proto.repo.spi.RepositoryException;
 import ai.protomolt.proto.repo.stack.Stack;
 import ai.protomolt.proto.repo.stack.StackDataLoss;
 import ai.protomolt.proto.repo.v1.Access;
+import ai.protomolt.proto.repo.v1.BlobBag;
 import ai.protomolt.proto.repo.v1.BlobWrite;
 import ai.protomolt.proto.repo.v1.Document;
 import ai.protomolt.proto.repo.v1.NodeAddress;
@@ -287,6 +288,7 @@ public final class DocumentSaves {
             Map<PartSelector, WriteAction> writes,
             Map<PartSelector, ByteString> fragments,
             Map<PartSelector, ByteString> storedFragments,
+            BlobBag storedBlobBag,
             List<RawBlobs.Raw> rawBlobs,
             Stack stack,
             Optional<CatalogRecords.Current> current,
@@ -360,6 +362,7 @@ public final class DocumentSaves {
 
             final Map<PartSelector, ByteString> fragments;
             final Map<PartSelector, ByteString> storedFragments;
+            BlobBag storedBlobBag = null;
             List<RawBlobs.Raw> rawBlobs = List.of();
             PartSelector streamedPart = null;
 
@@ -372,6 +375,7 @@ public final class DocumentSaves {
                 var extracted = RawBlobs.extractForUpload(fragments.get(BLOBS_SELECTOR), blobId);
                 storedFragments = new LinkedHashMap<>(fragments);
                 storedFragments.put(BLOBS_SELECTOR, extracted.stored());
+                storedBlobBag = extracted.bag();
                 rawBlobs = extracted.blobs();
             } else if (header.hasEncodedPart()) {
                 streamedPart = supported(header.getEncodedPart().getSelector());
@@ -382,6 +386,7 @@ public final class DocumentSaves {
                 if (!streamedPart.equals(BLOBS_SELECTOR) && fragments.containsKey(BLOBS_SELECTOR)) {
                     var extracted = RawBlobs.extract(fragments.get(BLOBS_SELECTOR));
                     storedFragments.put(BLOBS_SELECTOR, extracted.stored());
+                    storedBlobBag = extracted.bag();
                     rawBlobs = extracted.blobs();
                 }
             } else {
@@ -393,13 +398,13 @@ public final class DocumentSaves {
                 if (recorded.get().outcome().hasRejection()) {
                     RejectionAccess.require(catalog, caller, recorded.get());
                 } else {
-                    var outcomeAddress = recorded.get().outcome().getAccession().getAddress();
+                    var outcomeAddress = recordedAccession(recorded.get().outcome()).getAddress();
                     var cur = catalog.current(outcomeAddress).flatMap(state -> catalog.manifest(outcomeAddress, state.revision()));
                     if (cur.isEmpty() || !DocumentReads.canRead(caller, outcomeAddress, cur.get().getOwnership()))
                         throw new AccessionException(Status.Code.PERMISSION_DENIED, "The caller may not read this document", null);
                 }
                 return new PreparedUpload(caller, header, request, address, container, documentType, writes,
-                        fragments, storedFragments, rawBlobs, stack, Optional.empty(), Optional.empty(), null, null,
+                        fragments, storedFragments, storedBlobBag, rawBlobs, stack, Optional.empty(), Optional.empty(), null, null,
                         recorded.get());
             }
 
@@ -444,7 +449,7 @@ public final class DocumentSaves {
                         current.map(CatalogRecords.Current::tombstone).orElse(false));
 
             return new PreparedUpload(caller, header, request, address, container, documentType, writes,
-                    fragments, storedFragments, rawBlobs, stack, current, base, ownership, authorized, null);
+                    fragments, storedFragments, storedBlobBag, rawBlobs, stack, current, base, ownership, authorized, null);
         });
     }
 
@@ -525,7 +530,7 @@ public final class DocumentSaves {
                             "Uploaded SHA-256 " + uploadedRef.getSha256() + " differs from expected "
                                     + p.header().getExpectedSha256(), List.of()));
                 }
-                var declared = RawBlobs.stored(p.storedFragments().get(BLOBS_SELECTOR), p.header().getBlobId())
+                var declared = RawBlobs.stored(p.storedBlobBag(), p.header().getBlobId())
                         .orElseThrow(() -> new IllegalStateException("Uploaded blob is absent from its checked BLOBS fragment"));
                 var declaredMismatch = RawBlobs.declaredMismatch(declared, uploadedRef.getLength(), uploadedRef::getSha256);
                 if (declaredMismatch.isPresent()) {
@@ -546,7 +551,7 @@ public final class DocumentSaves {
                 }
                 var blobRef = BlobObjectRef.newBuilder().setBlobId(p.header().getBlobId()).setRef(uploadedRef).build();
                 var saved = finishSave(p.caller(), p.request(), p.address(), intentSha, p.container(), p.documentType(), p.writes(),
-                        p.current(), p.base(), p.ownership(), p.authorized(), p.storedFragments(),
+                        p.current(), p.base(), p.ownership(), p.authorized(), p.storedFragments(), p.storedBlobBag(),
                         p.rawBlobs(), List.of(blobRef));
                 return new UploadResult(UploadDocumentResponse.newBuilder().setSaved(saved).build(),
                         uploadedRef.getSha256(), uploadedRef.getLength());
@@ -641,16 +646,18 @@ public final class DocumentSaves {
                             p.request().getExpected().hasNone());
                 }
                 var storedFragments = new LinkedHashMap<>(p.storedFragments());
+                var storedBlobBag = p.storedBlobBag();
                 var rawBlobs = p.rawBlobs();
                 if (streamedPart.equals(BLOBS_SELECTOR)) {
-                    var extracted = RawBlobs.extract(streamedBytes);
+                    var extracted = RawBlobs.extract(streamedBytes, parsedFragment);
                     storedFragments.put(BLOBS_SELECTOR, extracted.stored());
+                    storedBlobBag = extracted.bag();
                     rawBlobs = extracted.blobs();
                 } else {
                     storedFragments.put(streamedPart, streamedBytes);
                 }
                 var saved = finishSave(p.caller(), p.request(), p.address(), intentSha, p.container(), p.documentType(), p.writes(),
-                        p.current(), p.base(), ownership, authorized, storedFragments, rawBlobs, List.of());
+                        p.current(), p.base(), ownership, authorized, storedFragments, storedBlobBag, rawBlobs, List.of());
                 return new UploadResult(UploadDocumentResponse.newBuilder().setSaved(saved).build(),
                         actualSha256, actualLength);
             } finally {
@@ -710,10 +717,12 @@ public final class DocumentSaves {
         // and a stored CHUNKS fragment may gain the server-computed content digest.
         var fragments = split(document, documentType, writes, null);
         var storedFragments = new LinkedHashMap<PartSelector, ByteString>(fragments);
+        BlobBag storedBlobBag = null;
         List<RawBlobs.Raw> rawBlobs = List.of();
         if (fragments.containsKey(BLOBS_SELECTOR)) {
             var extracted = RawBlobs.extract(fragments.get(BLOBS_SELECTOR));
             storedFragments.put(BLOBS_SELECTOR, extracted.stored());
+            storedBlobBag = extracted.bag();
             rawBlobs = extracted.blobs();
         }
         // The unary save reservation: one lease over the admitted serialized
@@ -761,7 +770,7 @@ public final class DocumentSaves {
                 throw WriterAuthority.denied("Process authority may not save opaque content");
 
             return finishSave(caller, request, address, intentSha, container, documentType, writes, current, base,
-                    ownership, authorized, storedFragments, rawBlobs, List.of());
+                    ownership, authorized, storedFragments, storedBlobBag, rawBlobs, List.of());
         }
     }
 
@@ -769,7 +778,7 @@ public final class DocumentSaves {
             String intentSha, DocumentSchemaAdmission.Definition container, Descriptors.Descriptor documentType,
             Map<PartSelector, WriteAction> writes, Optional<CatalogRecords.Current> current,
             Optional<StoredManifest> base, OwnershipContext ownership, WriterAuthority.Authorized authorized,
-            Map<PartSelector, ByteString> storedFragments, List<RawBlobs.Raw> rawBlobs,
+            Map<PartSelector, ByteString> storedFragments, BlobBag storedBlobBag, List<RawBlobs.Raw> rawBlobs,
             List<BlobObjectRef> preUploadedBlobs) {
         var account = address.getAccountId();
         boolean creating = request.getExpected().hasNone();
@@ -777,7 +786,7 @@ public final class DocumentSaves {
         long currentRevision = current.map(CatalogRecords.Current::revision).orElse(0L);
         if (creating ? current.isPresent() : currentRevision != request.getExpected().getRevision())
             return conflict(caller, request, intentSha, address);
-        var carriedBlobs = carriedBlobs(storedFragments, rawBlobs, preUploadedBlobs, base);
+        var carriedBlobs = carriedBlobs(storedBlobBag, rawBlobs, preUploadedBlobs, base);
         boolean opaqueMode = request.getValidationMode() == ValidationMode.VALIDATION_MODE_OPAQUE_ALLOWED;
         if (opaqueMode && !opaqueAllowed)
             return reject(caller, request, address, intentSha, authorized, RejectionReason.REJECTION_REASON_OPAQUE_NOT_ALLOWED,
@@ -1059,6 +1068,12 @@ public final class DocumentSaves {
             return reject(caller, request, address, intentSha, authorized, RejectionReason.REJECTION_REASON_VALIDATION_FAILED,
                     "A concept tag does not fit the catalog", unstorableTags);
 
+        // Prerequisite 6: a save whose candidate equals the expected revision records
+        // only its outcome, after the same authorization and checks as any save.
+        if (request.getUnchanged() == UnchangedPolicy.UNCHANGED_POLICY_RECORD_OUTCOME
+                && unchanged(request, base, storedFragments, rawBlobs, preUploadedBlobs, carriedBlobs))
+            return recordUnchanged(caller, request, address, intentSha, authorized, base.orElseThrow());
+
         // S12: write new bytes to the drive's stack, before the commit transaction. Each raw
         // blob is its own object, bound to its blob ID on the BLOBS entry (decision 45).
         var stack = drives.resolve(account, request.getDrive());
@@ -1084,8 +1099,8 @@ public final class DocumentSaves {
         // Blob-level carry-forward: the expected revision's binding, stamp included, with
         // no bytes sent and no copy; its object joins the carried-object purge check below.
         blobRefs.addAll(carriedBlobs);
-        if (!blobRefs.isEmpty() && storedFragments.containsKey(BLOBS_SELECTOR))
-            blobRefs = new ArrayList<>(RawBlobs.orderRefs(storedFragments.get(BLOBS_SELECTOR), blobRefs));
+        if (!blobRefs.isEmpty() && storedBlobBag != null)
+            blobRefs = new ArrayList<>(RawBlobs.orderRefs(storedBlobBag, blobRefs));
         for (var write : request.getWritesList()) {
             if (write.getAction() != WriteAction.WRITE_ACTION_PUT) continue;
             var selector = write.getSelector();
@@ -1132,16 +1147,18 @@ public final class DocumentSaves {
         authorized.process().ifPresent(validation::setProcessAuthority);
         var committedAt = timestamp(clock.instant());
         // Every part and binding this revision wrote takes its commit time; carried ones keep theirs.
-        var written = BlobWrite.newBuilder().setRevision(revision).setCommittedAt(committedAt);
-        if (request.getOwner().hasStep()) written.setStep(request.getOwner().getStep());
-        var stamped = ordered.stream().map(part -> stampNewWrites(part, revision, written.build(), newBindings)).toList();
+        var writtenBuilder = BlobWrite.newBuilder().setRevision(revision).setCommittedAt(committedAt);
+        if (request.getOwner().hasStep()) writtenBuilder.setStep(request.getOwner().getStep());
+        var written = writtenBuilder.build();
+        var stamped = ordered.stream().map(part -> stampNewWrites(part, revision, written, newBindings)).toList();
         var stored = StoredManifest.newBuilder().setAddress(address).setRevision(revision)
                 .setPreviousRevision(currentRevision).addAllParts(stamped).setValidation(validation)
                 .setOperationId(request.getOperationId()).setIntentSha256(intentSha).setOwner(request.getOwner())
                 .addAllDerivedFrom(request.getDerivedFromList()).setOwnership(ownership).setCommittedAt(committedAt)
                 .putAllMetadata(request.getMetadataMap()).build();
         var accession = DocumentReads.accession(stored);
-        var outcome = RecordedOutcome.newBuilder().setAccession(accession).setRecordedAt(committedAt).build();
+        var outcome = RecordedOutcome.newBuilder().setAccession(accession).setRecordedAt(committedAt)
+                .putAllRequestMetadata(request.getMetadataMap()).build();
         var changes = new ArrayList<PartChange>();
         for (var change : kinds.entrySet())
             changes.add(PartChange.newBuilder().setSelector(change.getKey()).setKind(change.getValue())
@@ -1188,19 +1205,85 @@ public final class DocumentSaves {
     }
 
     /**
+     * Whether a save changes nothing (prerequisite 6): every write is a PUT whose
+     * stored fragment SHA-256 and length equal the expected revision's PRESENT
+     * part, every raw blob of a BLOBS PUT binds bytes equal to the expected
+     * revision's object for the same blob ID, and the save names no source,
+     * lineage or opaque attestation.
+     */
+    private static boolean unchanged(SaveDocumentRequest request, Optional<StoredManifest> base,
+            Map<PartSelector, ByteString> storedFragments, List<RawBlobs.Raw> rawBlobs,
+            List<BlobObjectRef> preUploadedBlobs, List<BlobObjectRef> carriedBlobs) {
+        if (base.isEmpty() || base.get().getTombstone() || request.getSourcesCount() > 0
+                || request.getDerivedFromCount() > 0 || request.getOpaqueAttestationsCount() > 0)
+            return false;
+        var stored = new HashMap<PartSelector, StoredPartEntry>();
+        base.get().getPartsList().forEach(part -> stored.put(part.getEntry().getSelector(), part));
+        for (var write : request.getWritesList()) {
+            if (write.getAction() != WriteAction.WRITE_ACTION_PUT) return false;
+            var previous = stored.get(write.getSelector());
+            var bytes = storedFragments.get(write.getSelector());
+            if (previous == null || previous.getEntry().getState() != PartState.PART_STATE_PRESENT
+                    || previous.getEntry().getSizeBytes() != bytes.size()
+                    || !previous.getEntry().getSha256().equals(sha256(bytes)))
+                return false;
+            if (write.getSelector().equals(BLOBS_SELECTOR)) {
+                var bound = new HashMap<String, ContentIdentity>();
+                previous.getBlobRefsList().forEach(ref -> bound.put(ref.getBlobId(),
+                        new ContentIdentity(ref.getRef().getSha256(), ref.getRef().getLength())));
+                var next = new HashMap<String, ContentIdentity>();
+                rawBlobs.forEach(raw -> next.put(raw.blobId(), new ContentIdentity(sha256(raw.data()), raw.data().size())));
+                for (var ref : preUploadedBlobs)
+                    next.put(ref.getBlobId(), new ContentIdentity(ref.getRef().getSha256(), ref.getRef().getLength()));
+                for (var ref : carriedBlobs)
+                    next.put(ref.getBlobId(), new ContentIdentity(ref.getRef().getSha256(), ref.getRef().getLength()));
+                if (!bound.equals(next)) return false;
+            }
+        }
+        return true;
+    }
+
+    /**
+     * Records the outcome of an unchanged save: the expected revision's accession
+     * under this operation ID, in a transaction that rechecks authority and that
+     * the expected revision is still current. No revision, event or pointer move.
+     */
+    private SaveDocumentResponse recordUnchanged(RepositoryCaller caller, SaveDocumentRequest request,
+            NodeAddress address, String intentSha, WriterAuthority.Authorized authorized, StoredManifest base) {
+        var accession = DocumentReads.accession(base);
+        var outcome = RecordedOutcome.newBuilder().setUnchanged(accession).setRecordedAt(timestamp(clock.instant()))
+                .putAllRequestMetadata(request.getMetadataMap()).build();
+        var checked = VALIDATOR.validate(outcome);
+        if (!checked.valid()) throw new IllegalStateException("Built record is invalid: " + checked.violations().getFirst());
+        var result = catalog.recordUnchanged(address, request.getOperationId(), intentSha, base.getRevision(), outcome,
+                authorized.grantIds(), authorized.credential());
+        return switch (result) {
+            case CatalogRecords.Committed ignored -> SaveDocumentResponse.newBuilder()
+                    .setOperationId(request.getOperationId()).setAccession(accession).setUnchanged(true).build();
+            case CatalogRecords.Recorded again -> replay(caller, request, intentSha, again.outcome());
+            case CatalogRecords.Conflict conflict -> throw aborted(address, request.getExpected(), conflict.currentRevision(),
+                    conflict.currentTombstone());
+            case CatalogRecords.SourcePurged purged -> reject(caller, request, address, intentSha, authorized,
+                    RejectionReason.REJECTION_REASON_SOURCE_PURGED, "A carried object is purged", List.of());
+            case CatalogRecords.TargetPurged ignored -> reject(caller, request, address, intentSha, authorized,
+                    RejectionReason.REJECTION_REASON_SOURCE_PURGED, "The destination document was purged", List.of());
+            case CatalogRecords.WriteDenied denied -> throw WriterAuthority.denied(denied.reason());
+        };
+    }
+
+    /**
      * The expected revision's bindings for the blobs of a BLOBS PUT that carry
      * neither inline data nor a streamed upload. Each must name a raw blob of the
      * expected revision, and any size or SHA-256 it declares must match that blob's
      * object; anything else is a malformed request.
      */
-    private static List<BlobObjectRef> carriedBlobs(Map<PartSelector, ByteString> storedFragments,
+    private static List<BlobObjectRef> carriedBlobs(BlobBag storedBlobBag,
             List<RawBlobs.Raw> rawBlobs, List<BlobObjectRef> preUploadedBlobs, Optional<StoredManifest> base) {
-        var fragment = storedFragments.get(BLOBS_SELECTOR);
-        if (fragment == null) return List.of();
+        if (storedBlobBag == null) return List.of();
         var bound = new HashSet<String>();
         rawBlobs.forEach(raw -> bound.add(raw.blobId()));
         preUploadedBlobs.forEach(ref -> bound.add(ref.getBlobId()));
-        var unbound = RawBlobs.unbound(fragment, bound);
+        var unbound = RawBlobs.unbound(storedBlobBag, bound);
         if (unbound.isEmpty()) return List.of();
         var previous = new HashMap<String, BlobObjectRef>();
         base.ifPresent(stored -> stored.getPartsList().stream()
@@ -1219,7 +1302,7 @@ public final class DocumentSaves {
     }
 
     /** One raw blob binding of one part. */
-    private record BindingKey(PartSelector part, String blobId) {}
+    record BindingKey(PartSelector part, String blobId) {}
 
     /**
      * The part with this revision's write recorded: {@code written_at} on an entry
@@ -1227,7 +1310,7 @@ public final class DocumentSaves {
      * binding this revision made. Carried entries and bindings are left as they were,
      * stamped or not: a binding without a stamp is never given this revision's.
      */
-    private static StoredPartEntry stampNewWrites(StoredPartEntry part, long revision, BlobWrite written,
+    static StoredPartEntry stampNewWrites(StoredPartEntry part, long revision, BlobWrite written,
             Set<BindingKey> newBindings) {
         var selector = part.getEntry().getSelector();
         boolean entryWritten = part.getEntry().getWrittenInRevision() == revision && !part.getEntry().hasWrittenAt();
@@ -1981,13 +2064,21 @@ public final class DocumentSaves {
         var outcome = recorded.outcome();
         if (outcome.hasRejection()) throw rejectionException(outcome.getRejection());
         // An authorized replay needs current read access, not the original writer grant.
-        var address = outcome.getAccession().getAddress();
+        var accession = recordedAccession(outcome);
+        var address = accession.getAddress();
         var current = catalog.current(address)
                 .flatMap(state -> catalog.manifest(address, state.revision()));
         if (current.isEmpty() || !DocumentReads.canRead(caller, address, current.get().getOwnership()))
             throw new AccessionException(Status.Code.PERMISSION_DENIED, "The caller may not read this document", null);
         return SaveDocumentResponse.newBuilder().setOperationId(request.getOperationId())
-                .setAccession(outcome.getAccession()).setReplayed(true).build();
+                .setAccession(accession).setReplayed(true).setUnchanged(outcome.hasUnchanged()).build();
+    }
+
+    /** The accession a committed outcome names: a new revision's, or the matched revision's of an unchanged save. */
+    static Accession recordedAccession(RecordedOutcome outcome) {
+        if (outcome.hasAccession()) return outcome.getAccession();
+        if (outcome.hasUnchanged()) return outcome.getUnchanged();
+        throw new IllegalArgumentException("A rejection names no accession");
     }
 
     private SaveDocumentResponse conflict(RepositoryCaller caller, SaveDocumentRequest request, String intentSha,
@@ -2002,7 +2093,8 @@ public final class DocumentSaves {
     private SaveDocumentResponse reject(RepositoryCaller caller, SaveDocumentRequest request, NodeAddress address,
             String intentSha, WriterAuthority.Authorized authorized, RejectionReason reason, String message, List<FieldViolation> violations) {
         var rejection = SaveRejection.newBuilder().setReason(reason).setMessage(message).addAllViolations(violations).build();
-        var outcome = RecordedOutcome.newBuilder().setRejection(rejection).setRecordedAt(timestamp(clock.instant())).build();
+        var outcome = RecordedOutcome.newBuilder().setRejection(rejection).setRecordedAt(timestamp(clock.instant()))
+                .putAllRequestMetadata(request.getMetadataMap()).build();
         var result = catalog.recordRejection(address.getAccountId(), request.getOperationId(), intentSha, outcome,
                 authorized.grantIds(), authorized.credential(), address, request.getExpected().hasNone());
         return switch (result) {

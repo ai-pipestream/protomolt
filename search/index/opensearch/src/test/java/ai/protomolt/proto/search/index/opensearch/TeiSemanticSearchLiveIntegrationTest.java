@@ -26,6 +26,8 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.lifecycle.Startables;
 import org.testcontainers.utility.DockerImageName;
 
+import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
@@ -48,7 +50,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  * <p>TEI serves gRPC on container port 80 and logs {@code Starting gRPC server} only after the
  * model has loaded, so readiness waits on that line; the first run downloads the models from the
  * HF hub (about 1.2 GB combined) and can take several minutes. Setting the
- * {@value #CACHE_ENVIRONMENT_VARIABLE} environment variable to an existing directory bind-mounts
+ * {@value #CACHE_ENVIRONMENT_VARIABLE} environment variable to a directory creates it if needed and bind-mounts
  * it into both TEI containers at {@code /data}, so models persist across runs; unset, each run
  * downloads them again.
  *
@@ -61,7 +63,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 @Testcontainers
 class TeiSemanticSearchLiveIntegrationTest {
 
-    /** Environment variable naming an existing directory to reuse as the TEI model cache. */
+    /** Environment variable naming a directory to reuse as the TEI model cache. */
     private static final String CACHE_ENVIRONMENT_VARIABLE = "PROTOMOLT_TEI_CACHE";
 
     private static final DockerImageName TEI_IMAGE =
@@ -116,8 +118,21 @@ class TeiSemanticSearchLiveIntegrationTest {
                 .waitingFor(Wait.forLogMessage(".*Starting gRPC server.*", 1)
                         .withStartupTimeout(Duration.ofMinutes(10)));
         String cache = System.getenv(CACHE_ENVIRONMENT_VARIABLE);
-        if (cache != null && !cache.isBlank() && Files.isDirectory(Path.of(cache))) {
-            container.withFileSystemBind(cache, "/data", BindMode.READ_WRITE);
+        if (cache != null) {
+            if (cache.isBlank() || !Path.of(cache).isAbsolute()) {
+                throw new IllegalArgumentException(CACHE_ENVIRONMENT_VARIABLE
+                        + " must name an absolute cache directory shared with the Docker host");
+            }
+            Path directory = Path.of(cache).normalize();
+            try {
+                Files.createDirectories(directory);
+            } catch (IOException e) {
+                throw new UncheckedIOException("Cannot prepare TEI model cache " + directory, e);
+            }
+            if (!Files.isWritable(directory)) {
+                throw new IllegalArgumentException("TEI model cache is not writable: " + directory);
+            }
+            container.withFileSystemBind(directory.toString(), "/data", BindMode.READ_WRITE);
         }
         return container;
     }

@@ -6,7 +6,7 @@ cel = "0.14.0"
 junit = "6.1.3"
 assertj = "3.27.7"
 slf4j = "2.0.20"
-kafka = "4.3.1"
+kafka = "4.3.2"
 # Floor: 8.0 is the first line compiled against protobuf-java 4.x (7.9.x's ProtobufSchema
 # bytecode references GeneratedMessageV3, removed in protobuf 4). The former 8.0.x ceiling
 # is lifted: 8.1+ reference org.apache.kafka.common.metrics.Monitorable (KIP-877), which
@@ -17,15 +17,15 @@ kafka = "4.3.1"
 confluent = "8.3.2"
 testcontainers = "2.0.5"
 opensearch-testcontainers = "4.1.0"
-micrometer = "1.17.1"
-swagger-ui = "5.33.2"
-jackson = "2.22.3"
-quarkus = "3.40.1"
+micrometer = "1.17.2"
+swagger-ui = "5.34.0"
+jackson = "2.22.4"
+quarkus = "3.40.1.1"
 axion-release = "1.21.4"
 nmcp = "1.6.2"
-grpc = "1.85.0"
+grpc = "1.85.1"
 chicory = "1.7.5"
-lucene = "10.5.0"
+lucene = "10.5.2"
 # The 0.1.0-alpha4 line, not 3.x-preview: the 3.x snapshots stamp
 # "OpenNLP-Version: 3.x-preview-SNAPSHOT", which their own Version.parse
 # rejects, so BaseModel loading (sentence-detector models et al.) fails on
@@ -40,13 +40,13 @@ apicurio = "3.3.3"
 # build injects both into every Test task as system properties, so the
 # Testcontainers suites track this file instead of hardcoding tags.
 opensearch-image = "3.9.0"
-spring = "7.0.9"
+spring = "7.0.10"
 # Boot line matching Spring Framework 7
-spring-boot = "4.1.1"
-vertx = "5.2.1"
+spring-boot = "4.1.2"
+vertx = "5.2.2"
 netty = "4.2.19.Final"
 # Micronaut 5.x needs a JVM 25 runtime, which the JDK 25 baseline now supplies.
-micronaut = "5.2.15"
+micronaut = "5.2.20"
 protobuf-gradle = "0.10.0"
 wire = "6.4.7"
 jgit = "7.8.0.202609011348-r"
@@ -55,16 +55,16 @@ hadoop = "3.5.0"
 iceberg = "1.12.0"
 duckdb = "1.5.6.0"
 sqlite-jdbc = "3.53.4.0"
-awssdk = "2.56.0"
+awssdk = "2.57.3"
 maven-resolver = "1.9.27"
 # Pairs with the maven-resolver 1.9.x line above; 3.10.x pulls in maven-resolver 2.x,
 # which drops DefaultTrackingFileManager and breaks maven-resolver-supplier 1.9.x.
 maven = "3.9.16"
-graalvm-buildtools = "1.1.14"
+graalvm-buildtools = "1.1.17"
 # Persistence stack (framework-free): Hibernate ORM + HikariCP + Flyway.
 hibernate = "7.4.13.Final"
 hikari = "7.1.0"
-flyway = "13.10.3"
+flyway = "13.11.1"
 postgresql = "42.7.14"
 jedis = "8.0.2"
 

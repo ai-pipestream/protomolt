@@ -75,6 +75,7 @@ public final class StreamJoiner implements AutoCloseable {
         }
     }
 
+    private final java.util.function.LongSupplier nanoClock;
     private final Mode mode;
     private final Side left;
     private final Side right;
@@ -102,6 +103,14 @@ public final class StreamJoiner implements AutoCloseable {
 
     public StreamJoiner(Mode mode, Side left, Side right, int bufferLimit,
                         Descriptor target, List<String> rules, List<CelMappingRule> celRules) {
+        this(mode, left, right, bufferLimit, target, rules, celRules, System::nanoTime);
+    }
+
+    /** Visible for tests, matching WorkflowRunner's monotonic budget clock. */
+    StreamJoiner(Mode mode, Side left, Side right, int bufferLimit,
+                 Descriptor target, List<String> rules, List<CelMappingRule> celRules,
+                 java.util.function.LongSupplier nanoClock) {
+        this.nanoClock = Objects.requireNonNull(nanoClock, "nanoClock");
         if (bufferLimit <= 0) {
             throw new IllegalArgumentException("bufferLimit must be positive");
         }
@@ -194,26 +203,31 @@ public final class StreamJoiner implements AutoCloseable {
         }
         Objects.requireNonNull(timeout, "timeout");
         List<DynamicMessage> joined = new ArrayList<>();
-        long deadline = System.nanoTime() + timeout.toNanos();
+        long deadline = nanoClock.getAsLong() + timeout.toNanos();
         drainReady(joined, max);
         while (joined.size() < max) {
             // Pull whatever both sides have within the remaining time; the per-stream
             // take is the flow-control valve. Each message matches IMMEDIATELY against
             // the other side's buffer (a symmetric hash join) and completed joins park
             // in `ready` - so neither a full output nor eviction can strand a pair.
-            long remainingNanos = deadline - System.nanoTime();
+            long remainingNanos = deadline - nanoClock.getAsLong();
             if (remainingNanos <= 0) {
                 break;
             }
-            // Both sides wait in turn, so each gets half of what is left: a round trip must
-            // fit inside the caller's timeout rather than consuming it twice.
+            // Leave room for the right side, but re-read the clock after the left
+            // poll: scheduling and message processing may consume the whole budget.
             Duration slice = Duration.ofNanos(
                     Math.min(remainingNanos / 2, PULL_SLICE.toNanos()));
             for (DynamicMessage message : leftStream.take(max, slice)) {
                 offer(message, true);
             }
-            for (DynamicMessage message : rightStream.take(max, slice)) {
-                offer(message, false);
+            long rightRemainingNanos = deadline - nanoClock.getAsLong();
+            if (rightRemainingNanos > 0) {
+                Duration rightSlice = Duration.ofNanos(
+                        Math.min(rightRemainingNanos, PULL_SLICE.toNanos()));
+                for (DynamicMessage message : rightStream.take(max, rightSlice)) {
+                    offer(message, false);
+                }
             }
             if (mode == Mode.ZIP) {
                 zipMatches();

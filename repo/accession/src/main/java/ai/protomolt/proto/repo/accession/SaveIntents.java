@@ -36,7 +36,8 @@ final class SaveIntents {
                 .setValidationMode(request.getValidationMode() == ValidationMode.VALIDATION_MODE_UNSPECIFIED
                         ? ValidationMode.VALIDATION_MODE_TYPED : request.getValidationMode())
                 .addAllSources(request.getSourcesList()).setDrive(request.getDrive()).setOwner(request.getOwner())
-                .addAllDerivedFrom(request.getDerivedFromList()).setOperationKind("save");
+                .addAllDerivedFrom(request.getDerivedFromList()).setUnchanged(request.getUnchanged())
+                .setOperationKind("save");
         for (int index = 0; index < request.getWritesCount(); index++) {
             var write = request.getWrites(index);
             var entry = IntentWrite.newBuilder().setWrite(write);

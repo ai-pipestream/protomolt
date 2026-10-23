@@ -4,6 +4,8 @@ package ai.protomolt.proto.repo.archive.v1;
 
 import "ai/protomolt/proto/asset/v1/classification.proto";
 import "ai/protomolt/proto/asset/v1/content.proto";
+import "ai/protomolt/proto/asset/v1/format.proto";
+import "ai/protomolt/proto/projection/v1/projection.proto";
 import "ai/protomolt/proto/validate/v1/validate.proto";
 import "google/protobuf/timestamp.proto";
 
@@ -19,6 +21,12 @@ option java_package = "ai.protomolt.proto.repo.archive.v1";
 // authoritative list of a version's objects — sizes, hashes, exact keys —
 // and everything operational (reads, deletes, reconciliation) derives from
 // it, never from prefix listing.
+//
+// Over v2 documents (docs/design/archive.md, "The archive over v2
+// documents"), the view messages below declare their v2 sources and field
+// mappings with the projection options: each archive read is one v2 read per
+// revision it serves, projected into these messages and validated against
+// their own validate.v1 rules.
 // ============================================================================
 
 // The logical identity of one entry: the three segments the deterministic
@@ -27,41 +35,57 @@ option java_package = "ai.protomolt.proto.repo.archive.v1";
 // and free-form — it never reaches an object key (the UUID does), so
 // exotic characters cannot diverge a signed request.
 message EntryAddress {
-  // Owning account (tenant root).
+  option (ai.protomolt.proto.projection.v1.sources) = {
+    source: "ai.protomolt.proto.repo.v1.NodeAddress"
+  };
+  // Owning account (tenant root). Over v2: NodeAddress.account_id.
   string account_id = 1 [
     (ai.protomolt.proto.validate.v1.field) = {
       required: true
       string: {min_len: 1, max_len: 200}
-    }
+    },
+    (ai.protomolt.proto.projection.v1.from) = {paths: {path: "account_id"}}
   ];
-  // The archive (account-scoped collection) holding the entry.
+  // The archive (account-scoped collection) holding the entry. Over v2:
+  // NodeAddress.graph_address_id, under graph_id "archive:<account_id>".
   string archive = 2 [
     (ai.protomolt.proto.validate.v1.field) = {
       required: true
       string: {slug: true, max_len: 100}
-    }
+    },
+    (ai.protomolt.proto.projection.v1.from) = {paths: {path: "graph_address_id"}}
   ];
   // Caller-chosen entry identity, unique within the archive. Free-form:
-  // a URI, a natural key, anything stable the caller owns.
+  // a URI, a natural key, anything stable the caller owns. Over v2:
+  // NodeAddress.doc_id, verbatim.
   string entry_id = 3 [
     (ai.protomolt.proto.validate.v1.field) = {
       required: true
       string: {min_len: 1, max_len: 500}
-    }
+    },
+    (ai.protomolt.proto.projection.v1.from) = {paths: {path: "doc_id"}}
   ];
 }
 
 // Who wrote some bytes, stamped at write time and never invented: unknown
 // stays blank, and re-referenced renditions keep their original stamp.
 message WriteAttribution {
-  // The producing module or tool (e.g. "grparse", "markdown-export").
+  option (ai.protomolt.proto.projection.v1.sources) = {
+    source: "ai.protomolt.proto.repo.v1.Blob"
+    source: "ai.protomolt.proto.repo.v2.PartManifestEntry"
+  };
+  // The producing module or tool (e.g. "grparse", "markdown-export"). Over
+  // v2: the step module of the save that bound a blob, or of the save that
+  // wrote the PARSED part.
   string module = 1 [
     (ai.protomolt.proto.validate.v1.field) = {
       string: {max_len: 200}
       ignore_if_zero: true
-    }
+    },
+    (ai.protomolt.proto.projection.v1.from) = {paths: {path: "written.step.module_id" path: "owner.step.module_id"}}
   ];
-  // The acting principal, when one is known.
+  // The acting principal, when one is known. Not projected over v2: the
+  // authenticated caller is recorded as grant or process-authority evidence.
   string actor = 2 [
     (ai.protomolt.proto.validate.v1.field) = {
       string: {max_len: 200}
@@ -88,29 +112,40 @@ enum RenditionState {
 // sub-keyed object family) inside an entry. The archive imposes no closed
 // vocabulary — names mean what the producer means.
 message RenditionDescriptor {
+  option (ai.protomolt.proto.projection.v1.sources) = {
+    source: "ai.protomolt.proto.repo.v1.Blob"
+    source: "ai.protomolt.proto.repo.v2.PartManifestEntry"
+  };
   // The rendition name (e.g. "original", "parsed", "markdown",
-  // "metadata.parquet"). Path-safe because it appears in object keys.
+  // "metadata.parquet"). Path-safe because it appears in object keys. Over
+  // v2: a raw blob's blob_id up to its first "/"; "parsed" for the PARSED part.
   string name = 1 [
     (ai.protomolt.proto.validate.v1.field) = {
       required: true
       string: {path_safe_name: true, max_len: 200}
-    }
+    },
+    (ai.protomolt.proto.projection.v1.from) = {cel: "source.blob_id.split('/')[0]"},
+    (ai.protomolt.proto.projection.v1.default_from) = {cel: "source.selector.part == 4 ? 'parsed' : ''"}
   ];
   // Multi-object renditions (per page, per chunk set, per partition) store
   // one object per sub-key under one rendition name. Empty for
-  // single-object renditions.
+  // single-object renditions. Over v2: a raw blob's blob_id after its "/".
   string sub_key = 2 [
     (ai.protomolt.proto.validate.v1.field) = {
       string: {path_safe_name: true, max_len: 200}
       ignore_if_zero: true
-    }
+    },
+    (ai.protomolt.proto.projection.v1.from) = {cel: "source.blob_id.contains('/') ? source.blob_id.split('/')[1] : ''"}
   ];
-  // IANA media type of the bytes.
+  // IANA media type of the bytes. Over v2: Blob.mime_type; the PARSED part
+  // is an encoded protobuf fragment.
   string media_type = 3 [
     (ai.protomolt.proto.validate.v1.field) = {
       string: {mime_type: true, max_len: 200}
       ignore_if_zero: true
-    }
+    },
+    (ai.protomolt.proto.projection.v1.from) = {paths: {path: "mime_type"}},
+    (ai.protomolt.proto.projection.v1.default_from) = {cel: "source.selector.part == 4 ? 'application/x-protobuf' : ''"}
   ];
   // For protobuf renditions: the schema-registry subject that pins which
   // message the bytes decode as. Recorded, not enforced — enforcement is a
@@ -119,32 +154,50 @@ message RenditionDescriptor {
     (ai.protomolt.proto.validate.v1.field) = {
       string: {max_len: 300}
       ignore_if_zero: true
-    }
+    },
+    (ai.protomolt.proto.projection.v1.from) = {paths: {path: "schema_subject"}}
   ];
 }
 
 // One rendition object in a version's manifest: what it is, what state it
 // is in, and exactly where and what its bytes are.
+//
+// Over v2 there is one row per raw blob of the revision's BLOBS part and one
+// for its PARSED part. object_key and storage_object_id are not projected:
+// stack references are internal. content_profile is the classification
+// layer's output, not a stored document field, and is host-filled.
 message RenditionManifestEntry {
+  option (ai.protomolt.proto.projection.v1.sources) = {
+    source: "ai.protomolt.proto.repo.v1.Blob"
+    source: "ai.protomolt.proto.repo.v2.PartManifestEntry"
+  };
   option (ai.protomolt.proto.validate.v1.message).cel = {
     id: "archive-storage-binding-state"
     message: "a storage binding requires PRESENT content or DELETED provenance"
     expression: "this.storage_object_id == '' || this.state == 1 || this.state == 3"
   };
-  // What the object is.
+  // What the object is. Projected from the same blob or part entry.
   RenditionDescriptor rendition = 1 [
-    (ai.protomolt.proto.validate.v1.field) = {required: true}
+    (ai.protomolt.proto.validate.v1.field) = {required: true},
+    (ai.protomolt.proto.projection.v1.from) = {cel: "source"}
   ];
-  // Lifecycle state of the object.
-  RenditionState state = 2;
+  // Lifecycle state of the object. PartState and RenditionState share
+  // numbers; a blob listed in the document is PRESENT.
+  RenditionState state = 2 [
+    (ai.protomolt.proto.projection.v1.from) = {paths: {path: "state"}},
+    (ai.protomolt.proto.projection.v1.default_from) = {literal: {number_value: 1}}
+  ];
   // Size of the object in bytes (retained after deletion).
-  int64 size_bytes = 3;
+  int64 size_bytes = 3 [
+    (ai.protomolt.proto.projection.v1.from) = {paths: {path: "size_bytes"}}
+  ];
   // Lowercase hex SHA-256 of the object bytes (retained after deletion).
   string sha256 = 4 [
     (ai.protomolt.proto.validate.v1.field) = {
       string: {sha256_hex: true}
       ignore_if_zero: true
-    }
+    },
+    (ai.protomolt.proto.projection.v1.from) = {paths: {path: "checksum" path: "sha256"}}
   ];
   // Repository-internal storage object key. New writes use unique physical
   // identities; unchanged bytes share retained manifest references.
@@ -154,19 +207,26 @@ message RenditionManifestEntry {
       ignore_if_zero: true
     }
   ];
-  // When this rendition's bytes were written.
-  google.protobuf.Timestamp written_at = 6;
+  // When this rendition's bytes were written. Blob rows: the commit time of
+  // the save that bound the blob; PARSED: the commit time of the revision
+  // that wrote the part. Both survive carry-forward.
+  google.protobuf.Timestamp written_at = 6 [
+    (ai.protomolt.proto.projection.v1.from) = {paths: {path: "written.committed_at" path: "written_at"}}
+  ];
   // Set only when state == RENDITION_STATE_DELETED: the named reason the
   // bytes were removed (e.g. "RTBF", "RETENTION").
   string deleted_reason = 7 [
     (ai.protomolt.proto.validate.v1.field) = {
       string: {max_len: 200}
       ignore_if_zero: true
-    }
+    },
+    (ai.protomolt.proto.projection.v1.from) = {paths: {path: "deleted_reason"}}
   ];
   // Provenance of the write that produced these bytes. Re-referenced
   // renditions keep the stamp of the write that produced them.
-  WriteAttribution written_by = 8;
+  WriteAttribution written_by = 8 [
+    (ai.protomolt.proto.projection.v1.from) = {cel: "source"}
+  ];
   // What this rendition's content is, when a profile was measured
   // (typically on derived renditions; OCR text always carries one).
   ai.protomolt.proto.asset.v1.ContentProfile content_profile = 9;
@@ -186,49 +246,82 @@ message RenditionManifestEntry {
 // The machine-readable map of one immutable stored state: which renditions
 // a version contains, where they live, what they hash to, and what
 // happened to them.
+//
+// Over v2 a version is one revision of the entry's document.
 message VersionManifest {
+  option (ai.protomolt.proto.projection.v1.sources) = {
+    source: "ai.protomolt.proto.repo.v2.GetDocumentResponse"
+  };
   option (ai.protomolt.proto.validate.v1.message).cel = {
     id: "archive.snapshot_identity"
     message: "Version metadata must identify the containing entry and version"
-    expression: "!has(this.metadata_snapshot) || (this.version > 0 && this.metadata_snapshot.current_version == this.version && this.metadata_snapshot.address == this.address && this.metadata_snapshot.entry_uuid != '')"
+    expression: "!has(this.metadata_snapshot) || (this.version > 0 && this.metadata_snapshot.current_version == this.version && this.metadata_snapshot.address == this.address)"
   };
   // The entry this version belongs to.
   EntryAddress address = 1 [
-    (ai.protomolt.proto.validate.v1.field) = {required: true}
+    (ai.protomolt.proto.validate.v1.field) = {required: true},
+    (ai.protomolt.proto.projection.v1.from) = {paths: {path: "manifest.address"}}
   ];
   // The version number: 1 for the first stored state, monotonically
   // increasing per entry.
-  int64 version = 2;
+  int64 version = 2 [
+    (ai.protomolt.proto.projection.v1.from) = {paths: {path: "manifest.revision"}}
+  ];
   // SHA-256 over the ordered rendition hashes: the version's identity as
   // content. Two versions with equal root checksums hold identical bytes.
+  // Over v2: the revision's candidate_sha256, one digest of the composed
+  // candidate computed by v2.
   string root_checksum = 3 [
     (ai.protomolt.proto.validate.v1.field) = {
       string: {sha256_hex: true}
       ignore_if_zero: true
-    }
+    },
+    (ai.protomolt.proto.projection.v1.from) = {paths: {path: "validation.candidate_sha256"}}
   ];
-  // Sum of PRESENT rendition sizes in this version.
+  // Sum of PRESENT rendition sizes in this version. Host-filled over v2: a
+  // sum over the rows, and CEL has no fold.
   int64 total_bytes = 4;
   // When this version was created.
-  google.protobuf.Timestamp created_at = 5;
-  // One entry per rendition object, in stable (name, sub_key) order.
-  repeated RenditionManifestEntry renditions = 6;
+  google.protobuf.Timestamp created_at = 5 [
+    (ai.protomolt.proto.projection.v1.from) = {paths: {path: "manifest.committed_at"}}
+  ];
+  // One entry per rendition object, in stable (name, sub_key) order. Over
+  // v2: the raw blobs in stored order, then the PARSED part when present.
+  repeated RenditionManifestEntry renditions = 6 [
+    (ai.protomolt.proto.projection.v1.from) = {
+      cel: "dyn(source.document.blob_bag.blobs.blob) + dyn(source.manifest.parts.filter(p, has(p.selector.part) && p.selector.part == 4))"
+    }
+  ];
   // Descriptive metadata captured atomically when this content version committed.
   // Absent means legacy metadata was not recorded; never fill it from current info.
   // current_version is frozen at capture and equals this manifest's version.
   // This is provenance, not current authority or a schema/admission attestation.
-  EntryInfo metadata_snapshot = 7;
+  // Over v2: the CORE of the same revision, projected.
+  EntryInfo metadata_snapshot = 7 [
+    (ai.protomolt.proto.projection.v1.from) = {cel: "source"}
+  ];
 }
 
 // Entry-level metadata: the typed first-class fields plus the extension
 // map. Structured metadata that deserves a schema is a rendition with a
 // schema_subject pin, not a map entry — the map is for labels, renditions
 // are for data.
+//
+// Over v2: projected from a document read or a listing row. metadata and
+// classification are host-filled: projection v1 refuses map fields, and the
+// classification is the asset layer's output, not a stored document field.
 message EntryInfo {
+  option (ai.protomolt.proto.projection.v1.sources) = {
+    source: "ai.protomolt.proto.repo.v2.GetDocumentResponse"
+    source: "ai.protomolt.proto.repo.v2.DocumentSummary"
+  };
   // The entry's logical identity.
-  EntryAddress address = 1;
+  EntryAddress address = 1 [
+    (ai.protomolt.proto.projection.v1.from) = {paths: {path: "manifest.address" path: "address"}}
+  ];
   // The deterministic entry UUID (derived echo of the address; also the
-  // object-key prefix segment).
+  // object-key prefix segment). Not projected over v2: the call number is
+  // the identity.
   string entry_uuid = 2 [
     (ai.protomolt.proto.validate.v1.field) = {
       string: {uuid: true}
@@ -237,19 +330,26 @@ message EntryInfo {
   ];
   // The entry's current (latest) version number. Within a VersionManifest
   // metadata_snapshot, this is frozen at capture and equals that manifest's version.
-  int64 current_version = 3;
+  int64 current_version = 3 [
+    (ai.protomolt.proto.projection.v1.from) = {paths: {path: "manifest.revision" path: "revision"}}
+  ];
   // Display title.
   string title = 4 [
     (ai.protomolt.proto.validate.v1.field) = {
       string: {max_len: 500}
       ignore_if_zero: true
-    }
+    },
+    (ai.protomolt.proto.projection.v1.from) = {paths: {path: "document.search_metadata.title" path: "lookup.title"}}
   ];
-  // Original filename, when the entry came from a file.
+  // Original filename, when the entry came from a file. Over v2: the
+  // "original" blob's filename; listing rows have none.
   string filename = 5 [
     (ai.protomolt.proto.validate.v1.field) = {
       string: {max_len: 500}
       ignore_if_zero: true
+    },
+    (ai.protomolt.proto.projection.v1.from) = {
+      cel: "source.document.blob_bag.blobs.blob.filter(b, b.blob_id == 'original').map(b, b.filename).join('')"
     }
   ];
   // Media type of the entry's primary content.
@@ -257,6 +357,9 @@ message EntryInfo {
     (ai.protomolt.proto.validate.v1.field) = {
       string: {mime_type: true, max_len: 200}
       ignore_if_zero: true
+    },
+    (ai.protomolt.proto.projection.v1.from) = {
+      paths: {path: "document.search_metadata.source_mime_type" path: "lookup.source_mime_type"}
     }
   ];
   // Where the content came from, when the source has an address.
@@ -264,14 +367,25 @@ message EntryInfo {
     (ai.protomolt.proto.validate.v1.field) = {
       string: {max_len: 2000}
       ignore_if_zero: true
-    }
+    },
+    (ai.protomolt.proto.projection.v1.from) = {paths: {path: "document.search_metadata.source_uri" path: "lookup.source_uri"}}
   ];
   // The source's own last-modified instant, when the source reports one.
-  google.protobuf.Timestamp source_modified_at = 8;
+  google.protobuf.Timestamp source_modified_at = 8 [
+    (ai.protomolt.proto.projection.v1.from) = {
+      paths: {path: "document.search_metadata.last_modified_date" path: "lookup.last_modified_date"}
+    }
+  ];
   // When the entry was first created.
-  google.protobuf.Timestamp created_at = 9;
+  google.protobuf.Timestamp created_at = 9 [
+    (ai.protomolt.proto.projection.v1.from) = {
+      paths: {path: "document.search_metadata.creation_date" path: "lookup.creation_date"}
+    }
+  ];
   // When the entry last changed.
-  google.protobuf.Timestamp updated_at = 10;
+  google.protobuf.Timestamp updated_at = 10 [
+    (ai.protomolt.proto.projection.v1.from) = {paths: {path: "manifest.committed_at" path: "committed_at"}}
+  ];
   // What the entry is: the classification state machine's stored fact,
   // resolved from the primary rendition. Never a silent default —
   // "unclassified" and "conflicted" are first-class stored states.
@@ -279,6 +393,52 @@ message EntryInfo {
   // Extensible key-value labels (extension-metadata map — repository
   // field-99 convention).
   map<string, string> metadata = 99;
+}
+
+// One retained version of an entry, as ListVersions reports it over v2:
+// projected from the revision's history row. A row carries no renditions;
+// GetEntryManifest at the version reads them.
+message VersionSummary {
+  option (ai.protomolt.proto.projection.v1.sources) = {
+    source: "ai.protomolt.proto.repo.v2.RevisionSummary"
+  };
+  // The version number.
+  int64 version = 1 [
+    (ai.protomolt.proto.validate.v1.field) = {int64: {gt: 0}},
+    (ai.protomolt.proto.projection.v1.from) = {paths: {path: "revision"}}
+  ];
+  // The version this one superseded; 0 for the first.
+  int64 previous_version = 2 [
+    (ai.protomolt.proto.validate.v1.field) = {int64: {gte: 0}},
+    (ai.protomolt.proto.projection.v1.from) = {paths: {path: "previous_revision"}}
+  ];
+  // When this version was committed.
+  google.protobuf.Timestamp created_at = 3 [
+    (ai.protomolt.proto.validate.v1.field) = {required: true},
+    (ai.protomolt.proto.projection.v1.from) = {paths: {path: "committed_at"}}
+  ];
+  // The producing module of the save, when a step wrote it.
+  string module = 4 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      string: {max_len: 200}
+      ignore_if_zero: true
+    },
+    (ai.protomolt.proto.projection.v1.from) = {paths: {path: "owner.step.module_id"}}
+  ];
+  // The version is a deletion.
+  bool deleted = 5 [
+    (ai.protomolt.proto.projection.v1.from) = {paths: {path: "tombstone"}}
+  ];
+}
+
+// The structured CORE payload of an archive entry over v2: the producer's
+// format declaration and the asset's object-storage origin, stored as the
+// document's structured_data and typed-validated like any Any occurrence.
+message ArchiveEntryFacts {
+  // The producer's format declaration for the entry's primary rendition.
+  ai.protomolt.proto.asset.v1.FormatFact declared = 1;
+  // Where the asset came from, when it arrived from object storage.
+  ai.protomolt.proto.asset.v1.ObjectStoreOrigin origin = 2;
 }
 
 // A rendition with its bytes: the inline save/read payload shape.

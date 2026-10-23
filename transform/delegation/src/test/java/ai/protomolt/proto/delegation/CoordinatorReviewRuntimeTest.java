@@ -338,16 +338,23 @@ class CoordinatorReviewRuntimeTest {
                     && entry.getCoordinatorFrame().hasReviewDeferred());
             beforeCancel = harness.coordinator.transcript();
             harness.coordinator.cancel(TASK, "no longer needed");
+            // The worker acknowledgement is a second legitimate append. Wait for
+            // it so the cache assertions exercise both entries without a race.
+            harness.await(entry -> entry.hasWorkerFrame() && entry.getWorkerFrame().hasCancelled());
             afterCancel = harness.coordinator.transcript();
         }
-        assertThat(afterCancel.getEntriesCount()).isEqualTo(beforeCancel.getEntriesCount() + 1);
-        TranscriptEntry cancelEntry = afterCancel.getEntries(afterCancel.getEntriesCount() - 1);
+        assertThat(afterCancel.getEntriesList().subList(0, beforeCancel.getEntriesCount()))
+                .containsExactlyElementsOf(beforeCancel.getEntriesList());
+        List<TranscriptEntry> appended = afterCancel.getEntriesList()
+                .subList(beforeCancel.getEntriesCount(), afterCancel.getEntriesCount());
+        assertThat(appended).anyMatch(entry -> entry.hasCoordinatorFrame()
+                && entry.getCoordinatorFrame().hasCancellation());
+        assertThat(appended).anyMatch(entry -> entry.hasWorkerFrame()
+                && entry.getWorkerFrame().hasCancelled());
 
         DelegationCoordinatorState state = new DelegationCoordinatorState();
         DelegationReplay.restore(new DelegationReducer(), state, beforeCancel);
         assertThat(state.transcriptVersion).isEqualTo(beforeCancel.getEntriesCount());
-        DelegationReducer.ReviewState authoritative = new DelegationReducer()
-                .reduce(afterCancel).tasks().get(TASK).review();
 
         Object lock = new Object();
         java.util.concurrent.ExecutorService executor =
@@ -363,11 +370,20 @@ class CoordinatorReviewRuntimeTest {
                 // Nothing appended: the cached projection answers, instance-identical.
                 assertThat(runtime.currentReview(task)).isSameAs(first);
 
-                state.record(cancelEntry);
-                assertThat(state.transcriptVersion).isEqualTo(afterCancel.getEntriesCount());
-                DelegationReducer.ReviewState afterAppend = runtime.currentReview(task);
-                assertThat(afterAppend).isNotSameAs(first);
-                assertThat(afterAppend).isEqualTo(authoritative);
+                Transcript.Builder prefix = beforeCancel.toBuilder();
+                DelegationReducer.ReviewState previous = first;
+                for (TranscriptEntry entry : appended) {
+                    state.record(entry);
+                    prefix.addEntries(entry);
+                    assertThat(state.transcriptVersion).isEqualTo(prefix.getEntriesCount());
+                    DelegationReducer.ReviewState authoritative = new DelegationReducer()
+                            .reduce(prefix.build()).tasks().get(TASK).review();
+                    DelegationReducer.ReviewState afterAppend = runtime.currentReview(task);
+                    assertThat(afterAppend).isNotSameAs(previous);
+                    assertThat(afterAppend).isEqualTo(authoritative);
+                    assertThat(runtime.currentReview(task)).isSameAs(afterAppend);
+                    previous = afterAppend;
+                }
             }
         } finally {
             executor.shutdownNow();

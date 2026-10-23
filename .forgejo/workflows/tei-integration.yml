@@ -29,7 +29,10 @@ concurrency:
 
 jobs:
   tei-integration:
-    runs-on: ubuntu-latest
+    # Repository variables select a Docker-capable runner and persistent cache path.
+    runs-on: ${{ vars.PROTOMOLT_TEI_RUNNER || 'ubuntu-latest' }}
+    env:
+      PROTOMOLT_TEI_CACHE: ${{ vars.PROTOMOLT_TEI_CACHE || '/work/tei-model-cache' }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -42,17 +45,18 @@ jobs:
 
       - uses: gradle/actions/setup-gradle@v4
 
-      # Models are provisioned on the runner outside CI.
-      - name: Require the pre-provisioned TEI model cache
+      # TEI downloads missing models on startup and reuses the bind-mounted cache.
+      # With Docker outside the job container, this absolute path must also exist
+      # on the Docker host (mount it at the same path in the runner job).
+      - name: Prepare the persistent TEI model cache
         shell: bash
         run: |
-          cache=/work/tei-model-cache
-          if [[ ! -d "$cache" ]] || [[ -z "$(find "$cache" -mindepth 1 -maxdepth 1 -print -quit)" ]]; then
-            echo "::error::Required model cache /work/tei-model-cache is missing or empty; provision it before running TEI integration."
+          if [[ "$PROTOMOLT_TEI_CACHE" != /* ]]; then
+            echo "::error::PROTOMOLT_TEI_CACHE must be an absolute path shared with the Docker host."
             exit 1
           fi
+          mkdir -p -- "$PROTOMOLT_TEI_CACHE"
+          test -w "$PROTOMOLT_TEI_CACHE"
 
-      - name: Run the TEI rerank lane
-        env:
-          PROTOMOLT_TEI_CACHE: /work/tei-model-cache
+      - name: Run the TEI rerank lane (download missing models)
         run: ./gradlew :protomolt-search-index-opensearch:teiIntegrationTest --no-daemon --console=plain

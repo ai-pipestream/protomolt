@@ -207,7 +207,7 @@ services:
   # This sidecar exposes it to candidate containers ONLY on the Docker bridge.
   # No credential is held by this sidecar; both gRPC hops require their tokens.
   inference-forward:
-    image: alpine/socat:1.8.1.3@sha256:fb3862c949af7c79996d0e514ee96128644d840835ed5368eeecb14a869de361
+    image: alpine/socat:1.8.1.3@sha256:22d77becaeeea8ef56b8c4bb2312323acafe85354be6a85714ff5050e3537842
     network_mode: host
     command:
       - -d

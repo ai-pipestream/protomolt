@@ -36,6 +36,7 @@ naming the missing ones.
 | Variable | Default | Accepted |
 |---|---|---|
 | `DOCUMENT_PLATFORM_GRPC_PORT` | `9090` | integer 0..65535; 0 = ephemeral |
+| `DOCUMENT_PLATFORM_CONSOLE_DIR` | unset = console unavailable (HTTP 503) | path to a built console bundle containing `index.html`; blank or invalid paths fail boot |
 | `DOCUMENT_PLATFORM_HTTP_PORT` | `8080` | integer 0..65535 or `off`; 0/`off` disables the HTTP upload server |
 | `DOCUMENT_PLATFORM_S3_ENDPOINT` | unset = provider default endpoint | URL |
 | `DOCUMENT_PLATFORM_S3_REGION` | `us-east-1` | non-blank text |
@@ -238,6 +239,7 @@ member set without it fails fast):
 |---|---|---|---|
 | `PROTOMOLT_API_TOKEN` | `ProtoMoltServe`, `DocumentPlatformConfig`, `RepoServiceMain`, `ProtoMoltAcpAgent` | unset = open surfaces (serve, platform); required by the standalone repo service | token text |
 | `PROTOMOLT_ACCESS_POLICY` | `ProtoMoltServe`, `DocumentPlatformConfig` | unset | path to the access-policy document; requires the API token |
+| `PROTOMOLT_ACCOUNT_BINDINGS` | `AccountBindingPolicies` | unset = no account bindings | path to a binary protobuf `.binpb` or `.pb` account-binding document; blank, unreadable or invalid documents fail boot |
 | `PROTOMOLT_<ROLE>_TARGET` | `Channels` (composer) | unset = in-process or refused | `host:port` of the remote role, for example `PROTOMOLT_REPO_TARGET` |
 
 ## protomolt-serve (`apps/serve`)

@@ -15,6 +15,7 @@ import java.time.Duration;
 import java.util.Set;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
@@ -30,7 +31,8 @@ class UnaryRequestAdmissionTest {
         final AtomicInteger parses = new AtomicInteger();
         final AtomicInteger calls = new AtomicInteger();
         final AtomicInteger streams = new AtomicInteger();
-        final CountDownLatch parsed = new CountDownLatch(1);
+        final CountDownLatch received = new CountDownLatch(1);
+        final AtomicReference<Status> transportStatus = new AtomicReference<>();
         final CountDownLatch entered = new CountDownLatch(1);
         final CountDownLatch release = new CountDownLatch(1);
         final PayloadBudget budget;
@@ -50,7 +52,7 @@ class UnaryRequestAdmissionTest {
             var proto = ProtoUtils.marshaller(BytesValue.getDefaultInstance());
             var observed = new MethodDescriptor.Marshaller<BytesValue>() {
                 public InputStream stream(BytesValue value) { return proto.stream(value); }
-                public BytesValue parse(InputStream input) { parses.incrementAndGet(); parsed.countDown(); return proto.parse(input); }
+                public BytesValue parse(InputStream input) { parses.incrementAndGet(); return proto.parse(input); }
             };
             method = MethodDescriptor.<BytesValue, BytesValue>newBuilder().setFullMethodName(ECHO)
                     .setType(MethodDescriptor.MethodType.UNARY).setRequestMarshaller(observed).setResponseMarshaller(proto).build();
@@ -68,7 +70,15 @@ class UnaryRequestAdmissionTest {
                     .addMethod(stream, ServerCalls.asyncClientStreamingCall(observer -> {
                         streams.incrementAndGet(); throw new AssertionError("Rejected stream constructed a handler");
                     })).build();
-            var builder = NettyServerBuilder.forPort(0).addService(service);
+            var builder = NettyServerBuilder.forPort(0).addService(service)
+                    .addStreamTracerFactory(new ServerStreamTracer.Factory() {
+                        @Override public ServerStreamTracer newServerStreamTracer(String name, Metadata headers) {
+                            return new ServerStreamTracer() {
+                                @Override public void inboundMessage(int sequence) { received.countDown(); }
+                                @Override public void streamClosed(Status status) { transportStatus.set(status); }
+                            };
+                        }
+                    });
             admission.configure(builder);
             server = GrpcServerLifetime.start(builder);
             channel = NettyChannelBuilder.forAddress("127.0.0.1", server.server().getPort()).usePlaintext().build();
@@ -176,16 +186,22 @@ class UnaryRequestAdmissionTest {
         }
     }
 
-    @Test void cancellationBeforeHalfCloseDrainsParsedRequest() throws Exception {
+    @Test void cancellationBeforeHalfCloseDrainsReservationWithoutDecoding() throws Exception {
         try (var f = new Fixture(false)) {
             var call = f.channel.newCall(f.method, CallOptions.DEFAULT);
             call.start(new ClientCall.Listener<>() {}, new Metadata());
             call.request(1); call.sendMessage(VALUE);
-            assertThat(f.parsed.await(5, TimeUnit.SECONDS)).isTrue();
+            // Since gRPC 1.85.1, unary decoding waits for half-close. Observe the
+            // transport receiving the frame without requiring protobuf parsing.
+            assertThat(f.received.await(5, TimeUnit.SECONDS)).isTrue();
+            assertThat(f.parses.get()).isZero();
             assertThat(f.budget.reservedBytes()).isEqualTo(2048);
             call.cancel("Test cancellation before half-close", null);
             assertThat(f.admission.awaitIdle(Duration.ofSeconds(5))).isTrue();
+            assertThat(f.parses.get()).isZero();
             assertThat(f.calls.get()).isZero();
+            assertThat(f.budget.reservedBytes()).isZero();
+            assertThat(f.call(VALUE, CallOptions.DEFAULT)).isEqualTo(VALUE);
         }
     }
 
@@ -203,7 +219,7 @@ class UnaryRequestAdmissionTest {
         }
     }
 
-    @Test void duplicateUnaryMessagesAreRejectedAndBothDecodeAllowancesDrain() throws Exception {
+    @Test void duplicateUnaryMessagesAreRejectedBeforeDecodingAndAllowancesDrain() throws Exception {
         try (var f = new Fixture(false)) {
             // Only the client descriptor permits two sends; the server remains unary.
             var descriptor = f.method.toBuilder().setType(MethodDescriptor.MethodType.BIDI_STREAMING).build();
@@ -213,11 +229,16 @@ class UnaryRequestAdmissionTest {
                 @Override public void onClose(Status status, Metadata trailers) { result.complete(status); }
             }, new Metadata());
             call.request(1); call.sendMessage(VALUE); call.sendMessage(VALUE); call.halfClose();
-            assertThat(result.get(5, TimeUnit.SECONDS).getCode()).isEqualTo(Status.Code.INTERNAL);
-            assertThat(f.parses.get()).isEqualTo(2);
+            // gRPC rejects the extra frame before decoding either protobuf. Netty's
+            // stream reset reaches the client as CANCELLED; trace the server's
+            // actual protocol rejection separately.
+            assertThat(result.get(5, TimeUnit.SECONDS).getCode()).isEqualTo(Status.Code.CANCELLED);
+            assertThat(f.parses.get()).isZero();
             assertThat(f.calls.get()).isZero();
             assertThat(f.admission.awaitIdle(Duration.ofSeconds(5))).isTrue();
             assertThat(f.budget.reservedBytes()).isZero();
+            assertThat(f.transportStatus.get().getCode()).isEqualTo(Status.Code.INTERNAL);
+            assertThat(f.call(VALUE, CallOptions.DEFAULT)).isEqualTo(VALUE);
         }
     }
 
