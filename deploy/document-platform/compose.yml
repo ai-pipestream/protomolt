@@ -79,6 +79,20 @@ services:
       # a Model2Vec model directory and set PROTOMOLT_MODEL2VEC_PATH to it;
       # without one the repo-document subject serves the lexical lane only.
       DOCUMENT_PLATFORM_SEARCH_INDEX_DIR: /data/search-index
+      # Dev-only authentication examples. Unset, this stack is an open node:
+      # every surface answers without a credential, which is what the seeded
+      # demo and the read-only console expect. Uncomment the token to guard
+      # gRPC and HTTP (dev value, never production); console reads then need
+      # the token too until a session can write (#581).
+      #   PROTOMOLT_API_TOKEN: "dev-only-operator-token"
+      # Console OIDC sign-in needs a reachable provider: the host fetches the
+      # issuer's discovery document at startup, so placeholder values refuse
+      # to boot. Point these at a dev Keycloak realm, all five together:
+      #   PROTOMOLT_CONSOLE_OIDC_ISSUER: "http://keycloak:8080/realms/protomolt-dev"
+      #   PROTOMOLT_CONSOLE_OIDC_CLIENT_ID: "protomolt-console-dev"
+      #   PROTOMOLT_CONSOLE_OIDC_CLIENT_SECRET: "dev-only-client-secret"
+      #   PROTOMOLT_CONSOLE_OIDC_REDIRECT_URI: "http://localhost:8080/console/session/callback"
+      #   PROTOMOLT_CONSOLE_SESSION_TTL: "PT8H"
     ports:
       - "9090:9090"   # repo gRPC
       - "8080:8080"   # repo HTTP: uploads and /console
