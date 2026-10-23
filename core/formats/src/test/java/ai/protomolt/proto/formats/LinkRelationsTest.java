@@ -49,13 +49,31 @@ class LinkRelationsTest {
     @ValueSource(strings = {
             "https://example.com/rel/parent",   // RFC 8288 extension relation
             "http://purl.org/dc/terms/isPartOf", // a Dublin Core term in its URI form
-            "urn:example:rel:sibling",          // any absolute URI scheme
-            "tag:example.com,2026:rel/derived",
+            "HTTPS://example.com/rel/parent",   // scheme comparison is case-insensitive
+            "http://h",                          // smallest non-empty authority
     })
-    void absoluteUrisAreExtensionRelations(String value) {
+    void httpUrisAreExtensionRelations(String value) {
         assertThat(Formats.isLinkRelation(value)).isTrue();
         assertThat(LinkRelations.isDublinCore(value)).isFalse();
         assertThat(LinkRelations.isRegistered(value)).isFalse();
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {
+            "urn:example:rel:sibling",           // no locator, nothing to link to
+            "tag:example.com,2026:rel/derived",
+            "javascript:alert(1)",               // schemes with renderer side effects
+            "data:text/html,x",
+            "file:///etc/hosts",
+            "vbscript:msgbox",
+            "mailto:a@example.com",
+            "http:rel/parent",                   // http without an authority
+            "http:///rel/parent",                // empty authority
+            "https://?q",                        // authority starts at the query
+            "https://#f",
+    })
+    void nonHttpSchemesAndMissingAuthoritiesRefuse(String value) {
+        assertThat(Formats.isLinkRelation(value)).isFalse();
     }
 
     @ParameterizedTest
@@ -113,9 +131,23 @@ class LinkRelationsTest {
 
     @ParameterizedTest
     @ValueSource(strings = {"source", "relation", "conformsTo", "next", "related",
-            "https://example.com/rel/parent", "ispartof", ""})
+            "https://example.com/rel/parent", "ispartof", "",
+            "http://purl.org/dc/terms/source", "https://purl.org/dc/terms/conformsTo"})
     void relationsWithoutAPairedInverseAnswerEmpty(String value) {
         assertThat(Formats.inverseLinkRelation(value)).isEmpty();
+    }
+
+    @Test
+    void uriFormTermsAnswerTheirInverseInTheSamePrefixForm() {
+        assertThat(Formats.inverseLinkRelation("http://purl.org/dc/terms/isPartOf"))
+                .contains("http://purl.org/dc/terms/hasPart");
+        assertThat(Formats.inverseLinkRelation("https://purl.org/dc/terms/hasPart"))
+                .contains("https://purl.org/dc/terms/isPartOf");
+        assertThat(Formats.inverseLinkRelation("http://purl.org/dc/terms/isVersionOf"))
+                .contains("http://purl.org/dc/terms/hasVersion");
+        // A different namespace spelling of the same term stays unknown.
+        assertThat(Formats.inverseLinkRelation("http://purl.org/dc/elements/1.1/isPartOf"))
+                .isEmpty();
     }
 
     private static void assertStrictlySorted(String[] table) {

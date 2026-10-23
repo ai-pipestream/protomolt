@@ -215,8 +215,9 @@ public final class Formats {
 
     /**
      * A link relation: a Dublin Core relation term ({@code isPartOf}), an IANA registered
-     * relation name ({@code canonical}), or an absolute URI naming an RFC 8288 extension
-     * relation ({@code https://example.com/rel/parent}). Bundled names match exactly.
+     * relation name ({@code canonical}), or an http(s) URI with a non-empty authority naming
+     * an RFC 8288 extension relation ({@code https://example.com/rel/parent}). Bundled names
+     * match exactly; other URI schemes (javascript, data, file, urn, tag) refuse.
      */
     public static boolean isLinkRelation(String value) {
         return LinkRelations.isLinkRelation(value);
@@ -224,7 +225,8 @@ public final class Formats {
 
     /**
      * The paired Dublin Core inverse of a relation ({@code isPartOf} for {@code hasPart} and
-     * the reverse), or empty when the relation has no bundled inverse.
+     * the reverse), in the same spelling the value used (bare term or its
+     * {@code purl.org/dc/terms} URI form), or empty when the relation has no bundled inverse.
      */
     public static Optional<String> inverseLinkRelation(String value) {
         return LinkRelations.inverse(value);

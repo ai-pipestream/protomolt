@@ -278,4 +278,37 @@ class ConceptSchemeRulesTest {
                 .extracting(Violation::ruleId)
                 .containsExactly("concept_scheme.related_hierarchy");
     }
+
+    @Test
+    void iriSchemesStayInert() {
+        assertThat(check(scheme(
+                concept("a").setIri("HTTPS://example.org/a"),
+                concept("b").setIri("urn:example:b"),
+                concept("c").setIri("http://example.org/c"))).violations()).isEmpty();
+        assertThat(check(scheme(concept("a").setIri("javascript:alert(1)"))).violations())
+                .extracting(Violation::path, Violation::ruleId)
+                .containsExactly(tuple("concepts[0].iri", "concept_scheme.iri_scheme"));
+        assertThat(check(scheme(concept("a").setIri("data:text/html,x"))).violations())
+                .extracting(Violation::ruleId)
+                .containsExactly("concept_scheme.iri_scheme");
+        assertThat(check(scheme(concept("a").setIri("schemeless"))).violations())
+                .extracting(Violation::ruleId)
+                .containsExactly("concept_scheme.iri_scheme");
+    }
+
+    @Test
+    void notationDatatypeIrisStayInertAndPlainLiteralsPass() {
+        ConceptNotation plain = ConceptNotation.newBuilder().setValue("PHY").build();
+        ConceptNotation typed = ConceptNotation.newBuilder()
+                .setValue("530").setDatatypeIri("urn:example:ddc").build();
+        assertThat(check(scheme(concept("a").addNotation(plain).addNotation(typed)))
+                .violations()).isEmpty();
+        ConceptNotation scripted = ConceptNotation.newBuilder()
+                .setValue("x").setDatatypeIri("vbscript:msgbox").build();
+        assertThat(check(scheme(concept("a").addNotation(plain).addNotation(scripted)))
+                .violations())
+                .extracting(Violation::path, Violation::ruleId)
+                .containsExactly(
+                        tuple("concepts[0].notation[1].datatype_iri", "concept_scheme.iri_scheme"));
+    }
 }

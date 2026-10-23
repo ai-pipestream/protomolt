@@ -84,7 +84,14 @@ class LinkRelationRuleTest {
     @Test
     void extensionRelationUrisPass() {
         assertThat(ruleIds("https://example.com/rel/parent", "")).isEmpty();
-        assertThat(ruleIds("urn:example:rel:sibling", "")).isEmpty();
+        assertThat(ruleIds("http://purl.org/dc/terms/isPartOf", "")).isEmpty();
+    }
+
+    @Test
+    void nonHttpExtensionSchemesRefuse() {
+        assertThat(ruleIds("urn:example:rel:sibling", "")).containsExactly("string.link_relation");
+        assertThat(ruleIds("javascript:alert(1)", "")).containsExactly("string.link_relation");
+        assertThat(ruleIds("data:text/html,x", "")).containsExactly("string.link_relation");
     }
 
     @Test
