@@ -113,7 +113,11 @@ import ai.protomolt.proto.repo.container.ledger.LedgerConfig;
  *        resolving blob metadata before streaming the raw blob unbuffered;
  *        {@code GetSchemaDescriptor} reserves the retained descriptor's catalog
  *        length before loading it; the archive's streamed {@code ReadRendition}
- *        reserves a fixed two-frame window (128 KiB) for each open stream. A
+ *        reserves a fixed two-frame window (128 KiB) for each open stream. V2 saves
+ *        draw from a second pool of the same size ({@code ReadByteBudget.forSaves},
+ *        reporting {@code "Save buffer budget exhausted"} on refusal) after fragment
+ *        split and inline blob extraction, so the worst-case combined reservation
+ *        across concurrent reads and saves is {@code 2 * readBudgetBytes}. A
  *        reservation the remaining budget does not cover fails fast with
  *        {@code RESOURCE_EXHAUSTED}, never allocating from the recorded length
  */

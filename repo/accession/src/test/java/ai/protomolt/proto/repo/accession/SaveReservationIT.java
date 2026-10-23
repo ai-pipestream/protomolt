@@ -71,8 +71,10 @@ class SaveReservationIT {
         int puts = f.stack.puts.get();
 
         assertThatThrownBy(() -> limited.save(processAuthority(), request))
-                .isInstanceOfSatisfying(AccessionException.class,
-                        failure -> assertThat(failure.code()).isEqualTo(Status.Code.RESOURCE_EXHAUSTED));
+                .isInstanceOfSatisfying(AccessionException.class, failure -> {
+                    assertThat(failure.code()).isEqualTo(Status.Code.RESOURCE_EXHAUSTED);
+                    assertThat(failure.getMessage()).contains("Save buffer budget exhausted");
+                });
         assertThat(f.stack.puts.get()).as("no stack write happened").isEqualTo(puts);
         assertThat(budget.outstanding.get()).as("the refused reservation holds nothing").isZero();
         assertThat(f.catalog.outcome(account, "op-over")).as("the operation ID is still usable").isEmpty();
@@ -169,8 +171,10 @@ class SaveReservationIT {
         var request = create("op-cold", address, document(account, "doc-cold", "t")).build();
 
         assertThatThrownBy(() -> limited.save(processAuthority(), request))
-                .isInstanceOfSatisfying(AccessionException.class,
-                        failure -> assertThat(failure.code()).isEqualTo(Status.Code.RESOURCE_EXHAUSTED));
+                .isInstanceOfSatisfying(AccessionException.class, failure -> {
+                    assertThat(failure.code()).isEqualTo(Status.Code.RESOURCE_EXHAUSTED);
+                    assertThat(failure.getMessage()).contains("Save buffer budget exhausted");
+                });
         assertThat(registrations.get()).as("the cold drive registered nothing").isZero();
         assertThat(cachedStacks).as("the cold drive stays uncached").isEmpty();
         assertThat(tiny.outstanding.get()).isZero();

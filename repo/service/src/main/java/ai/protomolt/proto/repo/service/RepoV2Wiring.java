@@ -114,13 +114,15 @@ final class RepoV2Wiring {
         // fail-closed. Listings, and ResolveLink through them, expand concept
         // filters against the same mounts.
         ConceptSchemeCatalog mountedConcepts = schemeId -> conceptSchemes.get().scheme(schemeId);
-        // The save budget, sized like the read budget: a unary save reserves its
-        // admitted serialized fragments and raw blob bytes from admission until
-        // the revision commits, and a streamed upload reserves per received
-        // chunk. An over-budget save is RESOURCE_EXHAUSTED before any stack
-        // write, the same answer the read path gives.
+        // The save budget, sized like the read budget but tracked in its own
+        // pool (up to 2x DOCUMENT_PLATFORM_READ_BUDGET_BYTES across concurrent
+        // reads and saves): a unary save reserves its split fragments and
+        // extracted inline raw-blob bytes from admission until the revision
+        // commits, and a streamed upload reserves per received chunk. An
+        // over-budget save is RESOURCE_EXHAUSTED ("Save buffer budget exhausted")
+        // before any stack write.
         var v2Saves = new DocumentSaves(catalog, v2Drives, builtinSchemas,
-                limits, new ReadByteBudget(config.readBudgetBytes()), Clock.systemUTC(),
+                limits, ReadByteBudget.forSaves(config.readBudgetBytes()), Clock.systemUTC(),
                 DocumentSchemas.compiled(), false, mountedConcepts);
         var v2Uploads = new DocumentUploads(v2Saves);
         var accession = new AccessionGrpcService(v2Saves, v2Uploads,

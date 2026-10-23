@@ -121,6 +121,22 @@ recorded as sent and not enforced.
 committed `Accession` (address, revision, previous revision, commit time,
 per-part changes), and `replayed`.
 
+**Save byte budget.** After splitting the request's `Document` into part
+fragments and extracting any inline raw-blob bytes, a unary save reserves
+those fragment and raw-blob byte lengths (plus transient retained-schema
+evidence during admission) against a dedicated save-side byte budget of
+`DOCUMENT_PLATFORM_READ_BUDGET_BYTES` until the commit finishes; on
+`UploadDocument`, a streamed encoded part reserves per received 64 KiB
+chunk while a streamed raw blob flows straight to the stack. Exhaustion
+fails fast before any drive registration or stack write with
+`RESOURCE_EXHAUSTED` (`Save buffer budget exhausted`), leaving the
+`operation_id` unrecorded. Because the save-side budget is a separate pool
+of `DOCUMENT_PLATFORM_READ_BUDGET_BYTES` alongside the read-side
+`ReadByteBudget` (`Read buffer budget exhausted`), concurrent read and save
+paths can hold up to `2 * DOCUMENT_PLATFORM_READ_BUDGET_BYTES` in combined
+reservations (and a unary save's reservation is taken after the request
+message has been split and inline blobs extracted).
+
 ### Bulk and streamed saves
 
 - **`SaveDocuments`** (bidirectional stream) — each item is a full
