@@ -305,6 +305,15 @@ GitHub CI never runs it. Run it by hand with:
 
 In CI it runs on the Forgejo lane `.forgejo/workflows/tei-integration.yml`.
 The first run downloads about 1.2 GB of models from the HF hub. Setting
-`PROTOMOLT_TEI_CACHE` to an existing directory bind-mounts it into both
-TEI containers at `/data`, so the models persist across runs; the Forgejo
-lane points it at `/work/tei-model-cache` on the runner.
+`PROTOMOLT_TEI_CACHE` to an absolute writable directory creates it if needed and
+bind-mounts it into both TEI containers at `/data`. An empty cache is valid: TEI
+downloads missing models, then reuses them on later runs. Invalid configured paths
+fail explicitly. Unset, the containers use ephemeral storage and download again.
+
+The Forgejo lane accepts repository variables `PROTOMOLT_TEI_RUNNER` (default
+`ubuntu-latest`, a Docker-capable runner label) and `PROTOMOLT_TEI_CACHE` (default
+`/work/tei-model-cache`). With a containerized runner and host Docker socket, mount
+the cache into the job container at the same absolute path as on the Docker host;
+a directory created only inside the job container does not provision host storage.
+The runner must be able to create/write the directory, and the TEI containers need
+network access to the Hugging Face hub on a cold start. No pre-download is required.
