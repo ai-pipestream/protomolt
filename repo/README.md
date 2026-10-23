@@ -80,6 +80,7 @@ unpurged reference points at them.
 | `repo/stack` | `:protomolt-repo-stack` | v2 write-once stacks: streamed puts that return a `StackRef`, reads verified against it |
 | `repo/catalog` | `:protomolt-repo-catalog` | v2 catalog over JDBC + HikariCP + Flyway: revisions, part references, outcomes, writer grants, outbox (mounted in the dedicated `repo_catalog` schema) |
 | `repo/accession` | `:protomolt-repo-accession` | v2 `ai.protomolt.proto.repo.v2.DocumentService` (`AccessionGrpcService`): all 13 RPCs — save/read/manifest/revisions/outcome, streamed upload/read + blob reads, delete/list/purge, bulk streams and the Kafka outbox relay; mounted by full-profile `RepoServices` |
+| `repo/archive` | `:protomolt-repo-archive` | The archive over v2 documents (`DocumentArchiveGrpcService`): `ArchiveService` entry reads projected from `DocumentService` reads through the view `.proto`'s projection options, `PutEntry`/`UploadRendition` translated into one v2 save each, outcome replay under deterministic UUIDv5 operation IDs; not yet mounted by `RepoServices` |
 
 ## Repository v2 (parts-based)
 

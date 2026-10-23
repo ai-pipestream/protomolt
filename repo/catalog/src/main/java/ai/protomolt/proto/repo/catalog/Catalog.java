@@ -177,6 +177,20 @@ public interface Catalog extends AutoCloseable {
     RejectionResult recordRejection(String accountId, String operationId, String intentSha256, RecordedOutcome outcome,
             List<String> grantIds, Optional<CredentialCheck> credential, NodeAddress address, boolean creating);
 
+    /**
+     * Records the outcome of a save that changed nothing: {@code outcome.unchanged}
+     * names {@code expectedRevision} of {@code address}, and the outcome is stored
+     * under the operation ID bound to that revision, with no new revision, event or
+     * pointer move. In the storing transaction it rechecks every named grant and the
+     * credential and that {@code expectedRevision} is still the live current revision.
+     *
+     * @return {@code Committed} when stored; the found outcome when the operation ID was
+     *         already recorded; {@code Conflict} or {@code TargetPurged} when the document
+     *         moved; {@code WriteDenied} when authority was revoked or rotated
+     */
+    CommitResult recordUnchanged(NodeAddress address, String operationId, String intentSha256, long expectedRevision,
+            RecordedOutcome outcome, List<String> grantIds, Optional<CredentialCheck> credential);
+
     /** Marks all document references and durably records exact deletion targets; empty if the address is absent. */
     Optional<CatalogRecords.PurgeState> markPurged(ai.protomolt.proto.repo.v2.PurgeDocumentRequest request,
             com.google.protobuf.Timestamp markedAt);

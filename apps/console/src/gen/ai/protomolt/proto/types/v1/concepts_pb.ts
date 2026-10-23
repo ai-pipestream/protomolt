@@ -110,28 +110,36 @@ export type Concept = Message<"ai.protomolt.proto.types.v1.Concept"> & {
   related: string[];
 
   /**
-   * Cross-scheme mappings. Each target names another scheme.
+   * Cross-scheme mapping, same meaning. Each target names another scheme.
    *
    * @generated from field: repeated ai.protomolt.proto.types.v1.ConceptRef exact_match = 7;
    */
   exactMatch: ConceptRef[];
 
   /**
+   * Cross-scheme mapping, nearly the same meaning.
+   *
    * @generated from field: repeated ai.protomolt.proto.types.v1.ConceptRef close_match = 8;
    */
   closeMatch: ConceptRef[];
 
   /**
+   * Cross-scheme mapping to a more general concept.
+   *
    * @generated from field: repeated ai.protomolt.proto.types.v1.ConceptRef broad_match = 9;
    */
   broadMatch: ConceptRef[];
 
   /**
+   * Cross-scheme mapping to a more specific concept.
+   *
    * @generated from field: repeated ai.protomolt.proto.types.v1.ConceptRef narrow_match = 10;
    */
   narrowMatch: ConceptRef[];
 
   /**
+   * Cross-scheme mapping to an associated concept.
+   *
    * @generated from field: repeated ai.protomolt.proto.types.v1.ConceptRef related_match = 11;
    */
   relatedMatch: ConceptRef[];
@@ -144,6 +152,8 @@ export type Concept = Message<"ai.protomolt.proto.types.v1.Concept"> & {
   definition: LangLabel[];
 
   /**
+   * Usage notes: when this concept applies and when it does not.
+   *
    * @generated from field: repeated ai.protomolt.proto.types.v1.LangLabel scope_note = 13;
    */
   scopeNote: LangLabel[];
@@ -194,6 +204,8 @@ export const ConceptSchema: GenMessage<Concept> = /*@__PURE__*/
  */
 export type ConceptNotation = Message<"ai.protomolt.proto.types.v1.ConceptNotation"> & {
   /**
+   * The notation literal.
+   *
    * @generated from field: string value = 1;
    */
   value: string;
@@ -220,11 +232,15 @@ export const ConceptNotationSchema: GenMessage<ConceptNotation> = /*@__PURE__*/
  */
 export type LangLabel = Message<"ai.protomolt.proto.types.v1.LangLabel"> & {
   /**
+   * The BCP 47 language tag.
+   *
    * @generated from field: string language = 1;
    */
   language: string;
 
   /**
+   * The label text.
+   *
    * @generated from field: string text = 2;
    */
   text: string;
@@ -245,11 +261,15 @@ export const LangLabelSchema: GenMessage<LangLabel> = /*@__PURE__*/
  */
 export type ConceptRef = Message<"ai.protomolt.proto.types.v1.ConceptRef"> & {
   /**
+   * The slug of the scheme the concept lives in.
+   *
    * @generated from field: string scheme_id = 1;
    */
   schemeId: string;
 
   /**
+   * The id of the concept inside that scheme.
+   *
    * @generated from field: string concept_id = 2;
    */
   conceptId: string;
