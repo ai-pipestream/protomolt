@@ -32,8 +32,12 @@
               </div>
             </td>
             <td>
-              <v-btn v-if="row.revision !== shownRevision" size="x-small" variant="tonal"
-                     :data-testid="`open-revision-${row.revision}`" @click="emit('open', row.revision)">Open</v-btn>
+              <template v-if="row.revision !== shownRevision">
+                <v-btn size="x-small" variant="tonal"
+                       :data-testid="`open-revision-${row.revision}`" @click="emit('open', row.revision)">Open</v-btn>
+                <v-btn v-if="shownRevision !== null" size="x-small" variant="text" class="ml-1"
+                       :data-testid="`compare-revision-${row.revision}`" @click="emit('compare', row.revision)">Compare</v-btn>
+              </template>
               <span v-else class="text-caption text-medium-emphasis">shown</span>
             </td>
           </tr>
@@ -59,7 +63,7 @@ import { isOwnCancellation, rpcFailure, type RpcFailure } from '@/repository/rpc
 import { useCallScope } from '@/repository/useCallScope'
 
 const props = defineProps<{ address: NodeAddress; shownRevision: bigint | null }>()
-const emit = defineEmits<{ open: [revision: bigint] }>()
+const emit = defineEmits<{ open: [revision: bigint]; compare: [revision: bigint] }>()
 
 const clients = useRepositoryClients()
 const scope = useCallScope()

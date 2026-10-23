@@ -318,6 +318,22 @@ the procedures the screens call, listed in `ConsoleProcedures` in
   what it shows. Reading a part decodes it with the descriptor set the revision
   retained, fetched by digest through `GetSchemaDescriptor` and hashed again in
   the browser; unknown fields are listed, not dropped.
+- **Compare.** History's Compare button, or `compare=<revision>` beside
+  `revision` in the page address, opens a comparison of the revision shown
+  with another exact revision; Swap and Close change the address the same way.
+  Both sides are read at their exact revision. The parts table matches the two
+  manifests by selector and marks each part added, removed, changed or
+  unchanged, naming the changed columns (state with its deletion reason, size,
+  SHA-256, the revision that wrote it, owner, opaque). Line diffs follow for
+  the search metadata, the bound SKOS concept tags, the outbound links, and the
+  decoded CORE and PARSED fragments. A fragment is decoded with the schema its
+  revision retained and flattened into one `path = value` line per set field
+  by protobuf reflection; a typed Any is entered only when the revision
+  retained a schema for that exact payload (type URL and SHA-256), and a
+  `ConceptRef` field that declares `concept_schemes` is listed as a tag. Link
+  lines leave out the target status, which describes the target now rather
+  than the revision. A section whose read failed shows its failure while the
+  other sections still compare.
 - **Delete.** The current revision of a live document can be tombstoned
   through `DeleteDocument`. The confirmation names the call number and the
   revision it replaces and shows the operation ID chosen when it opened; the
