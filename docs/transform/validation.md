@@ -116,34 +116,158 @@ descriptors were built without the protovalidate extension registry, so
 schemas loaded from a registry or reflection are enforced rather than
 silently passed.
 
-Compatibility is measured rather than claimed: the implementation passes
-the complete protovalidate v1.2.2 conformance suite, 2872 of 2872 cases,
-and CI re-scores the full suite with buf's own runner on every push.
+Compatibility is measured against a pinned upstream suite. On 2026-10-23,
+ProtoMolt `193ef86dde3a9493795f0ac29aa99a03c72dbf2d` passed all **2880** cases
+at upstream `63347b841120e916b4cd29de64b88548326c9a4f`, with **0 failed and
+0 skipped**, using the default comparison mode described below. This runner
+is newer than the vendored v1.2.2 schemas; the old 2872-case result is not the
+current CI baseline. Passing this pin does not establish compatibility with
+later upstream changes.
 
 ## Conformance harness
 
 `protomolt-protobuf-validation-conformance` drives `ProtoValidator` against
-protovalidate's own conformance suite in two modes sharing one runner:
+protovalidate's conformance protocol in two modes sharing one runner:
 
 - **In-build.** A JUnit harness validates a curated set of
   `buf.validate`-annotated cases as part of `./gradlew build`, comparing the
   structured field and rule paths, rule IDs, and key flags of every
   violation exactly as the suite does. It gates at 100%, so any drift in
-  emitted rule IDs or paths fails the build.
+  emitted rule IDs or paths fails the build. `ConformanceHarnessTest` has
+  15 locally authored cases, not the full upstream corpus. The other local
+  tests cover the executor protocol and field-path conversion.
 - **Authoritative.** `ConformanceMain` implements the language-agnostic
   executor protocol (a `TestConformanceRequest` on stdin, a
   `TestConformanceResponse` on stdout), so buf's own
-  `protovalidate-conformance` binary can score the full suite:
-
-  ```shell
-  ./gradlew :protomolt-protobuf-validation-conformance:installDist
-  protovalidate-conformance \
-    protobuf/validation-conformance/build/install/protomolt-protobuf-validation-conformance/bin/protomolt-protobuf-validation-conformance
-  ```
+  `protovalidate-conformance` binary can score the full upstream suite.
+  The upstream tool owns the cases and expected results; ProtoMolt supplies
+  the executor under test. This does not invoke the upstream Java validator
+  as ProtoMolt's validation implementation.
 
 Structured field and rule paths are reconstructed with a faithful port of
 the suite's own field-path algorithm, so a match reflects semantic
 agreement, not formatting luck.
+
+### What is compared
+
+The upstream tool sends a binary protobuf request containing a descriptor
+set and named `Any` test payloads. `ConformanceMain` registers the
+`buf.validate` extensions before parsing, links the descriptors with
+`DescriptorSets`, and parses each payload as a `DynamicMessage`.
+`ConformanceRunner` calls the production `ProtoValidator`; the classpath
+registers `ProtovalidateRuleSource` through `ServiceLoader`. Per-message
+validators support descriptor-aware CEL. `FieldPaths` converts violations
+to the structured field and rule paths expected by Buf. The response stays
+binary protobuf on stdout; diagnostics belong on stderr.
+
+The default upstream comparison checks success/failure and, for validation
+violations, count, field path, rule path, rule ID and map-key flag. CI does
+**not** enable `--strict_message` or `--strict_error`: it does not require
+identical violation prose, and an expected compilation error may match a
+runtime error. A claim about either strict mode needs a separate recorded
+run. See the pinned upstream [comparison implementation](https://github.com/bufbuild/protovalidate/blob/63347b841120e916b4cd29de64b88548326c9a4f/tools/protovalidate-conformance/internal/results/result.go).
+
+This is separate from `buf lint`, which applies the `STANDARD` and
+`COMMENTS` schema-style rules configured in `buf.yaml`, and from
+`buf breaking`, which checks schema compatibility. Neither establishes
+runtime validation conformance. ProtoMolt-only rules such as taxonomy and
+postal rules also need their own tests; the Buf corpus does not cover them.
+
+### Pins and sources of truth
+
+| Component | Pin | Maintained in |
+|---|---|---|
+| Full upstream conformance runner and corpus | `63347b841120e916b4cd29de64b88548326c9a4f` (CI uses `63347b8`) | [CI conformance job](../../.github/workflows/ci.yml) |
+| Vendored `buf/validate/validate.proto` | v1.2.2, `4baed765070e580226a0a30bf2a357cc027dc1f7` | [Dialect NOTICE](../../protobuf/validation-protovalidate/NOTICE) |
+| Vendored `buf/validate/conformance/harness/harness.proto` and field-path port provenance | v1.2.2, same commit | [Harness NOTICE](../../protobuf/validation-conformance/NOTICE) |
+| Buf CLI for lint and breaking checks | `1.70.0` | [CI](../../.github/workflows/ci.yml) and [build prerequisites](../operations/building.md#prerequisites) |
+
+These are independent pins. Installing a newer Buf CLI does not update the
+validation suite or the vendored annotations. The runner resolves to Go
+module version `v1.2.3-0.20260903145109-63347b841120`; it is not a released
+v1.2.3 tag. The CI comment records why the runner advanced beyond v1.2.2.
+
+### Reproduce the CI baseline locally
+
+Run from the repository root with JDK 25 and Go on `PATH`, and network
+access for uncached Gradle and Go dependencies. The upstream tool's
+`tools/go.mod` determines its Go requirement; CI currently selects stable
+Go. Use a dedicated binary directory so an unrelated installed runner
+cannot silently supply a different suite:
+
+```bash
+set -euo pipefail
+conformance_tools="$(mktemp -d)"
+GOBIN="$conformance_tools" go install \
+  github.com/bufbuild/protovalidate/tools/protovalidate-conformance@63347b8
+go version -m "$conformance_tools/protovalidate-conformance"
+
+./gradlew :protomolt-protobuf-validation:test \
+  :protomolt-protobuf-validation-protovalidate:test \
+  :protomolt-protobuf-validation-conformance:test \
+  :protomolt-protobuf-validation-conformance:installDist \
+  --max-workers=2 --console=plain --rerun-tasks
+
+"$conformance_tools/protovalidate-conformance" \
+  protobuf/validation-conformance/build/install/protomolt-protobuf-validation-conformance/bin/protomolt-protobuf-validation-conformance \
+  2>&1 | tee protovalidate-conformance.log
+```
+
+At the current pin, the final summary must be
+`PASS (failed: 0, skipped: 0, passed: 2880, total: 2880)` and the command
+must exit successfully. Keep `pipefail` when using `tee`. Check both the
+summary and exit status; an empty or filtered run is not evidence. Preserve
+the log outside committed source, with the ProtoMolt commit, upstream full
+commit/module version, JDK/Go versions, command and flags. Local JUnit XML
+and HTML reports are under each module's `build/test-results/test` and
+`build/reports/tests/test` directories.
+
+The GitHub `conformance` job separately builds `installDist`, installs the
+pinned upstream runner, and invokes it without filters or expected-failure
+files. It runs on pull requests, pushes to `main`, and manual dispatches;
+an arbitrary branch push without a PR does not trigger this workflow.
+`./gradlew build` alone runs the local curated harness, not this external
+full-suite command. Review the conformance job for the exact candidate
+commit, not a previous green run.
+
+### Assistant maintenance procedure
+
+1. For changes to validation, the Buf dialect, descriptor/option handling,
+   CEL, shared format rules, the harness, or their dependencies, run the
+   relevant local tests and the complete pinned suite above. Preserve a
+   small permanent regression test for each behavior fixed. Diagnose the
+   production validator and its adapter separately; never hard-code a
+   case name or move enforcement into the harness to make the score green.
+2. Before a release or a validation dependency/pin update, compare the
+   pinned commit with upstream [releases](https://github.com/bufbuild/protovalidate/releases)
+   and [changes since the pin](https://github.com/bufbuild/protovalidate/compare/63347b841120e916b4cd29de64b88548326c9a4f...main).
+   Record the check date and exact candidate SHA. A passing pinned suite
+   does not detect new upstream cases; CI has no automatic pin-update job.
+3. Build a candidate runner into a separate `GOBIN` using that exact SHA
+   and run its complete corpus against the same executor. Keep the current
+   baseline run as well. Investigate changed expectations and new failures;
+   fix their cause and add regression tests before advancing the pin.
+   `--suite` and `--case` are useful for diagnosis only; rerun unfiltered
+   before claiming conformance.
+4. When adopting upstream changes, update the CI runner pin and rationale.
+   Inspect changes to both vendored schemas and the field-path algorithm.
+   If those need updating, copy the schemas verbatim, retain licensing,
+   and update each module's `NOTICE` and its `src/main/resources/META-INF/NOTICE`
+   copy. Regenerate affected outputs and run lint/breaking checks when
+   contracts change. Do not edit vendored schemas to suppress failures.
+5. Require zero failures and zero skipped/expected failures. Do not add
+   `--expected_failures`, exclusions, disabled assertions, `continue-on-error`,
+   or lower thresholds to obtain green. Report infrastructure/toolchain
+   failures as unverified runs, with their cause; they are not passes.
+6. Record old and new pins, full-suite totals, default/strict flags, test
+   results and logs in the review. Update the dated result in this guide
+   and current public claims in `docs/website-feature-inventory.md` only
+   from the new evidence. A changed total must be explained by upstream
+   corpus changes, not filtered cases. Do not infer strict-mode or newer
+   release compliance from the default pinned run.
+
+This procedure is also linked from `AGENTS.md` so future coding assistants
+encounter it before changing the validation path.
 
 ## At the gRPC boundary
 
