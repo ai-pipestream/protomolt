@@ -11,7 +11,6 @@ import com.google.protobuf.Descriptors.Descriptor;
 import com.google.protobuf.Descriptors.FieldDescriptor;
 import com.google.protobuf.Message;
 import com.google.protobuf.Timestamp;
-import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
@@ -176,7 +175,32 @@ public final class CatalogEntries {
         };
     }
 
-    private static int utf8Length(String value) { return value.getBytes(StandardCharsets.UTF_8).length; }
+    // Byte length under UTF-8, with no copy of the string. A surrogate pair is 4 bytes.
+    // An unpaired surrogate is the encoder's one-byte replacement, so this matches
+    // StandardCharsets.UTF_8.
+    private static int utf8Length(String value) {
+        int length = 0;
+        for (int i = 0; i < value.length(); i++) {
+            char c = value.charAt(i);
+            if (c < 0x80) {
+                length++;
+            } else if (c < 0x800) {
+                length += 2;
+            } else if (Character.isHighSurrogate(c)) {
+                if (i + 1 < value.length() && Character.isLowSurrogate(value.charAt(i + 1))) {
+                    length += 4;
+                    i++;
+                } else {
+                    length++;
+                }
+            } else if (Character.isLowSurrogate(c)) {
+                length++;
+            } else {
+                length += 3;
+            }
+        }
+        return length;
+    }
 
     /**
      * The entry of a revision: a tombstone carries no lookup and no owner. The
