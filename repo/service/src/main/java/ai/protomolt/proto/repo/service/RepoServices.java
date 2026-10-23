@@ -119,6 +119,13 @@ public final class RepoServices implements AutoCloseable {
     // rebinding touches the catalog only once the services are serving.
     private final RepoStepSaveRebinding stepSave = new RepoStepSaveRebinding(this::stepGrantCatalog, callerBindings);
 
+    {
+        // Principals whose account binding lists intake writers save through grants the
+        // host keeps in the catalog; like the step rebinding, it reads the catalog only
+        // once the services are serving.
+        callerBindings.provisionWriters(new RepoBindingWriters(this::stepGrantCatalog));
+    }
+
     private ai.protomolt.proto.repo.catalog.PostgresCatalog stepGrantCatalog() {
         return catalog;
     }
@@ -609,7 +616,9 @@ public final class RepoServices implements AutoCloseable {
      * @param console the console bundle served at {@link RepositoryConsole#PATH}
      * @param routes extra routes; each handler owns its credential check
      * @param requestCallers resolves the caller of every Connect request; hosts compose
-     *        {@code RequestCallerResolver.firstOf(List.of(bearer(apiToken, policy), sessions))}
+     *        {@code RequestCallerResolver.firstOf(List.of(bearer(apiToken, policy), sessions))}.
+     *        A scoped caller it resolves without a credential, whose account binding lists
+     *        intake writers, runs with the writer credential the host keeps for its principal
      * @return the started HTTP server (also closed by {@link #close()})
      */
     public synchronized UploadHttpServer startHttp(int port, String apiToken,
@@ -619,17 +628,20 @@ public final class RepoServices implements AutoCloseable {
         requireFullProfile();
         RepositoryNetworkAuthentication.requireOperatorToken(apiToken);
         Objects.requireNonNull(requestCallers, "requestCallers");
+        // A principal whose account binding lists intake writers is resolved with the
+        // writer credential the host keeps for it, on the gateway and the upload route alike.
+        RequestCallerResolver resolved = headers -> requestCallers.resolve(headers).map(callerBindings::withBindingWriter);
         if (managedArchive != null) startLifecycle();
         List<ServerServiceDefinition> definitions = services.stream()
                 .map(BindableService::bindService)
                 .toList();
-        ConnectGateway gateway = new ConnectGateway(definitions, ConsoleProcedures.ALL, requestCallers,
+        ConnectGateway gateway = new ConnectGateway(definitions, ConsoleProcedures.ALL, resolved,
                 new ConnectLimits(CONNECT_MESSAGE_BYTES, CONNECT_MESSAGE_BYTES));
         UploadHttpServer http;
         try {
             http = new UploadHttpServer(v2Uploads,
                     () -> new RepositoryCaller("http-upload", true), apiToken, archiveOperations,
-                    console, routes, gateway, requestCallers, callerBindings::bind);
+                    console, routes, gateway, resolved, callerBindings::bind);
         } catch (RuntimeException | Error failure) {
             try { gateway.close(); }
             catch (RuntimeException | Error cleanup) { failure.addSuppressed(cleanup); }
@@ -675,7 +687,8 @@ public final class RepoServices implements AutoCloseable {
     /**
      * The console's sign-in routes over {@code sessions}, for {@link #startHttp(int, String,
      * RepositoryConsole, java.util.Map)}: the status answer names the accounts this host's
-     * bindings map the session's principal to. A host without sign-in mounts the
+     * bindings map the session's principal to and the intake owners its binding lets it
+     * upload and delete as. A host without sign-in mounts the
      * not-configured handler, which answers 503 naming the variables.
      *
      * @param sessions the session store, or empty when sign-in is not configured
@@ -684,7 +697,8 @@ public final class RepoServices implements AutoCloseable {
     public java.util.Map<String, com.sun.net.httpserver.HttpHandler> consoleSignInRoutes(
             java.util.Optional<ai.protomolt.proto.authz.OidcConsoleSessions> sessions) {
         ConsoleSignInHandler handler = sessions
-                .map(store -> ConsoleSignInHandler.over(store, callerBindings::boundAccountIds))
+                .map(store -> ConsoleSignInHandler.over(store, callerBindings::boundAccountIds,
+                        callerBindings::boundIntakeWriters))
                 .orElseGet(ConsoleSignInHandler::notConfigured);
         return java.util.Map.of(ConsoleSignInHandler.PATH, handler);
     }

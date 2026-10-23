@@ -275,6 +275,13 @@ class RepoConnectGatewayIT {
         requests.put(DocumentServiceGrpc.getDeleteDocumentMethod().getFullMethodName(),
                 DeleteDocumentRequest.newBuilder().setOperationId("op-delete-" + DOC).setAddress(address())
                         .setExpected(ExpectedRevision.newBuilder().setRevision(1)).build());
+        requests.put(DocumentServiceGrpc.getListLinksMethod().getFullMethodName(),
+                ai.protomolt.proto.repo.v2.ListLinksRequest.newBuilder().setAddress(address()).build());
+        requests.put(DocumentServiceGrpc.getResolveLinkMethod().getFullMethodName(),
+                ai.protomolt.proto.repo.v2.ResolveLinkRequest.newBuilder().setAddress(address())
+                        .setFieldPath("structured_data.related").setPageSize(10).build());
+        requests.put(DocumentServiceGrpc.getListBacklinksMethod().getFullMethodName(),
+                ai.protomolt.proto.repo.v2.ListBacklinksRequest.newBuilder().setTarget(address()).setPageSize(10).build());
         requests.put(DriveServiceGrpc.getListDrivesMethod().getFullMethodName(),
                 ListDrivesRequest.newBuilder().setAccountId(ACCOUNT).build());
         requests.put(ArchiveServiceGrpc.getListArchivesMethod().getFullMethodName(),

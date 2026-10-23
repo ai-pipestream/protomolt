@@ -287,8 +287,29 @@ the procedures the screens call, listed in `ConsoleProcedures` in
   author, category, ownership, metadata pairs, commit time range, save owner),
   sort by commit time or title, the tombstone toggle and paging by page token.
   A form value the server would refuse (whitespace only, a metadata key required
-  to equal two values, an unordered time range) is refused by name before any
-  call.
+  to equal two values, an unordered time range, a concept scheme without a
+  concept) is refused by name before any call. The concept filter takes a
+  scheme ID and concept ID (`DocumentFilter.concept`) with the two optional
+  expansion steps, narrower concepts and close matches, and the page shows
+  what the expansion read: how many concepts it matched against, the mounted
+  version of every scheme it consulted, and each mapping it could not follow.
+  A listed query is written to the page's address, so a reload, the back
+  button and a shared link list it again from page 1; page tokens are never
+  in the address, because each is bound to the query it was issued for.
+- **Links.** A document's Links tab reads `ListLinks` for the revision shown:
+  each link's field path, relation and label, and its target. A static target
+  shows its call number, its pinned revision if any, and its state as this
+  reader sees it: `RESOLVED`, `TOMBSTONED`, or `UNAVAILABLE`, which covers a
+  missing, purged or unreadable target alike because the server does not tell
+  them apart. A dynamic target shows its selector condition by condition, and
+  Resolve dynamic target pages through `ResolveLink`, pinned to the same
+  revision, with the concept expansion evidence when the selector names a
+  concept. Inbound backlinks come from `ListBacklinks`: the linking document,
+  its current revision, the field and relation, and the revision it pins. Every
+  target and backlink opens in the console. A relation is shown as text; only
+  an absolute `http:` or `https:` relation URI becomes a link, opened in a new
+  tab with `rel="noopener noreferrer"`, so a `javascript:` or `data:` value can
+  never become an `href`.
 - **Document detail.** The manifest's parts with state, size, SHA-256, the
   revision that wrote each one and its owner; the revision's request metadata;
   the validation record with every schema artifact it binds; revision history
@@ -351,6 +372,24 @@ the procedures the screens call, listed in `ConsoleProcedures` in
   uploads with process authority, and a console session uploads as the scoped
   caller its principal is bound as, so an account it is not bound to answers
   403 and a request with neither credential answers 401.
+- **Session writes.** A session uploads and deletes only as an intake owner
+  its principal's account binding lists in `intake_writers` (account,
+  datasource, optional connector, and whether it may create documents). For
+  such a principal the host registers one writer credential (issuer
+  `repo-account-bindings`) and one intake writer grant per listed owner, so
+  the document service's usual writer check applies: each revision records the
+  grant it was saved under, and the commit rechecks it. The grants follow the
+  binding: removing an owner revokes its grant the next time the principal is
+  bound, and listing it again issues a new grant ID. A principal with no
+  `intake_writers` reads only, and its uploads and deletes answer 403
+  `WRITE_DENIED`. A session that creates a document grants each ACL identity
+  its binding presents `READ` and `WRITE` on it, so it can read and delete
+  what it saved; an upload that replaces a revision keeps that revision's
+  access rules. The operator token's uploads write no access rules, as before.
+  `/console/session` lists the session's `intake_writers`; the account list
+  marks each account read only or names what the session writes as there, and
+  the upload form says before sending whether the binding covers the datasource
+  and connector entered.
 
 Every failed call shows its gRPC status name and the server's message; a
 response the console refuses (a stream that breaks its contract, a digest that
@@ -408,8 +447,8 @@ LocalStack S3 and Keycloak, seeds the fixture corpus, serves `dist/` with the
 Connect gateway and sign-in routes on one port, and runs `npm run
 test:browser` (Playwright, specs in `e2e/`) against it. Every spec signs in
 through Keycloak's own login page and holds only the session cookie; the write
-specs also send the operator token, because a session carries no writer
-credential yet. Run it with:
+specs also send the operator token, because the fixture's account bindings list
+no intake writers. Run it with:
 
     cd apps/console && npm ci && npm run build && npx playwright install chromium
     PROTOMOLT_CONSOLE_BROWSER_IT=1 ./gradlew :protomolt-repo-fixtures:integrationTest --tests '*ConsoleBrowserIT'

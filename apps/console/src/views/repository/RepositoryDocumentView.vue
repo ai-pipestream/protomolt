@@ -57,6 +57,7 @@
         <v-tab value="parts">Parts</v-tab>
         <v-tab value="metadata">Metadata</v-tab>
         <v-tab value="validation">Validation</v-tab>
+        <v-tab value="links" data-testid="tab-links">Links</v-tab>
         <v-tab value="history" data-testid="tab-history">History</v-tab>
         <v-tab value="files" data-testid="tab-files">Files</v-tab>
       </v-tabs>
@@ -201,6 +202,10 @@
           </v-card>
         </v-window-item>
 
+        <v-window-item value="links">
+          <DocumentLinks :address="address!" :revision="pinned!" :tombstone="manifest.tombstone" />
+        </v-window-item>
+
         <v-window-item value="history">
           <RevisionHistory :address="address!" :shown-revision="pinned" @open="openRevision" />
         </v-window-item>
@@ -221,6 +226,7 @@ import { Code, ConnectError } from '@connectrpc/connect'
 import ProtoMessageNode from '@/components/ProtoMessageNode.vue'
 import BlobFiles from '@/components/repository/BlobFiles.vue'
 import DeleteDocumentDialog from '@/components/repository/DeleteDocumentDialog.vue'
+import DocumentLinks from '@/components/repository/DocumentLinks.vue'
 import RevisionHistory from '@/components/repository/RevisionHistory.vue'
 import RpcFailureAlert from '@/components/repository/RpcFailureAlert.vue'
 import type { NodeAddress } from '@/gen/ai/protomolt/proto/repo/v1/address_pb'

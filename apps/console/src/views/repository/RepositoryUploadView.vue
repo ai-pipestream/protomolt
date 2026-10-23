@@ -32,6 +32,21 @@
           <v-col cols="12" md="2"><v-text-field v-model="form.connectorId" label="Connector ID" density="compact" /></v-col>
           <v-col cols="12" md="2"><v-text-field v-model="form.contentType" label="Content type" density="compact" /></v-col>
         </v-row>
+        <v-alert v-if="writer" :type="writer.covered ? 'info' : 'warning'" variant="tonal" density="compact" class="mb-3"
+                 data-testid="up-writer">
+          <template v-if="writer.covered">
+            Your session (<span class="text-mono">{{ writer.principal }}</span>) may save as {{ writer.covered }}.
+          </template>
+          <template v-else>
+            Your session (<span class="text-mono">{{ writer.principal }}</span>) has no writer scope for this
+            {{ writer.creating ? 'new document' : 'revision' }}, so the host will refuse it with WRITE_DENIED.
+            <span v-if="writer.scopes.length > 0">In account {{ form.accountId }} it may save as: {{ writer.scopes.join('; ') }}.</span>
+            <span v-else>Its account binding lists no intake writer in account {{ form.accountId }}.</span>
+          </template>
+        </v-alert>
+        <div v-if="sessionFailure" class="text-caption text-medium-emphasis mb-2" data-testid="up-session-failure">
+          Your session's writer scopes could not be read: {{ sessionFailure }}
+        </div>
         <input ref="fileInput" type="file" data-testid="up-file" @change="pickFile" />
         <div v-if="file" class="text-caption text-mono mt-1">{{ file.name }} · {{ byteSize(file.size) }} · {{ file.type || 'no type' }}</div>
         <RpcFailureAlert v-if="drivesFailure" :failure="drivesFailure" title="Listing drives" class="mt-2" />
@@ -128,7 +143,8 @@ import RpcFailureAlert from '@/components/repository/RpcFailureAlert.vue'
 import type { NodeAddress } from '@/gen/ai/protomolt/proto/repo/v1/address_pb'
 import { ListDrivesRequestSchema } from '@/gen/ai/protomolt/proto/repo/v1/drive_pb'
 import { RejectionReasonSchema } from '@/gen/ai/protomolt/proto/repo/v2/errors_pb'
-import { REPOSITORY_UPLOAD_REQUEST, useRepositoryClients, useSignIn } from '@/repository/clients'
+import type { ConsoleSessionStatus } from '@/gen/ai/protomolt/proto/authz/v1/console_session_pb'
+import { REPOSITORY_UPLOAD_REQUEST, useRepositoryClients, useRepositorySession, useSignIn } from '@/repository/clients'
 import { byteSize, enumLabel, instant } from '@/repository/formatCore'
 import type { OutcomeAnswer } from '@/repository/lookupCore'
 import { isOwnCancellation, rpcFailure, type RpcFailure } from '@/repository/rpcErrorCore'
@@ -143,9 +159,11 @@ import {
   type UploadPlan,
   type UploadSendResult,
 } from '@/repository/uploadCore'
+import { coveringScope, scopeLabel, scopesIn } from '@/repository/sessionWritersCore'
 import { useCallScope } from '@/repository/useCallScope'
 
 const clients = useRepositoryClients()
+const sessions = useRepositorySession()
 const signIn = useSignIn()
 const newRequest = inject(REPOSITORY_UPLOAD_REQUEST, () => new XMLHttpRequest())
 const route = useRoute()
@@ -296,6 +314,38 @@ function cancel() {
   scope.next()
   phase.value = 'idle'
 }
+
+// The signed-in session's writer scopes, shown before the send. A browser
+// without a session shows no scopes: the upload runs with whatever credential
+// the request carries.
+const session = shallowRef<ConsoleSessionStatus | null>(null)
+const sessionFailure = ref<string | null>(null)
+const writer = computed(() => {
+  const s = session.value
+  if (s === null || !s.authenticated || form.accountId.trim() === '' || form.datasourceId.trim() === '') return null
+  const creating = form.expectedRevision.trim() === '' || form.expectedRevision.trim() === '0'
+  const covered = coveringScope(s.intakeWriters, {
+    accountId: form.accountId,
+    datasourceId: form.datasourceId,
+    connectorId: form.connectorId,
+    creating,
+  })
+  return {
+    principal: s.principal,
+    creating,
+    covered: covered === null ? null : scopeLabel(covered),
+    scopes: scopesIn(s.intakeWriters, form.accountId).map(scopeLabel),
+  }
+})
+
+onMounted(async () => {
+  try {
+    session.value = await sessions.status()
+  } catch (error) {
+    // Advisory only: the host still decides the upload and reports its own refusal.
+    sessionFailure.value = error instanceof Error ? error.message : String(error)
+  }
+})
 
 onMounted(async () => {
   if (form.accountId === '') return

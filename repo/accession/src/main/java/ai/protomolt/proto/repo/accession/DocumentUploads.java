@@ -1,6 +1,7 @@
 package ai.protomolt.proto.repo.accession;
 
 import ai.protomolt.proto.repo.spi.RepositoryCaller;
+import ai.protomolt.proto.repo.v1.DocumentSecurity;
 import ai.protomolt.proto.repo.v2.UploadDocumentRequest;
 import ai.protomolt.proto.repo.v2.UploadDocumentResponse;
 import ai.protomolt.proto.repo.v2.UploadHeader;
@@ -11,6 +12,7 @@ import io.grpc.stub.StreamObserver;
 import java.io.IOException;
 import java.io.InputStream;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -36,6 +38,22 @@ public final class DocumentUploads {
      */
     public DocumentUploads(DocumentSaves saves) {
         this.saves = Objects.requireNonNull(saves, "saves");
+    }
+
+    /**
+     * The access rules of one revision of an intake document, which an HTTP upload that
+     * replaces the revision keeps.
+     *
+     * @param caller the uploading caller
+     * @param accountId the document's account
+     * @param datasourceId the intake datasource
+     * @param docId the document ID
+     * @param revision the revision the upload expects
+     * @return the revision's document security, if it carries any
+     */
+    public Optional<DocumentSecurity> intakeRevisionSecurity(RepositoryCaller caller, String accountId,
+            String datasourceId, String docId, long revision) {
+        return saves.intakeRevisionSecurity(caller, accountId, datasourceId, docId, revision);
     }
 
     /**
