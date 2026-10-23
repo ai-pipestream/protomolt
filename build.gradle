@@ -56,9 +56,16 @@ tasks.register('checkTestNaming', Exec) {
     commandLine 'bash', 'scripts/check-test-naming.sh'
 }
 
+tasks.register('checkZeroRegex', Exec) {
+    group = 'verification'
+    description = 'Refuse regex APIs in production Java sources (#532)'
+    workingDir = rootDir
+    commandLine 'bash', 'scripts/check-zero-regex.sh'
+}
+
 tasks.register('check') {
     group = 'verification'
-    dependsOn('bufLint', 'checkTestNaming')
+    dependsOn('bufLint', 'checkTestNaming', 'checkZeroRegex')
 }
 
 // Central Portal validates license, developers, and scm on every pom.
@@ -192,6 +199,7 @@ subprojects {
         tasks.named('check') {
             dependsOn integrationTest
             dependsOn rootProject.tasks.named('checkTestNaming')
+            dependsOn rootProject.tasks.named('checkZeroRegex')
         }
 
         // Generated protobuf sources have no javadoc tags; keep doclint useful but quiet.

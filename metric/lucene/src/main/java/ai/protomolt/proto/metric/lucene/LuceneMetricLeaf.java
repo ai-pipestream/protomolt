@@ -225,7 +225,7 @@ final class LuceneMetricLeaf {
 
         void accumulate(int doc, LuceneMetricResults.MeasureState state) throws IOException {
             for (RowFilterCursor filter : rowFilters) {
-                if (!filter.matches(doc)) {
+                if (!filter.matches(doc)) { // zero-regex: allowed
                     return;
                 }
             }
