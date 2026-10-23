@@ -1899,7 +1899,8 @@ public final class DocumentSaves {
      * tombstoned current target is accepted unpinned: the link is born dangling. A
      * dynamic target's filter must select something and be consistent, as a listing's
      * is; it is not evaluated here. A pinned revision must be a document revision, not
-     * a tombstone. Every link must also fit the catalog's edge index, checked first, so
+     * a tombstone. A static refusal keeps every dynamic-filter violation from the same
+     * scan. Every link must also fit the catalog's edge index, checked first, so
      * an oversized path or key is refused by name rather than failing inside the commit.
      */
     private Optional<SemanticRejection> linkRefusal(RepositoryCaller caller, String account, List<DocumentLinks.Link> links) {
@@ -1913,6 +1914,7 @@ public final class DocumentSaves {
         if (!violations.isEmpty())
             return Optional.of(new SemanticRejection(RejectionReason.REJECTION_REASON_VALIDATION_FAILED,
                     "A link does not fit the catalog", List.copyOf(violations)));
+        Optional<SemanticRejection> staticRefusal = Optional.empty();
         for (var link : links) {
             var at = link.at();
             if (link.link().hasDynamicTarget()) {
@@ -1934,19 +1936,27 @@ public final class DocumentSaves {
                     || address.getGraphAddressId().isBlank() || address.getDocId().isBlank()
                     ? Optional.<CatalogRecords.LinkTarget>empty() : catalog.linkTarget(address, pinned);
             if (found.isEmpty() || !DocumentReads.canRead(caller, address, found.get().entry().getOwnership())
-                    || (pinned.isPresent() && (found.get().pinned().isEmpty() || found.get().pinned().get().tombstone())))
-                return Optional.of(new SemanticRejection(RejectionReason.REJECTION_REASON_LINK_TARGET_NOT_FOUND,
-                        "The target of link " + at + " is not found", List.of()));
+                    || (pinned.isPresent() && (found.get().pinned().isEmpty() || found.get().pinned().get().tombstone()))) {
+                if (staticRefusal.isEmpty())
+                    staticRefusal = Optional.of(new SemanticRejection(RejectionReason.REJECTION_REASON_LINK_TARGET_NOT_FOUND,
+                            "The target of link " + at + " is not found", List.of()));
+                continue;
+            }
             if (link.field().getTargetTypesCount() == 0) continue;
             Optional<String> type;
             if (pinned.isPresent()) type = found.get().pinned().get().structuredDataType();
             else if (found.get().tombstone()) continue;
             else type = found.get().currentType();
-            if (type.isEmpty() || !link.field().getTargetTypesList().contains(type.get()))
-                return Optional.of(new SemanticRejection(RejectionReason.REJECTION_REASON_LINK_TARGET_TYPE,
-                        "The target of link " + at + " holds " + type.map(name -> "structured_data " + name)
-                                .orElse("no structured_data") + ", which the link does not allow", List.of()));
+            if (type.isEmpty() || !link.field().getTargetTypesList().contains(type.get())) {
+                if (staticRefusal.isEmpty())
+                    staticRefusal = Optional.of(new SemanticRejection(RejectionReason.REJECTION_REASON_LINK_TARGET_TYPE,
+                            "The target of link " + at + " holds " + type.map(name -> "structured_data " + name)
+                                    .orElse("no structured_data") + ", which the link does not allow", List.of()));
+            }
         }
+        if (staticRefusal.isPresent())
+            return Optional.of(new SemanticRejection(staticRefusal.get().reason(), staticRefusal.get().message(),
+                    List.copyOf(violations)));
         return violations.isEmpty() ? Optional.empty() : Optional.of(new SemanticRejection(
                 RejectionReason.REJECTION_REASON_VALIDATION_FAILED, "A dynamic link's selector is invalid", List.copyOf(violations)));
     }
