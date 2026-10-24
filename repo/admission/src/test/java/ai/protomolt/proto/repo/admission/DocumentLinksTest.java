@@ -200,6 +200,56 @@ class DocumentLinksTest {
         }).declares(head)).isSameAs(stopped);
     }
 
+    @Test void memoizesLinkOptionConvertsCanonicalDynamicLinksAndHonorsCancellation() throws Exception {
+        var file = retained(DescriptorProto.newBuilder().setName("Report")
+                .addField(link("cites", 1, true, LinkField.newBuilder().setRelation("references")
+                        .addTargetTypes("acme.v1.Report"))));
+        var report = file.findMessageTypeByName("Report");
+        var cites = report.findFieldByName("cites");
+
+        var firstOption = DocumentLinks.linkField(cites);
+        assertThat(firstOption).isSameAs(DocumentLinks.linkField(cites));
+
+        var staticWithRevision = DocumentLink.newBuilder()
+                .setStaticTarget(StaticTarget.newBuilder().setAddress(ADDRESS).setRevision(7L))
+                .setLabel("citation")
+                .build();
+        var dynamicWithSort = DocumentLink.newBuilder()
+                .setDynamicTarget(DynamicTarget.newBuilder()
+                        .setFilter(DocumentFilter.newBuilder().setCategory("science").setDocId("d1"))
+                        .setSort(ai.protomolt.proto.repo.v2.DocumentSort.newBuilder()
+                                .setField(ai.protomolt.proto.repo.v2.DocumentSortField.DOCUMENT_SORT_FIELD_COMMITTED_AT)
+                                .setDescending(true)))
+                .setLabel("related")
+                .build();
+        var value = DynamicMessage.newBuilder(report)
+                .addRepeatedField(cites, dynamicLink(cites.getMessageType(), staticWithRevision))
+                .addRepeatedField(cites, dynamicLink(cites.getMessageType(), dynamicWithSort))
+                .build();
+
+        var controlRuns = new int[1];
+        var extracted = DocumentLinks.extract(value, "structured_data", () -> controlRuns[0]++);
+        assertThat(controlRuns[0]).isPositive();
+        assertThat(extracted).extracting(DocumentLinks.Link::link)
+                .containsExactly(staticWithRevision, dynamicWithSort);
+
+        var cancelled = new java.util.concurrent.CancellationException("deadline expired");
+        assertThatThrownBy(() -> DocumentLinks.extract(value, "structured_data", () -> {
+            throw cancelled;
+        })).isSameAs(cancelled);
+
+        var withUnknown = DynamicMessage.newBuilder(cites.getMessageType())
+                .mergeFrom(staticWithRevision.toByteString())
+                .setUnknownFields(com.google.protobuf.UnknownFieldSet.newBuilder()
+                        .addField(99, com.google.protobuf.UnknownFieldSet.Field.newBuilder().addVarint(1).build())
+                        .build())
+                .build();
+        var unknownCarrier = DynamicMessage.newBuilder(report).addRepeatedField(cites, withUnknown).build();
+        assertThatThrownBy(() -> DocumentLinks.extract(unknownCarrier, "structured_data"))
+                .isInstanceOf(DocumentLinks.SchemaRefused.class)
+                .hasMessageContaining("carries fields this server does not know");
+    }
+
     // ------------------------------------------------------------------ fixtures
 
     /** Builds the file, then rebuilds it from its bytes as a retained schema is. */

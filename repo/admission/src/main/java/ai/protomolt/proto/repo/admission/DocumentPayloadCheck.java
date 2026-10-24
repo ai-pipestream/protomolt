@@ -46,15 +46,17 @@ final class DocumentPayloadCheck {
     private final java.util.List<DocumentSchemaOccurrences.Occurrence> occurrences;
     private final long decodedBytes;
     private final java.util.List<ResolutionRequest> opaqueTerminals;
+    private final Map<java.util.List<DocumentSchemaOccurrences.Step>, DynamicMessage> decodedOccurrences;
 
     private DocumentPayloadCheck(DocumentSchemaBinding schema, Any original, DynamicMessage decoded, Map<SchemaKey, DocumentSchemaBinding> resolvedSchemas,
             java.util.List<DocumentSchemaOccurrences.Occurrence> occurrences, long decodedBytes) {
-        this(schema, original, decoded, resolvedSchemas, occurrences, decodedBytes, java.util.List.of());
+        this(schema, original, decoded, resolvedSchemas, occurrences, decodedBytes, java.util.List.of(), Map.of());
     }
 
     private DocumentPayloadCheck(DocumentSchemaBinding schema, Any original, DynamicMessage decoded, Map<SchemaKey, DocumentSchemaBinding> resolvedSchemas,
             java.util.List<DocumentSchemaOccurrences.Occurrence> occurrences, long decodedBytes,
-            java.util.List<ResolutionRequest> opaqueTerminals) {
+            java.util.List<ResolutionRequest> opaqueTerminals,
+            Map<java.util.List<DocumentSchemaOccurrences.Step>, DynamicMessage> decodedOccurrences) {
         this.schema = schema;
         this.original = original;
         this.decoded = decoded;
@@ -62,6 +64,7 @@ final class DocumentPayloadCheck {
         this.occurrences = java.util.List.copyOf(occurrences);
         this.decodedBytes = decodedBytes;
         this.opaqueTerminals = java.util.List.copyOf(opaqueTerminals);
+        this.decodedOccurrences = Map.copyOf(decodedOccurrences);
     }
 
     DocumentSchemaBinding schema() { return schema; }
@@ -72,6 +75,8 @@ final class DocumentPayloadCheck {
     long decodedBytes() { return decodedBytes; }
     /** Nested Any values accepted as opaque terminals: inventoried, never resolved or decoded. */
     java.util.List<ResolutionRequest> opaqueTerminals() { return opaqueTerminals; }
+    /** Decoded messages keyed by their full occurrence path (ending at their Any boundary). */
+    Map<java.util.List<DocumentSchemaOccurrences.Step>, DynamicMessage> decodedOccurrences() { return decodedOccurrences; }
 
     /** In-memory evidence only; neither retention nor trusted compiler provenance is established. */
     record AssetResult(DocumentPayloadCheck payload, Map<SchemaKey, DocumentSchemaAssetBinding> assets) {
@@ -156,7 +161,7 @@ final class DocumentPayloadCheck {
         if (session.failure != null) return new DocumentPayloadAssessment.Invalid(evaluatedAt, candidate,
                 selections.assets(), occurrences, session.decodedBytes, session.failure);
         var checked = new DocumentPayloadCheck(root.schema(), candidate, scan.decoded(), session.bindings,
-                occurrences, session.decodedBytes, session.opaqueFound);
+                occurrences, session.decodedBytes, session.opaqueFound, session.decodedOccurrences);
         return new DocumentPayloadAssessment.Accepted(evaluatedAt, new AssetResult(checked, selections.assets()));
     }
 
@@ -236,7 +241,8 @@ final class DocumentPayloadCheck {
         var scan = scan(schema, candidate, acceptedTypeUrl, validator, limits, control, resolver, evidence,
                 Objects.requireNonNull(evaluatedAt), false);
         return new DocumentPayloadCheck(schema, candidate, scan.decoded(), scan.session().bindings,
-                evidence == null ? java.util.List.of() : evidence.result(), scan.session().decodedBytes);
+                evidence == null ? java.util.List.of() : evidence.result(), scan.session().decodedBytes,
+                java.util.List.of(), scan.session().decodedOccurrences);
     }
 
     private record Scan(DynamicMessage decoded, Session session) {}
@@ -291,6 +297,7 @@ final class DocumentPayloadCheck {
         private final DocumentSchemaOccurrences evidence;
         private final MessageWireBudget wire;
         private final Map<SchemaKey, DocumentSchemaBinding> bindings = new LinkedHashMap<>();
+        private final Map<java.util.List<DocumentSchemaOccurrences.Step>, DynamicMessage> decodedOccurrences = new LinkedHashMap<>();
         private final java.util.Set<Descriptor> schemas = Collections.newSetFromMap(new IdentityHashMap<>());
         private long decodedBytes;
         private long schemaFields;
@@ -325,8 +332,11 @@ final class DocumentPayloadCheck {
                 throw new ByteBudgetExceeded();
             if (evidence == null) return decode(schema, bytes, depth);
             evidence.boundary(url, bytes, schema, () -> active(control));
-            try { return decode(schema, bytes, depth); }
-            finally { evidence.pop(); }
+            try {
+                var decoded = decode(schema, bytes, depth);
+                decodedOccurrences.put(evidence.prefix(), decoded);
+                return decoded;
+            } finally { evidence.pop(); }
         }
 
         DynamicMessage decode(DocumentSchemaBinding schema, com.google.protobuf.ByteString bytes, int depth)
