@@ -160,6 +160,77 @@ class UploadHttpServerCredentialTest {
         }
     }
 
+    @Test
+    void theOperatorTokenWithoutACallerSupplierUploadsAsTheOperator() throws Exception {
+        var captured = new java.util.concurrent.atomic.AtomicReference<ai.protomolt.proto.repo.spi.RepositoryCaller>();
+        try (var direct = new UploadHttpServer(null, null, TOKEN, recordingArchive(captured),
+                RepositoryConsole.notConfigured())) {
+            String target = "http://127.0.0.1:" + direct.start(0) + UploadHttpServer.ARCHIVE_UPLOAD_PATH
+                    + "?account_id=acct-1&archive=arc&entry_id=e1";
+
+            HttpResponse<String> ok = send(target, "api_token", TOKEN);
+
+            assertThat(ok.statusCode()).as(ok.body()).isEqualTo(200);
+            assertThat(captured.get().principalName()).isEqualTo("operator");
+            assertThat(captured.get().processAuthority()).isTrue();
+        }
+    }
+
+    @Test
+    void aResolverWithoutAGatewayResolvesEachUploadAndExposesNoGatewayResolver() throws Exception {
+        // The gateway-less host start: the operator bearer resolver and the account bindings,
+        // without a Connect gateway on the port.
+        var captured = new java.util.concurrent.atomic.AtomicReference<ai.protomolt.proto.repo.spi.RepositoryCaller>();
+        var bound = new java.util.concurrent.atomic.AtomicReference<ai.protomolt.proto.authz.AuthenticatedCaller>();
+        try (var direct = new UploadHttpServer(null, null, TOKEN, null, recordingArchive(captured), null,
+                RepositoryConsole.notConfigured(), java.util.Map.of(), null,
+                ai.protomolt.proto.authz.RequestCallerResolver.bearer(TOKEN),
+                auth -> {
+                    bound.set(auth);
+                    return new ai.protomolt.proto.repo.spi.RepositoryCaller(
+                            auth.caller().name(), auth.caller().unrestricted());
+                })) {
+            String target = "http://127.0.0.1:" + direct.start(0) + UploadHttpServer.ARCHIVE_UPLOAD_PATH
+                    + "?account_id=acct-1&archive=arc&entry_id=e1";
+
+            HttpResponse<String> other = send(target, "Authorization", "Bearer session-alice");
+            assertThat(other.statusCode()).isEqualTo(401);
+            assertThat(bound.get()).isNull();
+            assertThat(captured.get()).isNull();
+
+            HttpResponse<String> ok = send(target, "Authorization", "Bearer " + TOKEN);
+            assertThat(ok.statusCode()).as(ok.body()).isEqualTo(200);
+            assertThat(bound.get().caller().name()).isEqualTo("operator");
+            assertThat(captured.get().principalName()).isEqualTo("operator");
+            assertThat(captured.get().processAuthority()).isTrue();
+
+            assertThatThrownBy(direct::callers).isInstanceOf(IllegalStateException.class)
+                    .hasMessageContaining("no Connect gateway");
+        }
+    }
+
+    private HttpResponse<String> send(String target, String header, String value) throws Exception {
+        return client.send(HttpRequest.newBuilder(URI.create(target))
+                        .header(header, value)
+                        .POST(HttpRequest.BodyPublishers.ofByteArray(new byte[] {1}))
+                        .build(),
+                HttpResponse.BodyHandlers.ofString());
+    }
+
+    /** An archive port that records the caller of each upload and accepts it. */
+    static ai.protomolt.proto.repo.spi.ArchiveRepository recordingArchive(
+            java.util.concurrent.atomic.AtomicReference<ai.protomolt.proto.repo.spi.RepositoryCaller> captured) {
+        return (ai.protomolt.proto.repo.spi.ArchiveRepository) java.lang.reflect.Proxy.newProxyInstance(
+                UploadHttpServerCredentialTest.class.getClassLoader(),
+                new Class<?>[] { ai.protomolt.proto.repo.spi.ArchiveRepository.class },
+                (proxy, method, args) -> {
+                    captured.set((ai.protomolt.proto.repo.spi.RepositoryCaller) args[0]);
+                    ((java.io.InputStream) args[9]).readAllBytes();
+                    return new ai.protomolt.proto.repo.spi.ArchiveRepository.UploadResult(
+                            "entry-uuid", 1L, "sha", 1L, "obj", "root", false);
+                });
+    }
+
     /** Credential and validation failures fire before the archive port is ever called. */
     static ai.protomolt.proto.repo.spi.ArchiveRepository unimplementedArchive() {
         return (ai.protomolt.proto.repo.spi.ArchiveRepository) java.lang.reflect.Proxy.newProxyInstance(
