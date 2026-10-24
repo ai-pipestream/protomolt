@@ -2,6 +2,7 @@ package ai.protomolt.proto.repo.service;
 
 import ai.protomolt.proto.repo.accession.DocumentUploads;
 import ai.protomolt.proto.repo.accession.UploadHttpHandler;
+import ai.protomolt.proto.actions.Caller;
 import ai.protomolt.proto.authz.AuthenticatedCaller;
 import ai.protomolt.proto.authz.RequestCallerResolver;
 import ai.protomolt.proto.authz.RequestHeaders;
@@ -319,7 +320,7 @@ public final class UploadHttpServer implements AutoCloseable {
      * @throws IllegalStateException when this server mounts no gateway
      */
     public RequestCallerResolver callers() {
-        if (requestCallers == null) {
+        if (gateway == null) {
             throw new IllegalStateException("this repository HTTP port mounts no Connect gateway");
         }
         return requestCallers;
@@ -481,9 +482,10 @@ public final class UploadHttpServer implements AutoCloseable {
             return new ResolvedCaller(caller, authenticated);
         }
         requireCredential(exchange);
+        // The operator credential just matched; without a supplier it names the operator.
         RepositoryCaller caller = callers != null
                 ? Objects.requireNonNull(callers.get(), "caller")
-                : new RepositoryCaller("http-upload", true);
+                : new RepositoryCaller(Caller.operator().name(), true);
         return new ResolvedCaller(caller, null);
     }
 

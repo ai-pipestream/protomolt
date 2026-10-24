@@ -10,6 +10,9 @@ import ai.protomolt.proto.repo.v1.DocumentPart;
 import ai.protomolt.proto.repo.v1.DocumentSecurity;
 import ai.protomolt.proto.repo.v1.NodeAddress;
 import ai.protomolt.proto.repo.v1.OwnershipContext;
+import ai.protomolt.proto.repo.v1.ParseStatus;
+import ai.protomolt.proto.repo.v1.ParserDocument;
+import ai.protomolt.proto.repo.v1.ParserResult;
 import ai.protomolt.proto.repo.v1.PublicationSchemaCondition;
 import ai.protomolt.proto.repo.v1.RepositorySchemaAsset;
 import ai.protomolt.proto.repo.v1.SchemaCompilationOrigin;
@@ -24,6 +27,7 @@ import ai.protomolt.proto.types.ConceptRef;
 import ai.protomolt.proto.types.ConceptsProto;
 import ai.protomolt.proto.validate.FieldRules;
 import ai.protomolt.proto.validate.ValidateProto;
+import ai.protomolt.proto.validate.spi.ConceptSchemeCatalog;
 import com.google.protobuf.Any;
 import com.google.protobuf.AnyProto;
 import com.google.protobuf.ByteString;
@@ -36,10 +40,12 @@ import com.google.protobuf.Descriptors.FileDescriptor;
 import com.google.protobuf.DynamicMessage;
 import java.security.MessageDigest;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.CancellationException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -234,6 +240,157 @@ class DocumentCandidateAdmissionTest {
             }).isSameAs(cancelled);
             assertThat(reservations.live).as("leases released at tick %s", stopPoint).isZero();
         }
+    }
+
+    @Test
+    void validatesNonCoreContainerFragmentAndParsedConceptTagsWithoutCataloguingThem() throws Exception {
+        ConceptSchemeCatalog catalog = schemeId -> "subject".equals(schemeId)
+                ? Optional.of(new ConceptSchemeCatalog.Mounted("subject", "s1", Set.of("physics")))
+                : Optional.empty();
+        var validator = DocumentSchemaAdmission.contentValidator(catalog);
+
+        // 1. Custom registered Document container version with a bound ConceptRef on a non-CORE
+        // fragment (BlobBag.subject on DOCUMENT_PART_BLOBS), exercising line 315 directly.
+        var customDocType = buildDocumentContainerWithTaggedBlobBag();
+        var customContainerDef = definition(customDocType);
+        var blobBagField = customDocType.findFieldByName("blob_bag");
+        var blobBagSubjectField = blobBagField.getMessageType().findFieldByName("subject");
+
+        var invalidBlobsDoc = DynamicMessage.newBuilder(customDocType)
+                .setField(customDocType.findFieldByName("doc_id"), "doc-1")
+                .setField(blobBagField, DynamicMessage.newBuilder(blobBagField.getMessageType())
+                        .setField(blobBagSubjectField, DynamicMessage.parseFrom(
+                                blobBagSubjectField.getMessageType(),
+                                ConceptRef.newBuilder().setSchemeId("subject").setConceptId("biology").build().toByteString()))
+                        .build())
+                .build();
+        var invalidBlobsReq = new DocumentCandidateAdmission.Request(
+                "doc-1",
+                List.of(new DocumentCandidateAdmission.Fragment(DocumentPart.DOCUMENT_PART_BLOBS, invalidBlobsDoc.toByteString())),
+                customContainerDef);
+        try (var result = DocumentCandidateAdmission.check(
+                invalidBlobsReq, selection -> null, limits(), new TrackingReservations(), Instant.EPOCH, () -> {}, validator)) {
+            assertThat(result).isInstanceOf(DocumentCandidateAdmission.Rejected.class);
+            var rejected = (DocumentCandidateAdmission.Rejected) result;
+            assertThat(rejected.violations())
+                    .extracting(
+                            DocumentCandidateAdmission.Violation::part,
+                            DocumentCandidateAdmission.Violation::fieldPath,
+                            DocumentCandidateAdmission.Violation::ruleId)
+                    .containsExactly(tuple(DocumentPart.DOCUMENT_PART_BLOBS, "blob_bag.subject", "concept.member"));
+        }
+
+        var validBlobsDoc = DynamicMessage.newBuilder(customDocType)
+                .setField(customDocType.findFieldByName("doc_id"), "doc-1")
+                .setField(blobBagField, DynamicMessage.newBuilder(blobBagField.getMessageType())
+                        .setField(blobBagSubjectField, DynamicMessage.parseFrom(
+                                blobBagSubjectField.getMessageType(),
+                                ConceptRef.newBuilder().setSchemeId("subject").setConceptId("physics").build().toByteString()))
+                        .build())
+                .build();
+        var validBlobsReq = new DocumentCandidateAdmission.Request(
+                "doc-1",
+                List.of(new DocumentCandidateAdmission.Fragment(DocumentPart.DOCUMENT_PART_BLOBS, validBlobsDoc.toByteString())),
+                customContainerDef);
+        try (var result = DocumentCandidateAdmission.check(
+                validBlobsReq, selection -> null, limits(), new TrackingReservations(), Instant.EPOCH, () -> {}, validator)) {
+            assertThat(result).isInstanceOf(DocumentCandidateAdmission.Accepted.class);
+            var accepted = (DocumentCandidateAdmission.Accepted) result;
+            assertThat(accepted.concepts()).isEmpty();
+        }
+
+        // 2. DOCUMENT_PART_PARSED fragment holding a bound ConceptRef in its typed Any root.
+        var file = buildNestedLinkAndConceptFile();
+        var innerType = file.findMessageTypeByName("Inner");
+        String innerUrl = "type.test/" + innerType.getFullName();
+        var innerDef = definition(innerType);
+        var containerDef = definition(Document.getDescriptor());
+
+        var invalidInner = DynamicMessage.newBuilder(innerType)
+                .setField(innerType.findFieldByName("subject"), DynamicMessage.parseFrom(
+                        innerType.findFieldByName("subject").getMessageType(),
+                        ConceptRef.newBuilder().setSchemeId("subject").setConceptId("biology").build().toByteString()))
+                .build();
+        var invalidParsedDoc = Document.newBuilder()
+                .setDocId("doc-1")
+                .putParserResults("tagger", ParserResult.newBuilder()
+                        .setParserName("tagger")
+                        .setParserVersion("1")
+                        .setStatus(ParseStatus.PARSE_STATUS_OK)
+                        .setDocument(ParserDocument.newBuilder()
+                                .setShape(Any.newBuilder().setTypeUrl(innerUrl).setValue(invalidInner.toByteString())))
+                        .build())
+                .build();
+        var invalidParsedReq = new DocumentCandidateAdmission.Request(
+                "doc-1",
+                List.of(new DocumentCandidateAdmission.Fragment(DocumentPart.DOCUMENT_PART_PARSED, invalidParsedDoc.toByteString())),
+                containerDef);
+        try (var result = DocumentCandidateAdmission.check(
+                invalidParsedReq, selection -> innerDef, limits(), new TrackingReservations(), Instant.EPOCH, () -> {}, validator)) {
+            assertThat(result).isInstanceOf(DocumentCandidateAdmission.Rejected.class);
+            var rejected = (DocumentCandidateAdmission.Rejected) result;
+            assertThat(rejected.violations())
+                    .extracting(
+                            DocumentCandidateAdmission.Violation::part,
+                            DocumentCandidateAdmission.Violation::fieldPath,
+                            DocumentCandidateAdmission.Violation::ruleId)
+                    .containsExactly(tuple(
+                            DocumentPart.DOCUMENT_PART_PARSED,
+                            "parser_results[\"tagger\"].document.shape.subject",
+                            "concept.member"));
+        }
+
+        var validInner = DynamicMessage.newBuilder(innerType)
+                .setField(innerType.findFieldByName("subject"), DynamicMessage.parseFrom(
+                        innerType.findFieldByName("subject").getMessageType(),
+                        ConceptRef.newBuilder().setSchemeId("subject").setConceptId("physics").build().toByteString()))
+                .build();
+        var validParsedDoc = Document.newBuilder()
+                .setDocId("doc-1")
+                .putParserResults("tagger", ParserResult.newBuilder()
+                        .setParserName("tagger")
+                        .setParserVersion("1")
+                        .setStatus(ParseStatus.PARSE_STATUS_OK)
+                        .setDocument(ParserDocument.newBuilder()
+                                .setShape(Any.newBuilder().setTypeUrl(innerUrl).setValue(validInner.toByteString())))
+                        .build())
+                .build();
+        var validParsedReq = new DocumentCandidateAdmission.Request(
+                "doc-1",
+                List.of(new DocumentCandidateAdmission.Fragment(DocumentPart.DOCUMENT_PART_PARSED, validParsedDoc.toByteString())),
+                containerDef);
+        try (var result = DocumentCandidateAdmission.check(
+                validParsedReq, selection -> innerDef, limits(), new TrackingReservations(), Instant.EPOCH, () -> {}, validator)) {
+            assertThat(result).isInstanceOf(DocumentCandidateAdmission.Accepted.class);
+            var accepted = (DocumentCandidateAdmission.Accepted) result;
+            assertThat(accepted.concepts()).isEmpty();
+        }
+    }
+
+    private static Descriptor buildDocumentContainerWithTaggedBlobBag() throws Exception {
+        var baseFile = Document.getDescriptor().getFile();
+        var protoBuilder = baseFile.toProto().toBuilder()
+                .addDependency(ConceptsProto.getDescriptor().getName())
+                .addDependency(ValidateProto.getDescriptor().getName());
+        for (var message : protoBuilder.getMessageTypeBuilderList()) {
+            if ("BlobBag".equals(message.getName())) {
+                message.addField(FieldDescriptorProto.newBuilder()
+                        .setName("subject")
+                        .setNumber(3)
+                        .setType(FieldDescriptorProto.Type.TYPE_MESSAGE)
+                        .setTypeName(".ai.protomolt.proto.types.v1.ConceptRef")
+                        .setLabel(FieldDescriptorProto.Label.LABEL_OPTIONAL)
+                        .setOptions(FieldOptions.newBuilder().setExtension(
+                                ValidateProto.field, FieldRules.newBuilder().addConceptSchemes("subject").build())));
+            }
+        }
+        var deps = new ArrayList<>(baseFile.getDependencies());
+        deps.add(ConceptsProto.getDescriptor());
+        deps.add(ValidateProto.getDescriptor());
+        var depArray = deps.toArray(FileDescriptor[]::new);
+        var bytes = FileDescriptor.buildFrom(protoBuilder.build(), depArray).toProto().toByteString();
+        return FileDescriptor.buildFrom(FileDescriptorProto.parseFrom(bytes), depArray)
+                .findMessageTypeByName("Document");
     }
 
     private static FileDescriptor buildNestedLinkAndConceptFile() throws Exception {
