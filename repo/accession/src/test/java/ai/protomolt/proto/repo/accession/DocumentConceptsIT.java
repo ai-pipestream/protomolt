@@ -361,6 +361,55 @@ class DocumentConceptsIT {
         }
     }
 
+    @Test void aTagInParsedIsValidatedAndStoredButNotCatalogued() throws Exception {
+        var source = new Source();
+        mountAll(source);
+        try (var f = new AccessionFixture(); var config = DistributedConfig.over(source)) {
+            var mounts = follow(config);
+            var saves = saves(f, mounts);
+            var doc = saveTagged(saves, "parsed", p -> p.setField(PAPER.findFieldByName("subject"), ref("subject", "physics")));
+            var core = f.catalog.concepts(doc);
+
+            // A parser's output holding a bound tag saves; the tag is held to the mounts like any other.
+            saves.save(processAuthority(), parsedWith(doc, 1, "chemistry"));
+            assertThat(f.catalog.current(doc).orElseThrow().revision()).isEqualTo(2);
+            var biology = SemanticPartsIT.rejected(() -> saves.save(processAuthority(), parsedWith(doc, 2, "biology")),
+                    Status.Code.INVALID_ARGUMENT, RejectionReason.REJECTION_REASON_VALIDATION_FAILED);
+            assertThat(biology.getViolationsList()).extracting(FieldViolation::getRuleId).containsExactly("concept.member");
+            assertThat(f.catalog.current(doc).orElseThrow().revision()).isEqualTo(2);
+
+            // Only CORE's tags are catalogued: the PARSED tag is stored with PARSED and filters do not see it.
+            assertThat(f.catalog.concepts(doc)).isEqualTo(core);
+            var lists = new DocumentLists(f.catalog, mounts);
+            assertThat(list(lists, filter("subject", "chemistry", ConceptExpansion.getDefaultInstance()), 10).docs()).isEmpty();
+            assertThat(list(lists, filter("subject", "physics", ConceptExpansion.getDefaultInstance()), 10).docs())
+                    .containsExactly("parsed");
+            var read = f.reads.getDocument(processAuthority(), GetDocumentRequest.newBuilder().setAddress(doc)
+                    .setSelection(PartSelection.newBuilder().addSelectors(PartSelector.newBuilder()
+                            .setPart(DocumentPart.DOCUMENT_PART_PARSED))).build());
+            var shape = read.getDocument().getParserResultsOrThrow("tagger").getDocument().getShape();
+            var stored = (Message) DynamicMessage.parseFrom(PAPER, shape.getValue()).getField(PAPER.findFieldByName("subject"));
+            assertThat(ConceptRef.parseFrom(stored.toByteString())).isEqualTo(cref("subject", "chemistry"));
+
+            // A rebuild reads the stored PARSED tag the same way: it stays out of the catalog.
+            execute(f, "DELETE FROM catalog_document_concepts");
+            new CatalogEntryRebuild(f.catalog, f.reads).rebuild(ACCOUNT);
+            assertThat(f.catalog.concepts(doc)).isEqualTo(core);
+        }
+    }
+
+    /** A PARSED write whose parser output is a Paper tagged {@code concept}, on top of {@code revision}. */
+    private static SaveDocumentRequest parsedWith(NodeAddress doc, long revision, String concept) {
+        var shape = Any.newBuilder().setTypeUrl(PAPER_URL).setValue(paper(p -> p.setField(PAPER.findFieldByName("subject"),
+                ref("subject", concept))).toByteString()).build();
+        var parsed = Document.newBuilder().putParserResults("tagger", ai.protomolt.proto.repo.v1.ParserResult.newBuilder()
+                .setParserName("tagger").setParserVersion("1").setStatus(ai.protomolt.proto.repo.v1.ParseStatus.PARSE_STATUS_OK)
+                .setDocument(ai.protomolt.proto.repo.v1.ParserDocument.newBuilder().setShape(shape)).build()).build();
+        return SaveDocumentRequest.newBuilder().setOperationId("parsed-" + concept)
+                .setTarget(DocumentTarget.newBuilder().setAddress(doc)).setExpected(at(revision)).setOwner(intakeOwner())
+                .setDocument(parsed).addWrites(put(DocumentPart.DOCUMENT_PART_PARSED)).build();
+    }
+
     // ------------------------------------------------------------------ lifecycle
 
     @Test void rowsFollowTheCurrentRevisionAndRebuild() throws Exception {
