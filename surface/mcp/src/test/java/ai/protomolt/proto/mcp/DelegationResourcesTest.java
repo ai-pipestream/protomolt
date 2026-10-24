@@ -112,6 +112,12 @@ class DelegationResourcesTest {
         assertThat(resources.read(mapper, DelegationResources.ROOT)).isEmpty();
         assertThat(resources.read(mapper,
                 DelegationResources.TASKS_URI + "/not-a-task/elsewhere")).isEmpty();
+        assertThat(resources.read(mapper,
+                DelegationResources.TASKS_URI + "/transcript")).isEmpty();
+        assertThat(resources.read(mapper,
+                DelegationResources.TASKS_URI + "//transcript")).isEmpty();
+        assertThat(resources.read(mapper,
+                DelegationResources.TASKS_URI + "/%ZZ/transcript")).isEmpty();
     }
 
     private JsonNode read(String uri) throws Exception {
