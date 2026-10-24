@@ -199,7 +199,20 @@ describe('ConceptSchemeBrowser', () => {
     expect(wrapper.get('[data-testid="mounted-scheme-chip-topics"]').text()).toContain('topics@v2')
     expect(wrapper.get('[data-testid="concept-doc-row-doc-wind-1"]').text()).toContain('Offshore Wind Report')
 
-    // Open in account documents
+    // Editing the draft account input without re-running lookup must not change the account used when opening a loaded row
+    await wrapper.get('[data-testid="concept-lookup-account"] input').setValue('acct-unsubmitted')
+    await wrapper.get('[data-testid="concept-doc-row-doc-wind-1"]').trigger('click')
+    await settle()
+    expect(router.currentRoute.value.name).toBe('repository-document')
+    expect(router.currentRoute.value.query).toEqual({
+      account: 'acct-a',
+      graph: 'intake:acct-a',
+      node: 'ds-files',
+      doc: 'doc-wind-1',
+    })
+
+    // Restore account input and open in account documents
+    await wrapper.get('[data-testid="concept-lookup-account"] input').setValue('acct-a')
     await wrapper.get('[data-testid="concept-open-in-account"]').trigger('click')
     await settle()
     expect(router.currentRoute.value.name).toBe('repository-account')

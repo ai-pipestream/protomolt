@@ -209,6 +209,40 @@ describe('filterConcepts and expandConceptInScheme', () => {
       { fromId: 'orphan-deprecated', relation: 'replaced_by', targetId: 'ghost-target' },
     ])
   })
+
+  it('expands multi-hop replaced_by deprecation chains transitively even when narrower is false', () => {
+    const chainScheme = create(ConceptSchemeSchema, {
+      concepts: [
+        create(ConceptSchema, {
+          id: 'legacy-v1',
+          prefLabel: [label('Legacy Wind v1', 'en')],
+          deprecated: true,
+          replacedBy: ['legacy-v2'],
+        }),
+        create(ConceptSchema, {
+          id: 'legacy-v2',
+          prefLabel: [label('Legacy Wind v2', 'en')],
+          deprecated: true,
+          replacedBy: ['wind-v3'],
+        }),
+        create(ConceptSchema, {
+          id: 'wind-v3',
+          prefLabel: [label('Wind v3', 'en')],
+        }),
+      ],
+    })
+    const view = buildConceptSchemeView('topics', chainScheme, 'v3')
+
+    const fromLive = expandConceptInScheme(view, 'wind-v3', { narrower: false, closeMatch: false })!
+    expect(fromLive.replacedRedirected).toBe(false)
+    expect(fromLive.canonicalIds).toEqual(['wind-v3'])
+    expect(fromLive.inSchemeConcepts.map((c) => c.id)).toEqual(['legacy-v1', 'legacy-v2', 'wind-v3'])
+
+    const fromOldest = expandConceptInScheme(view, 'legacy-v1', { narrower: false, closeMatch: false })!
+    expect(fromOldest.replacedRedirected).toBe(true)
+    expect(fromOldest.canonicalIds).toEqual(['wind-v3'])
+    expect(fromOldest.inSchemeConcepts.map((c) => c.id)).toEqual(['legacy-v1', 'legacy-v2', 'wind-v3'])
+  })
 })
 
 describe('buildConceptLookupRequest, conceptAccountRouteQuery, and mergeMountedSchemes', () => {

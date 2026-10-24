@@ -471,19 +471,34 @@ export function expandConceptInScheme(
 
   const unresolvedInScheme: { fromId: string; relation: 'broader' | 'replaced_by'; targetId: string }[] = []
   const canonicalNodes: ConceptNodeView[] = []
+  const canonicalSeen = new Set<string>()
+  const forwardVisited = new Set<string>()
   let replacedRedirected = false
   if (start.deprecated && start.replacedBy.length > 0) {
-    for (const replacement of start.replacedBy) {
-      if (replacement.known) {
-        const targetNode = scheme.byId.get(replacement.conceptId)!
-        canonicalNodes.push(targetNode)
-        if (targetNode.id !== start.id) replacedRedirected = true
-      } else {
-        unresolvedInScheme.push({
-          fromId: start.id,
-          relation: 'replaced_by',
-          targetId: replacement.conceptId,
-        })
+    const forwardQueue: ConceptNodeView[] = [start]
+    forwardVisited.add(start.id)
+    while (forwardQueue.length > 0) {
+      const node = forwardQueue.shift()!
+      for (const replacement of node.replacedBy) {
+        if (replacement.known) {
+          const targetNode = scheme.byId.get(replacement.conceptId)!
+          if (targetNode.id !== start.id) replacedRedirected = true
+          if (targetNode.deprecated && targetNode.replacedBy.length > 0) {
+            if (!forwardVisited.has(targetNode.id)) {
+              forwardVisited.add(targetNode.id)
+              forwardQueue.push(targetNode)
+            }
+          } else if (!canonicalSeen.has(targetNode.id)) {
+            canonicalSeen.add(targetNode.id)
+            canonicalNodes.push(targetNode)
+          }
+        } else {
+          unresolvedInScheme.push({
+            fromId: node.id,
+            relation: 'replaced_by',
+            targetId: replacement.conceptId,
+          })
+        }
       }
     }
   }
@@ -499,7 +514,15 @@ export function expandConceptInScheme(
       queue.push(node)
     }
   }
-  if (replacedRedirected) expandedIds.add(start.id)
+  if (replacedRedirected) {
+    for (const id of forwardVisited) {
+      const node = scheme.byId.get(id)
+      if (node !== undefined && !expandedIds.has(node.id)) {
+        expandedIds.add(node.id)
+        queue.push(node)
+      }
+    }
+  }
 
   while (queue.length > 0) {
     const current = queue.shift()!
@@ -509,8 +532,10 @@ export function expandConceptInScheme(
       }
     }
     for (const pred of current.replaces) {
-      if (pred.known && !expandedIds.has(pred.conceptId)) {
-        expandedIds.add(pred.conceptId)
+      const predNode = scheme.byId.get(pred.conceptId)
+      if (predNode !== undefined && !expandedIds.has(predNode.id)) {
+        expandedIds.add(predNode.id)
+        queue.push(predNode)
       }
     }
     if (options.narrower) {

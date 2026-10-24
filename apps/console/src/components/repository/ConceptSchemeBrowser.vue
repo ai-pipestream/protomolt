@@ -697,6 +697,7 @@ watch(
 
 const cursor = reactive(new PageCursor())
 const rows = ref<DocumentRow[]>([])
+const loadedAccountId = ref('')
 const evidence = ref<EvidenceView | null>(null)
 const mountedSchemes = ref<{ schemeId: string; version: string }[]>([])
 const lookupLoading = ref(false)
@@ -728,12 +729,14 @@ async function runConceptLookup(resetPage: boolean) {
   lookupLoading.value = true
   if (resetPage) {
     rows.value = []
+    loadedAccountId.value = ''
     evidence.value = null
   }
   try {
     const response = await clients.documents.listDocuments(request, { signal })
     if (signal.aborted) return
     rows.value = response.documents.map(documentRow)
+    loadedAccountId.value = request.accountId
     const ev = evidenceView(response.conceptEvidence)
     evidence.value = ev
     mountedSchemes.value = mergeMountedSchemes(mountedSchemes.value, ev)
@@ -779,7 +782,7 @@ function openDocumentRow(row: DocumentRow) {
   void router.push({
     name: 'repository-document',
     query: {
-      account: draft.accountId.trim(),
+      account: loadedAccountId.value || draft.accountId.trim(),
       graph: row.graphId,
       node: row.graphAddressId,
       doc: row.docId,
