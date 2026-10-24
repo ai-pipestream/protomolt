@@ -118,6 +118,16 @@ class TeiRerankProviderTest {
     }
 
     @Test
+    void negativeRankIndexFromHighUint32ThrowsIllegalStateException() {
+        fake.negativeRankIndex = true;
+        TeiRerankProvider provider = new TeiRerankProvider(channel);
+
+        assertThatThrownBy(() -> provider.score("bamboo", List.of("a", "b")))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("rank index -1");
+    }
+
+    @Test
     void duplicatedRankIndexThrows() {
         fake.duplicateFirstRank = true;
         TeiRerankProvider provider = new TeiRerankProvider(channel);
@@ -250,6 +260,7 @@ class TeiRerankProviderTest {
         private final List<Integer> lastRankOrder = new CopyOnWriteArrayList<>();
         private volatile io.grpc.StatusRuntimeException failWith;
         private volatile int extraRankIndex = -1;
+        private volatile boolean negativeRankIndex;
         private volatile boolean dropLastRank;
         private volatile boolean duplicateFirstRank;
 
@@ -273,6 +284,9 @@ class TeiRerankProviderTest {
             }
             if (extraRankIndex >= 0) {
                 ranks.add(Rank.newBuilder().setIndex(extraRankIndex).setScore(0).build());
+            }
+            if (negativeRankIndex) {
+                ranks.add(Rank.newBuilder().setIndex(-1).setScore(0).build());
             }
             if (duplicateFirstRank && !ranks.isEmpty()) {
                 ranks.add(ranks.get(0));

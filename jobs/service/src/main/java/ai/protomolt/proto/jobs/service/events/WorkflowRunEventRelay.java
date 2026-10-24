@@ -20,6 +20,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Properties;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.locks.ReentrantLock;
 
 /**
  * The outbox relay: drains {@code workflow_run_events_outbox} to the
@@ -49,6 +50,7 @@ public final class WorkflowRunEventRelay implements AutoCloseable {
     private final String topic;
     private final Duration pollInterval;
     private final int batchSize;
+    private final ReentrantLock lifecycleLock = new ReentrantLock();
 
     private volatile boolean closed;
     private Thread thread;
@@ -73,22 +75,31 @@ public final class WorkflowRunEventRelay implements AutoCloseable {
      * Start the drain loop on a virtual thread. A non-empty drain loops
      * again immediately; an empty one backs off the poll interval. The loop
      * catches and logs per iteration — one store hiccup never kills it —
-     * and stops in {@link #close()}.
+     * and stops in {@link #close()}. Calling {@code start()} when the relay
+     * is already running or closed is a no-op.
      */
     public void start() {
-        thread = Thread.ofVirtual().name("workflow-run-event-relay").start(() -> {
-            while (!closed) {
-                try {
-                    if (relayOnce() == 0) {
-                        sleep(pollInterval.toMillis());
-                    }
-                } catch (RuntimeException e) {
-                    LOG.warn("workflow-run-event-relay iteration failed (loop continues): {}",
-                            e.getMessage(), e);
-                    sleep(1000);
-                }
+        lifecycleLock.lock();
+        try {
+            if (closed || thread != null) {
+                return;
             }
-        });
+            thread = Thread.ofVirtual().name("workflow-run-event-relay").start(() -> {
+                while (!closed) {
+                    try {
+                        if (relayOnce() == 0) {
+                            sleep(pollInterval.toMillis());
+                        }
+                    } catch (RuntimeException e) {
+                        LOG.warn("workflow-run-event-relay iteration failed (loop continues): {}",
+                                e.getMessage(), e);
+                        sleep(1000);
+                    }
+                }
+            });
+        } finally {
+            lifecycleLock.unlock();
+        }
     }
 
     /**
@@ -123,11 +134,19 @@ public final class WorkflowRunEventRelay implements AutoCloseable {
     /** Stop the drain loop. The producer's lifecycle stays with the caller. */
     @Override
     public void close() {
-        closed = true;
-        if (thread != null) {
-            thread.interrupt();
+        Thread running;
+        lifecycleLock.lock();
+        try {
+            closed = true;
+            running = thread;
+            thread = null;
+        } finally {
+            lifecycleLock.unlock();
+        }
+        if (running != null) {
+            running.interrupt();
             try {
-                thread.join(TimeUnit.SECONDS.toMillis(10));
+                running.join(TimeUnit.SECONDS.toMillis(10));
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
             }
@@ -168,7 +187,16 @@ public final class WorkflowRunEventRelay implements AutoCloseable {
         props.put(ProducerConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapServers);
         props.put(ProducerConfig.ACKS_CONFIG, "all");
         props.put(ProducerConfig.ENABLE_IDEMPOTENCE_CONFIG, "true");
-        return new KafkaProducer<>(props, new StringSerializer(), valueSerializer);
+        try {
+            return new KafkaProducer<>(props, new StringSerializer(), valueSerializer);
+        } catch (RuntimeException e) {
+            try {
+                valueSerializer.close();
+            } catch (RuntimeException suppressed) {
+                e.addSuppressed(suppressed);
+            }
+            throw e;
+        }
     }
 
     private static void sleep(long millis) {

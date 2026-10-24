@@ -19,6 +19,7 @@ import java.util.Objects;
  */
 public final class ApicurioProtobufParseFallback {
 
+    /** Magic byte framing Confluent/Apicurio wire-format payloads: {@value}. */
     public static final byte MAGIC_BYTE = 0x00;
 
     private final Class<? extends Message> messageType;
@@ -27,6 +28,14 @@ public final class ApicurioProtobufParseFallback {
     private final boolean readIndexes;
     private final boolean readTypeRef;
 
+    /**
+     * Creates a fallback parser for {@code messageType}.
+     *
+     * @param messageType concrete generated protobuf message class
+     * @param idSize number of content-id bytes following {@link #MAGIC_BYTE}
+     * @param readIndexes whether the wire prefix carries Confluent-style message indexes
+     * @param readTypeRef whether the wire prefix carries an Apicurio length-delimited type reference
+     */
     public ApicurioProtobufParseFallback(
             Class<? extends Message> messageType,
             int idSize,
@@ -51,11 +60,24 @@ public final class ApicurioProtobufParseFallback {
         this.readTypeRef = readTypeRef;
     }
 
-    /** Default Confluent/Apicurio content-id size of 4 bytes, with type-ref enabled. */
+    /**
+     * Default Confluent/Apicurio content-id size of 4 bytes, with type-ref enabled.
+     *
+     * @param messageType concrete generated protobuf message class
+     * @return fallback parser configured for default 4-byte Apicurio framing
+     */
     public static ApicurioProtobufParseFallback forType(Class<? extends Message> messageType) {
         return new ApicurioProtobufParseFallback(messageType, 4, false, true);
     }
 
+    /**
+     * Parses {@code data} into an instance of the configured protobuf message type, stripping
+     * any leading Apicurio/Confluent wire-format prefix.
+     *
+     * @param data wire payload bytes, or {@code null}
+     * @param <T> expected protobuf message type
+     * @return parsed message, or {@code null} when {@code data} is {@code null}
+     */
     @SuppressWarnings("unchecked")
     public <T extends Message> T parse(byte[] data) {
         if (data == null) {
@@ -64,7 +86,7 @@ public final class ApicurioProtobufParseFallback {
         try {
             ByteArrayInputStream in = new ByteArrayInputStream(data);
             if (data.length > 0 && data[0] == MAGIC_BYTE) {
-                int prefix = 1 + idSize;
+                long prefix = 1L + idSize;
                 if (in.skip(prefix) != prefix) {
                     throw new IllegalStateException(
                             "Wire-format prefix truncated: expected " + prefix + " bytes");
@@ -86,6 +108,9 @@ public final class ApicurioProtobufParseFallback {
     /** Skips Confluent-style message indexes (zigzag varint count + zigzag varints). */
     static void skipMessageIndexes(InputStream in) throws IOException {
         int count = readZigZagVarint(in);
+        if (count < 0) {
+            throw new IOException("Negative message index count: " + count);
+        }
         for (int i = 0; i < count; i++) {
             readZigZagVarint(in);
         }

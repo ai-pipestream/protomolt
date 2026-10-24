@@ -27,6 +27,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.locks.ReentrantLock;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -91,6 +92,7 @@ public final class IntakeHttpServer implements AutoCloseable {
 
     private final RawIngests ingests;
     private final ApiKeyIdentityResolver resolver;
+    private final ReentrantLock lock = new ReentrantLock();
 
     private HttpServer server;
     private ExecutorService executor;
@@ -112,31 +114,36 @@ public final class IntakeHttpServer implements AutoCloseable {
      * @param port the listen port (0 = ephemeral, read it back via {@link #port()})
      * @return the bound port
      */
-    public synchronized int start(int port) {
-        if (server != null) {
-            throw new IllegalStateException("HTTP intake server already started");
-        }
-        HttpServer created;
+    public int start(int port) {
+        lock.lock();
         try {
-            created = HttpServer.create(new InetSocketAddress(port), 0);
-        } catch (IOException e) {
-            throw new UncheckedIOException("failed to bind HTTP intake server on port " + port, e);
+            if (server != null) {
+                throw new IllegalStateException("HTTP intake server already started");
+            }
+            HttpServer created;
+            try {
+                created = HttpServer.create(new InetSocketAddress(port), 0);
+            } catch (IOException e) {
+                throw new UncheckedIOException("failed to bind HTTP intake server on port " + port, e);
+            }
+            ExecutorService pool = Executors.newVirtualThreadPerTaskExecutor();
+            try {
+                created.createContext(UPLOAD_PATH, this::handle);
+                created.setExecutor(pool);
+                created.start();
+            } catch (RuntimeException e) {
+                created.stop(0);
+                pool.shutdownNow();
+                throw e;
+            }
+            this.server = created;
+            this.executor = pool;
+            int bound = created.getAddress().getPort();
+            LOG.info("HTTP intake route listening on port {} ({})", bound, UPLOAD_PATH);
+            return bound;
+        } finally {
+            lock.unlock();
         }
-        ExecutorService pool = Executors.newVirtualThreadPerTaskExecutor();
-        try {
-            created.createContext(UPLOAD_PATH, this::handle);
-            created.setExecutor(pool);
-            created.start();
-        } catch (RuntimeException e) {
-            created.stop(0);
-            pool.shutdownNow();
-            throw e;
-        }
-        this.server = created;
-        this.executor = pool;
-        int bound = created.getAddress().getPort();
-        LOG.info("HTTP intake route listening on port {} ({})", bound, UPLOAD_PATH);
-        return bound;
     }
 
     /**
@@ -144,22 +151,36 @@ public final class IntakeHttpServer implements AutoCloseable {
      *
      * @return the port the server is listening on
      */
-    public synchronized int port() {
-        if (server == null) {
-            throw new IllegalStateException("HTTP intake server not started");
+    public int port() {
+        lock.lock();
+        try {
+            if (server == null) {
+                throw new IllegalStateException("HTTP intake server not started");
+            }
+            return server.getAddress().getPort();
+        } finally {
+            lock.unlock();
         }
-        return server.getAddress().getPort();
     }
 
     @Override
-    public synchronized void close() {
-        if (server != null) {
-            server.stop(1);
+    public void close() {
+        HttpServer toStop;
+        ExecutorService toShutdown;
+        lock.lock();
+        try {
+            toStop = server;
             server = null;
-        }
-        if (executor != null) {
-            executor.shutdown();
+            toShutdown = executor;
             executor = null;
+        } finally {
+            lock.unlock();
+        }
+        if (toStop != null) {
+            toStop.stop(1);
+        }
+        if (toShutdown != null) {
+            toShutdown.shutdown();
         }
     }
 

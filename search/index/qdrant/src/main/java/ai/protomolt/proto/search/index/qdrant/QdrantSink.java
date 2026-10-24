@@ -61,6 +61,8 @@ public final class QdrantSink implements AutoCloseable {
      * Creates a sink from a {@link QdrantConfig}, connecting eagerly to
      * {@link QdrantConfig#target()} (plaintext unless {@link QdrantConfig#useTls()}). The
      * sink owns the channel; {@link #close()} shuts it down.
+     *
+     * @param config connection and authentication configuration
      */
     public QdrantSink(QdrantConfig config) {
         this(newChannel(Objects.requireNonNull(config, "config")), true, config.apiKey());
@@ -69,6 +71,8 @@ public final class QdrantSink implements AutoCloseable {
     /**
      * Creates a sink over a caller-owned channel with no API key; {@link #close()} leaves
      * {@code channel} open.
+     *
+     * @param channel caller-owned gRPC channel connected to Qdrant
      */
     public QdrantSink(ManagedChannel channel) {
         this(channel, false, "");
@@ -146,6 +150,11 @@ public final class QdrantSink implements AutoCloseable {
     /**
      * {@link #ensureCollection(String, Collection)} with COSINE vectors sized by name, for
      * callers that already know the sizes.
+     *
+     * @param collection collection name
+     * @param vectorDimensions map of named vector to dimension count
+     * @return {@code true} when this call created the collection, {@code false} when it
+     *         already existed
      */
     public boolean ensureCollection(String collection, Map<String, Integer> vectorDimensions) {
         Objects.requireNonNull(vectorDimensions, "vectorDimensions");
@@ -161,6 +170,9 @@ public final class QdrantSink implements AutoCloseable {
      * declaration. Alternatively pass specs derived from the source Document to
      * {@link #ensureCollection(String, Collection)}. An empty batch creates nothing.
      *
+     * @param collection collection name
+     * @param pointsBatch points about to be written
+     * @param mapping index mapping providing vector dimension and similarity hints
      * @return {@code true} when this call created the collection
      */
     public boolean ensureCollectionForPoints(String collection, List<PointStruct> pointsBatch,
@@ -175,6 +187,10 @@ public final class QdrantSink implements AutoCloseable {
     /**
      * Empty-batch convenience. Nonempty points alone cannot establish their similarity and
      * are refused; supply a mapping or explicit {@link QdrantVectorSpec}s instead.
+     *
+     * @param collection collection name
+     * @param pointsBatch points about to be written
+     * @return {@code true} when this call created the collection
      */
     public boolean ensureCollectionForPoints(String collection, List<PointStruct> pointsBatch) {
         return ensureCollectionForPoints(collection, pointsBatch, null);
@@ -183,6 +199,8 @@ public final class QdrantSink implements AutoCloseable {
     /**
      * Upserts the points in one call with {@code wait=true}. An empty batch sends nothing.
      *
+     * @param collection collection name
+     * @param pointsBatch points to upsert
      * @throws StatusRuntimeException when the server rejects the write or cannot be reached
      */
     public void upsert(String collection, List<PointStruct> pointsBatch) {
@@ -206,6 +224,7 @@ public final class QdrantSink implements AutoCloseable {
      *        the collection's default (unnamed) vector
      * @param vector query vector
      * @param limit max number of results
+     * @return the Qdrant search response with full payloads
      */
     public SearchResponse search(String collection, String vectorName, List<Float> vector, int limit) {
         Objects.requireNonNull(collection, "collection");
@@ -227,8 +246,11 @@ public final class QdrantSink implements AutoCloseable {
         if (ownsChannel) {
             channel.shutdown();
             try {
-                channel.awaitTermination(SHUTDOWN_SECONDS, TimeUnit.SECONDS);
+                if (!channel.awaitTermination(SHUTDOWN_SECONDS, TimeUnit.SECONDS)) {
+                    channel.shutdownNow();
+                }
             } catch (InterruptedException e) {
+                channel.shutdownNow();
                 Thread.currentThread().interrupt();
             }
         }
