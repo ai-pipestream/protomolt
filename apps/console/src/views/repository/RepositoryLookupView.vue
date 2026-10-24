@@ -8,7 +8,7 @@
       </v-card-title>
     </v-card>
 
-    <v-row dense>
+    <v-row density="compact">
       <v-col cols="12" md="6">
         <v-card class="mb-4">
           <v-card-title class="text-subtitle-2">By call number</v-card-title>
@@ -76,12 +76,15 @@
         </v-card>
       </v-col>
     </v-row>
+
+    <ConceptSchemeBrowser :account-id="call.accountId || opAccount" class="mt-2" />
   </div>
 </template>
 
 <script setup lang="ts">
-import { reactive, ref } from 'vue'
+import { reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import ConceptSchemeBrowser from '@/components/repository/ConceptSchemeBrowser.vue'
 import RpcFailureAlert from '@/components/repository/RpcFailureAlert.vue'
 import type { NodeAddress } from '@/gen/ai/protomolt/proto/repo/v1/address_pb'
 import { RejectionReasonSchema } from '@/gen/ai/protomolt/proto/repo/v2/errors_pb'
@@ -108,6 +111,17 @@ const looking = ref(false)
 const opInputError = ref<string | null>(null)
 const opFailure = ref<RpcFailure | null>(null)
 const answer = ref<OutcomeAnswer | null>(null)
+
+watch(
+  () => route.query.account,
+  (next) => {
+    const account = typeof next === 'string' ? next : ''
+    if (account !== '') {
+      call.accountId = account
+      opAccount.value = account
+    }
+  },
+)
 
 function documentRoute(address: NodeAddress, revision: bigint | null) {
   const query: Record<string, string> = {
@@ -141,12 +155,14 @@ async function lookup() {
   const signal = scope.next()
   looking.value = true
   try {
-    answer.value = await lookupOutcome(clients.documents, opAccount.value, operationId.value, signal)
+    const result = await lookupOutcome(clients.documents, opAccount.value, operationId.value, signal)
+    if (signal.aborted) return
+    answer.value = result
   } catch (error) {
     if (error instanceof OutcomeInputError) opInputError.value = error.message
     else if (!isOwnCancellation(error, signal)) opFailure.value = rpcFailure(error)
   } finally {
-    looking.value = false
+    if (!signal.aborted) looking.value = false
   }
 }
 </script>
