@@ -351,4 +351,151 @@ class ScopeServerInterceptorTest {
         return HealthGrpc.newBlockingStub(target)
                 .withInterceptors(MetadataUtils.newAttachHeadersInterceptor(headers));
     }
+
+    private static ServerServiceDefinition countingHealthService(AtomicInteger parses) {
+        MethodDescriptor<HealthCheckRequest, HealthCheckResponse> baseMethod =
+                HealthGrpc.getCheckMethod();
+        MethodDescriptor.Marshaller<HealthCheckRequest> baseMarshaller =
+                baseMethod.getRequestMarshaller();
+        MethodDescriptor<HealthCheckRequest, HealthCheckResponse> countingMethod =
+                baseMethod.toBuilder(
+                        new MethodDescriptor.Marshaller<HealthCheckRequest>() {
+                            @Override
+                            public InputStream stream(HealthCheckRequest value) {
+                                return baseMarshaller.stream(value);
+                            }
+
+                            @Override
+                            public HealthCheckRequest parse(InputStream stream) {
+                                parses.incrementAndGet();
+                                return baseMarshaller.parse(stream);
+                            }
+                        },
+                        baseMethod.getResponseMarshaller()).build();
+        return ServerServiceDefinition.builder(HEALTH)
+                .addMethod(countingMethod, ServerCalls.asyncUnaryCall((request, observer) -> {
+                    observer.onNext(HealthCheckResponse.newBuilder()
+                            .setStatus(HealthCheckResponse.ServingStatus.SERVING)
+                            .build());
+                    observer.onCompleted();
+                }))
+                .build();
+    }
+
+    @Test
+    void reviewerCompressedSmallMessageWithinCapMustSucceed() throws Exception {
+        AtomicInteger parses = new AtomicInteger();
+        CallerResolver resolver = credential -> "capped-credential".equals(credential)
+                ? Optional.of(Caller.scoped("capped",
+                        Set.of(Scopes.METRICS_QUERY),
+                        Map.of(Scopes.METRICS_QUERY, new Caller.Budget(2, 4))))
+                : Optional.empty();
+        ScopeServerInterceptor scopes = new ScopeServerInterceptor(
+                Map.of(HEALTH, Scopes.METRICS_QUERY), Map.of(), Set.of());
+        NettyServerBuilder builder = NettyServerBuilder.forPort(0)
+                .addService(countingHealthService(parses));
+        scopes.configure(builder);
+        builder.intercept(new ApiTokenServerInterceptor(OPERATOR, resolver));
+        Server nettyServer = builder.build().start();
+        ManagedChannel nettyChannel = NettyChannelBuilder
+                .forAddress("localhost", nettyServer.getPort())
+                .usePlaintext()
+                .build();
+        try {
+            HealthCheckRequest small = HealthCheckRequest.newBuilder().setService("a").build();
+            assertThat(small.getSerializedSize()).isEqualTo(3);
+            HealthCheckResponse response = stubOn(nettyChannel, "capped-credential")
+                    .withCompression("gzip")
+                    .check(small);
+            assertThat(response.getStatus())
+                    .isEqualTo(HealthCheckResponse.ServingStatus.SERVING);
+            assertThat(parses.get()).isEqualTo(1);
+        } finally {
+            nettyChannel.shutdownNow();
+            nettyServer.shutdownNow();
+        }
+    }
+
+    @Test
+    void reviewerCompressedPayloadCapBeforeHalfClose() throws Exception {
+        AtomicInteger parses = new AtomicInteger();
+        CallerResolver resolver = credential -> "capped-credential".equals(credential)
+                ? Optional.of(Caller.scoped("capped",
+                        Set.of(Scopes.METRICS_QUERY),
+                        Map.of(Scopes.METRICS_QUERY, new Caller.Budget(2, 100))))
+                : Optional.empty();
+        ScopeServerInterceptor scopes = new ScopeServerInterceptor(
+                Map.of(HEALTH, Scopes.METRICS_QUERY), Map.of(), Set.of());
+        NettyServerBuilder builder = NettyServerBuilder.forPort(0)
+                .addService(countingHealthService(parses));
+        scopes.configure(builder);
+        builder.intercept(new ApiTokenServerInterceptor(OPERATOR, resolver));
+        Server nettyServer = builder.build().start();
+        ManagedChannel nettyChannel = NettyChannelBuilder
+                .forAddress("localhost", nettyServer.getPort())
+                .usePlaintext()
+                .build();
+        try {
+            CountDownLatch closed = new CountDownLatch(1);
+            AtomicReference<Status> closeStatus = new AtomicReference<>();
+            ClientCall<HealthCheckRequest, HealthCheckResponse> call =
+                    nettyChannel.newCall(
+                            HealthGrpc.getCheckMethod(),
+                            CallOptions.DEFAULT.withCompression("gzip"));
+            Metadata headers = new Metadata();
+            headers.put(Metadata.Key.of("api_token", Metadata.ASCII_STRING_MARSHALLER),
+                    "capped-credential");
+            call.start(new ClientCall.Listener<>() {
+                @Override
+                public void onClose(Status status, Metadata trailers) {
+                    closeStatus.set(status);
+                    closed.countDown();
+                }
+            }, headers);
+            call.request(1);
+            call.sendMessage(HealthCheckRequest.newBuilder()
+                    .setService("x".repeat(1024))
+                    .build());
+            assertThat(closed.await(5, TimeUnit.SECONDS)).isTrue();
+            assertThat(closeStatus.get().getCode()).isEqualTo(Status.Code.RESOURCE_EXHAUSTED);
+            assertThat(closeStatus.get().getDescription())
+                    .contains("capped").contains("1027 bytes").contains("100-byte");
+            assertThat(parses.get()).isZero();
+        } finally {
+            nettyChannel.shutdownNow();
+            nettyServer.shutdownNow();
+        }
+    }
+
+    @Test
+    void reviewerCompressedEmptyMessageWithinCapMustSucceed() throws Exception {
+        AtomicInteger parses = new AtomicInteger();
+        CallerResolver resolver = credential -> "capped-credential".equals(credential)
+                ? Optional.of(Caller.scoped("capped",
+                        Set.of(Scopes.METRICS_QUERY),
+                        Map.of(Scopes.METRICS_QUERY, new Caller.Budget(2, 4))))
+                : Optional.empty();
+        ScopeServerInterceptor scopes = new ScopeServerInterceptor(
+                Map.of(HEALTH, Scopes.METRICS_QUERY), Map.of(), Set.of());
+        NettyServerBuilder builder = NettyServerBuilder.forPort(0)
+                .addService(countingHealthService(parses));
+        scopes.configure(builder);
+        builder.intercept(new ApiTokenServerInterceptor(OPERATOR, resolver));
+        Server nettyServer = builder.build().start();
+        ManagedChannel nettyChannel = NettyChannelBuilder
+                .forAddress("localhost", nettyServer.getPort())
+                .usePlaintext()
+                .build();
+        try {
+            HealthCheckResponse response = stubOn(nettyChannel, "capped-credential")
+                    .withCompression("gzip")
+                    .check(HealthCheckRequest.getDefaultInstance());
+            assertThat(response.getStatus())
+                    .isEqualTo(HealthCheckResponse.ServingStatus.SERVING);
+            assertThat(parses.get()).isEqualTo(1);
+        } finally {
+            nettyChannel.shutdownNow();
+            nettyServer.shutdownNow();
+        }
+    }
 }

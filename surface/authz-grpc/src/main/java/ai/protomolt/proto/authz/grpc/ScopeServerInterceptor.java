@@ -5,6 +5,8 @@ import ai.protomolt.proto.actions.ScopeBudgets;
 import ai.protomolt.proto.actions.Scopes;
 import com.google.protobuf.MessageLite;
 import io.grpc.Context;
+import io.grpc.Decompressor;
+import io.grpc.DecompressorRegistry;
 import io.grpc.ForwardingServerCallListener;
 import io.grpc.Metadata;
 import io.grpc.ServerBuilder;
@@ -13,6 +15,11 @@ import io.grpc.ServerCallHandler;
 import io.grpc.ServerInterceptor;
 import io.grpc.ServerStreamTracer;
 import io.grpc.Status;
+import java.io.ByteArrayInputStream;
+import java.io.IOException;
+import java.io.InputStream;
+import java.lang.reflect.Field;
+import java.lang.reflect.Method;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
@@ -36,6 +43,12 @@ import java.util.concurrent.ConcurrentLinkedQueue;
  */
 public final class ScopeServerInterceptor implements ServerInterceptor {
 
+    private static final long MAX_DECOMPRESSED_COUNT_BYTES = 64L * 1024L;
+    private static final int SCRATCH_BUFFER_BYTES = 4096;
+    private static final ThreadLocal<InboundFrameTracker> PENDING_COMPRESSED_TRACKER =
+            new ThreadLocal<>();
+    private static final DecompressorRegistry DECOMPRESSOR_REGISTRY = buildDecompressorRegistry();
+
     private final Map<String, String> serviceScopes;
     private final Map<String, String> methodScopes;
     private final Set<String> openServices;
@@ -48,6 +61,21 @@ public final class ScopeServerInterceptor implements ServerInterceptor {
             return new InboundFrameTracker(frameTrackerKey);
         }
     };
+
+    private static DecompressorRegistry buildDecompressorRegistry() {
+        DecompressorRegistry defaults = DecompressorRegistry.getDefaultInstance();
+        Set<String> advertised = defaults.getAdvertisedMessageEncodings();
+        DecompressorRegistry registry = DecompressorRegistry.emptyInstance();
+        for (String encoding : defaults.getKnownMessageEncodings()) {
+            Decompressor delegate = defaults.lookupDecompressor(encoding);
+            if (delegate != null) {
+                registry = registry.with(
+                        new PayloadCapDecompressor(delegate),
+                        advertised.contains(encoding));
+            }
+        }
+        return registry;
+    }
 
     /**
      * An interceptor spending on its own ledger, for a surface that is the node's only
@@ -107,15 +135,17 @@ public final class ScopeServerInterceptor implements ServerInterceptor {
     }
 
     /**
-     * Attaches both {@link #streamTracerFactory()} and this interceptor to {@code builder} so
-     * positive per-scope payload caps and rate budgets are enforced on frame arrival before
-     * {@code halfClose()}.
+     * Attaches the payload-cap-aware decompressor registry, {@link #streamTracerFactory()},
+     * and this interceptor to {@code builder} so positive per-scope payload caps and rate
+     * budgets are enforced on frame arrival before {@code halfClose()} for both uncompressed
+     * and compressed messages.
      *
      * @param builder the server builder to configure
      */
     public void configure(ServerBuilder<?> builder) {
         Objects.requireNonNull(builder, "builder");
-        builder.addStreamTracerFactory(tracerFactory)
+        builder.decompressorRegistry(DECOMPRESSOR_REGISTRY)
+                .addStreamTracerFactory(tracerFactory)
                 .intercept(this);
     }
 
@@ -183,6 +213,31 @@ public final class ScopeServerInterceptor implements ServerInterceptor {
                     }
                     return;
                 }
+                if (event instanceof CompressedFrameArrivalEvent arrival) {
+                    if (refused || tracker == null) {
+                        return;
+                    }
+                    InputStream delayed = delayedMessageOf(call);
+                    if (delayed == null) {
+                        if (arrival.attempt() < 2) {
+                            call.triggerEvent(new CompressedFrameArrivalEvent(
+                                    arrival.attempt() + 1));
+                        }
+                        return;
+                    }
+                    PENDING_COMPRESSED_TRACKER.set(tracker);
+                    try {
+                        delayed.available();
+                    } catch (IOException e) {
+                        refused = true;
+                        call.close(Status.INTERNAL
+                                .withDescription("Failed to decompress inbound frame")
+                                .withCause(e), new Metadata());
+                    } finally {
+                        PENDING_COMPRESSED_TRACKER.remove();
+                    }
+                    return;
+                }
                 super.onEvent(event);
             }
 
@@ -226,11 +281,78 @@ public final class ScopeServerInterceptor implements ServerInterceptor {
     private record FrameRefusalEvent(String description) {
     }
 
+    private record CompressedFrameArrivalEvent(int attempt) {
+    }
+
     private record FrameVerdict(boolean evaluated, String refusal) {
     }
 
     private record Gate(ServerCall<?, ?> call, Caller caller, String scope,
             Caller.Budget budget, ScopeBudgets budgets) {
+    }
+
+    private static InputStream delayedMessageOf(ServerCall<?, ?> call) {
+        try {
+            Object current = call;
+            while (current != null && !"io.grpc.internal.ServerCallImpl".equals(
+                    current.getClass().getName())) {
+                Method delegateMethod = findNoArgMethod(current.getClass(), "delegate");
+                if (delegateMethod == null) {
+                    return null;
+                }
+                delegateMethod.setAccessible(true);
+                current = delegateMethod.invoke(current);
+            }
+            if (current == null) {
+                return null;
+            }
+            Field streamField = current.getClass().getDeclaredField("stream");
+            streamField.setAccessible(true);
+            Object stream = streamField.get(current);
+            if (stream == null) {
+                return null;
+            }
+            Method transportStateMethod = findNoArgMethod(stream.getClass(), "transportState");
+            if (transportStateMethod == null) {
+                return null;
+            }
+            transportStateMethod.setAccessible(true);
+            Object transportState = transportStateMethod.invoke(stream);
+            if (transportState == null) {
+                return null;
+            }
+            Method listenerMethod = findNoArgMethod(transportState.getClass(), "listener");
+            if (listenerMethod == null) {
+                return null;
+            }
+            listenerMethod.setAccessible(true);
+            Object jumpListener = listenerMethod.invoke(transportState);
+            if (jumpListener == null) {
+                return null;
+            }
+            Field appListenerField = jumpListener.getClass().getDeclaredField("listener");
+            appListenerField.setAccessible(true);
+            Object appListener = appListenerField.get(jumpListener);
+            if (appListener == null) {
+                return null;
+            }
+            Field delayedMessageField = appListener.getClass().getDeclaredField("delayedMessage");
+            delayedMessageField.setAccessible(true);
+            return (InputStream) delayedMessageField.get(appListener);
+        } catch (ReflectiveOperationException | RuntimeException e) {
+            return null;
+        }
+    }
+
+    private static Method findNoArgMethod(Class<?> type, String name) {
+        for (Class<?> cursor = type; cursor != null; cursor = cursor.getSuperclass()) {
+            for (Method method : cursor.getDeclaredMethods()) {
+                if (method.getName().equals(name) && method.getParameterCount() == 0) {
+                    return method;
+                }
+            }
+        }
+        return null;
     }
 
     private static final class InboundFrameTracker extends ServerStreamTracer {
@@ -265,24 +387,80 @@ public final class ScopeServerInterceptor implements ServerInterceptor {
                 return;
             }
             if (optionalUncompressedSize >= 0) {
-                Optional<String> refusal = active.budgets().refuse(
-                        active.caller(), active.scope(), optionalUncompressedSize);
-                verdicts.add(new FrameVerdict(true, refusal.orElse(null)));
-                if (refusal.isPresent()) {
-                    refused = true;
-                    active.call().triggerEvent(new FrameRefusalEvent(refusal.get()));
-                }
-            } else if (optionalWireSize > active.budget().maxPayloadBytes()) {
-                Optional<String> refusal = active.budgets().refuse(
-                        active.caller(), active.scope(), optionalWireSize);
-                verdicts.add(new FrameVerdict(true, refusal.orElse(null)));
-                if (refusal.isPresent()) {
-                    refused = true;
-                    active.call().triggerEvent(new FrameRefusalEvent(refusal.get()));
-                }
+                evaluateUncompressedSize(active, optionalUncompressedSize);
             } else {
-                verdicts.add(new FrameVerdict(false, null));
+                active.call().triggerEvent(new CompressedFrameArrivalEvent(0));
             }
+        }
+
+        private void evaluateUncompressedSize(Gate active, long uncompressedSize) {
+            Optional<String> refusal = active.budgets().refuse(
+                    active.caller(), active.scope(), uncompressedSize);
+            verdicts.add(new FrameVerdict(true, refusal.orElse(null)));
+            if (refusal.isPresent()) {
+                refused = true;
+                active.call().triggerEvent(new FrameRefusalEvent(refusal.get()));
+            }
+        }
+
+        private InputStream inspectCompressedStream(InputStream decompressed) throws IOException {
+            Gate active = this.gate;
+            if (active == null || refused) {
+                return decompressed;
+            }
+            long rawCap = active.budget().maxPayloadBytes();
+            if (rawCap <= 0) {
+                return decompressed;
+            }
+            int cap = (int) Math.min(rawCap, Integer.MAX_VALUE - 8);
+            byte[] prefix = decompressed.readNBytes(cap);
+            int next = decompressed.read();
+            if (next == -1) {
+                decompressed.close();
+                evaluateUncompressedSize(active, prefix.length);
+                if (refused) {
+                    return InputStream.nullInputStream();
+                }
+                return new ByteArrayInputStream(prefix);
+            }
+            long totalUncompressed = (long) prefix.length + 1L;
+            long countLimit = Math.max((long) cap + 1L, MAX_DECOMPRESSED_COUNT_BYTES);
+            byte[] scratch = new byte[SCRATCH_BUFFER_BYTES];
+            while (totalUncompressed < countLimit) {
+                int toRead = (int) Math.min(scratch.length, countLimit - totalUncompressed);
+                int read = decompressed.read(scratch, 0, toRead);
+                if (read < 0) {
+                    break;
+                }
+                totalUncompressed += read;
+            }
+            decompressed.close();
+            evaluateUncompressedSize(active, totalUncompressed);
+            return InputStream.nullInputStream();
+        }
+    }
+
+    private static final class PayloadCapDecompressor implements Decompressor {
+        private final Decompressor delegate;
+
+        private PayloadCapDecompressor(Decompressor delegate) {
+            this.delegate = delegate;
+        }
+
+        @Override
+        public String getMessageEncoding() {
+            return delegate.getMessageEncoding();
+        }
+
+        @Override
+        public InputStream decompress(InputStream is) throws IOException {
+            InboundFrameTracker tracker = PENDING_COMPRESSED_TRACKER.get();
+            PENDING_COMPRESSED_TRACKER.remove();
+            InputStream decompressed = delegate.decompress(is);
+            if (tracker == null) {
+                return decompressed;
+            }
+            return tracker.inspectCompressedStream(decompressed);
         }
     }
 }
