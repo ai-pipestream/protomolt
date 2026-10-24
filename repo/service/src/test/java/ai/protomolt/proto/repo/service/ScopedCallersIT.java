@@ -300,7 +300,7 @@ class ScopedCallersIT {
         assertThat(alice.getEntryManifest(GetEntryManifestRequest.newBuilder().setAddress(entry(ACCOUNT_A)).build())
                 .getManifest().getVersion()).isEqualTo(1);
         assertThat(alice.listVersions(ListVersionsRequest.newBuilder().setAddress(entry(ACCOUNT_A)).build())
-                .getVersionsCount()).isEqualTo(1);
+                .getSummariesCount()).isEqualTo(1);
     }
 
     @Test

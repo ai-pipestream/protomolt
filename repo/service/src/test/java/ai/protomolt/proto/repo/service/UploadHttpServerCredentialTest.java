@@ -102,16 +102,47 @@ class UploadHttpServerCredentialTest {
     @Test
     void requestCallerResolverHandlesArchiveRouteUnauthenticatedAndOutageAndBindsCaller() throws Exception {
         var capturedCaller = new java.util.concurrent.atomic.AtomicReference<ai.protomolt.proto.repo.spi.RepositoryCaller>();
-        ai.protomolt.proto.repo.spi.ArchiveRepository recording =
-                (ai.protomolt.proto.repo.spi.ArchiveRepository) java.lang.reflect.Proxy.newProxyInstance(
-                        UploadHttpServerCredentialTest.class.getClassLoader(),
-                        new Class<?>[] { ai.protomolt.proto.repo.spi.ArchiveRepository.class },
-                        (proxy, method, args) -> {
-                            capturedCaller.set((ai.protomolt.proto.repo.spi.RepositoryCaller) args[0]);
-                            ((java.io.InputStream) args[9]).readAllBytes();
-                            return new ai.protomolt.proto.repo.spi.ArchiveRepository.UploadResult(
-                                    "entry-uuid-scoped", 1L, "sha", 1L, "obj", "root", false);
-                        });
+        io.grpc.Channel recordingChannel = new io.grpc.Channel() {
+            @Override
+            public <RequestT, ResponseT> io.grpc.ClientCall<RequestT, ResponseT> newCall(
+                    io.grpc.MethodDescriptor<RequestT, ResponseT> methodDescriptor,
+                    io.grpc.CallOptions callOptions) {
+                capturedCaller.set(ArchiveCallerHandoff.REPOSITORY_CALLER.get());
+                return new io.grpc.ClientCall<>() {
+                    private Listener<ResponseT> listener;
+
+                    @Override
+                    public void start(Listener<ResponseT> responseListener, io.grpc.Metadata headers) {
+                        this.listener = responseListener;
+                    }
+
+                    @Override
+                    public void request(int numMessages) {}
+
+                    @Override
+                    public void cancel(String message, Throwable cause) {}
+
+                    @Override
+                    public void halfClose() {
+                        listener.onClose(
+                                io.grpc.Status.NOT_FOUND.withDescription("synthetic not found"),
+                                new io.grpc.Metadata());
+                    }
+
+                    @Override
+                    public void sendMessage(RequestT message) {}
+                };
+            }
+
+            @Override
+            public String authority() {
+                return "test";
+            }
+        };
+        var recording = new ai.protomolt.proto.repo.archive.DocumentArchive(
+                recordingChannel,
+                (accountId, archive) -> java.util.Optional.empty(),
+                java.time.Clock.systemUTC());
         ai.protomolt.proto.authz.RequestCallerResolver resolver =
                 ai.protomolt.proto.authz.RequestCallerResolver.bearer(TOKEN, token -> switch (token) {
                     case "session-alice" -> java.util.Optional.of(
@@ -119,14 +150,15 @@ class UploadHttpServerCredentialTest {
                     case "store-down" -> throw new IllegalStateException("credential store down");
                     default -> java.util.Optional.empty();
                 });
-        try (var scopedServer = new UploadHttpServer(null, null, TOKEN, null, recording, null,
-                RepositoryConsole.notConfigured(), java.util.Map.of(), null, resolver,
+        try (var scopedServer = new UploadHttpServer(null, TOKEN, resolver,
                 auth -> new ai.protomolt.proto.repo.spi.RepositoryCaller(
                         auth.caller().name(), false, java.util.Set.of("acct-1"),
-                        java.util.Set.of()))) {
+                        java.util.Set.of()),
+                recording,
+                RepositoryConsole.notConfigured())) {
             String scopedBase = "http://127.0.0.1:" + scopedServer.start(0);
             String target = scopedBase + UploadHttpServer.ARCHIVE_UPLOAD_PATH
-                    + "?account_id=acct-1&archive=arc&entry_id=e1";
+                    + "?account_id=acct-1&archive=arc&entry_id=e1&operation_id=op-1";
 
             // Unauthenticated -> 401
             HttpResponse<String> unauth = client.send(
@@ -145,14 +177,14 @@ class UploadHttpServerCredentialTest {
                     HttpResponse.BodyHandlers.ofString());
             assertThat(outage.statusCode()).isEqualTo(503);
 
-            // Authenticated scoped caller -> 200 with bound RepositoryCaller
-            HttpResponse<String> ok = client.send(
+            // Authenticated scoped caller reaches the archive port with the bound RepositoryCaller
+            HttpResponse<String> reached = client.send(
                     HttpRequest.newBuilder(URI.create(target))
                             .header("Authorization", "Bearer session-alice")
                             .POST(HttpRequest.BodyPublishers.ofByteArray(new byte[] {1}))
                             .build(),
                     HttpResponse.BodyHandlers.ofString());
-            assertThat(ok.statusCode()).as(ok.body()).isEqualTo(200);
+            assertThat(reached.statusCode()).as(reached.body()).isEqualTo(404);
             assertThat(capturedCaller.get()).isNotNull();
             assertThat(capturedCaller.get().principalName()).isEqualTo("alice");
             assertThat(capturedCaller.get().processAuthority()).isFalse();
@@ -232,10 +264,23 @@ class UploadHttpServerCredentialTest {
     }
 
     /** Credential and validation failures fire before the archive port is ever called. */
-    static ai.protomolt.proto.repo.spi.ArchiveRepository unimplementedArchive() {
-        return (ai.protomolt.proto.repo.spi.ArchiveRepository) java.lang.reflect.Proxy.newProxyInstance(
-                UploadHttpServerCredentialTest.class.getClassLoader(),
-                new Class<?>[] { ai.protomolt.proto.repo.spi.ArchiveRepository.class },
-                (proxy, method, args) -> { throw new UnsupportedOperationException(method.getName()); });
+    static ai.protomolt.proto.repo.archive.DocumentArchive unimplementedArchive() {
+        io.grpc.Channel unimplemented = new io.grpc.Channel() {
+            @Override
+            public <RequestT, ResponseT> io.grpc.ClientCall<RequestT, ResponseT> newCall(
+                    io.grpc.MethodDescriptor<RequestT, ResponseT> methodDescriptor,
+                    io.grpc.CallOptions callOptions) {
+                throw new UnsupportedOperationException(methodDescriptor.getFullMethodName());
+            }
+
+            @Override
+            public String authority() {
+                return "unimplemented";
+            }
+        };
+        return new ai.protomolt.proto.repo.archive.DocumentArchive(
+                unimplemented,
+                (accountId, archive) -> java.util.Optional.empty(),
+                java.time.Clock.systemUTC());
     }
 }

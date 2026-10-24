@@ -1025,19 +1025,21 @@ before pagination.
   - `DeleteRendition`: `"DeleteRendition is not supported by the archive over v2 documents under keep-forever retention; destructive byte removal across versions requires per-blob purge or section 13 retention"`
   - `PruneVersions`: `"PruneVersions is not supported by the archive over v2 documents under keep-forever retention; removing retained versions requires section 13 retention"`
 
-### Not settled here
+### Cutover & Remaining Follow-Ups
 
-Each needs its own follow-up issue under #535 before the ledger retires:
-
+- **Host cutover and ledger retirement (#632).** No live deployment holds legacy
+  `archive_*` ledger rows at cutover, so `RepoServices` and
+  `RepoBoundedArchiveMain` mount `DocumentArchiveGrpcService` and
+  `DocumentArchiveMutationGrpcService` directly, `UploadHttpServer` routes
+  `POST /v1/archive:upload` exclusively through `DocumentArchive`
+  (`RenditionUploads`) into `UploadDocument`, and Flyway migration `V121`
+  drops the retired `archives` and `archive_*` ledger tables alongside the
+  `ArchiveGrpcService`, `ArchiveMutationGrpcService`, `ArchiveOperations`, and
+  `ArchiveLedger` stack without shipping an unexercised data migrator.
 - **`DeleteRendition` and `PruneVersions` byte removal.** `DeleteEntry` and
   `GetArchiveMutation` run over `DeleteDocument` and `GetOperationOutcome`
   (section 7 above); `DeleteRendition` and `PruneVersions` are refused by name
   with `FAILED_PRECONDITION` until per-blob purge or §13 retention lands.
-- **Host cutover (#632).** Switching `RepoServices` from `JdbcArchiveStore` to
-  `DocumentArchiveGrpcService` once `ArchiveMutationService` and the HTTP upload
-  route cut over.
-- **The HTTP upload route** for archives becomes the v2 HTTP upload route with
-  the section 1 call number and the section 5 operation ID.
 
 ## Rules of the house
 
