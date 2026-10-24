@@ -79,12 +79,13 @@ services:
       # a Model2Vec model directory and set PROTOMOLT_MODEL2VEC_PATH to it;
       # without one the repo-document subject serves the lexical lane only.
       DOCUMENT_PLATFORM_SEARCH_INDEX_DIR: /data/search-index
-      # Dev-only authentication examples. Unset, this stack is an open node:
-      # every surface answers without a credential, which is what the seeded
-      # demo and the read-only console expect. Uncomment the token to guard
-      # gRPC and HTTP (dev value, never production). Console reads then need
-      # the token. A signed-in session writes when the binding lists intake_writers (#593).
-      #   PROTOMOLT_API_TOKEN: "dev-only-operator-token"
+      # Dev-only operator credential. The default role set mounts the repository,
+      # and network startup requires a nonblank PROTOMOLT_API_TOKEN. A missing
+      # or blank value fails the boot with "Repository network transport requires
+      # a nonblank API token (PROTOMOLT_API_TOKEN)". Dev value, never production.
+      # Console reads need the same token. A signed-in session writes when the
+      # binding lists intake_writers (#593).
+      PROTOMOLT_API_TOKEN: dev-only-operator-token
       # Console OIDC sign-in needs a reachable provider: the host fetches the
       # issuer's discovery document at startup, so placeholder values refuse
       # to boot. Point these at a dev Keycloak realm, all five together:
