@@ -7,6 +7,7 @@ import ai.protomolt.proto.repo.archive.v1.UploadRenditionResponse;
 import ai.protomolt.proto.repo.v2.DocumentServiceGrpc;
 import ai.protomolt.proto.repo.v2.UploadDocumentRequest;
 import ai.protomolt.proto.repo.v2.UploadDocumentResponse;
+import ai.protomolt.proto.repo.v2.UploadHeader;
 import com.google.protobuf.ByteString;
 import io.grpc.Channel;
 import io.grpc.Status;
@@ -15,12 +16,12 @@ import io.grpc.stub.ClientCallStreamObserver;
 import io.grpc.stub.ClientResponseObserver;
 import io.grpc.stub.ServerCallStreamObserver;
 import io.grpc.stub.StreamObserver;
-import java.io.IOException;
 import java.security.MessageDigest;
-import java.util.ArrayList;
+import java.util.ArrayDeque;
+import java.util.Deque;
 import java.util.HexFormat;
-import java.util.List;
 import java.util.Objects;
+import java.util.concurrent.locks.Condition;
 import java.util.concurrent.locks.ReentrantLock;
 
 /**
@@ -42,15 +43,51 @@ import java.util.concurrent.locks.ReentrantLock;
 public final class RenditionUploads {
 
     /**
-     * Maximum bytes buffered before opening the downstream {@code UploadDocument}
-     * stream when an upload carries the entry's primary rendition, allowing both
-     * leading (64 KiB) and trailing (128 KiB) characterization windows to be
-     * captured into the single revision's CORE while keeping memory strictly bounded.
+     * Maximum bytes buffered before sending the initial {@code UploadHeader}
+     * frame when an upload carries the entry's primary rendition, allowing small
+     * and medium uploads to resolve both leading (64 KiB) and trailing (128 KiB)
+     * characterization windows upfront while larger streams continue capturing the
+     * sliding trailing window in fixed memory and refresh {@code CORE} before
+     * half-close.
      */
     static final int MAX_CHARACTERIZE_BUFFER_BYTES = 1024 * 1024;
 
+    /**
+     * A flow-controlled upload request observer for non-gRPC producers (such as HTTP
+     * streaming handlers) that wait for the underlying v2 {@code UploadDocument}
+     * stream to become ready before reading and sending the next chunk.
+     */
+    public interface FlowControlledUpload extends StreamObserver<UploadRenditionRequest> {
+        /**
+         * Returns {@code true} when the underlying upload stream can accept another frame
+         * without unbounded queueing, or when the upload has already terminated.
+         *
+         * @return whether the producer may send the next frame immediately
+         */
+        boolean isReady();
+
+        /**
+         * Blocks the calling thread until {@link #isReady()} is {@code true} or the upload
+         * finishes, up to {@code timeoutNanos}.
+         *
+         * @param timeoutNanos maximum time to wait in nanoseconds
+         * @return {@code true} if the upload is ready or finished; {@code false} if the wait timed out
+         * @throws InterruptedException if the thread is interrupted while waiting
+         */
+        boolean awaitReady(long timeoutNanos) throws InterruptedException;
+    }
+
     private final DocumentArchive archive;
     private final DocumentServiceGrpc.DocumentServiceStub documents;
+
+    /**
+     * Constructs an upload translator using {@code archive}'s own v2 document service channel.
+     *
+     * @param archive the archive the upload is translated by
+     */
+    public RenditionUploads(DocumentArchive archive) {
+        this(Objects.requireNonNull(archive, "archive"), archive.documents().getChannel());
+    }
 
     /**
      * @param archive the archive the upload is translated by
@@ -61,23 +98,49 @@ public final class RenditionUploads {
         this.documents = DocumentServiceGrpc.newStub(Objects.requireNonNull(documents, "documents"));
     }
 
+    /**
+     * Returns the channel to the v2 document service used by this translator.
+     *
+     * @return the v2 document service channel
+     */
+    public Channel channel() {
+        return documents.getChannel();
+    }
+
     /** Starts one upload call; the returned observer receives the client's frames. */
     public StreamObserver<UploadRenditionRequest> upload(StreamObserver<UploadRenditionResponse> responses) {
         return new Call(responses);
     }
 
-    private final class Call implements StreamObserver<UploadRenditionRequest> {
+    /**
+     * Starts one flow-controlled upload call for a non-gRPC producer.
+     *
+     * @param responses the observer that receives the upload response or failure
+     * @return the flow-controlled request observer
+     */
+    public FlowControlledUpload uploadFlowControlled(StreamObserver<UploadRenditionResponse> responses) {
+        return new Call(responses);
+    }
+
+    private final class Call implements FlowControlledUpload {
         private final StreamObserver<UploadRenditionResponse> responses;
         private final ServerCallStreamObserver<UploadRenditionResponse> server;
         private final ReentrantLock lock = new ReentrantLock();
+        private final Condition readyChanged = lock.newCondition();
         private DocumentArchive.Pending pending;
         private DocumentArchive.Verify verifying;
         private ClientCallStreamObserver<UploadDocumentRequest> upload;
         private final MessageDigest sent = RenditionReads.sha256();
-        private final List<ByteString> bufferedChunks = new ArrayList<>();
+        private final Deque<ByteString> bufferedChunks = new ArrayDeque<>();
         private int bufferedBytes;
+        private int characterizeBufferLimit = MAX_CHARACTERIZE_BUFFER_BYTES;
+        private WindowCapture windowCapture;
+        private UploadHeader sentHeader;
+        private boolean headerSent;
+        private boolean openedEarly;
         private long sentBytes;
         private boolean clientCompleted;
+        private boolean downstreamCompleted;
         private boolean waitingForUpload;
         private boolean finished;
 
@@ -87,6 +150,43 @@ public final class RenditionUploads {
             if (server != null) {
                 server.disableAutoRequest();
                 server.request(1);
+            }
+        }
+
+        private boolean canAcceptChunk() {
+            if (upload == null) {
+                return true;
+            }
+            if (!upload.isReady()) {
+                return false;
+            }
+            return headerSent ? bufferedChunks.isEmpty() : bufferedBytes < characterizeBufferLimit;
+        }
+
+        @Override
+        public boolean isReady() {
+            lock.lock();
+            try {
+                return finished || canAcceptChunk();
+            } finally {
+                lock.unlock();
+            }
+        }
+
+        @Override
+        public boolean awaitReady(long timeoutNanos) throws InterruptedException {
+            long remaining = timeoutNanos;
+            lock.lock();
+            try {
+                while (!finished && !canAcceptChunk()) {
+                    if (remaining <= 0L) {
+                        return false;
+                    }
+                    remaining = readyChanged.awaitNanos(remaining);
+                }
+                return true;
+            } finally {
+                lock.unlock();
             }
         }
 
@@ -116,18 +216,28 @@ public final class RenditionUploads {
                             }
                             return;
                         }
-                        if (upload == null) {
-                            bufferedChunks.add(chunk);
+                        if (windowCapture != null) {
+                            chunk.asReadOnlyByteBufferList().forEach(windowCapture::update);
+                        }
+                        if (!headerSent) {
+                            bufferedChunks.addLast(chunk);
                             bufferedBytes += chunk.size();
-                            if (bufferedBytes >= MAX_CHARACTERIZE_BUFFER_BYTES) {
-                                openDownstreamUpload(capturedWindows(false));
-                                requestNext();
-                            } else if (server != null) {
-                                server.request(1);
+                            if (bufferedBytes >= characterizeBufferLimit) {
+                                ByteWindows earlyWindows = windowCapture != null
+                                        ? ByteWindows.ofHead(windowCapture.windows().head())
+                                        : ByteWindows.EMPTY;
+                                sendHeaderAndDrain(earlyWindows, true);
                             }
+                            requestNext();
                             return;
                         }
-                        upload.onNext(UploadDocumentRequest.newBuilder().setData(chunk).build());
+                        if (!bufferedChunks.isEmpty() || !upload.isReady()) {
+                            bufferedChunks.addLast(chunk);
+                            bufferedBytes += chunk.size();
+                            drainBufferedChunks();
+                        } else {
+                            upload.onNext(UploadDocumentRequest.newBuilder().setData(chunk).build());
+                        }
                         requestNext();
                     }
                 } catch (StatusRuntimeException failure) {
@@ -142,27 +252,33 @@ public final class RenditionUploads {
             DocumentArchive.UploadStart start = archive.startUpload(frame.getHeader());
             if (start instanceof DocumentArchive.Replay replay) {
                 finished = true;
+                readyChanged.signalAll();
                 responses.onNext(replay.response());
                 responses.onCompleted();
                 return;
             }
             if (start instanceof DocumentArchive.Verify verify) {
                 verifying = verify;
+                readyChanged.signalAll();
                 if (server != null) {
                     server.request(1);
                 }
                 return;
             }
             pending = (DocumentArchive.Pending) start;
-            if (!pending.needsWindows()) {
-                openDownstreamUpload(ByteWindows.EMPTY);
-                requestNext();
-            } else if (server != null) {
-                server.request(1);
+            if (frame.getHeader().getSizeBytes() > MAX_CHARACTERIZE_BUFFER_BYTES) {
+                characterizeBufferLimit = ByteWindows.DEFAULT_HEAD_BYTES;
             }
+            openDownstreamCall();
+            if (!pending.needsWindows()) {
+                sendHeaderAndDrain(ByteWindows.EMPTY, false);
+            } else {
+                windowCapture = new WindowCapture();
+            }
+            requestNext();
         }
 
-        private void openDownstreamUpload(ByteWindows windows) {
+        private void openDownstreamCall() {
             documents.uploadDocument(new ClientResponseObserver<UploadDocumentRequest, UploadDocumentResponse>() {
                 private UploadDocumentResponse result;
 
@@ -187,20 +303,40 @@ public final class RenditionUploads {
                     uploadCompleted(result);
                 }
             });
-            upload.onNext(UploadDocumentRequest.newBuilder().setHeader(pending.header(windows)).build());
-            for (ByteString chunk : bufferedChunks) {
-                upload.onNext(UploadDocumentRequest.newBuilder().setData(chunk).build());
+        }
+
+        private void sendHeaderAndDrain(ByteWindows windows, boolean early) {
+            sentHeader = pending.header(windows);
+            headerSent = true;
+            openedEarly = early;
+            upload.onNext(UploadDocumentRequest.newBuilder().setHeader(sentHeader).build());
+            drainBufferedChunks();
+        }
+
+        private void drainBufferedChunks() {
+            while (!bufferedChunks.isEmpty() && upload.isReady()) {
+                ByteString next = bufferedChunks.removeFirst();
+                bufferedBytes -= next.size();
+                upload.onNext(UploadDocumentRequest.newBuilder().setData(next).build());
             }
-            bufferedChunks.clear();
-            bufferedBytes = 0;
+            if (bufferedChunks.isEmpty() && clientCompleted && !downstreamCompleted) {
+                downstreamCompleted = true;
+                if (openedEarly && windowCapture != null) {
+                    UploadHeader refreshed = pending.header(windowCapture.windows());
+                    if (!refreshed.equals(sentHeader)) {
+                        upload.onNext(UploadDocumentRequest.newBuilder().setHeader(refreshed).build());
+                    }
+                }
+                upload.onCompleted();
+            }
         }
 
         private void requestNext() {
-            if (server == null) {
-                return;
-            }
-            if (upload.isReady()) {
-                server.request(1);
+            if (canAcceptChunk()) {
+                readyChanged.signalAll();
+                if (server != null) {
+                    server.request(1);
+                }
             } else {
                 waitingForUpload = true;
             }
@@ -209,9 +345,18 @@ public final class RenditionUploads {
         private void uploadReady() {
             lock.lock();
             try {
-                if (waitingForUpload && !finished) {
+                if (finished || upload == null) {
+                    return;
+                }
+                if (headerSent) {
+                    drainBufferedChunks();
+                }
+                readyChanged.signalAll();
+                if (waitingForUpload && canAcceptChunk()) {
                     waitingForUpload = false;
-                    server.request(1);
+                    if (server != null) {
+                        server.request(1);
+                    }
                 }
             } finally {
                 lock.unlock();
@@ -223,6 +368,9 @@ public final class RenditionUploads {
             lock.lock();
             try {
                 finished = true;
+                bufferedChunks.clear();
+                bufferedBytes = 0;
+                readyChanged.signalAll();
                 if (upload != null) {
                     upload.cancel("The archive upload's client failed", failure);
                 }
@@ -246,6 +394,7 @@ public final class RenditionUploads {
                         return;
                     }
                     finished = true;
+                    readyChanged.signalAll();
                     responses.onNext(verifying.response());
                     responses.onCompleted();
                     return;
@@ -255,49 +404,39 @@ public final class RenditionUploads {
                     return;
                 }
                 clientCompleted = true;
-                if (upload == null) {
+                if (!headerSent) {
                     try {
-                        openDownstreamUpload(capturedWindows(true));
+                        ByteWindows completeWindows = windowCapture != null ? windowCapture.windows() : ByteWindows.EMPTY;
+                        sendHeaderAndDrain(completeWindows, false);
                     } catch (StatusRuntimeException failure) {
                         fail(failure);
                         return;
                     }
+                } else {
+                    drainBufferedChunks();
                 }
-                upload.onCompleted();
             } finally {
                 lock.unlock();
             }
         }
 
-        private ByteWindows capturedWindows(boolean complete) {
-            ByteString buffered = ByteString.copyFrom(bufferedChunks);
-            if (!complete) {
-                int headLen = Math.min(buffered.size(), ByteWindows.DEFAULT_HEAD_BYTES);
-                return ByteWindows.ofHead(buffered.substring(0, headLen).toByteArray());
-            }
-            try (WindowCapture capture = new WindowCapture(buffered.newInput())) {
-                byte[] discard = new byte[8192];
-                while (capture.read(discard) >= 0) {
-                    // Drain buffered bytes through WindowCapture.
-                }
-                return capture.windows();
-            } catch (IOException impossible) {
-                throw new IllegalStateException(impossible);
-            }
-        }
-
-        private String sentSha256() {
-            return HexFormat.of().formatHex(sent.digest());
-        }
-
         private void uploadCompleted(UploadDocumentResponse result) {
             UploadRenditionResponse response;
             try {
-                if (result == null) {
+                if (result == null || !result.hasSaved()) {
                     throw Status.INTERNAL.withDescription("UploadDocument completed without a response")
                             .asRuntimeException();
                 }
-                response = archive.finishUpload(pending, result.getSaved());
+                lock.lock();
+                try {
+                    if (!result.getSaved().getReplayed() && !clientCompleted) {
+                        throw Status.INTERNAL.withDescription("UploadDocument completed before all upload bytes")
+                                .asRuntimeException();
+                    }
+                    response = archive.finishUpload(pending, result.getSaved(), sentSha256(), sentBytes);
+                } finally {
+                    lock.unlock();
+                }
             } catch (StatusRuntimeException failure) {
                 fail(failure);
                 return;
@@ -308,6 +447,7 @@ public final class RenditionUploads {
                     return;
                 }
                 finished = true;
+                readyChanged.signalAll();
             } finally {
                 lock.unlock();
             }
@@ -316,34 +456,34 @@ public final class RenditionUploads {
         }
 
         private void uploadFailed(Throwable failure) {
-            StatusRuntimeException status = failure instanceof StatusRuntimeException runtime
-                    ? runtime : Status.fromThrowable(failure).asRuntimeException(Status.trailersFromThrowable(failure));
-            UploadRenditionResponse response;
+            String sha256;
+            long bytes;
+            lock.lock();
             try {
-                String sha256 = null;
-                long size = 0;
+                if (finished) {
+                    return;
+                }
+                sha256 = sentSha256();
+                bytes = sentBytes;
+            } finally {
+                lock.unlock();
+            }
+            StatusRuntimeException status = Status.fromThrowable(failure)
+                    .asRuntimeException(Status.trailersFromThrowable(failure));
+            UploadRenditionResponse replayed;
+            try {
+                DocumentArchive.Recorded winner = archive.afterLostRace(
+                        pending.address(),
+                        pending.operationId(),
+                        pending.contentSha256(),
+                        pending.derivedLastWriteWins(),
+                        status);
+                replayed = archive.uploadResponse(winner.revision(), pending.rendition(), pending.operationId(), true);
                 if (pending.checkBytes()) {
-                    lock.lock();
-                    try {
-                        if (!clientCompleted) {
-                            // Not every byte has arrived, so a lost race cannot be told from other bytes.
-                            throw status;
-                        }
-                        sha256 = sentSha256();
-                        size = sentBytes;
-                    } finally {
-                        lock.unlock();
-                    }
+                    DocumentArchive.requireRecordedBytes(replayed, sha256, bytes);
                 }
-                response = archive.uploadResponse(
-                        archive.afterLostRace(pending.address(), pending.operationId(), pending.contentSha256(),
-                                pending.derivedLastWriteWins(), status).revision(),
-                        pending.rendition(), pending.operationId(), true);
-                if (sha256 != null) {
-                    DocumentArchive.requireRecordedBytes(response, sha256, size);
-                }
-            } catch (StatusRuntimeException answer) {
-                fail(answer);
+            } catch (StatusRuntimeException translated) {
+                fail(translated);
                 return;
             }
             lock.lock();
@@ -352,11 +492,21 @@ public final class RenditionUploads {
                     return;
                 }
                 finished = true;
+                readyChanged.signalAll();
             } finally {
                 lock.unlock();
             }
-            responses.onNext(response);
+            responses.onNext(replayed);
             responses.onCompleted();
+        }
+
+        private String sentSha256() {
+            try {
+                MessageDigest copy = (MessageDigest) sent.clone();
+                return HexFormat.of().formatHex(copy.digest());
+            } catch (CloneNotSupportedException impossible) {
+                throw new IllegalStateException("SHA-256 supports cloning", impossible);
+            }
         }
 
         private void fail(StatusRuntimeException failure) {
@@ -366,11 +516,14 @@ public final class RenditionUploads {
                     return;
                 }
                 finished = true;
+                bufferedChunks.clear();
+                bufferedBytes = 0;
+                readyChanged.signalAll();
+                if (upload != null && !downstreamCompleted) {
+                    upload.cancel("Archive upload failed", failure);
+                }
             } finally {
                 lock.unlock();
-            }
-            if (upload != null) {
-                upload.cancel("The archive upload failed", failure);
             }
             responses.onError(failure);
         }

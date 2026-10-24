@@ -54,7 +54,9 @@ import static org.assertj.core.api.Assertions.assertThat;
  * it into both TEI containers at {@code /data}, so models persist across runs; unset, each run
  * downloads them again.
  *
- * <p>The suite is tagged {@code tei} and excluded from the default test task; it runs via
+ * <p>The suite is tagged {@code integration} and {@code tei} and excluded by tag from both the
+ * default {@code test} and {@code integrationTest} tasks (unless {@code -PincludeTei} is passed)
+ * so cold-cache model downloads do not run in standard verification; it runs via
  * {@code ./gradlew :protomolt-search-index-opensearch:teiIntegrationTest}, in CI on the Forgejo lane
  * ({@code .forgejo/workflows/tei-integration.yml}). Docker is required.
  */

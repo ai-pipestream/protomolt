@@ -8,6 +8,7 @@ dependencies {
     implementation libs.slf4j.api
 
     testImplementation libs.grpc.inprocess
+    testImplementation libs.grpc.netty.shaded
     testImplementation libs.grpc.stub
     testImplementation libs.grpc.protobuf
     testImplementation project(':protomolt-sources')

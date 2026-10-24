@@ -174,7 +174,10 @@ public final class ReflectionClient {
         V1Stream(Channel channel, long timeoutMs, long deadlineNanos) {
             this.timeoutMs = timeoutMs;
             this.deadlineNanos = deadlineNanos;
-            ServerReflectionGrpc.ServerReflectionStub stub = ServerReflectionGrpc.newStub(channel);
+            ServerReflectionGrpc.ServerReflectionStub stub = ServerReflectionGrpc.newStub(channel)
+                    .withDeadlineAfter(
+                            Math.max(1L, deadlineNanos - System.nanoTime()),
+                            TimeUnit.NANOSECONDS);
             this.requests = stub.serverReflectionInfo(new StreamObserver<>() {
                 @Override
                 public void onNext(ServerReflectionResponse value) {
@@ -248,6 +251,10 @@ public final class ReflectionClient {
                 throw new ReflectionException("Reflection stream closed before responding");
             }
             if (taken instanceof Throwable t) {
+                if (Status.fromThrowable(t).getCode() == Status.Code.DEADLINE_EXCEEDED) {
+                    throw new ReflectionException(
+                            "Reflection timed out after " + timeoutMs + "ms", t);
+                }
                 throw new ReflectionException("Reflection stream failed: " + t.getMessage(), t);
             }
             ServerReflectionResponse response = (ServerReflectionResponse) taken;
@@ -279,7 +286,10 @@ public final class ReflectionClient {
         V1AlphaStream(Channel channel, long timeoutMs, long deadlineNanos) {
             this.timeoutMs = timeoutMs;
             this.deadlineNanos = deadlineNanos;
-            var stub = io.grpc.reflection.v1alpha.ServerReflectionGrpc.newStub(channel);
+            var stub = io.grpc.reflection.v1alpha.ServerReflectionGrpc.newStub(channel)
+                    .withDeadlineAfter(
+                            Math.max(1L, deadlineNanos - System.nanoTime()),
+                            TimeUnit.NANOSECONDS);
             this.requests = stub.serverReflectionInfo(new StreamObserver<>() {
                 @Override
                 public void onNext(io.grpc.reflection.v1alpha.ServerReflectionResponse value) {
@@ -356,6 +366,10 @@ public final class ReflectionClient {
                 throw new ReflectionException("Reflection stream closed before responding");
             }
             if (taken instanceof Throwable t) {
+                if (Status.fromThrowable(t).getCode() == Status.Code.DEADLINE_EXCEEDED) {
+                    throw new ReflectionException(
+                            "Reflection timed out after " + timeoutMs + "ms", t);
+                }
                 throw new ReflectionException("Reflection stream failed: " + t.getMessage(), t);
             }
             var response = (io.grpc.reflection.v1alpha.ServerReflectionResponse) taken;

@@ -1594,14 +1594,15 @@ class DocumentArchiveIT {
         assertThat(conflictedPut.getManifest().getMetadataSnapshot().getClassification().getState())
                 .isEqualTo(ClassificationState.CLASSIFICATION_STATE_CONFLICTED);
 
-        // 5. UploadRendition of 256 KiB Parquet file (PAR1 header + PAR1 footer) -> IDENTIFIED with sealed footer evidence.
+        // 5. UploadRendition of 2 MiB Parquet file (> 1 MiB characterization buffer, PAR1 header + PAR1 footer)
+        // -> IDENTIFIED with sealed footer evidence on version 1.
         EntryAddress parquetEntry = EntryAddress.newBuilder()
                 .setAccountId(account).setArchive("assets").setEntryId("events.parquet").build();
-        byte[] parquetRaw = new byte[256 * 1024];
+        byte[] parquetRaw = new byte[2 * 1024 * 1024];
         System.arraycopy("PAR1".getBytes(StandardCharsets.US_ASCII), 0, parquetRaw, 0, 4);
         System.arraycopy("PAR1".getBytes(StandardCharsets.US_ASCII), 0, parquetRaw, parquetRaw.length - 4, 4);
         ByteString parquetBytes = ByteString.copyFrom(parquetRaw);
-        upload(UploadRenditionHeader.newBuilder()
+        UploadRenditionResponse uploadedParquet = upload(UploadRenditionHeader.newBuilder()
                 .setAddress(parquetEntry)
                 .setRendition(RenditionDescriptor.newBuilder()
                         .setName("original")
@@ -1609,6 +1610,7 @@ class DocumentArchiveIT {
                 .setSizeBytes(parquetBytes.size())
                 .setExpectedSha256(RenditionReads.sha256Hex(parquetBytes))
                 .build(), parquetBytes, 32 * 1024);
+        assertThat(uploadedParquet.getVersion()).isEqualTo(1L);
         Classification parquetClass = archive.getEntry(GetEntryRequest.newBuilder()
                 .setAddress(parquetEntry).addRenditions("none").build()).getInfo().getClassification();
         assertThat(parquetClass.getState()).isEqualTo(ClassificationState.CLASSIFICATION_STATE_IDENTIFIED);
@@ -1681,6 +1683,21 @@ class DocumentArchiveIT {
                         .setState(ClassificationState.CLASSIFICATION_STATE_VERIFIED).setCount(1).build(),
                 ClassificationStateCount.newBuilder()
                         .setState(ClassificationState.CLASSIFICATION_STATE_CONFLICTED).setCount(1).build());
+
+        // 9. Replacing the primary rendition with an empty rendition reverts classification to UNCLASSIFIED.
+        PutEntryResponse emptiedPut = archive.putEntry(PutEntryRequest.newBuilder()
+                .setAddress(pdfEntry)
+                .addRenditions(rendition("original", "", "application/octet-stream", ByteString.EMPTY))
+                .build());
+        assertThat(emptiedPut.getVersion()).isEqualTo(2L);
+        assertThat(emptiedPut.getManifest().getMetadataSnapshot().getClassification().getState())
+                .isEqualTo(ClassificationState.CLASSIFICATION_STATE_UNCLASSIFIED);
+        GetEntryResponse emptiedGet = archive.getEntry(GetEntryRequest.newBuilder()
+                .setAddress(pdfEntry).build());
+        assertThat(emptiedGet.getManifest().getRenditions(0).getState())
+                .isEqualTo(ai.protomolt.proto.repo.archive.v1.RenditionState.RENDITION_STATE_EMPTY);
+        assertThat(emptiedGet.getInfo().getClassification().getState())
+                .isEqualTo(ClassificationState.CLASSIFICATION_STATE_UNCLASSIFIED);
     }
 
     @Test
