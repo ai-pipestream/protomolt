@@ -797,17 +797,36 @@ class DocumentArchiveTest {
             }
 
             @Override
+            public void getDocument(
+                    GetDocumentRequest request,
+                    StreamObserver<GetDocumentResponse> responseObserver) {
+                if (!request.getAddress().equals(node)) {
+                    responseObserver.onError(Status.NOT_FOUND.asRuntimeException());
+                    return;
+                }
+                responseObserver.onNext(
+                        documentWithBlob(node, 2L, "original", ByteString.copyFromUtf8("pdf")));
+                responseObserver.onCompleted();
+            }
+
+            @Override
             public void deleteDocument(
                     DeleteDocumentRequest request,
                     StreamObserver<DeleteDocumentResponse> responseObserver) {
+                if (!request.getAddress().equals(node)) {
+                    responseObserver.onError(Status.NOT_FOUND.asRuntimeException());
+                    return;
+                }
                 responseObserver.onError(Status.ABORTED
                         .withDescription("expected revision " + request.getExpected().getRevision() + " != 2")
                         .asRuntimeException());
             }
         });
 
-        ArchiveBindings bindings = (acct, name) -> Optional.of(
-                new ArchiveBinding(acct, name, "ds", "", VersioningPolicy.VERSIONING_POLICY_RETAINED));
+        ArchiveBindings bindings = (acct, name) -> ARCHIVE.equals(name)
+                ? Optional.of(new ArchiveBinding(
+                        acct, name, "ds", "", VersioningPolicy.VERSIONING_POLICY_RETAINED))
+                : Optional.empty();
         DocumentArchive archive = new DocumentArchive(channel, bindings, FIXED_CLOCK);
 
         // Explicit stale expectedVersion fails with ABORTED.
@@ -936,6 +955,65 @@ class DocumentArchiveTest {
                                 .setReason("GDPR erasure")
                                 .build()));
         assertThat(reusedOnRendition.getStatus().getCode()).isEqualTo(Status.Code.ALREADY_EXISTS);
+
+        // DeleteRendition and PruneVersions on an unknown archive or missing entry return NOT_FOUND
+        // without recording a refusal outcome.
+        EntryAddress unknownArchiveAddress = EntryAddress.newBuilder()
+                .setAccountId(ACCOUNT)
+                .setArchive("unknown-archive")
+                .setEntryId("e-conflict")
+                .build();
+        StatusRuntimeException unknownArchiveRendition = catchThrowableOfType(
+                StatusRuntimeException.class,
+                () -> archive.deleteRendition(
+                        "aaaaaaaa-2222-4333-8444-555555555555",
+                        DeleteRenditionRequest.newBuilder()
+                                .setAddress(unknownArchiveAddress)
+                                .setRendition("original")
+                                .setReason("GDPR erasure")
+                                .build()));
+        assertThat(unknownArchiveRendition.getStatus().getCode()).isEqualTo(Status.Code.NOT_FOUND);
+
+        StatusRuntimeException unknownArchivePrune = catchThrowableOfType(
+                StatusRuntimeException.class,
+                () -> archive.pruneVersions(
+                        "bbbbbbbb-2222-4333-8444-555555555555",
+                        PruneVersionsRequest.newBuilder()
+                                .setAddress(unknownArchiveAddress)
+                                .setKeepLatest(1)
+                                .build()));
+        assertThat(unknownArchivePrune.getStatus().getCode()).isEqualTo(Status.Code.NOT_FOUND);
+
+        EntryAddress missingEntryAddress = EntryAddress.newBuilder()
+                .setAccountId(ACCOUNT)
+                .setArchive(ARCHIVE)
+                .setEntryId("missing-entry")
+                .build();
+        StatusRuntimeException missingEntryRendition = catchThrowableOfType(
+                StatusRuntimeException.class,
+                () -> archive.deleteRendition(
+                        "cccccccc-2222-4333-8444-555555555555",
+                        DeleteRenditionRequest.newBuilder()
+                                .setAddress(missingEntryAddress)
+                                .setRendition("original")
+                                .setReason("GDPR erasure")
+                                .build()));
+        assertThat(missingEntryRendition.getStatus().getCode()).isEqualTo(Status.Code.NOT_FOUND);
+
+        StatusRuntimeException missingEntryPrune = catchThrowableOfType(
+                StatusRuntimeException.class,
+                () -> archive.pruneVersions(
+                        "dddddddd-2222-4333-8444-555555555555",
+                        PruneVersionsRequest.newBuilder()
+                                .setAddress(missingEntryAddress)
+                                .setKeepLatest(1)
+                                .build()));
+        assertThat(missingEntryPrune.getStatus().getCode()).isEqualTo(Status.Code.NOT_FOUND);
+        assertThat(recordedOutcomes).doesNotContainKeys(
+                "aaaaaaaa-2222-4333-8444-555555555555",
+                "bbbbbbbb-2222-4333-8444-555555555555",
+                "cccccccc-2222-4333-8444-555555555555",
+                "dddddddd-2222-4333-8444-555555555555");
     }
 
     @Test
@@ -957,6 +1035,15 @@ class DocumentArchiveTest {
                 responseObserver.onNext(GetOperationOutcomeResponse.newBuilder()
                         .setNone(NoRecordedOutcome.getDefaultInstance())
                         .build());
+                responseObserver.onCompleted();
+            }
+
+            @Override
+            public void getDocument(
+                    GetDocumentRequest request,
+                    StreamObserver<GetDocumentResponse> responseObserver) {
+                responseObserver.onNext(documentWithBlob(
+                        request.getAddress(), 1L, "original", ByteString.copyFromUtf8("pdf")));
                 responseObserver.onCompleted();
             }
 

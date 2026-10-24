@@ -2231,25 +2231,33 @@ public final class DocumentArchive {
 
     /**
      * {@code DeleteRendition}: refused by name with {@code FAILED_PRECONDITION}
-     * under v2 keep-forever retention.
+     * under v2 keep-forever retention after verifying the archive and live entry
+     * exist.
      *
      * @param request the delete-rendition request
      * @return never returns normally
-     * @throws StatusRuntimeException {@code FAILED_PRECONDITION} naming {@code DeleteRendition}
+     * @throws StatusRuntimeException {@code NOT_FOUND} when the archive or live
+     *         entry is absent, {@code ALREADY_EXISTS} on conflicting
+     *         {@code operation_id} reuse, or {@code FAILED_PRECONDITION} naming
+     *         {@code DeleteRendition}
      */
     public ArchiveMutationResponse deleteRendition(DeleteRenditionRequest request) {
         return deleteRendition("", request);
     }
 
     /**
-     * {@code DeleteRendition}: validates the request, records the refusal outcome
-     * under {@code (account_id, operation_id)}, and refuses by name with
-     * {@code FAILED_PRECONDITION} under v2 keep-forever retention.
+     * {@code DeleteRendition}: validates the request, verifies the archive and live
+     * entry exist, records the refusal outcome under {@code (account_id, operation_id)},
+     * and refuses by name with {@code FAILED_PRECONDITION} under v2 keep-forever
+     * retention.
      *
      * @param operationId the caller-supplied operation UUID, or empty
      * @param request the delete-rendition request
      * @return never returns normally
-     * @throws StatusRuntimeException {@code FAILED_PRECONDITION} naming {@code DeleteRendition}
+     * @throws StatusRuntimeException {@code NOT_FOUND} when the archive or live
+     *         entry is absent, {@code ALREADY_EXISTS} on conflicting
+     *         {@code operation_id} reuse, or {@code FAILED_PRECONDITION} naming
+     *         {@code DeleteRendition}
      */
     public ArchiveMutationResponse deleteRendition(
             String operationId, DeleteRenditionRequest request) {
@@ -2271,25 +2279,33 @@ public final class DocumentArchive {
 
     /**
      * {@code PruneVersions}: refused by name with {@code FAILED_PRECONDITION}
-     * under v2 keep-forever retention.
+     * under v2 keep-forever retention after verifying the archive and live entry
+     * exist.
      *
      * @param request the prune-versions request
      * @return never returns normally
-     * @throws StatusRuntimeException {@code FAILED_PRECONDITION} naming {@code PruneVersions}
+     * @throws StatusRuntimeException {@code NOT_FOUND} when the archive or live
+     *         entry is absent, {@code ALREADY_EXISTS} on conflicting
+     *         {@code operation_id} reuse, or {@code FAILED_PRECONDITION} naming
+     *         {@code PruneVersions}
      */
     public ArchiveMutationResponse pruneVersions(PruneVersionsRequest request) {
         return pruneVersions("", request);
     }
 
     /**
-     * {@code PruneVersions}: validates the request, records the refusal outcome
-     * under {@code (account_id, operation_id)}, and refuses by name with
-     * {@code FAILED_PRECONDITION} under v2 keep-forever retention.
+     * {@code PruneVersions}: validates the request, verifies the archive and live
+     * entry exist, records the refusal outcome under {@code (account_id, operation_id)},
+     * and refuses by name with {@code FAILED_PRECONDITION} under v2 keep-forever
+     * retention.
      *
      * @param operationId the caller-supplied operation UUID, or empty
      * @param request the prune-versions request
      * @return never returns normally
-     * @throws StatusRuntimeException {@code FAILED_PRECONDITION} naming {@code PruneVersions}
+     * @throws StatusRuntimeException {@code NOT_FOUND} when the archive or live
+     *         entry is absent, {@code ALREADY_EXISTS} on conflicting
+     *         {@code operation_id} reuse, or {@code FAILED_PRECONDITION} naming
+     *         {@code PruneVersions}
      */
     public ArchiveMutationResponse pruneVersions(
             String operationId, PruneVersionsRequest request) {
@@ -2476,21 +2492,21 @@ public final class DocumentArchive {
             return ArchiveErrors.alreadyExists(
                     "operation_id", operationId + " is already recorded for another operation");
         }
+        ArchiveBinding archiveBinding = binding(entryAddress);
+        read(ArchiveCoordinates.address(entryAddress), current(), BLOBS_ONLY);
         recordRefusedMutationInDocuments(
-                entryAddress, operationId, kind, commandSha256, refusalMessage);
+                archiveBinding, entryAddress, operationId, kind, commandSha256, refusalMessage);
         return ArchiveErrors.failedPrecondition(refusalMessage);
     }
 
     private void recordRefusedMutationInDocuments(
+            ArchiveBinding binding,
             EntryAddress entryAddress,
             String operationId,
             String kind,
             String commandSha256,
             String refusalMessage) {
-        Optional<ArchiveBinding> binding =
-                bindings.find(entryAddress.getAccountId(), entryAddress.getArchive());
-        String datasourceId =
-                binding.map(ArchiveBinding::datasourceId).orElse(DEFAULT_DATASOURCE_ID);
+        String datasourceId = binding.datasourceId();
         NodeAddress syntheticAddress = NodeAddress.newBuilder()
                 .setAccountId(entryAddress.getAccountId())
                 .setGraphId(MUTATION_GRAPH_PREFIX + entryAddress.getAccountId())
@@ -2516,7 +2532,7 @@ public final class DocumentArchive {
                 .setOwner(SaveOwner.newBuilder()
                         .setIntake(IntakeOrigin.newBuilder().setDatasourceId(datasourceId)))
                 .setValidationMode(ValidationMode.VALIDATION_MODE_TYPED)
-                .setDrive(binding.map(ArchiveBinding::drive).orElse(""))
+                .setDrive(binding.drive())
                 .putMetadata(MUTATION_KIND_METADATA, kind)
                 .putMetadata(MUTATION_SHA256_METADATA, commandSha256)
                 .putMetadata(MUTATION_REFUSAL_METADATA, refusalMessage)
