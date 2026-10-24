@@ -26,33 +26,75 @@ final class ConfigLaneMount {
     private ConfigLaneMount() {
     }
 
+    /** Closeable trust snapshot supplier owned by the serve process. */
+    interface TrustSource extends Supplier<TrustSnapshot>, AutoCloseable {
+        @Override
+        void close();
+    }
+
     /**
      * Resolves the trust source for the configured lane. The boot pull runs before the catalog
      * is assembled; with a positive refresh interval a single platform thread keeps pulling on
      * the delay schedule, which is the backpressure - serialising refreshes is what keeps two
      * config pulls from overlapping.
      */
-    static Supplier<TrustSnapshot> trustSource(ProtoMoltServe.ConfigLaneOptions lane,
-                                               String apiToken) {
+    static TrustSource trustSource(ProtoMoltServe.ConfigLaneOptions lane,
+                                   String apiToken) {
         TrustPin pinned = TrustPin.fromEnvironment();
         TrustSnapshot file = pinned == null ? null : pinned.snapshot();
         if (lane == null) {
-            return () -> file;
+            return new TrustSource() {
+                @Override
+                public TrustSnapshot get() {
+                    return file;
+                }
+
+                @Override
+                public void close() {
+                }
+            };
         }
         DistributedConfig config = DistributedConfig.over(
                 new RegistryConfigSource(lane.registryUrl(), apiToken));
-        TrustSnapshotMounts mounts = TrustSnapshotMounts.follow(config);
-        refreshQuietly(config, "the boot pull");
-        if (lane.refreshSeconds() > 0) {
-            ScheduledExecutorService refresher = Executors.newSingleThreadScheduledExecutor(
-                    Thread.ofPlatform().name("serve-config-refresh").daemon().factory());
-            refresher.scheduleWithFixedDelay(
-                    () -> refreshQuietly(config, "a config refresh"),
-                    lane.refreshSeconds(), lane.refreshSeconds(), TimeUnit.SECONDS);
+        ScheduledExecutorService refresher = null;
+        try {
+            TrustSnapshotMounts mounts = TrustSnapshotMounts.follow(config);
+            refreshQuietly(config, "the boot pull");
+            if (lane.refreshSeconds() > 0) {
+                refresher = Executors.newSingleThreadScheduledExecutor(
+                        Thread.ofPlatform().name("serve-config-refresh").daemon().factory());
+                refresher.scheduleWithFixedDelay(
+                        () -> refreshQuietly(config, "a config refresh"),
+                        lane.refreshSeconds(), lane.refreshSeconds(), TimeUnit.SECONDS);
+            }
+            ScheduledExecutorService activeRefresher = refresher;
+            return new TrustSource() {
+                @Override
+                public TrustSnapshot get() {
+                    return mounts.current()
+                            .map(TrustSnapshotMounts.Mounted::snapshot)
+                            .orElse(file);
+                }
+
+                @Override
+                public void close() {
+                    if (activeRefresher != null) {
+                        activeRefresher.shutdownNow();
+                    }
+                    config.close();
+                }
+            };
+        } catch (RuntimeException | Error e) {
+            if (refresher != null) {
+                refresher.shutdownNow();
+            }
+            try {
+                config.close();
+            } catch (RuntimeException | Error cleanup) {
+                e.addSuppressed(cleanup);
+            }
+            throw e;
         }
-        return () -> mounts.current()
-                .map(TrustSnapshotMounts.Mounted::snapshot)
-                .orElse(file);
     }
 
     /**

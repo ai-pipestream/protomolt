@@ -285,6 +285,57 @@ class InProcessDelegationCoordinatorTest {
         assertTrue(failure.getMessage().contains("not admitted"));
     }
 
+    @Test
+    void virtualThreadConcurrentBridgeWorkersAndEventWaitersCoordinateCleanly() throws Exception {
+        coordinator = new InProcessDelegationCoordinator(
+                AdmissionPolicy.allowAll(),
+                CandidateReviewer.acceptAll());
+        ScriptedWorkerRunner.Step submitStep = (task, events) -> GrpcJavaTaskFixtures.result(
+                task.offer().getAttempt(), task.expectedRevision(),
+                "0123456789abcdef0123456789abcdef01234567");
+        startServer(new ScriptedWorkerRunner(hello(), List.of(submitStep)));
+        assertTrue(worker.awaitAdmission(WAIT_BUDGET));
+
+        int extraWorkers = 3;
+        var extra = new java.util.ArrayList<DelegationWorker>();
+        try {
+            for (int i = 1; i <= extraWorkers; i++) {
+                WorkerHello workerHello = hello().toBuilder()
+                        .setWorkerId("scripted-kimi-" + i)
+                        .build();
+                DelegationWorker dw = new DelegationWorker(
+                        AgentDelegationServiceGrpc.newStub(channel),
+                        new ScriptedWorkerRunner(workerHello, List.of(submitStep)));
+                dw.start();
+                extra.add(dw);
+                assertTrue(dw.awaitAdmission(WAIT_BUDGET));
+            }
+
+            try (var vts = java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor()) {
+                var futures = new java.util.ArrayList<java.util.concurrent.Future<InProcessDelegationCoordinator.Event>>();
+                for (int i = 0; i <= extraWorkers; i++) {
+                    String workerId = i == 0 ? "scripted-kimi" : "scripted-kimi-" + i;
+                    String taskId = UUID.randomUUID().toString();
+                    futures.add(vts.submit(() -> {
+                        coordinator.offer(workerId, taskId,
+                                GrpcJavaTaskFixtures.job().spec(), Duration.ofSeconds(30));
+                        return waitForAccepted(taskId);
+                    }));
+                }
+                for (var future : futures) {
+                    InProcessDelegationCoordinator.Event accepted =
+                            future.get(WAIT_BUDGET.toMillis(), TimeUnit.MILLISECONDS);
+                    assertTrue(accepted.entry().getCoordinatorFrame().hasAccepted());
+                }
+            }
+        } finally {
+            for (DelegationWorker dw : extra) {
+                dw.close();
+            }
+        }
+        assertTrue(coordinator.state().clean(), coordinator.state().findings().toString());
+    }
+
     private InProcessDelegationCoordinator.Event waitForAccepted(String taskId)
             throws InterruptedException {
         return awaitEvent(taskId, entry -> entry.getLane() == Lane.LANE_COORDINATOR

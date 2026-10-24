@@ -59,18 +59,20 @@ import ai.protomolt.proto.formats.Formats;
 import ai.protomolt.proto.validate.ProtoValidator;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.locks.Condition;
+import java.util.concurrent.locks.ReentrantLock;
 
 /**
  * In-memory delegation coordinator for embedded servers, tests, and MCP long polling.
  * The wire transcript remains the source of truth and is checked by
  * {@link DelegationReducer} after every accepted frame.
  *
- * <p>The coordinator is a single-monitor state machine: every projection mutation happens
+ * <p>The coordinator is a single-lock state machine: every projection mutation happens
  * under the one {@code lock}, whether driven by the live path or by transcript replay at
  * construction. The mutable projection lives in {@code DelegationCoordinatorState}, replay
  * in {@code DelegationReplay}, the candidate-review runtime in
  * {@code CoordinatorReviewRuntime}, and the lease clock in {@code CoordinatorLeaseSchedule};
- * those package-private collaborators share the coordinator's monitor and never create one
+ * those package-private collaborators share the coordinator's lock and never create one
  * of their own. Frame emission, transcript persistence, and review application remain here
  * behind {@code CoordinatorFrames}, so transcript authority and reducer ordering are
  * unchanged by the extraction.
@@ -82,7 +84,8 @@ public final class InProcessDelegationCoordinator
     private static final System.Logger LOG =
             System.getLogger(InProcessDelegationCoordinator.class.getName());
 
-    private final Object lock = new Object();
+    private final ReentrantLock lock = new ReentrantLock();
+    private final Condition eventAvailable = lock.newCondition();
     private final AdmissionPolicy admissionPolicy;
     private final CandidateReviewer reviewer;
     private final Clock clock;
@@ -191,10 +194,13 @@ public final class InProcessDelegationCoordinator
                 reviewWindow, scheduleReviewDeadlines, runtimeTasks, reducer, frames);
         this.leaseSchedule = new CoordinatorLeaseSchedule(lock, projection, clock,
                 scheduleLeaseExpiries, runtimeTasks, frames);
-        synchronized (lock) {
+        lock.lock();
+        try {
             transcripts.load().ifPresent(transcript ->
                     DelegationReplay.restore(reducer, projection, transcript));
             reviewRuntime.recordInterruptedReviews();
+        } finally {
+            lock.unlock();
         }
     }
 
@@ -212,11 +218,14 @@ public final class InProcessDelegationCoordinator
 
     /** Exact live observer identity, not merely a matching worker hello. */
     boolean ownsCurrentSession(String workerId, StreamObserver<DelegateResponse> observer) {
-        synchronized (lock) {
+        lock.lock();
+        try {
             projection.requireOpen();
             Session current = projection.sessions.get(workerId);
             return current != null && current.connected && current.admitted
                     && current.responses == observer;
+        } finally {
+            lock.unlock();
         }
     }
 
@@ -234,7 +243,8 @@ public final class InProcessDelegationCoordinator
                 }
                 try {
                     CoordinatorReviewRuntime.ReviewDispatch dispatch = null;
-                    synchronized (lock) {
+                    lock.lock();
+                    try {
                         projection.requireOpen();
                         DelegationValidation.validate(frame);
                         if (session == null) {
@@ -258,6 +268,8 @@ public final class InProcessDelegationCoordinator
                         if (recordWorkerFrame(session.workerId, frame)) {
                             dispatch = handleWorkerFrame(session, frame);
                         }
+                    } finally {
+                        lock.unlock();
                     }
                     if (dispatch != null) reviewRuntime.dispatchReview(dispatch);
                 } catch (WorkerRegistrationConflictException e) {
@@ -291,20 +303,26 @@ public final class InProcessDelegationCoordinator
             @Override
             public void onError(Throwable throwable) {
                 ended = true;
-                synchronized (lock) {
+                lock.lock();
+                try {
                     if (session != null) {
                         session.connected = false;
                     }
+                } finally {
+                    lock.unlock();
                 }
             }
 
             @Override
             public void onCompleted() {
                 ended = true;
-                synchronized (lock) {
+                lock.lock();
+                try {
                     if (session != null) {
                         session.connected = false;
                     }
+                } finally {
+                    lock.unlock();
                 }
                 responseObserver.onCompleted();
             }
@@ -338,7 +356,8 @@ public final class InProcessDelegationCoordinator
         // type its own descriptor set does not declare is refused while the caller is still
         // holding it, and the schema every worker reads is rendered onto the offered spec.
         TaskSpec offeredSpec = DeliverableContracts.rendered(spec);
-        synchronized (lock) {
+        lock.lock();
+        try {
             projection.requireOpen();
             Session session = projection.requireAdmittedSession(workerId);
             TaskRuntime existing = projection.tasks.get(taskId);
@@ -348,6 +367,8 @@ public final class InProcessDelegationCoordinator
             int attempt = existing == null ? 1 : existing.attempt + 1;
             return commitOffer(session, workerId, taskId, existing, attempt,
                     offeredSpec, leaseDuration, resumeFrom, "", null);
+        } finally {
+            lock.unlock();
         }
     }
 
@@ -368,7 +389,8 @@ public final class InProcessDelegationCoordinator
         }
         Objects.requireNonNull(matchesCommitted, "matchesCommitted");
         Objects.requireNonNull(newOffer, "newOffer");
-        synchronized (lock) {
+        lock.lock();
+        try {
             projection.requireOpen();
             TranscriptEntry firstOffer = null;
             for (TranscriptEntry entry : projection.entries) {
@@ -412,6 +434,8 @@ public final class InProcessDelegationCoordinator
             DelegationValidation.validate(rendered);
             return commitOffer(session, workerId, taskId, null, 1, rendered,
                     initial.leaseDuration(), null, initial.startBindingSha256(), matchesCommitted);
+        } finally {
+            lock.unlock();
         }
     }
 
@@ -452,7 +476,8 @@ public final class InProcessDelegationCoordinator
         if (attempt < 1 || revision < 1) {
             throw new IllegalArgumentException("review attempt and revision must be positive");
         }
-        synchronized (lock) {
+        lock.lock();
+        try {
             projection.requireOpen();
             TaskRuntime task = projection.requireTask(taskId);
             if (task.phase != DelegationReducer.Phase.CANDIDATE) {
@@ -466,6 +491,8 @@ public final class InProcessDelegationCoordinator
                     == DelegationReducer.ReviewStatus.RUNNING
                     ? reviewRuntime.currentReview(task).started().getIdentity().getInvocationId() : "";
             applyReview(task, Objects.requireNonNull(decision, "decision"), invocation);
+        } finally {
+            lock.unlock();
         }
     }
 
@@ -474,7 +501,8 @@ public final class InProcessDelegationCoordinator
         requireNative(request, "invalid review retry request");
         CoordinatorReviewRuntime.ReviewDispatch dispatch;
         RetryCandidateReviewResponse response;
-        synchronized (lock) {
+        lock.lock();
+        try {
             projection.requireOpen();
             for (TranscriptEntry entry : projection.entries) {
                 if (!entry.hasCoordinatorFrame()
@@ -520,6 +548,8 @@ public final class InProcessDelegationCoordinator
             deliver(session, frame);
             response = retryResponse(request, identity);
             dispatch = new CoordinatorReviewRuntime.ReviewDispatch(task.taskId, started);
+        } finally {
+            lock.unlock();
         }
         reviewRuntime.dispatchReview(dispatch);
         return response;
@@ -547,7 +577,8 @@ public final class InProcessDelegationCoordinator
         Objects.requireNonNull(kind, "kind");
         Objects.requireNonNull(text, "text");
         Objects.requireNonNull(artifacts, "artifacts");
-        synchronized (lock) {
+        lock.lock();
+        try {
             projection.requireOpen();
             Session session = projection.requireAdmittedWorker(workerId);
             projection.requireTask(taskId);
@@ -565,6 +596,8 @@ public final class InProcessDelegationCoordinator
             // Messages sequence in the task's attempt-0 scope on both lanes.
             emit(session, taskId, 0, DelegateResponse.newBuilder().setTaskMessage(message));
             return message;
+        } finally {
+            lock.unlock();
         }
     }
 
@@ -634,26 +667,33 @@ public final class InProcessDelegationCoordinator
      */
     public WorkerResumption workerResumption(String workerId) {
         Objects.requireNonNull(workerId, "workerId");
-        synchronized (lock) {
+        lock.lock();
+        try {
             projection.requireOpen();
             return DelegationReplay.workerResumption(projection.entries, workerId);
+        } finally {
+            lock.unlock();
         }
     }
 
     /** Returns the current worker registrations, in first-seen order. */
     public List<WorkerView> workers() {
-        synchronized (lock) {
+        lock.lock();
+        try {
             projection.requireOpen();
             return projection.sessions.values().stream()
                     .map(session -> new WorkerView(session.workerId, session.admitted,
                             session.connected, session.hello))
                     .toList();
+        } finally {
+            lock.unlock();
         }
     }
 
     /** Cancels the current offer or lease. */
     public void cancel(String taskId, String reason) {
-        synchronized (lock) {
+        lock.lock();
+        try {
             projection.requireOpen();
             TaskRuntime task = projection.requireTask(taskId);
             if (task.phase != DelegationReducer.Phase.OFFERED
@@ -670,6 +710,8 @@ public final class InProcessDelegationCoordinator
                         task.phase = DelegationReducer.Phase.CANCELLED;
                         task.leaseGeneration++;
                     });
+        } finally {
+            lock.unlock();
         }
     }
 
@@ -681,9 +723,12 @@ public final class InProcessDelegationCoordinator
      */
     public int expireLeases(Instant now) {
         Objects.requireNonNull(now, "now");
-        synchronized (lock) {
+        lock.lock();
+        try {
             projection.requireOpen();
             return leaseSchedule.expireLeases(now);
+        } finally {
+            lock.unlock();
         }
     }
 
@@ -700,7 +745,8 @@ public final class InProcessDelegationCoordinator
     public JsonFormat.TypeRegistry deliverableTypes() {
         List<Descriptor> types = new ArrayList<>();
         Set<String> named = new HashSet<>();
-        synchronized (lock) {
+        lock.lock();
+        try {
             projection.requireOpen();
             for (TaskRuntime task : projection.tasks.values()) {
                 if (task.offer == null || !task.offer.getSpec().hasContract()) {
@@ -716,6 +762,8 @@ public final class InProcessDelegationCoordinator
                     // A contract that does not link names no resolvable type.
                 }
             }
+        } finally {
+            lock.unlock();
         }
         return JsonFormat.TypeRegistry.newBuilder().add(types).build();
     }
@@ -723,33 +771,42 @@ public final class InProcessDelegationCoordinator
     /** The current offer's contract for one task, if its offer declared one. */
     public Optional<ai.protomolt.proto.delegation.v1.DeliverableContract> deliverableContract(
             String taskId) {
-        synchronized (lock) {
+        lock.lock();
+        try {
             projection.requireOpen();
             TaskRuntime task = projection.tasks.get(taskId);
             if (task == null || task.offer == null || !task.offer.getSpec().hasContract()) {
                 return Optional.empty();
             }
             return Optional.of(task.offer.getSpec().getContract());
+        } finally {
+            lock.unlock();
         }
     }
 
     /** Returns the current replayable transcript. */
     public Transcript transcript() {
-        synchronized (lock) {
+        lock.lock();
+        try {
             projection.requireOpen();
             return Transcript.newBuilder().addAllEntries(projection.entries).build();
+        } finally {
+            lock.unlock();
         }
     }
 
     /** Returns all events after a cursor, optionally restricted to one task. */
     public List<Event> eventsAfter(String taskId, long afterCursor) {
-        synchronized (lock) {
+        lock.lock();
+        try {
             projection.requireOpen();
             return projection.events.stream()
                     .filter(event -> event.cursor > afterCursor)
                     .filter(event -> taskId == null || taskId.isEmpty()
                             || event.taskId().equals(taskId))
                     .toList();
+        } finally {
+            lock.unlock();
         }
     }
 
@@ -766,34 +823,37 @@ public final class InProcessDelegationCoordinator
             throw new IllegalArgumentException("timeout must not be negative");
         }
         long remaining = timeout.toNanos();
-        long deadline = System.nanoTime() + remaining;
-        synchronized (lock) {
+        lock.lock();
+        try {
             while (true) {
                 projection.requireOpen();
                 Optional<Event> event = firstEvent(taskId, afterCursor);
                 if (event.isPresent() || remaining <= 0) {
                     return event;
                 }
-                long millis = remaining / 1_000_000L;
-                int nanos = (int) (remaining % 1_000_000L);
-                lock.wait(millis, nanos);
-                remaining = deadline - System.nanoTime();
+                remaining = eventAvailable.awaitNanos(remaining);
             }
+        } finally {
+            lock.unlock();
         }
     }
 
     /** Reduces the current transcript for diagnostics or persistence gates. */
     public DelegationReducer.Result state() {
-        synchronized (lock) {
+        lock.lock();
+        try {
             projection.requireOpen();
             return reducer.reduce(
                     Transcript.newBuilder().addAllEntries(projection.entries).build());
+        } finally {
+            lock.unlock();
         }
     }
 
     @Override
     public void close() {
-        synchronized (lock) {
+        lock.lock();
+        try {
             if (projection.closed) {
                 return;
             }
@@ -801,7 +861,9 @@ public final class InProcessDelegationCoordinator
             projection.sessions.values().stream().filter(session -> session.connected)
                     .forEach(session -> session.responses.onCompleted());
             projection.sessions.values().forEach(session -> session.connected = false);
-            lock.notifyAll();
+            eventAvailable.signalAll();
+        } finally {
+            lock.unlock();
         }
         runtimeTasks.shutdownNow();
     }
@@ -1043,7 +1105,7 @@ public final class InProcessDelegationCoordinator
         for (TranscriptEntry entry : batch) {
             projection.record(entry);
         }
-        lock.notifyAll();
+        eventAvailable.signalAll();
     }
 
     private static void requireNative(Message value, String description) {
@@ -1068,8 +1130,11 @@ public final class InProcessDelegationCoordinator
         if (session == null) {
             return;
         }
-        synchronized (lock) {
+        lock.lock();
+        try {
             session.connected = false;
+        } finally {
+            lock.unlock();
         }
     }
 

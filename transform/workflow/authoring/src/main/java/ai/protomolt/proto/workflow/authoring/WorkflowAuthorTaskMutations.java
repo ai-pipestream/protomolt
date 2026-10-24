@@ -21,11 +21,13 @@ import java.time.Clock;
 import java.util.HashSet;
 import java.util.Objects;
 import java.util.Set;
+import java.util.concurrent.locks.ReentrantLock;
 import static ai.protomolt.proto.workflow.authoring.WorkflowPreparationException.Kind;
 
 /** Author-scoped mutations over the existing coordinator and durable transcript. */
 public final class WorkflowAuthorTaskMutations {
     private final DelegationBridge bridge;
+    private final ReentrantLock lock;
     private final ArtifactReference policy;
     private final Clock clock;
     private final WorkflowAuthorTaskReader reader;
@@ -33,6 +35,7 @@ public final class WorkflowAuthorTaskMutations {
     public WorkflowAuthorTaskMutations(DelegationBridge bridge, ArtifactRepository artifacts,
             ArtifactReference policy, Clock clock) {
         this.bridge = Objects.requireNonNull(bridge);
+        this.lock = bridge.mutationLock();
         this.policy = Objects.requireNonNull(policy);
         this.clock = Objects.requireNonNull(clock);
         WorkflowPreparationValidation.validate(policy, 4 * 1024 * 1024);
@@ -50,7 +53,8 @@ public final class WorkflowAuthorTaskMutations {
             throws WorkflowPreparationException {
         input(request);
         identity(request.getWorkerId(), caller);
-        synchronized (bridge) {
+        lock.lock();
+        try {
             if (bridge.coordinator().workers().stream().anyMatch(worker ->
                     worker.workerId().equals(caller.name()) && worker.connected())) {
                 throw failure(Kind.CONFLICT, "Worker is already connected");
@@ -66,6 +70,8 @@ public final class WorkflowAuthorTaskMutations {
             } catch (RuntimeException unavailable) {
                 throw new WorkflowPreparationException(Kind.UNAVAILABLE, "Worker registration failed", unavailable);
             }
+        } finally {
+            lock.unlock();
         }
     }
 
@@ -75,7 +81,8 @@ public final class WorkflowAuthorTaskMutations {
         input(wrapped);
         var request = wrapped.getRegistration();
         identity(request.getWorkerId(), caller);
-        synchronized (bridge) {
+        lock.lock();
+        try {
             try {
                 var registration = bridge.ensureWorker(WorkerHello.newBuilder()
                         .setWorkerId(caller.name()).setProtocolVersion(1)
@@ -95,6 +102,8 @@ public final class WorkflowAuthorTaskMutations {
                 throw new WorkflowPreparationException(Kind.UNAVAILABLE,
                         "Worker registration is unavailable", unavailable);
             }
+        } finally {
+            lock.unlock();
         }
     }
 
@@ -102,7 +111,8 @@ public final class WorkflowAuthorTaskMutations {
             throws WorkflowPreparationException {
         input(request);
         identity(request.getWorkerId(), caller);
-        synchronized (bridge) {
+        lock.lock();
+        try {
             var snapshot = inspect(request.getTaskId(), request.getAttempt(), caller);
             if (accepted(snapshot, request.getAttempt())) return acceptance(request);
             live(snapshot, request.getAttempt(), DelegationReducer.Phase.OFFERED);
@@ -118,6 +128,8 @@ public final class WorkflowAuthorTaskMutations {
             var after = inspect(request.getTaskId(), request.getAttempt(), caller);
             if (!accepted(after, request.getAttempt())) throw failure(Kind.CORRUPT_EVIDENCE, "Acceptance was not persisted");
             return acceptance(request);
+        } finally {
+            lock.unlock();
         }
     }
 
@@ -134,7 +146,8 @@ public final class WorkflowAuthorTaskMutations {
         } catch (Exception invalid) {
             throw new WorkflowPreparationException(Kind.INVALID_INPUT, "Invalid workflow deliverable", invalid);
         }
-        synchronized (bridge) {
+        lock.lock();
+        try {
             var snapshot = inspect(request.getTaskId(), candidate.getAttempt(), caller);
             if (submitted(snapshot, candidate)) return submission(request);
             validateSubmissionFrame(request);
@@ -172,6 +185,8 @@ public final class WorkflowAuthorTaskMutations {
             var after = inspect(request.getTaskId(), candidate.getAttempt(), caller);
             if (!submitted(after, candidate)) throw failure(Kind.CORRUPT_EVIDENCE, "Candidate was not persisted");
             return submission(request);
+        } finally {
+            lock.unlock();
         }
     }
 

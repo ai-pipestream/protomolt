@@ -34,6 +34,7 @@ import java.util.function.Predicate;
 import java.util.function.Supplier;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.locks.ReentrantLock;
 
 /**
  * The session-owning adapter between MCP-style request/response callers and one
@@ -64,7 +65,7 @@ public final class DelegationBridge implements AutoCloseable {
         }
     }
 
-    private final Object lock = new Object();
+    private final ReentrantLock lock = new ReentrantLock();
     private final InProcessDelegationCoordinator coordinator;
     private final Map<String, WorkerStream> streams = new LinkedHashMap<>();
     private boolean closed;
@@ -77,6 +78,16 @@ public final class DelegationBridge implements AutoCloseable {
     /** The coordinator this bridge adapts; lifecycle decisions live there. */
     public InProcessDelegationCoordinator coordinator() {
         return coordinator;
+    }
+
+    /**
+     * Returns the reentrant lock guarding worker-stream registrations and compound
+     * bridge mutations without pinning virtual threads on intrinsic monitors.
+     *
+     * @return the bridge's reentrant mutation lock
+     */
+    public ReentrantLock mutationLock() {
+        return lock;
     }
 
     /**
@@ -95,7 +106,8 @@ public final class DelegationBridge implements AutoCloseable {
     public WorkerRegistration registerWorker(WorkerHello hello) {
         Objects.requireNonNull(hello, "hello");
         DelegationValidation.validate(hello);
-        synchronized (lock) {
+        lock.lock();
+        try {
             requireOpen();
             WorkerStream previous = streams.get(hello.getWorkerId());
             if (previous != null && previous.open && previous.failure == null) {
@@ -107,6 +119,8 @@ public final class DelegationBridge implements AutoCloseable {
             }
             streams.remove(hello.getWorkerId());
             return openWorker(hello, false);
+        } finally {
+            lock.unlock();
         }
     }
 
@@ -114,7 +128,8 @@ public final class DelegationBridge implements AutoCloseable {
     public WorkerRegistration ensureWorker(WorkerHello hello) {
         Objects.requireNonNull(hello, "hello");
         DelegationValidation.validate(hello);
-        synchronized (lock) {
+        lock.lock();
+        try {
             requireOpen();
             WorkerStream previous = streams.get(hello.getWorkerId());
             if (previous != null && previous.open && previous.failure == null
@@ -129,6 +144,8 @@ public final class DelegationBridge implements AutoCloseable {
             if (previous != null) previous.complete();
             streams.remove(hello.getWorkerId());
             return openWorker(hello, true);
+        } finally {
+            lock.unlock();
         }
     }
 
@@ -338,25 +355,31 @@ public final class DelegationBridge implements AutoCloseable {
 
     @Override
     public void close() {
-        synchronized (lock) {
+        lock.lock();
+        try {
             if (closed) {
                 return;
             }
             closed = true;
             streams.values().forEach(WorkerStream::complete);
             streams.clear();
+        } finally {
+            lock.unlock();
         }
     }
 
     private WorkerStream requireStream(String workerId) {
         Objects.requireNonNull(workerId, "workerId");
-        synchronized (lock) {
+        lock.lock();
+        try {
             WorkerStream stream = streams.get(workerId);
             if (stream == null) {
                 throw new IllegalArgumentException(
                         "worker is not registered on this bridge: " + workerId);
             }
             return stream;
+        } finally {
+            lock.unlock();
         }
     }
 
@@ -377,6 +400,7 @@ public final class DelegationBridge implements AutoCloseable {
 
     /** One open worker stream plus its per-scope sequence counters. */
     private static final class WorkerStream {
+        private final ReentrantLock streamLock = new ReentrantLock();
         private final String workerId;
         private final WorkerHello hello;
         private final Map<String, Long> sequences = new HashMap<>();
@@ -400,81 +424,111 @@ public final class DelegationBridge implements AutoCloseable {
          * the stream sends its first frame, so a replacement stream continues the
          * recorded scopes instead of rewinding them.
          */
-        private synchronized void seed(InProcessDelegationCoordinator.WorkerResumption resumption) {
-            resumption.sequences().forEach((scope, last) ->
-                    sequences.put(scope(scope.taskId(), scope.attempt()), last));
-            resumption.progressSequences().forEach((scope, last) ->
-                    progressSequences.put(scope(scope.taskId(), scope.attempt()), last));
-            resumption.checkpointSequences().forEach((scope, last) ->
-                    checkpointSequences.put(scope(scope.taskId(), scope.attempt()), last));
-        }
-
-        private synchronized int sendProgress(String taskId, int attempt, String message) {
-            int progressSeq = progressSequences.getOrDefault(scope(taskId, attempt), 0) + 1;
-            send(taskId, attempt, DelegateRequest.newBuilder()
-                    .setProgress(ProgressEvent.newBuilder()
-                            .setAttempt(attempt)
-                            .setProgressSeq(progressSeq)
-                            .setMessage(message)));
-            progressSequences.put(scope(taskId, attempt), progressSeq);
-            return progressSeq;
-        }
-
-        private synchronized int sendCheckpoint(String taskId, int attempt, String resumeToken,
-                                                String note, ArtifactReference state) {
-            int checkpointSeq = checkpointSequences.getOrDefault(scope(taskId, attempt), 0) + 1;
-            Checkpoint.Builder checkpoint = Checkpoint.newBuilder()
-                    .setAttempt(attempt)
-                    .setCheckpointSeq(checkpointSeq)
-                    .setResumeToken(resumeToken)
-                    .setNote(note == null ? "" : note);
-            if (state != null) {
-                checkpoint.setState(state);
-            }
-            send(taskId, attempt, DelegateRequest.newBuilder().setCheckpoint(checkpoint));
-            checkpointSequences.put(scope(taskId, attempt), checkpointSeq);
-            return checkpointSeq;
-        }
-
-        private synchronized void sendChecked(String taskId, int attempt,
-                                              DelegateRequest.Builder payload) {
-            send(taskId, attempt, payload);
-        }
-
-        private synchronized void send(String taskId, int attempt,
-                                       DelegateRequest.Builder payload) {
-            if (!open) {
-                throw new IllegalStateException("worker stream is closed: " + workerId);
-            }
-            if (failure != null) {
-                throw new IllegalStateException("worker stream failed for " + workerId
-                        + ": " + failureMessage(failure));
-            }
-            // Validation runs before the sequence commits: a malformed tool call fails
-            // the call and leaves the scope's next sequence untouched.
-            long seq = sequences.getOrDefault(scope(taskId, attempt), 0L) + 1;
-            DelegateRequest frame = payload
-                    .setFrameId(UUID.randomUUID().toString())
-                    .setTaskId(taskId)
-                    .setSeq(seq)
-                    .setSentAt(nowTimestamp())
-                    .build();
-            DelegationValidation.validate(frame);
-            sequences.put(scope(taskId, attempt), seq);
-            requests.onNext(frame);
-            if (failure != null) {
-                throw new IllegalStateException("worker stream failed for " + workerId
-                        + ": " + failureMessage(failure));
-            }
-            if (!open) {
-                throw new IllegalStateException("worker stream is closed: " + workerId);
+        private void seed(InProcessDelegationCoordinator.WorkerResumption resumption) {
+            streamLock.lock();
+            try {
+                resumption.sequences().forEach((scope, last) ->
+                        sequences.put(scope(scope.taskId(), scope.attempt()), last));
+                resumption.progressSequences().forEach((scope, last) ->
+                        progressSequences.put(scope(scope.taskId(), scope.attempt()), last));
+                resumption.checkpointSequences().forEach((scope, last) ->
+                        checkpointSequences.put(scope(scope.taskId(), scope.attempt()), last));
+            } finally {
+                streamLock.unlock();
             }
         }
 
-        private synchronized void complete() {
-            open = false;
-            if (requests != null) {
-                requests.onCompleted();
+        private int sendProgress(String taskId, int attempt, String message) {
+            streamLock.lock();
+            try {
+                int progressSeq = progressSequences.getOrDefault(scope(taskId, attempt), 0) + 1;
+                send(taskId, attempt, DelegateRequest.newBuilder()
+                        .setProgress(ProgressEvent.newBuilder()
+                                .setAttempt(attempt)
+                                .setProgressSeq(progressSeq)
+                                .setMessage(message)));
+                progressSequences.put(scope(taskId, attempt), progressSeq);
+                return progressSeq;
+            } finally {
+                streamLock.unlock();
+            }
+        }
+
+        private int sendCheckpoint(String taskId, int attempt, String resumeToken,
+                                   String note, ArtifactReference state) {
+            streamLock.lock();
+            try {
+                int checkpointSeq = checkpointSequences.getOrDefault(scope(taskId, attempt), 0) + 1;
+                Checkpoint.Builder checkpoint = Checkpoint.newBuilder()
+                        .setAttempt(attempt)
+                        .setCheckpointSeq(checkpointSeq)
+                        .setResumeToken(resumeToken)
+                        .setNote(note == null ? "" : note);
+                if (state != null) {
+                    checkpoint.setState(state);
+                }
+                send(taskId, attempt, DelegateRequest.newBuilder().setCheckpoint(checkpoint));
+                checkpointSequences.put(scope(taskId, attempt), checkpointSeq);
+                return checkpointSeq;
+            } finally {
+                streamLock.unlock();
+            }
+        }
+
+        private void sendChecked(String taskId, int attempt,
+                                 DelegateRequest.Builder payload) {
+            streamLock.lock();
+            try {
+                send(taskId, attempt, payload);
+            } finally {
+                streamLock.unlock();
+            }
+        }
+
+        private void send(String taskId, int attempt,
+                          DelegateRequest.Builder payload) {
+            streamLock.lock();
+            try {
+                if (!open) {
+                    throw new IllegalStateException("worker stream is closed: " + workerId);
+                }
+                if (failure != null) {
+                    throw new IllegalStateException("worker stream failed for " + workerId
+                            + ": " + failureMessage(failure));
+                }
+                // Validation runs before the sequence commits: a malformed tool call fails
+                // the call and leaves the scope's next sequence untouched.
+                long seq = sequences.getOrDefault(scope(taskId, attempt), 0L) + 1;
+                DelegateRequest frame = payload
+                        .setFrameId(UUID.randomUUID().toString())
+                        .setTaskId(taskId)
+                        .setSeq(seq)
+                        .setSentAt(nowTimestamp())
+                        .build();
+                DelegationValidation.validate(frame);
+                sequences.put(scope(taskId, attempt), seq);
+                requests.onNext(frame);
+                if (failure != null) {
+                    throw new IllegalStateException("worker stream failed for " + workerId
+                            + ": " + failureMessage(failure));
+                }
+                if (!open) {
+                    throw new IllegalStateException("worker stream is closed: " + workerId);
+                }
+            } finally {
+                streamLock.unlock();
+            }
+        }
+
+        private void complete() {
+            streamLock.lock();
+            try {
+                open = false;
+                if (requests != null) {
+                    requests.onCompleted();
+                }
+            } finally {
+                streamLock.unlock();
             }
         }
 

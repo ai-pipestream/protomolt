@@ -9,10 +9,12 @@ import java.util.ArrayDeque;
 import java.util.Collection;
 import java.util.Deque;
 import java.util.Objects;
+import java.util.concurrent.locks.ReentrantLock;
 
 /** Deterministic worker runner for in-process protocol and integration tests. */
 public final class ScriptedWorkerRunner implements WorkerRunner {
 
+    private final ReentrantLock lock = new ReentrantLock();
     private final WorkerHello hello;
     private final Deque<Step> steps;
 
@@ -29,13 +31,18 @@ public final class ScriptedWorkerRunner implements WorkerRunner {
     }
 
     @Override
-    public synchronized CompletionCandidate run(WorkerTask task, WorkerEvents events)
+    public CompletionCandidate run(WorkerTask task, WorkerEvents events)
             throws Exception {
-        Step step = steps.pollFirst();
-        if (step == null) {
-            throw new IllegalStateException("the scripted worker has no remaining step");
+        lock.lock();
+        try {
+            Step step = steps.pollFirst();
+            if (step == null) {
+                throw new IllegalStateException("the scripted worker has no remaining step");
+            }
+            return step.run(task, events);
+        } finally {
+            lock.unlock();
         }
-        return step.run(task, events);
     }
 
     /** One deterministic worker invocation. */
