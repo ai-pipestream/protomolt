@@ -347,7 +347,7 @@ public final class UnaryRequestAdmission implements ServerInterceptor, AutoClose
             throw new IllegalArgumentException("Negative drain timeout");
         }
         long remaining = timeout.toNanos();
-        lock.lock();
+        lock.lockInterruptibly();
         try {
             while (active != 0 && remaining > 0) {
                 remaining = idle.awaitNanos(remaining);
