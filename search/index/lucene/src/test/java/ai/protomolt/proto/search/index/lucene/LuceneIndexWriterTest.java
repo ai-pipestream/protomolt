@@ -9,12 +9,14 @@ import org.apache.lucene.search.IndexSearcher;
 import org.apache.lucene.search.TermQuery;
 import org.apache.lucene.store.Directory;
 import org.apache.lucene.store.FSDirectory;
+import org.apache.lucene.store.LockObtainFailedException;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import java.nio.file.Path;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
  * {@link LuceneIndexWriter} basics: adds and term deletions are buffered and
@@ -62,6 +64,22 @@ class LuceneIndexWriterTest {
         try (Directory directory = FSDirectory.open(indexDir);
                 DirectoryReader reader = DirectoryReader.open(directory)) {
             assertThat(reader.numDocs()).isEqualTo(1);
+        }
+    }
+
+    @Test
+    void constructorFailureWhenWriteLockIsHeldReleasesDirectoryAndRecoversAfterUnlock()
+            throws Exception {
+        try (LuceneIndexWriter holder = new LuceneIndexWriter(indexDir)) {
+            holder.add(doc("locked"));
+            assertThatThrownBy(() -> new LuceneIndexWriter(indexDir))
+                    .isInstanceOf(LockObtainFailedException.class);
+        }
+
+        try (LuceneIndexWriter reopened = new LuceneIndexWriter(indexDir)) {
+            reopened.add(doc("unlocked"));
+            reopened.commit();
+            assertThat(reopened.numDocs()).isEqualTo(2);
         }
     }
 }

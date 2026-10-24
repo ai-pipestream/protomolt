@@ -28,6 +28,7 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.util.Locale;
 import java.util.Objects;
 import java.util.Optional;
@@ -70,6 +71,7 @@ public final class SearchConsoleServer implements AutoCloseable {
     private static final Metadata.Key<String> API_TOKEN_HEADER =
             Metadata.Key.of("api_token", Metadata.ASCII_STRING_MARSHALLER);
     private static final int MAX_CREDENTIAL_BYTES = 4 * 1024;
+    private static final Duration PROXY_TIMEOUT = Duration.ofSeconds(30);
 
     private final HttpServer http;
     private final ManagedChannel channel;
@@ -77,7 +79,9 @@ public final class SearchConsoleServer implements AutoCloseable {
     private final Supplier<String> actionsBaseUrl;
     private final ConsoleSessions sessions;
     private final ScopeBudgets budgets;
-    private final HttpClient actionsClient = HttpClient.newHttpClient();
+    private final HttpClient actionsClient = HttpClient.newBuilder()
+            .connectTimeout(PROXY_TIMEOUT)
+            .build();
 
     /** Creates the open console (no login), for trusted-network nodes. */
     public SearchConsoleServer(int port, String serviceTarget, Supplier<String> actionsBaseUrl)
@@ -135,7 +139,12 @@ public final class SearchConsoleServer implements AutoCloseable {
                 : NettyChannelBuilder.forTarget(serviceTarget).usePlaintext().build();
         this.service = SearchServiceGrpc.newBlockingStub(channel);
         this.actionsBaseUrl = actionsBaseUrl == null ? () -> "" : actionsBaseUrl;
-        this.http = HttpServer.create(new InetSocketAddress(port), 0);
+        try {
+            this.http = HttpServer.create(new InetSocketAddress(port), 0);
+        } catch (IOException | RuntimeException e) {
+            channel.shutdownNow();
+            throw e;
+        }
         http.setExecutor(Executors.newVirtualThreadPerTaskExecutor());
         http.createContext("/", this::servePage);
         http.createContext("/session", this::serveSession);
@@ -263,13 +272,15 @@ public final class SearchConsoleServer implements AutoCloseable {
 
     /** The stub for this exchange: the session's own credential rides guarded channels. */
     private SearchServiceGrpc.SearchServiceBlockingStub serviceFor(HttpExchange exchange) {
+        SearchServiceGrpc.SearchServiceBlockingStub stub =
+                service.withDeadlineAfter(PROXY_TIMEOUT.toMillis(), TimeUnit.MILLISECONDS);
         Optional<String> credential = sessions.credential(exchange);
         if (credential.isEmpty()) {
-            return service;
+            return stub;
         }
         Metadata identity = new Metadata();
         identity.put(API_TOKEN_HEADER, credential.get());
-        return service.withInterceptors(MetadataUtils.newAttachHeadersInterceptor(identity));
+        return stub.withInterceptors(MetadataUtils.newAttachHeadersInterceptor(identity));
     }
 
     private void serveSubjects(HttpExchange exchange) throws IOException {
@@ -330,7 +341,9 @@ public final class SearchConsoleServer implements AutoCloseable {
         String path = exchange.getRequestURI().getPath();
         try {
             if ("/actions".equals(path) && "GET".equals(exchange.getRequestMethod())) {
-                forward(exchange, HttpRequest.newBuilder(URI.create(base)).GET());
+                forward(exchange, HttpRequest.newBuilder(URI.create(base))
+                        .timeout(PROXY_TIMEOUT)
+                        .GET());
                 return;
             }
             String name = path.startsWith("/actions/") ? path.substring("/actions/".length()) : "";
@@ -340,6 +353,7 @@ public final class SearchConsoleServer implements AutoCloseable {
                 return;
             }
             forward(exchange, HttpRequest.newBuilder(URI.create(base + "/" + name))
+                    .timeout(PROXY_TIMEOUT)
                     .header("Content-Type", "application/json")
                     .POST(HttpRequest.BodyPublishers.ofByteArray(
                             exchange.getRequestBody().readAllBytes())));
@@ -391,6 +405,8 @@ public final class SearchConsoleServer implements AutoCloseable {
             case FAILED_PRECONDITION -> 409;
             case UNAUTHENTICATED -> 401;
             case PERMISSION_DENIED -> 403;
+            case RESOURCE_EXHAUSTED -> 429;
+            case DEADLINE_EXCEEDED -> 504;
             case UNAVAILABLE -> 503;
             default -> 502;
         };

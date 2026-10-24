@@ -5,18 +5,22 @@ import ai.protomolt.proto.actions.Scopes;
 import ai.protomolt.proto.authz.CallerResolver;
 import ai.protomolt.proto.authz.grpc.ApiTokenServerInterceptor;
 import ai.protomolt.proto.authz.grpc.ScopeServerInterceptor;
+import ai.protomolt.proto.grpc.validate.UnaryRequestAdmission;
 import ai.protomolt.proto.grpc.validate.ValidatingServerInterceptor;
+import io.grpc.MethodDescriptor;
 import io.grpc.Server;
-import io.grpc.ServerInterceptor;
+import io.grpc.ServerBuilder;
 import io.grpc.inprocess.InProcessServerBuilder;
 import io.grpc.netty.shaded.io.grpc.netty.NettyServerBuilder;
 import io.grpc.protobuf.services.HealthStatusManager;
 import io.grpc.protobuf.services.ProtoReflectionServiceV1;
 import java.io.IOException;
+import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.Executors;
-import java.util.function.Consumer;
 
 /**
  * One factory wires the metric service: the MetricService over its served
@@ -28,9 +32,22 @@ import java.util.function.Consumer;
  */
 public final class MetricServices implements AutoCloseable {
 
+    /** Default per-request wire cap (4 MiB). */
+    public static final int DEFAULT_MAX_REQUEST_BYTES = 4 * 1024 * 1024;
+
+    /** Default maximum concurrent unary calls holding pre-half-close reservations. */
+    public static final int DEFAULT_MAX_ACTIVE = 64;
+
+    private static final Set<String> OPEN_SERVICES = Set.of(
+            "grpc.health.v1.Health",
+            "grpc.reflection.v1.ServerReflection");
+
     private final Map<String, ServedMetricSubject> subjects;
     private final MetricGrpcService service;
-    private Server server;
+    private final Set<String> admittedMethods;
+    private final List<Server> servers = new CopyOnWriteArrayList<>();
+    private volatile UnaryRequestAdmission admission;
+    private volatile Server server;
 
     private MetricServices(
             Map<String, ServedMetricSubject> subjects,
@@ -39,6 +56,19 @@ public final class MetricServices implements AutoCloseable {
             java.util.function.Supplier<ai.protomolt.proto.authz.AccessPolicy> accessPolicy) {
         this.subjects = Map.copyOf(subjects);
         this.service = new MetricGrpcService(this.subjects, rollups, resolver, accessPolicy);
+        Set<String> methods = new LinkedHashSet<>();
+        for (MethodDescriptor<?, ?> method
+                : this.service.bindService().getServiceDescriptor().getMethods()) {
+            methods.add(method.getFullMethodName());
+        }
+        this.admittedMethods = Set.copyOf(methods);
+        this.admission = new UnaryRequestAdmission(
+                2L * DEFAULT_MAX_REQUEST_BYTES * DEFAULT_MAX_ACTIVE,
+                DEFAULT_MAX_REQUEST_BYTES,
+                DEFAULT_MAX_ACTIVE,
+                this.admittedMethods,
+                Map.of(),
+                OPEN_SERVICES);
     }
 
     /**
@@ -112,6 +142,33 @@ public final class MetricServices implements AutoCloseable {
     }
 
     /**
+     * Replaces the pre-half-close unary admission gate before starting a server.
+     *
+     * @param maxRequestBytes per-request wire cap in bytes
+     * @param maxActive maximum concurrent unary calls holding reservations
+     * @return this instance, for chaining
+     */
+    public MetricServices withAdmission(int maxRequestBytes, int maxActive) {
+        this.admission = new UnaryRequestAdmission(
+                2L * maxRequestBytes * maxActive,
+                maxRequestBytes,
+                maxActive,
+                this.admittedMethods,
+                Map.of(),
+                OPEN_SERVICES);
+        return this;
+    }
+
+    /**
+     * The unary request admission gate shared across started servers.
+     *
+     * @return the admission gate
+     */
+    public UnaryRequestAdmission admission() {
+        return admission;
+    }
+
+    /**
      * Starts the service on an in-process server named {@code name}.
      *
      * @param name the in-process server name
@@ -147,11 +204,14 @@ public final class MetricServices implements AutoCloseable {
         InProcessServerBuilder builder = InProcessServerBuilder.forName(name)
                 .executor(Executors.newVirtualThreadPerTaskExecutor())
                 .intercept(ValidatingServerInterceptor.create());
-        identity(builder::intercept, apiToken, resolver, budgets);
-        server = builder.addService(service)
+        admission.configure(builder);
+        identity(builder, apiToken, resolver, budgets);
+        Server started = builder.addService(service)
                 .build()
                 .start();
-        return server;
+        servers.add(started);
+        server = started;
+        return started;
     }
 
     /**
@@ -183,20 +243,24 @@ public final class MetricServices implements AutoCloseable {
         NettyServerBuilder builder = NettyServerBuilder.forPort(port)
                 .executor(Executors.newVirtualThreadPerTaskExecutor())
                 .intercept(ValidatingServerInterceptor.create());
-        identity(builder::intercept, apiToken, resolver, budgets);
-        server = builder.addService(service)
+        admission.configure(builder);
+        identity(builder, apiToken, resolver, budgets);
+        Server started = builder.addService(service)
                 .addService(health.getHealthService())
                 .addService(ProtoReflectionServiceV1.newInstance())
                 .build()
                 .start();
-        return server;
+        servers.add(started);
+        server = started;
+        return started;
     }
 
     /**
-     * Installs the credential and scope interceptors: added after the validating one so the
-     * credential check runs first on the wire, the scope table second, validation third.
+     * Installs the credential and scope interceptors: added after the validating and
+     * admission interceptors so the credential check runs first on the wire, the scope
+     * table second, pre-half-close admission third, and validation fourth.
      */
-    private void identity(Consumer<ServerInterceptor> intercept, String apiToken,
+    private void identity(ServerBuilder<?> builder, String apiToken,
                           CallerResolver resolver, ScopeBudgets budgets) {
         if (apiToken == null) {
             if (resolver != null) {
@@ -206,13 +270,13 @@ public final class MetricServices implements AutoCloseable {
             return;
         }
         String serviceName = service.bindService().getServiceDescriptor().getName();
-        intercept.accept(new ScopeServerInterceptor(
+        ScopeServerInterceptor scopes = new ScopeServerInterceptor(
                 Map.of(serviceName, Scopes.METRICS_QUERY),
                 Map.of(serviceName + "/RebuildRollup", Scopes.METRICS_REBUILD),
-                Set.of("grpc.health.v1.Health",
-                        "grpc.reflection.v1.ServerReflection"),
-                budgets));
-        intercept.accept(new ApiTokenServerInterceptor(apiToken, resolver));
+                OPEN_SERVICES,
+                budgets);
+        scopes.configure(builder);
+        builder.intercept(new ApiTokenServerInterceptor(apiToken, resolver));
     }
 
     /** The bound server, once one of the start methods has run. */
@@ -222,8 +286,10 @@ public final class MetricServices implements AutoCloseable {
 
     @Override
     public void close() {
-        if (server != null) {
-            server.shutdownNow();
+        admission.close();
+        for (Server running : servers) {
+            running.shutdownNow();
         }
+        servers.clear();
     }
 }

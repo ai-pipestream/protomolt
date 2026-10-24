@@ -3,7 +3,9 @@
  *
  * <p>{@link ValidatingServerInterceptor} validates every inbound request message — unary or
  * streamed — before the handler sees it, and refuses a violation with
- * {@code INVALID_ARGUMENT}. It also measures requests against the quality dimensions their
+ * {@code INVALID_ARGUMENT}. {@link UnaryRequestAdmission} bounds unary request size, active
+ * concurrency, and pre-half-close frame reservation at header time before decoding.
+ * {@link ValidatingServerInterceptor} also measures requests against the quality dimensions their
  * schema declares, so a configured floor turns
  * {@link ai.protomolt.proto.quality.QualityReport} into admission criteria.
  * {@link ValidatingClientInterceptor} is the outbound half: an invalid request fails locally

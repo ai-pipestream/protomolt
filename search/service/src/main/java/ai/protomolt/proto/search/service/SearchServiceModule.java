@@ -233,58 +233,71 @@ public final class SearchServiceModule implements ServiceModule {
                     // A configured screening supplier turns the mask policy
                     // on: fetched documents screen over the live mount.
                     config.screening());
-        } catch (RuntimeException e) {
+        } catch (RuntimeException | Error e) {
             // A failed mount (for instance a subject naming an absent
             // embedding provider) must not leak the repo channel.
-            repo.close();
+            try {
+                repo.close();
+            } catch (RuntimeException | Error suppressed) {
+                e.addSuppressed(suppressed);
+            }
             throw e;
         }
-        String name = ROLE + "-" + context.nodeId();
-        inProcess = service.startInProcess(name);
-        context.channels().publishInProcess(ROLE, name);
+        try {
+            String name = ROLE + "-" + context.nodeId();
+            inProcess = service.startInProcess(name);
+            context.channels().publishInProcess(ROLE, name);
 
-        // The live store, for co-mounted roles that read the same index in
-        // process (the metrics role's executor borrows its searchers).
-        context.contributions().contribute(LuceneSearchStore.class, service.store());
+            // The live store, for co-mounted roles that read the same index in
+            // process (the metrics role's executor borrows its searchers).
+            context.contributions().contribute(LuceneSearchStore.class, service.store());
 
-        // With a co-mounted registry, register the service's workflows so
-        // operators can submit them by name. Parse-and-index additionally
-        // needs a co-mounted parse coordinator; delete-and-unindex rides
-        // the repo channel the service already requires. A standalone search
-        // node skips both: the workflows span roles it does not have.
-        List<GitSchemaRegistryStore> stores =
-                context.contributions().all(GitSchemaRegistryStore.class);
-        if (!stores.isEmpty()) {
-            if (context.channels().isLocal("parse")) {
+            // With a co-mounted registry, register the service's workflows so
+            // operators can submit them by name. Parse-and-index additionally
+            // needs a co-mounted parse coordinator; delete-and-unindex rides
+            // the repo channel the service already requires. A standalone search
+            // node skips both: the workflows span roles it does not have.
+            List<GitSchemaRegistryStore> stores =
+                    context.contributions().all(GitSchemaRegistryStore.class);
+            if (!stores.isEmpty()) {
+                if (context.channels().isLocal("parse")) {
+                    stores.getFirst().putWorkflow(
+                            SearchWorkflows.PARSE_AND_INDEX_WORKFLOW,
+                            SearchWorkflows.parseAndIndexWorkflow(
+                                            context.channels().targetOf("parse"),
+                                            context.channels().targetOf(ROLE),
+                                            60_000)
+                                    .toString());
+                }
                 stores.getFirst().putWorkflow(
-                        SearchWorkflows.PARSE_AND_INDEX_WORKFLOW,
-                        SearchWorkflows.parseAndIndexWorkflow(
-                                        context.channels().targetOf("parse"),
+                        SearchWorkflows.DELETE_AND_UNINDEX_WORKFLOW,
+                        SearchWorkflows.deleteAndUnindexWorkflow(
+                                        context.channels().targetOf("repo"),
                                         context.channels().targetOf(ROLE),
                                         60_000)
                                 .toString());
             }
-            stores.getFirst().putWorkflow(
-                    SearchWorkflows.DELETE_AND_UNINDEX_WORKFLOW,
-                    SearchWorkflows.deleteAndUnindexWorkflow(
-                                    context.channels().targetOf("repo"),
-                                    context.channels().targetOf(ROLE),
-                                    60_000)
-                            .toString());
+
+            // Querying is agent-operable wherever the service is mounted, read-only nodes
+            // included: a reader serves no indexing surface but is exactly what a search is for.
+            context.contributions().contribute(
+                    ProtoAction.class, new SearchAction(service.store()));
+
+            // With a co-mounted jobs module, replay rides its submit action: the
+            // replay-documents action re-runs a stored workflow over a listing.
+            context.contributions().all(ProtoAction.class).stream()
+                    .filter(action -> action.name().equals("submit-workflow"))
+                    .findFirst()
+                    .ifPresent(submit -> context.contributions().contribute(
+                            ProtoAction.class, new ReplayAction(repo, submit, service.store())));
+        } catch (Exception | Error failure) {
+            try {
+                service.close();
+            } catch (RuntimeException | Error suppressed) {
+                failure.addSuppressed(suppressed);
+            }
+            throw failure;
         }
-
-        // Querying is agent-operable wherever the service is mounted, read-only nodes
-        // included: a reader serves no indexing surface but is exactly what a search is for.
-        context.contributions().contribute(
-                ProtoAction.class, new SearchAction(service.store()));
-
-        // With a co-mounted jobs module, replay rides its submit action: the
-        // replay-documents action re-runs a stored workflow over a listing.
-        context.contributions().all(ProtoAction.class).stream()
-                .filter(action -> action.name().equals("submit-workflow"))
-                .findFirst()
-                .ifPresent(submit -> context.contributions().contribute(
-                        ProtoAction.class, new ReplayAction(repo, submit, service.store())));
         // One ledger per node: the search action this module contributes reaches the
         // same principal through the registry's actions route, so both enforcement
         // points spend the same per-scope budget.
@@ -322,10 +335,19 @@ public final class SearchServiceModule implements ServiceModule {
                         config.refreshSeconds())
                         .vectorizing(config.vectorization()),
                 null);
-        String name = ROLE + "-" + context.nodeId();
-        inProcess = service.startInProcess(name);
-        context.channels().publishInProcess(ROLE, name);
-        context.contributions().contribute(LuceneSearchStore.class, service.store());
+        try {
+            String name = ROLE + "-" + context.nodeId();
+            inProcess = service.startInProcess(name);
+            context.channels().publishInProcess(ROLE, name);
+            context.contributions().contribute(LuceneSearchStore.class, service.store());
+        } catch (Exception | Error failure) {
+            try {
+                service.close();
+            } catch (RuntimeException | Error suppressed) {
+                failure.addSuppressed(suppressed);
+            }
+            throw failure;
+        }
         ScopeBudgets budgets = context.contributions()
                 .shared(ScopeBudgets.class, ScopeBudgets::new);
         return new ServiceMount() {

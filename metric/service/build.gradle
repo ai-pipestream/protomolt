@@ -3,7 +3,7 @@ description = 'The metric service: the MetricService over served subjects, the v
 dependencies {
     api project(':protomolt-metric-spi')
     api project(':protomolt-authz-grpc')
-    implementation project(':protomolt-grpc-validation')
+    api project(':protomolt-grpc-validation')
     implementation project(':protomolt-actions')
     // Action input schemas are derived from the request descriptors rather than
     // hand-written, so the declared validation rules reach every caller.

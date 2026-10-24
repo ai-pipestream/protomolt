@@ -1,8 +1,9 @@
 name: TEI integration
 
 # Forgejo-only lane: GitHub ignores .forgejo/. The suite self-provisions OpenSearch plus two
-# TEI CPU containers (embeddings and reranker) and is excluded from the default test task, so
-# GitHub CI never runs it.
+# TEI CPU containers (embeddings and reranker) and is excluded by its @Tag("tei") gate from
+# both test and default integrationTest (unless -PincludeTei is set), running via
+# :protomolt-search-index-opensearch:teiIntegrationTest so cold-cache model downloads stay isolated.
 on:
   push:
     branches: [main]

@@ -25,24 +25,27 @@ dependencies {
 }
 
 // The TEI lane self-provisions three heavyweight containers (OpenSearch plus two TEI CPU model
-// servers), so it runs as its own lane on the Forgejo workflow rather than in the default
-// test task, which GitHub CI runs.
+// servers) and downloads ~1.2 GB of model weights on a cold cache, so it runs in its dedicated
+// teiIntegrationTest task on the Forgejo workflow rather than in test or default integrationTest.
 tasks.named('test') {
     useJUnitPlatform {
         excludeTags 'tei'
     }
 }
 
-// The TEI suite is named *IntegrationTest, so integrationTest leaves it out by tag as well.
+// TeiSemanticSearchLiveIntegrationTest carries both @Tag("integration") and @Tag("tei");
+// integrationTest excludes 'tei' unless -PincludeTei is passed explicitly.
 tasks.named('integrationTest') {
     useJUnitPlatform {
-        excludeTags 'tei'
+        if (!project.hasProperty('includeTei')) {
+            excludeTags 'tei'
+        }
     }
 }
 
 tasks.register('teiIntegrationTest', Test) {
     group = 'verification'
-    description = 'Runs the self-provisioned TEI rerank lane excluded from the default test task'
+    description = 'Runs the self-provisioned TEI rerank lane excluded from test and default integrationTest'
     testClassesDirs = sourceSets.test.output.classesDirs
     classpath = sourceSets.test.runtimeClasspath
     useJUnitPlatform {
