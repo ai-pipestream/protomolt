@@ -329,12 +329,13 @@ final class ArchiveCallerHandoff {
                             super.sendMessage((ReqT) updated);
                             return;
                         }
+                        // The trailer must keep the ownership its header was stamped with.
                         if (message instanceof UploadDocumentRequest uploadReq
                                 && uploadReq.hasTrailer()
-                                && repoCaller != null
-                                && !repoCaller.processAuthority()
                                 && !uploadReq.getTrailer().getDocument().getOwnership().hasSecurity()) {
-                            UploadDocumentRequest updated = withUploaderSecurity(uploadReq, repoCaller);
+                            UploadDocumentRequest updated = repoCaller != null && !repoCaller.processAuthority()
+                                    ? withUploaderSecurity(uploadReq, repoCaller)
+                                    : withInternalStepSecurity(uploadReq);
                             super.sendMessage((ReqT) updated);
                             return;
                         }
@@ -448,6 +449,11 @@ final class ArchiveCallerHandoff {
     }
 
     private static UploadDocumentRequest withInternalStepSecurity(UploadDocumentRequest request) {
+        if (request.hasTrailer()) {
+            var trailer = request.getTrailer().toBuilder();
+            trailer.getDocumentBuilder().getOwnershipBuilder().setSecurity(internalStepSecurity());
+            return request.toBuilder().setTrailer(trailer).build();
+        }
         var header = request.getHeader().toBuilder();
         header.getSaveBuilder().getDocumentBuilder().getOwnershipBuilder().setSecurity(internalStepSecurity());
         return request.toBuilder().setHeader(header).build();
