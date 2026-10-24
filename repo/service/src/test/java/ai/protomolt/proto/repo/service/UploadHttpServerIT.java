@@ -168,6 +168,9 @@ class UploadHttpServerIT {
                                         .setGraphId("intake:" + ACCOUNT).setGraphAddressId(DATASOURCE))
                                 .build());
                 assertThat(readBack.getManifest().getRevision()).isEqualTo(1);
+                // The gateway-less start resolves the operator token to the caller it names.
+                assertThat(readBack.getValidation().getProcessAuthority().getPrincipal())
+                        .isEqualTo("operator");
             } finally {
                 v2Channel.shutdownNow();
             }

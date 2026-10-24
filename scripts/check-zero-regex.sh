@@ -8,7 +8,11 @@
 # opening parenthesis:
 #   - any mention of java.util.regex (imports or qualified use)
 #   - Pattern.compile( , Pattern.matches( , Pattern.quote(
-#   - .split( , .replaceAll( , .replaceFirst( , .matches(
+#   - .split( , .splitWithDelimiters( , .replaceAll( , .replaceFirst( , .matches(
+#
+# Out of this line-by-line token scan's scope: method references ("a+"::matches,
+# String::split), calls split across a newline after the dot, Scanner.useDelimiter,
+# and getPathMatcher("regex:...").
 #
 # How known non-regex look-alikes stay out without loosening the check. The skips are
 # token-level: the non-regex call is removed from the line and whatever remains is
@@ -35,7 +39,7 @@ cd "$(dirname "$0")/.."
 
 # The grep and awk token pattern; kept identical in both so a line grep finds is
 # re-tested the same way after the token-level removals.
-PATTERN='java\.util\.regex|Pattern[[:space:]]*\.[[:space:]]*(compile|matches|quote)[[:space:]]*\(|\.[[:space:]]*(split|replaceAll|replaceFirst|matches)[[:space:]]*\('
+PATTERN='java\.util\.regex|Pattern[[:space:]]*\.[[:space:]]*(compile|matches|quote)[[:space:]]*\(|\.[[:space:]]*(split(WithDelimiters)?|replaceAll|replaceFirst|matches)[[:space:]]*\('
 
 # Permanent:
 #   protobuf/validation ValueChecks evaluates user-supplied protovalidate
@@ -76,8 +80,8 @@ scan_file() {
         sub(/^\/\*.*\*\//, "", text)
       }
       # Token-level skips: remove the non-regex calls, then re-test the rest.
-      gsub(/\.[[:space:]]*replaceAll[[:space:]]*\(\([^)]*\)[[:space:]]*->/, "", text)
-      gsub(/\.[[:space:]]*replaceAll[[:space:]]*\([A-Za-z_][A-Za-z0-9_]*[[:space:]]*->/, "", text)
+      gsub(/\.[[:space:]]*replaceAll[[:space:]]*\([[:space:]]*\([^)]*\)[[:space:]]*->/, "", text)
+      gsub(/\.[[:space:]]*replaceAll[[:space:]]*\([[:space:]]*[A-Za-z_][A-Za-z0-9_]*[[:space:]]*->/, "", text)
       gsub(/\.[[:space:]]*matches[[:space:]]*\([^(),"'"'"']*,/, "", text)
       if (text ~ pattern) print $0
     }' || true
@@ -103,11 +107,12 @@ class Violation {
     String[] i = "a,b".split (",");
     /* block */ String[] j = "a,b".split(",");
     boolean k = "aa".matches("a{1,2}");
+    String[] l = "a,b".splitWithDelimiters(",", 0);
 }
 EOF
   hits="$(scan_file "$dir/Violation.java")"
-  if [[ "$(printf '%s\n' "$hits" | grep -c .)" -ne 11 ]]; then
-    echo 'self-test FAIL: expected all eleven violation fixture lines flagged, got:' >&2
+  if [[ "$(printf '%s\n' "$hits" | grep -c .)" -ne 12 ]]; then
+    echo 'self-test FAIL: expected all twelve violation fixture lines flagged, got:' >&2
     echo "$hits" >&2
     return 1
   fi
@@ -123,7 +128,9 @@ class FalsePositive {
              java.nio.file.PathMatcher m, java.nio.file.Path p, Cursor filter, int doc,
              String code, String mask) {
         map.replaceAll((k, v) -> v);
+        map.replaceAll( (k, v) -> v);
         list.replaceAll(s -> s);
+        list.replaceAll( s -> s);
         boolean a = m.matches(p); // zero-regex: allowed
         boolean b = filter.matches(doc); // zero-regex: allowed
         boolean c = Masks.matches(code, mask);

@@ -29,8 +29,6 @@ import ai.protomolt.proto.repo.v1.CreateDriveRequest;
 import ai.protomolt.proto.repo.v1.DriveServiceGrpc;
 import ai.protomolt.proto.repo.v1.DriveType;
 import ai.protomolt.proto.repo.container.ledger.LedgerConfig;
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import ai.protomolt.proto.repo.archive.v1.ArchiveMutationRequest;
 import ai.protomolt.proto.repo.archive.v1.ArchiveMutationReceipt;
 import ai.protomolt.proto.repo.archive.v1.ArchiveMutationServiceGrpc;
@@ -81,8 +79,6 @@ class ArchiveServiceIT {
     static final LocalStackContainer LOCALSTACK =
             new LocalStackContainer(DockerImageName.parse("localstack/localstack:3.8"))
                     .withServices("s3");
-
-    private static final ObjectMapper JSON = new ObjectMapper();
 
     static RepoServices services;
     static ManagedChannel channel;
@@ -485,7 +481,7 @@ class ArchiveServiceIT {
                     .isInstanceOfSatisfying(StatusRuntimeException.class,
                             failure -> assertThat(failure.getStatus().getCode()).isEqualTo(Status.Code.NOT_FOUND));
         }
-        HttpResponse<String> response = client.send(HttpRequest.newBuilder(URI.create(
+        HttpResponse<byte[]> response = client.send(HttpRequest.newBuilder(URI.create(
                         "http://127.0.0.1:" + http.port() + UploadHttpServer.ARCHIVE_UPLOAD_PATH
                                 + "?account_id=" + account + "&archive=uploads"
                                 + "&entry_id=curl-doc&rendition=original&filename=doc.txt"))
@@ -494,16 +490,18 @@ class ArchiveServiceIT {
                         .header("api_token", "synthetic-http-operator-key")
                         .POST(HttpRequest.BodyPublishers.ofByteArray(body))
                         .build(),
-                HttpResponse.BodyHandlers.ofString());
+                HttpResponse.BodyHandlers.ofByteArray());
         assertThat(response.statusCode()).isEqualTo(200);
-        JsonNode receipt = JSON.readTree(response.body());
-        assertThat(receipt.path("version").asLong()).isEqualTo(1);
-        assertThat(receipt.path("sha256").asText()).isEqualTo(sha256(body));
-        assertThat(receipt.path("rendition").asText()).isEqualTo("original");
+        assertThat(response.headers().firstValue("Content-Type")).contains("application/protobuf");
+        UploadRenditionResponse receipt = UploadRenditionResponse.parseFrom(response.body());
+        assertThat(receipt.getVersion()).isEqualTo(1);
+        assertThat(receipt.getSha256()).isEqualTo(sha256(body));
+        assertThat(receipt.getSizeBytes()).isEqualTo(body.length);
 
         GetEntryResponse read = archives.getEntry(GetEntryRequest.newBuilder()
                 .setAddress(address(account, "uploads", "curl-doc")).build());
         assertThat(read.getRenditions(0).getData().toByteArray()).isEqualTo(body);
+        assertThat(read.getRenditions(0).getRendition().getName()).isEqualTo("original");
         assertThat(read.getInfo().getFilename()).isEqualTo("doc.txt");
     }
 
