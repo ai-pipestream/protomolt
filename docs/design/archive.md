@@ -693,7 +693,12 @@ the translator holds no rules v2 does not also enforce.
 `UploadRendition` becomes one `UploadDocument`: the header frame carries the
 same `SaveDocumentRequest` with `UploadHeader.blob_id` naming the streamed
 blob (or `encoded_part{selector: PARSED}` for `parsed`), `declared_length =
-size_bytes` and `expected_sha256` unchanged; chunks become data frames. Its
+size_bytes` and `expected_sha256` unchanged. A rendition of at most 1 MiB is
+held in memory and sent as `inline_data` with its finished CORE, one round
+trip. A larger one sends its header with a `streamed` body before any chunk
+and forwards chunks as data frames only after v2 answers `accepted`; for the
+primary rendition the header sets `core_in_trailer` and the finished CORE
+follows in an `UploadTrailer`. Its
 `expected` follows the `PutEntry` row above, deleted entries included. v2
 already streams through a digest, refuses length and digest mismatches and
 leaves an uncommitted object unreferenced, so the archive's staging key and
@@ -787,10 +792,11 @@ settle copy are retired.
   any supplied `origin` (`ObjectStoreOrigin`) is validated the same way. The
   entry's primary rendition is `original` when present, or the first present
   non-`parsed`, non-bridge-derived rendition in `(name, sub_key)` order. On
-  `PutEntry` and `UploadRendition` (captured through `WindowCapture` over the
-  upload stream, keeping the 64 KiB leading and 128 KiB circular trailing
-  windows in fixed memory and spilling streams above 1 MiB to a bounded
-  temporary spool file before sending the single `UploadHeader` frame), the
+  `PutEntry` and `UploadRendition` (the whole rendition when it is sent
+  inline, otherwise captured through `WindowCapture` over the upload stream,
+  keeping only the 64 KiB leading and 128 KiB circular trailing windows in
+  memory, with the result sent in the `UploadTrailer`; nothing is staged on
+  disk), the
   primary rendition's byte windows are characterized with
   `Characterizer.identify` and resolved with `Classifications.resolve` against
   the effective `declared` and `origin` facts. When the resolved

@@ -5,9 +5,12 @@ import ai.protomolt.proto.asset.characterize.WindowCapture;
 import ai.protomolt.proto.repo.archive.v1.UploadRenditionRequest;
 import ai.protomolt.proto.repo.archive.v1.UploadRenditionResponse;
 import ai.protomolt.proto.repo.v2.DocumentServiceGrpc;
+import ai.protomolt.proto.repo.v2.SaveDocumentResponse;
+import ai.protomolt.proto.repo.v2.StreamedBody;
 import ai.protomolt.proto.repo.v2.UploadDocumentRequest;
 import ai.protomolt.proto.repo.v2.UploadDocumentResponse;
 import ai.protomolt.proto.repo.v2.UploadHeader;
+import ai.protomolt.proto.repo.v2.UploadTrailer;
 import com.google.protobuf.ByteString;
 import io.grpc.Channel;
 import io.grpc.Status;
@@ -16,11 +19,6 @@ import io.grpc.stub.ClientCallStreamObserver;
 import io.grpc.stub.ClientResponseObserver;
 import io.grpc.stub.ServerCallStreamObserver;
 import io.grpc.stub.StreamObserver;
-import java.io.IOException;
-import java.io.InputStream;
-import java.io.OutputStream;
-import java.nio.file.Files;
-import java.nio.file.Path;
 import java.security.MessageDigest;
 import java.util.ArrayDeque;
 import java.util.Deque;
@@ -30,11 +28,19 @@ import java.util.concurrent.locks.Condition;
 import java.util.concurrent.locks.ReentrantLock;
 
 /**
- * {@code UploadRendition} as one v2 {@code UploadDocument}: the header frame
- * becomes the v2 upload header (after the outcome lookup, which may answer the
- * call outright), and each chunk becomes a v2 data frame. v2 streams through a
- * digest, refuses length and digest mismatches and leaves an uncommitted object
- * unreferenced.
+ * {@code UploadRendition} as one v2 {@code UploadDocument}, after the outcome
+ * lookup, which may answer the call outright.
+ *
+ * <p>A rendition of at most {@link #INLINE_BODY_MAX_BYTES} is held in memory
+ * and sent as one inline header with its finished CORE, so v2 admits and
+ * commits it in one round trip. A larger rendition sends its header first and
+ * forwards no chunk until v2 answers {@code accepted}: authentication,
+ * ownership, owner match, writer authority and the revision checks all run
+ * before a byte moves. Each chunk then becomes a v2 data frame. For the entry's
+ * primary rendition the chunks pass through a {@link WindowCapture} (the
+ * 64 KiB head and 128 KiB tail, nothing else is kept), and the finished
+ * classification goes to v2 in the {@link UploadTrailer}, which v2 admits again
+ * before the one commit. No byte is staged on disk.</p>
  *
  * <p>Flow control is end to end: the next archive frame is requested only when
  * the v2 call can take another, so a slow repository holds back the producer
@@ -48,15 +54,10 @@ import java.util.concurrent.locks.ReentrantLock;
 public final class RenditionUploads {
 
     /**
-     * Maximum bytes buffered in heap memory before spilling to a temporary file
-     * when an upload carries the entry's primary rendition, allowing small and
-     * medium uploads to resolve both leading (64 KiB) and trailing (128 KiB)
-     * characterization windows in memory while larger streams spill to disk with
-     * bounded heap usage before sending the single {@code UploadHeader} frame.
+     * The largest rendition sent inline: its header frame, finished CORE and bytes
+     * stay well under the default 4 MiB gRPC message size.
      */
-    static final int MAX_CHARACTERIZE_BUFFER_BYTES = 1024 * 1024;
-
-    private static final int SPOOL_CHUNK_BYTES = 64 * 1024;
+    static final int INLINE_BODY_MAX_BYTES = 1024 * 1024;
 
     /**
      * A flow-controlled upload request observer for non-gRPC producers (such as HTTP
@@ -134,19 +135,14 @@ public final class RenditionUploads {
         private final ReentrantLock lock = new ReentrantLock();
         private final Condition readyChanged = lock.newCondition();
         private DocumentArchive.Pending pending;
-        private DocumentArchive.Verify verifying;
+        private UploadRenditionResponse verifying;
         private ClientCallStreamObserver<UploadDocumentRequest> upload;
         private final MessageDigest sent = RenditionReads.sha256();
         private final Deque<ByteString> bufferedChunks = new ArrayDeque<>();
-        private int bufferedBytes;
-        private long maxSpoolBytes;
-        private long spooledBytes;
-        private Path spoolFile;
-        private OutputStream spoolOut;
-        private InputStream spoolIn;
-        private final byte[] spoolBuffer = new byte[SPOOL_CHUNK_BYTES];
+        private ByteString.Output inline;
+        private long declaredSize;
         private WindowCapture windowCapture;
-        private boolean headerSent;
+        private boolean accepted;
         private long sentBytes;
         private boolean clientCompleted;
         private boolean downstreamCompleted;
@@ -163,13 +159,10 @@ public final class RenditionUploads {
         }
 
         private boolean canAcceptChunk() {
-            if (upload == null) {
+            if (pending == null || verifying != null || inline != null) {
                 return true;
             }
-            if (!upload.isReady()) {
-                return false;
-            }
-            return !headerSent || (bufferedChunks.isEmpty() && spoolIn == null);
+            return accepted && bufferedChunks.isEmpty() && upload.isReady();
         }
 
         @Override
@@ -212,76 +205,46 @@ public final class RenditionUploads {
                             throw ArchiveErrors.invalid("frame", "the first frame of an upload must be the header");
                         }
                         start(frame);
-                    } else {
-                        if (!frame.hasChunk()) {
-                            throw ArchiveErrors.invalid("frame", "only the first frame of an upload is a header");
-                        }
-                        ByteString chunk = frame.getChunk();
-                        chunk.asReadOnlyByteBufferList().forEach(sent::update);
-                        sentBytes += chunk.size();
-                        if (verifying != null) {
-                            if (server != null) {
-                                server.request(1);
-                            }
-                            return;
-                        }
-                        if (windowCapture != null) {
-                            chunk.asReadOnlyByteBufferList().forEach(windowCapture::update);
-                        }
-                        if (!headerSent) {
-                            stageChunkBeforeHeader(chunk);
-                            requestNext();
-                            return;
-                        }
-                        if (!bufferedChunks.isEmpty() || !upload.isReady()) {
-                            bufferedChunks.addLast(chunk);
-                            bufferedBytes += chunk.size();
-                            drainBufferedChunks();
-                        } else {
-                            upload.onNext(UploadDocumentRequest.newBuilder().setData(chunk).build());
-                        }
-                        requestNext();
+                        return;
                     }
+                    if (!frame.hasChunk()) {
+                        throw ArchiveErrors.invalid("frame", "only the first frame of an upload is a header");
+                    }
+                    ByteString chunk = frame.getChunk();
+                    chunk.asReadOnlyByteBufferList().forEach(sent::update);
+                    sentBytes += chunk.size();
+                    if (verifying != null) {
+                        requestNext();
+                        return;
+                    }
+                    if (inline != null) {
+                        if (inline.size() + (long) chunk.size() > INLINE_BODY_MAX_BYTES) {
+                            throw ArchiveErrors.invalid("size_bytes",
+                                    "the upload sent more bytes than its size_bytes " + declaredSize);
+                        }
+                        chunk.writeTo(inline);
+                        requestNext();
+                        return;
+                    }
+                    if (windowCapture != null) {
+                        chunk.asReadOnlyByteBufferList().forEach(windowCapture::update);
+                    }
+                    if (!bufferedChunks.isEmpty() || !accepted || !upload.isReady()) {
+                        bufferedChunks.addLast(chunk);
+                        drainBufferedChunks();
+                    } else {
+                        upload.onNext(UploadDocumentRequest.newBuilder().setData(chunk).build());
+                    }
+                    requestNext();
                 } catch (StatusRuntimeException failure) {
                     fail(failure);
                 }
+            } catch (java.io.IOException impossible) {
+                fail(Status.INTERNAL.withDescription("Failed to hold an inline upload in memory")
+                        .withCause(impossible).asRuntimeException());
             } finally {
                 lock.unlock();
             }
-        }
-
-        private void stageChunkBeforeHeader(ByteString chunk) {
-            if (spoolOut == null && bufferedBytes + (long) chunk.size() <= MAX_CHARACTERIZE_BUFFER_BYTES) {
-                bufferedChunks.addLast(chunk);
-                bufferedBytes += chunk.size();
-                return;
-            }
-            try {
-                if (spoolOut == null) {
-                    spoolFile = Files.createTempFile("protomolt-rendition-upload-", ".spool");
-                    spoolOut = Files.newOutputStream(spoolFile);
-                    while (!bufferedChunks.isEmpty()) {
-                        writeSpoolBounded(bufferedChunks.removeFirst());
-                    }
-                    bufferedBytes = 0;
-                }
-                writeSpoolBounded(chunk);
-            } catch (IOException ioFailure) {
-                throw Status.INTERNAL
-                        .withDescription("Failed to spool upload for characterization")
-                        .withCause(ioFailure)
-                        .asRuntimeException();
-            }
-        }
-
-        private void writeSpoolBounded(ByteString chunk) throws IOException {
-            if (chunk.isEmpty() || spooledBytes >= maxSpoolBytes) {
-                return;
-            }
-            long remaining = maxSpoolBytes - spooledBytes;
-            ByteString slice = chunk.size() <= remaining ? chunk : chunk.substring(0, (int) remaining);
-            slice.writeTo(spoolOut);
-            spooledBytes += slice.size();
         }
 
         private void start(UploadRenditionRequest frame) {
@@ -294,27 +257,33 @@ public final class RenditionUploads {
                 return;
             }
             if (start instanceof DocumentArchive.Verify verify) {
-                verifying = verify;
-                readyChanged.signalAll();
-                if (server != null) {
-                    server.request(1);
-                }
+                verifying = verify.response();
+                requestNext();
                 return;
             }
             pending = (DocumentArchive.Pending) start;
-            maxSpoolBytes = Math.max(0L, frame.getHeader().getSizeBytes()) + 1L;
-            openDownstreamCall();
-            if (!pending.needsWindows()) {
-                sendHeaderAndDrain(ByteWindows.EMPTY);
-            } else {
+            declaredSize = frame.getHeader().getSizeBytes();
+            if (declaredSize <= INLINE_BODY_MAX_BYTES) {
+                inline = ByteString.newOutput((int) Math.max(0L, declaredSize));
+                requestNext();
+                return;
+            }
+            if (pending.needsWindows()) {
                 windowCapture = new WindowCapture();
             }
-            requestNext();
+            openDownstreamCall();
+            UploadHeader header = pending.header(ByteWindows.EMPTY).toBuilder()
+                    .setStreamed(StreamedBody.newBuilder().setCoreInTrailer(pending.needsWindows()))
+                    .build();
+            upload.onNext(UploadDocumentRequest.newBuilder().setHeader(header).build());
+            // The next archive frame is requested once v2 answers accepted.
+            waitingForUpload = true;
         }
 
         private void openDownstreamCall() {
             documents.uploadDocument(new ClientResponseObserver<UploadDocumentRequest, UploadDocumentResponse>() {
-                private UploadDocumentResponse result;
+                private SaveDocumentResponse result;
+                private boolean replayed;
 
                 @Override
                 public void beforeStart(ClientCallStreamObserver<UploadDocumentRequest> requests) {
@@ -324,7 +293,17 @@ public final class RenditionUploads {
 
                 @Override
                 public void onNext(UploadDocumentResponse value) {
-                    result = value;
+                    switch (value.getAnswerCase()) {
+                        case ACCEPTED -> uploadAccepted();
+                        case REPLAYED -> {
+                            result = value.getReplayed();
+                            replayed = true;
+                        }
+                        case SAVED -> result = value.getSaved();
+                        default -> fail(Status.INTERNAL
+                                .withDescription("UploadDocument sent an answer of no known kind")
+                                .asRuntimeException());
+                    }
                 }
 
                 @Override
@@ -334,47 +313,48 @@ public final class RenditionUploads {
 
                 @Override
                 public void onCompleted() {
-                    uploadCompleted(result);
+                    uploadCompleted(result, replayed);
                 }
             });
         }
 
-        private void sendHeaderAndDrain(ByteWindows windows) {
-            UploadHeader header = pending.header(windows);
-            headerSent = true;
-            upload.onNext(UploadDocumentRequest.newBuilder().setHeader(header).build());
-            drainBufferedChunks();
+        private void uploadAccepted() {
+            lock.lock();
+            try {
+                if (finished) {
+                    return;
+                }
+                accepted = true;
+                drainBufferedChunks();
+                readyChanged.signalAll();
+                if (waitingForUpload && canAcceptChunk()) {
+                    waitingForUpload = false;
+                    if (server != null) {
+                        server.request(1);
+                    }
+                }
+            } catch (StatusRuntimeException failure) {
+                fail(failure);
+            } finally {
+                lock.unlock();
+            }
         }
 
         private void drainBufferedChunks() {
+            if (!accepted) {
+                return;
+            }
             while (!bufferedChunks.isEmpty() && upload.isReady()) {
-                ByteString next = bufferedChunks.removeFirst();
-                bufferedBytes -= next.size();
-                upload.onNext(UploadDocumentRequest.newBuilder().setData(next).build());
+                upload.onNext(UploadDocumentRequest.newBuilder().setData(bufferedChunks.removeFirst()).build());
             }
-            if (bufferedChunks.isEmpty() && spoolIn != null) {
-                try {
-                    while (spoolIn != null && upload.isReady()) {
-                        int n = spoolIn.read(spoolBuffer);
-                        if (n < 0) {
-                            cleanupSpool();
-                            break;
-                        }
-                        if (n > 0) {
-                            upload.onNext(UploadDocumentRequest.newBuilder()
-                                    .setData(ByteString.copyFrom(spoolBuffer, 0, n))
-                                    .build());
-                        }
-                    }
-                } catch (IOException ioFailure) {
-                    throw Status.INTERNAL
-                            .withDescription("Failed to read spooled upload")
-                            .withCause(ioFailure)
-                            .asRuntimeException();
-                }
-            }
-            if (bufferedChunks.isEmpty() && spoolIn == null && clientCompleted && !downstreamCompleted) {
+            if (bufferedChunks.isEmpty() && clientCompleted && !downstreamCompleted) {
                 downstreamCompleted = true;
+                if (windowCapture != null) {
+                    UploadTrailer trailer = UploadTrailer.newBuilder()
+                            .setDocument(pending.header(windowCapture.windows()).getSave().getDocument())
+                            .build();
+                    upload.onNext(UploadDocumentRequest.newBuilder().setTrailer(trailer).build());
+                }
                 upload.onCompleted();
             }
         }
@@ -396,13 +376,11 @@ public final class RenditionUploads {
                 if (finished || upload == null) {
                     return;
                 }
-                if (headerSent) {
-                    try {
-                        drainBufferedChunks();
-                    } catch (StatusRuntimeException failure) {
-                        fail(failure);
-                        return;
-                    }
+                try {
+                    drainBufferedChunks();
+                } catch (StatusRuntimeException failure) {
+                    fail(failure);
+                    return;
                 }
                 readyChanged.signalAll();
                 if (waitingForUpload && canAcceptChunk()) {
@@ -422,8 +400,7 @@ public final class RenditionUploads {
             try {
                 finished = true;
                 bufferedChunks.clear();
-                bufferedBytes = 0;
-                cleanupSpoolAttach(failure);
+                inline = null;
                 readyChanged.signalAll();
                 if (upload != null) {
                     upload.cancel("The archive upload's client failed", failure);
@@ -442,14 +419,14 @@ public final class RenditionUploads {
                 }
                 if (verifying != null) {
                     try {
-                        DocumentArchive.requireRecordedBytes(verifying.response(), sentSha256(), sentBytes);
+                        DocumentArchive.requireRecordedBytes(verifying, sentSha256(), sentBytes);
                     } catch (StatusRuntimeException failure) {
                         fail(failure);
                         return;
                     }
                     finished = true;
                     readyChanged.signalAll();
-                    responses.onNext(verifying.response());
+                    responses.onNext(verifying);
                     responses.onCompleted();
                     return;
                 }
@@ -458,57 +435,69 @@ public final class RenditionUploads {
                     return;
                 }
                 clientCompleted = true;
-                if (!headerSent) {
-                    try {
-                        if (spoolOut != null) {
-                            spoolOut.close();
-                            spoolOut = null;
-                            spoolIn = Files.newInputStream(spoolFile);
-                        }
-                        ByteWindows completeWindows = windowCapture != null ? windowCapture.windows() : ByteWindows.EMPTY;
-                        sendHeaderAndDrain(completeWindows);
-                    } catch (IOException ioFailure) {
-                        fail(Status.INTERNAL
-                                .withDescription("Failed to prepare spooled upload")
-                                .withCause(ioFailure)
-                                .asRuntimeException());
-                        return;
-                    } catch (StatusRuntimeException failure) {
-                        fail(failure);
-                        return;
-                    }
-                } else {
-                    try {
+                try {
+                    if (inline != null) {
+                        sendInline();
+                    } else {
                         drainBufferedChunks();
-                    } catch (StatusRuntimeException failure) {
-                        fail(failure);
-                        return;
                     }
+                } catch (StatusRuntimeException failure) {
+                    fail(failure);
                 }
             } finally {
                 lock.unlock();
             }
         }
 
-        private void uploadCompleted(UploadDocumentResponse result) {
+        private void sendInline() {
+            ByteString body = inline.toByteString();
+            inline = null;
+            UploadHeader header = pending.header(pending.needsWindows()
+                            ? ByteWindows.ofWhole(body.toByteArray())
+                            : ByteWindows.EMPTY)
+                    .toBuilder()
+                    .setInlineData(body)
+                    .build();
+            openDownstreamCall();
+            downstreamCompleted = true;
+            upload.onNext(UploadDocumentRequest.newBuilder().setHeader(header).build());
+            upload.onCompleted();
+        }
+
+        private void uploadCompleted(SaveDocumentResponse result, boolean replayed) {
             UploadRenditionResponse response;
             try {
-                if (result == null || !result.hasSaved()) {
+                if (result == null) {
                     throw Status.INTERNAL.withDescription("UploadDocument completed without a response")
                             .asRuntimeException();
                 }
                 lock.lock();
                 try {
-                    if (!result.getSaved().getReplayed() && !clientCompleted) {
-                        throw Status.INTERNAL.withDescription("UploadDocument completed before all upload bytes")
-                                .asRuntimeException();
+                    if (finished) {
+                        return;
                     }
-                    cleanupSpool();
-                    response = archive.finishUpload(pending, result.getSaved(), sentSha256(), sentBytes);
-                } catch (IOException ioFailure) {
-                    throw Status.INTERNAL.withDescription("Failed to clean up upload spool")
-                            .withCause(ioFailure)
-                            .asRuntimeException();
+                    if (replayed) {
+                        // The header alone fixed an intent v2 had already committed, and no
+                        // byte went to v2. When the archive header named no expected_sha256 the
+                        // client's bytes are still checked against the recorded rendition.
+                        UploadRenditionResponse recorded = archive.finishUpload(pending, result, "", 0L);
+                        if (pending.checkBytes() && !clientCompleted) {
+                            verifying = recorded;
+                            bufferedChunks.clear();
+                            requestNext();
+                            return;
+                        }
+                        if (pending.checkBytes()) {
+                            DocumentArchive.requireRecordedBytes(recorded, sentSha256(), sentBytes);
+                        }
+                        response = recorded;
+                    } else {
+                        if (!result.getReplayed() && !clientCompleted) {
+                            throw Status.INTERNAL.withDescription("UploadDocument completed before all upload bytes")
+                                    .asRuntimeException();
+                        }
+                        response = archive.finishUpload(pending, result, sentSha256(), sentBytes);
+                    }
                 } finally {
                     lock.unlock();
                 }
@@ -573,7 +562,6 @@ public final class RenditionUploads {
                     return;
                 }
                 finished = true;
-                cleanupSpoolAttach(status);
                 readyChanged.signalAll();
             } finally {
                 lock.unlock();
@@ -591,58 +579,6 @@ public final class RenditionUploads {
             }
         }
 
-        private void cleanupSpool() throws IOException {
-            IOException first = null;
-            if (spoolOut != null) {
-                try {
-                    spoolOut.close();
-                } catch (IOException closeOut) {
-                    first = closeOut;
-                } finally {
-                    spoolOut = null;
-                }
-            }
-            if (spoolIn != null) {
-                try {
-                    spoolIn.close();
-                } catch (IOException closeIn) {
-                    if (first == null) {
-                        first = closeIn;
-                    } else {
-                        first.addSuppressed(closeIn);
-                    }
-                } finally {
-                    spoolIn = null;
-                }
-            }
-            if (spoolFile != null) {
-                try {
-                    Files.deleteIfExists(spoolFile);
-                } catch (IOException deleteFailure) {
-                    if (first == null) {
-                        first = deleteFailure;
-                    } else {
-                        first.addSuppressed(deleteFailure);
-                    }
-                } finally {
-                    spoolFile = null;
-                }
-            }
-            if (first != null) {
-                throw first;
-            }
-        }
-
-        private void cleanupSpoolAttach(Throwable target) {
-            try {
-                cleanupSpool();
-            } catch (IOException cleanupFailure) {
-                if (target != null && target != cleanupFailure) {
-                    target.addSuppressed(cleanupFailure);
-                }
-            }
-        }
-
         private void fail(StatusRuntimeException failure) {
             lock.lock();
             try {
@@ -651,8 +587,7 @@ public final class RenditionUploads {
                 }
                 finished = true;
                 bufferedChunks.clear();
-                bufferedBytes = 0;
-                cleanupSpoolAttach(failure);
+                inline = null;
                 readyChanged.signalAll();
                 if (upload != null && !downstreamCompleted) {
                     upload.cancel("Archive upload failed", failure);

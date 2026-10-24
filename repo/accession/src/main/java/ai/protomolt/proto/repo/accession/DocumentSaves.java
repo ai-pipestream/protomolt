@@ -359,7 +359,9 @@ public final class DocumentSaves {
         Objects.requireNonNull(body, "body");
         Objects.requireNonNull(cancelled, "cancelled");
         var prepared = precheckUpload(caller, header);
-        return executeUpload(prepared, body, cancelled);
+        if (header.hasStreamed() && header.getStreamed().getCoreInTrailer())
+            throw malformedException("This upload surface carries no UploadTrailer");
+        return executeUpload(prepared, body, cancelled, () -> null);
     }
 
     PreparedUpload precheckUpload(RepositoryCaller caller, UploadHeader header) {
@@ -375,6 +377,12 @@ public final class DocumentSaves {
                 throw malformedException("Invalid save request: " + structure.violations().getFirst());
             DocumentReads.requireBinding(caller);
             var writes = selectors(request);
+            if (header.hasStreamed() && header.getStreamed().getCoreInTrailer()) {
+                if (writes.get(CORE_SELECTOR) != WriteAction.WRITE_ACTION_PUT)
+                    throw malformedException("A CORE trailer needs a CORE PUT write");
+                if (header.hasEncodedPart() && CORE_SELECTOR.equals(supported(header.getEncodedPart().getSelector())))
+                    throw malformedException("A streamed CORE part cannot also arrive in a trailer");
+            }
             var document = normalizedDocument(request);
 
             final DocumentSchemaAdmission.Definition container;
@@ -486,7 +494,76 @@ public final class DocumentSaves {
         });
     }
 
-    UploadResult executeUpload(PreparedUpload p, java.io.InputStream body, java.util.function.BooleanSupplier cancelled) {
+    /**
+     * The recorded outcome of a streamed upload whose header alone fixes its intent: no
+     * trailer is announced and the header declares both the length and the SHA-256 of
+     * the bytes. Empty when the bytes, or the trailer, are needed to tell the intent.
+     */
+    Optional<SaveDocumentResponse> headerReplay(PreparedUpload p) {
+        if (p.recorded() == null || !p.header().hasStreamed() || p.header().getStreamed().getCoreInTrailer()
+                || !p.header().hasDeclaredLength() || p.header().getExpectedSha256().isEmpty())
+            return Optional.empty();
+        return Optional.of(guarded(() -> replay(p.caller(), p.request(),
+                uploadIntentSha(p, p.header().getExpectedSha256().toLowerCase(java.util.Locale.ROOT),
+                        p.header().getDeclaredLength()),
+                p.recorded())));
+    }
+
+    /**
+     * Applies the trailer a streamed upload's header announced. The trailer's document may
+     * change CORE only: its address, ownership and every other fragment must be the ones the
+     * header was accepted with. When {@code admit} is set, owner match and writer authority run
+     * again on the finished CORE before the commit uses it.
+     *
+     * @param p the accepted upload
+     * @param trailer the received trailer, or {@code null} when none arrived
+     * @param admit whether to run the writer checks again (a replay needs read access only)
+     * @return the upload to commit
+     */
+    PreparedUpload withTrailer(PreparedUpload p, UploadTrailer trailer, boolean admit) {
+        boolean announced = p.header().hasStreamed() && p.header().getStreamed().getCoreInTrailer();
+        if (trailer == null) {
+            if (announced) throw malformedException("The upload ended without the UploadTrailer its header announced");
+            return p;
+        }
+        if (!announced) throw malformedException("The upload header announced no UploadTrailer");
+        var structure = VALIDATOR.validate(trailer);
+        if (!structure.valid()) throw malformedException("Invalid upload trailer: " + structure.violations().getFirst());
+        if (!trailer.getUnknownFields().asMap().isEmpty())
+            throw malformedException("Unsupported field in the command: " + UploadTrailer.getDescriptor().getName());
+        var request = p.request().toBuilder().setDocument(trailer.getDocument()).build();
+        var document = normalizedDocument(request);
+        var address = resolveAddress(request, document);
+        if (!address.equals(p.address())) throw malformedException("The upload trailer names another address");
+        var streamedPart = p.header().hasEncodedPart() ? supported(p.header().getEncodedPart().getSelector()) : null;
+        var fragments = split(document, p.documentType(), p.writes(), streamedPart);
+        if (!fragments.keySet().equals(p.fragments().keySet()))
+            throw malformedException("The upload trailer writes other parts than its header");
+        for (var fragment : fragments.entrySet()) {
+            if (!fragment.getKey().equals(CORE_SELECTOR) && !fragment.getValue().equals(p.fragments().get(fragment.getKey())))
+                throw malformedException("The upload trailer changes " + describe(fragment.getKey()) + "; only CORE may differ");
+        }
+        var storedFragments = new LinkedHashMap<>(p.storedFragments());
+        storedFragments.put(CORE_SELECTOR, fragments.get(CORE_SELECTOR));
+        var ownership = p.ownership();
+        var authorized = p.authorized();
+        if (admit) {
+            ownership = ownership(document, address, p.base(), true);
+            if (!ownership.equals(p.ownership()))
+                throw malformedException("The upload trailer changes the document's ownership");
+            requireOwnerMatches(request.getOwner(), ownership);
+            authorized = authority.authorize(p.caller(), request.getOwner(), address.getAccountId(),
+                    ownership.hasConnectorId() ? Optional.of(ownership.getConnectorId()) : Optional.empty(),
+                    request.getExpected().hasNone());
+        }
+        return new PreparedUpload(p.caller(), p.header(), request, address, p.container(), p.documentType(), p.writes(),
+                fragments, storedFragments, p.storedBlobBag(), p.rawBlobs(), p.stack(), p.current(), p.base(),
+                ownership, authorized, p.recorded());
+    }
+
+    UploadResult executeUpload(PreparedUpload p, java.io.InputStream body,
+            java.util.function.BooleanSupplier cancelled, java.util.function.Supplier<UploadTrailer> trailer) {
+        Objects.requireNonNull(trailer, "trailer");
         return guarded(() -> {
             long expectedLength = p.header().hasDeclaredLength() ? p.header().getDeclaredLength() : Stack.UNKNOWN_LENGTH;
             var tracker = new UploadStreamTracker(body, expectedLength, cancelled);
@@ -512,14 +589,15 @@ public final class DocumentSaves {
                 }
                 var actualSha256 = tracker.sha256Hex();
                 long actualLength = tracker.count();
-                var intentSha = uploadIntentSha(p, actualSha256, actualLength);
-                var replayed = replay(p.caller(), p.request(), intentSha, p.recorded());
-                if (!p.header().getExpectedSha256().isEmpty()
-                        && !actualSha256.equalsIgnoreCase(p.header().getExpectedSha256())) {
+                var t = withTrailer(p, trailer.get(), false);
+                var intentSha = uploadIntentSha(t, actualSha256, actualLength);
+                var replayed = replay(t.caller(), t.request(), intentSha, t.recorded());
+                if (!t.header().getExpectedSha256().isEmpty()
+                        && !actualSha256.equalsIgnoreCase(t.header().getExpectedSha256())) {
                     throw rejectionException(rejection(
                             RejectionReason.REJECTION_REASON_UPLOAD_MISMATCH,
                             "Uploaded SHA-256 " + actualSha256 + " differs from expected "
-                                    + p.header().getExpectedSha256()));
+                                    + t.header().getExpectedSha256()));
                 }
                 return new UploadResult(UploadDocumentResponse.newBuilder().setSaved(replayed).build(),
                         actualSha256, actualLength);
@@ -573,19 +651,27 @@ public final class DocumentSaves {
                             p.caller(), p.request(), p.address(), intentSha, p.authorized(),
                             RejectionReason.REJECTION_REASON_UPLOAD_MISMATCH, declaredMismatch.get(), List.of()));
                 }
-                var intentSha = uploadIntentSha(p, uploadedRef.getSha256(), uploadedRef.getLength());
-                var concurrent = catalog.outcome(p.address().getAccountId(), p.request().getOperationId());
-                if (concurrent.isPresent()) {
+                final PreparedUpload t;
+                try {
+                    t = withTrailer(p, trailer.get(), true);
+                } catch (RuntimeException refused) {
                     var cleanupFailure = deleteUnreferenced(p.stack(), uploadedRef);
+                    if (cleanupFailure != null) refused.addSuppressed(cleanupFailure);
+                    throw refused;
+                }
+                var intentSha = uploadIntentSha(t, uploadedRef.getSha256(), uploadedRef.getLength());
+                var concurrent = catalog.outcome(t.address().getAccountId(), t.request().getOperationId());
+                if (concurrent.isPresent()) {
+                    var cleanupFailure = deleteUnreferenced(t.stack(), uploadedRef);
                     var replayed = withCleanupSuppressed(
-                            cleanupFailure, () -> replay(p.caller(), p.request(), intentSha, concurrent.get()));
+                            cleanupFailure, () -> replay(t.caller(), t.request(), intentSha, concurrent.get()));
                     return new UploadResult(UploadDocumentResponse.newBuilder().setSaved(replayed).build(),
                             uploadedRef.getSha256(), uploadedRef.getLength());
                 }
-                var blobRef = BlobObjectRef.newBuilder().setBlobId(p.header().getBlobId()).setRef(uploadedRef).build();
-                var saved = finishSave(p.caller(), p.request(), p.address(), intentSha, p.container(), p.documentType(), p.writes(),
-                        p.current(), p.base(), p.ownership(), p.authorized(), p.storedFragments(), p.storedBlobBag(),
-                        p.rawBlobs(), List.of(blobRef));
+                var blobRef = BlobObjectRef.newBuilder().setBlobId(t.header().getBlobId()).setRef(uploadedRef).build();
+                var saved = finishSave(t.caller(), t.request(), t.address(), intentSha, t.container(), t.documentType(), t.writes(),
+                        t.current(), t.base(), t.ownership(), t.authorized(), t.storedFragments(), t.storedBlobBag(),
+                        t.rawBlobs(), List.of(blobRef));
                 return new UploadResult(UploadDocumentResponse.newBuilder().setSaved(saved).build(),
                         uploadedRef.getSha256(), uploadedRef.getLength());
             }
@@ -643,11 +729,12 @@ public final class DocumentSaves {
                 var streamedBytes = out.toByteString();
                 if (streamedBytes.isEmpty())
                     throw malformedException("PUT " + describe(streamedPart) + " has no content; write EMPTY instead");
+                var t = withTrailer(p, trailer.get(), true);
 
-                var intentSha = uploadIntentSha(p, actualSha256, actualLength);
-                var concurrent = catalog.outcome(p.address().getAccountId(), p.request().getOperationId());
+                var intentSha = uploadIntentSha(t, actualSha256, actualLength);
+                var concurrent = catalog.outcome(t.address().getAccountId(), t.request().getOperationId());
                 if (concurrent.isPresent()) {
-                    var replayed = replay(p.caller(), p.request(), intentSha, concurrent.get());
+                    var replayed = replay(t.caller(), t.request(), intentSha, concurrent.get());
                     return new UploadResult(UploadDocumentResponse.newBuilder().setSaved(replayed).build(),
                             actualSha256, actualLength);
                 }
@@ -656,7 +743,7 @@ public final class DocumentSaves {
                 try {
                     parsedFragment = Document.parseFrom(streamedBytes);
                 } catch (InvalidProtocolBufferException invalid) {
-                    reject(p.caller(), p.request(), p.address(), intentSha, p.authorized(),
+                    reject(t.caller(), t.request(), t.address(), intentSha, t.authorized(),
                             RejectionReason.REJECTION_REASON_VALIDATION_FAILED,
                             "The composed document cannot be admitted: " + describe(streamedPart) + " fragment does not parse", List.of());
                     throw new AssertionError("unreachable");
@@ -669,18 +756,18 @@ public final class DocumentSaves {
                 } catch (DocumentCandidateAdmission.ContentRefused refused) {
                     throw malformedException(refused.getMessage());
                 }
-                var ownership = p.ownership();
-                var authorized = p.authorized();
+                var ownership = t.ownership();
+                var authorized = t.authorized();
                 if (streamedPart.equals(CORE_SELECTOR)) {
-                    ownership = ownership(parsedFragment, p.address(), p.base(), true);
-                    requireOwnerMatches(p.request().getOwner(), ownership);
-                    authorized = authority.authorize(p.caller(), p.request().getOwner(), p.address().getAccountId(),
-                            ownership.hasConnectorId() ? Optional.of(ownership.getConnectorId()) : Optional.empty(),
-                            p.request().getExpected().hasNone());
+                    ownership = ownership(parsedFragment, t.address(), t.base(), true);
+                    requireOwnerMatches(t.request().getOwner(), ownership);
+                    authorized = authority.authorize(t.caller(), t.request().getOwner(), t.address().getAccountId(),
+                            ownershit.hasConnectorId() ? Optional.of(ownershit.getConnectorId()) : Optional.empty(),
+                            t.request().getExpected().hasNone());
                 }
-                var storedFragments = new LinkedHashMap<>(p.storedFragments());
-                var storedBlobBag = p.storedBlobBag();
-                var rawBlobs = p.rawBlobs();
+                var storedFragments = new LinkedHashMap<>(t.storedFragments());
+                var storedBlobBag = t.storedBlobBag();
+                var rawBlobs = t.rawBlobs();
                 if (streamedPart.equals(BLOBS_SELECTOR)) {
                     var extracted = RawBlobs.extract(streamedBytes, parsedFragment);
                     storedFragments.put(BLOBS_SELECTOR, extracted.stored());
@@ -689,8 +776,8 @@ public final class DocumentSaves {
                 } else {
                     storedFragments.put(streamedPart, streamedBytes);
                 }
-                var saved = finishSave(p.caller(), p.request(), p.address(), intentSha, p.container(), p.documentType(), p.writes(),
-                        p.current(), p.base(), ownership, authorized, storedFragments, storedBlobBag, rawBlobs, List.of());
+                var saved = finishSave(t.caller(), t.request(), t.address(), intentSha, t.container(), t.documentType(), t.writes(),
+                        t.current(), t.base(), ownership, authorized, storedFragments, storedBlobBag, rawBlobs, List.of());
                 return new UploadResult(UploadDocumentResponse.newBuilder().setSaved(saved).build(),
                         actualSha256, actualLength);
             } finally {

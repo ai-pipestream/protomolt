@@ -275,6 +275,20 @@ class RepositoryV2ContractTest {
                 .setExpected(ExpectedRevision.newBuilder().setRevision(1)).setCurrentRevision(2)).build(), true);
         check(UploadDocumentRequest.getDefaultInstance(), false);
         check(UploadDocumentRequest.newBuilder().setData(ByteString.EMPTY).build(), true);
+        check(UploadDocumentRequest.newBuilder().setTrailer(UploadTrailer.getDefaultInstance()).build(), false);
+        check(UploadDocumentRequest.newBuilder().setTrailer(UploadTrailer.newBuilder()
+                .setDocument(ai.protomolt.proto.repo.v1.Document.getDefaultInstance())).build(), true);
+        check(UploadDocumentResponse.getDefaultInstance(), false);
+        check(UploadDocumentResponse.newBuilder().setAccepted(UploadAccepted.getDefaultInstance()).build(), true);
+    }
+
+    @Test void uploadHeadersSayHowTheBytesArrive() throws Exception {
+        var header = UploadHeader.newBuilder().setBlobId("b1").setDeclaredLength(3);
+        assertThat(violationIds(header.build())).contains("upload-body-required");
+        assertThat(violationIds(header.clone().setStreamed(StreamedBody.getDefaultInstance()).build()))
+                .doesNotContain("upload-body-required");
+        assertThat(violationIds(header.clone().setInlineData(ByteString.EMPTY).build()))
+                .doesNotContain("upload-body-required");
     }
 
     @Test void listingFiltersAreTypedAndRefuseContradictions() throws Exception {
@@ -403,6 +417,11 @@ class RepositoryV2ContractTest {
 
     private static PartSelector part(DocumentPart part) {
         return PartSelector.newBuilder().setPart(part).build();
+    }
+
+    private static java.util.List<String> violationIds(Message value) {
+        return VALIDATOR.validate(value).violations().stream()
+                .map(ai.protomolt.proto.validate.ValidationResult.Violation::ruleId).toList();
     }
 
     private static void check(Message value, boolean valid) throws Exception {

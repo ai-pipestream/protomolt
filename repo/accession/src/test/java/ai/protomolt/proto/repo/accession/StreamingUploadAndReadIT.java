@@ -265,6 +265,7 @@ class StreamingUploadAndReadIT {
                 .build();
 
         var header = UploadHeader.newBuilder()
+                .setStreamed(ai.protomolt.proto.repo.v2.StreamedBody.getDefaultInstance())
                 .setSave(create("op-raw-1", address, document))
                 .setBlobId("streamed-1")
                 .setDeclaredLength(rawPayload.length)
@@ -377,6 +378,7 @@ class StreamingUploadAndReadIT {
                 .setOwner(intakeOwner())
                 .build();
         var coreHeader = UploadHeader.newBuilder()
+                .setStreamed(ai.protomolt.proto.repo.v2.StreamedBody.getDefaultInstance())
                 .setSave(createSave)
                 .setEncodedPart(StreamedPart.newBuilder()
                         .setSelector(PartSelector.newBuilder().setPart(DocumentPart.DOCUMENT_PART_CORE)))
@@ -419,6 +421,7 @@ class StreamingUploadAndReadIT {
                 .setOwner(intakeOwner())
                 .build();
         var parsedHeader = UploadHeader.newBuilder()
+                .setStreamed(ai.protomolt.proto.repo.v2.StreamedBody.getDefaultInstance())
                 .setSave(parsedSave)
                 .setEncodedPart(StreamedPart.newBuilder()
                         .setSelector(PartSelector.newBuilder().setPart(DocumentPart.DOCUMENT_PART_PARSED)))
@@ -447,6 +450,7 @@ class StreamingUploadAndReadIT {
                 .setOwner(intakeOwner())
                 .build();
         var blobsHeader = UploadHeader.newBuilder()
+                .setStreamed(ai.protomolt.proto.repo.v2.StreamedBody.getDefaultInstance())
                 .setSave(blobsSave)
                 .setEncodedPart(StreamedPart.newBuilder()
                         .setSelector(PartSelector.newBuilder().setPart(DocumentPart.DOCUMENT_PART_BLOBS)))
@@ -464,6 +468,7 @@ class StreamingUploadAndReadIT {
         var address = address(account, "doc-proto-violations");
         var validDoc = documentWithPendingBlob(account, "doc-proto-violations", "b1");
         var validHeader = UploadHeader.newBuilder()
+                .setStreamed(ai.protomolt.proto.repo.v2.StreamedBody.getDefaultInstance())
                 .setSave(create("op-proto", address, validDoc))
                 .setBlobId("b1")
                 .build();
@@ -488,6 +493,7 @@ class StreamingUploadAndReadIT {
         // 5. Uploaded blob_id already carries inline data.
         var inlineBlobDoc = document(account, "doc-proto-violations", "title");
         var inlineBlobHeader = UploadHeader.newBuilder()
+                .setStreamed(ai.protomolt.proto.repo.v2.StreamedBody.getDefaultInstance())
                 .setSave(create("op-proto", address, inlineBlobDoc))
                 .setBlobId("b1")
                 .build();
@@ -502,6 +508,7 @@ class StreamingUploadAndReadIT {
                                 .setObjectKey(f.prefix + "/forged"))))
                 .build();
         var forgedHeader = UploadHeader.newBuilder()
+                .setStreamed(ai.protomolt.proto.repo.v2.StreamedBody.getDefaultInstance())
                 .setSave(create("op-proto", address, forgedDoc))
                 .setBlobId("b1")
                 .build();
@@ -509,6 +516,7 @@ class StreamingUploadAndReadIT {
 
         // 7. Streamed encoded_part also carries inline fields for that part in save.document.
         var duplicateEncodedCore = UploadHeader.newBuilder()
+                .setStreamed(ai.protomolt.proto.repo.v2.StreamedBody.getDefaultInstance())
                 .setSave(create("op-proto", address, inlineBlobDoc))
                 .setEncodedPart(StreamedPart.newBuilder()
                         .setSelector(PartSelector.newBuilder().setPart(DocumentPart.DOCUMENT_PART_CORE)))
@@ -525,6 +533,7 @@ class StreamingUploadAndReadIT {
         var address = address(account, "doc-unauth-upload");
         var doc = documentWithPendingBlob(account, "doc-unauth-upload", "b1");
         var header = UploadHeader.newBuilder()
+                .setStreamed(ai.protomolt.proto.repo.v2.StreamedBody.getDefaultInstance())
                 .setSave(create("op-unauth", address, doc))
                 .setBlobId("b1")
                 .setDeclaredLength(5)
@@ -569,6 +578,7 @@ class StreamingUploadAndReadIT {
 
         // 1. Declared length longer than actual stream (truncated stream).
         var shortHeader = UploadHeader.newBuilder()
+                .setStreamed(ai.protomolt.proto.repo.v2.StreamedBody.getDefaultInstance())
                 .setSave(create("op-short", address, doc))
                 .setBlobId("b1")
                 .setDeclaredLength(actual.length + 10)
@@ -584,6 +594,7 @@ class StreamingUploadAndReadIT {
 
         // 2. Declared length shorter than actual stream (overflow stream).
         var longHeader = UploadHeader.newBuilder()
+                .setStreamed(ai.protomolt.proto.repo.v2.StreamedBody.getDefaultInstance())
                 .setSave(create("op-long", address, doc))
                 .setBlobId("b1")
                 .setDeclaredLength(5)
@@ -600,6 +611,7 @@ class StreamingUploadAndReadIT {
         // 3. Expected SHA-256 mismatch: object is deleted from S3 and UPLOAD_MISMATCH is recorded.
         String wrongSha = "0".repeat(64);
         var shaHeader = UploadHeader.newBuilder()
+                .setStreamed(ai.protomolt.proto.repo.v2.StreamedBody.getDefaultInstance())
                 .setSave(create("op-bad-sha", address, doc))
                 .setBlobId("b1")
                 .setDeclaredLength(actual.length)
@@ -623,6 +635,7 @@ class StreamingUploadAndReadIT {
                 OperationReuse.class).getOperationId()).isEqualTo("op-bad-sha");
 
         var fixedHeader = UploadHeader.newBuilder()
+                .setStreamed(ai.protomolt.proto.repo.v2.StreamedBody.getDefaultInstance())
                 .setSave(create("op-fixed", address, doc))
                 .setBlobId("b1")
                 .setDeclaredLength(actual.length)
@@ -638,6 +651,7 @@ class StreamingUploadAndReadIT {
         var doc = documentWithPendingBlob(account, "doc-upload-retry", "b1");
         byte[] payload = "idempotent-stream-payload".getBytes(StandardCharsets.UTF_8);
         var header = UploadHeader.newBuilder()
+                .setStreamed(ai.protomolt.proto.repo.v2.StreamedBody.getDefaultInstance())
                 .setSave(create("op-idempotent", address, doc))
                 .setBlobId("b1")
                 .setDeclaredLength(payload.length)
@@ -662,11 +676,92 @@ class StreamingUploadAndReadIT {
         assertThat(committed.getSaved().getAccession().getRevision()).isEqualTo(1L);
         assertThat(committed.getSaved().getReplayed()).isFalse();
 
-        // Retry with the same operation_id after commit -> returns recorded accession with replayed = true.
+        // Retry with the same operation_id after commit. The header names the length and
+        // digest and no trailer, so the server answers Replayed before any byte is read.
         var replayed = sendUpload(header, List.of(ByteString.copyFrom(payload)));
-        assertThat(replayed.getSaved().getAccession()).isEqualTo(committed.getSaved().getAccession());
-        assertThat(replayed.getSaved().getReplayed()).isTrue();
+        assertThat(replayed.getAnswerCase()).isEqualTo(UploadDocumentResponse.AnswerCase.REPLAYED);
+        assertThat(replayed.getReplayed().getAccession()).isEqualTo(committed.getSaved().getAccession());
+        assertThat(replayed.getReplayed().getReplayed()).isTrue();
         assertThat(f.catalog.current(address).orElseThrow().revision()).isEqualTo(1L);
+    }
+
+    @Test
+    void uploadDocumentAnswersAcceptedThenSavedAndReplaysBeforeAnyByte() throws Exception {
+        var address = address(account, "doc-handshake");
+        var doc = documentWithPendingBlob(account, "doc-handshake", "b1");
+        byte[] payload = "handshake-bytes".getBytes(StandardCharsets.UTF_8);
+        var header = UploadHeader.newBuilder()
+                .setStreamed(StreamedBody.getDefaultInstance())
+                .setSave(create("op-handshake", address, doc))
+                .setBlobId("b1")
+                .setDeclaredLength(payload.length)
+                .setExpectedSha256(SaveIntents.sha256Hex(payload))
+                .build();
+
+        var answers = new java.util.concurrent.CopyOnWriteArrayList<UploadDocumentResponse>();
+        var done = new CompletableFuture<Void>();
+        var req = asyncStub.uploadDocument(new StreamObserver<>() {
+            @Override public void onNext(UploadDocumentResponse response) { answers.add(response); }
+            @Override public void onError(Throwable t) { done.completeExceptionally(t); }
+            @Override public void onCompleted() { done.complete(null); }
+        });
+        req.onNext(UploadDocumentRequest.newBuilder().setHeader(header).build());
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(15);
+        while (answers.isEmpty()) {
+            if (done.isCompletedExceptionally()) done.get(1, TimeUnit.SECONDS);
+            if (System.nanoTime() > deadline) fail("the server sent no Accepted answer before the body");
+            Thread.sleep(10);
+        }
+        assertThat(answers).singleElement()
+                .extracting(UploadDocumentResponse::getAnswerCase)
+                .isEqualTo(UploadDocumentResponse.AnswerCase.ACCEPTED);
+        req.onNext(UploadDocumentRequest.newBuilder().setData(ByteString.copyFrom(payload)).build());
+        req.onCompleted();
+        done.get(15, TimeUnit.SECONDS);
+        assertThat(answers).hasSize(2);
+        assertThat(answers.get(1).getAnswerCase()).isEqualTo(UploadDocumentResponse.AnswerCase.SAVED);
+        assertThat(answers.get(1).getSaved().getReplayed()).isFalse();
+
+        var replayed = new java.util.concurrent.CopyOnWriteArrayList<UploadDocumentResponse>();
+        var replayDone = new CompletableFuture<Void>();
+        var retry = asyncStub.uploadDocument(new StreamObserver<>() {
+            @Override public void onNext(UploadDocumentResponse response) { replayed.add(response); }
+            @Override public void onError(Throwable t) { replayDone.completeExceptionally(t); }
+            @Override public void onCompleted() { replayDone.complete(null); }
+        });
+        retry.onNext(UploadDocumentRequest.newBuilder().setHeader(header).build());
+        replayDone.get(15, TimeUnit.SECONDS);
+        assertThat(replayed).singleElement().satisfies(answer -> {
+            assertThat(answer.getAnswerCase()).isEqualTo(UploadDocumentResponse.AnswerCase.REPLAYED);
+            assertThat(answer.getReplayed().getReplayed()).isTrue();
+            assertThat(answer.getReplayed().getAccession()).isEqualTo(answers.get(1).getSaved().getAccession());
+        });
+
+        var inlineDoc = documentWithPendingBlob(account, "doc-handshake-inline", "b1");
+        var inlineAddress = address(account, "doc-handshake-inline");
+        var inlineHeader = UploadHeader.newBuilder()
+                .setInlineData(ByteString.copyFrom(payload))
+                .setSave(create("op-handshake-inline", inlineAddress, inlineDoc))
+                .setBlobId("b1")
+                .setDeclaredLength(payload.length)
+                .setExpectedSha256(SaveIntents.sha256Hex(payload))
+                .build();
+        var inlineAnswers = new java.util.concurrent.CopyOnWriteArrayList<UploadDocumentResponse>();
+        var inlineDone = new CompletableFuture<Void>();
+        var inline = asyncStub.uploadDocument(new StreamObserver<>() {
+            @Override public void onNext(UploadDocumentResponse response) { inlineAnswers.add(response); }
+            @Override public void onError(Throwable t) { inlineDone.completeExceptionally(t); }
+            @Override public void onCompleted() { inlineDone.complete(null); }
+        });
+        inline.onNext(UploadDocumentRequest.newBuilder().setHeader(inlineHeader).build());
+        inline.onCompleted();
+        inlineDone.get(15, TimeUnit.SECONDS);
+        assertThat(inlineAnswers).singleElement().satisfies(answer -> {
+            assertThat(answer.getAnswerCase()).isEqualTo(UploadDocumentResponse.AnswerCase.SAVED);
+            assertThat(answer.hasAccepted()).isFalse();
+            assertThat(answer.getSaved().getReplayed()).isFalse();
+            assertThat(answer.getSaved().getAccession().getRevision()).isEqualTo(1L);
+        });
     }
 
     @Test
@@ -674,6 +769,7 @@ class StreamingUploadAndReadIT {
         var address = address(account, "doc-cancel-upload");
         var doc = documentWithPendingBlob(account, "doc-cancel-upload", "b1");
         var header = UploadHeader.newBuilder()
+                .setStreamed(ai.protomolt.proto.repo.v2.StreamedBody.getDefaultInstance())
                 .setSave(create("op-cancelled", address, doc))
                 .setBlobId("b1")
                 .setDeclaredLength(10L * 1024 * 1024)
@@ -713,6 +809,7 @@ class StreamingUploadAndReadIT {
         byte[] raw = "verifiable-blob-bytes-for-corruption-check".getBytes(StandardCharsets.UTF_8);
         var doc = documentWithPendingBlob(account, "doc-corrupt-checks", "b1");
         var header = UploadHeader.newBuilder()
+                .setStreamed(ai.protomolt.proto.repo.v2.StreamedBody.getDefaultInstance())
                 .setSave(create("op-corrupt-1", address, doc))
                 .setBlobId("b1")
                 .setDeclaredLength(raw.length)
@@ -1105,6 +1202,7 @@ class StreamingUploadAndReadIT {
                 .setBlobBag(doc.getBlobBag().toBuilder().setBlob(doc.getBlobBag().getBlob().toBuilder().clearData()))
                 .build();
         var header = UploadHeader.newBuilder()
+                .setStreamed(ai.protomolt.proto.repo.v2.StreamedBody.getDefaultInstance())
                 .setSave(create("op-replay-strict", address, inline))
                 .setBlobId("b1")
                 .setDeclaredLength(payload.length)
@@ -1183,6 +1281,7 @@ class StreamingUploadAndReadIT {
                 .build();
         byte[] coreFragmentBytes = RawBlobs.deterministic(coreFragmentDoc).toByteArray();
         var encHeader = UploadHeader.newBuilder()
+                .setStreamed(ai.protomolt.proto.repo.v2.StreamedBody.getDefaultInstance())
                 .setSave(SaveDocumentRequest.newBuilder()
                         .setOperationId("op-reserved-enc")
                         .setTarget(DocumentTarget.newBuilder().setAddress(address))
@@ -1450,6 +1549,7 @@ class StreamingUploadAndReadIT {
         byte[] payload = "diagnostic-payload".getBytes(StandardCharsets.UTF_8);
         var doc = documentWithPendingBlob(account, "doc-diagnostics", "b1");
         var header = UploadHeader.newBuilder()
+                .setStreamed(ai.protomolt.proto.repo.v2.StreamedBody.getDefaultInstance())
                 .setSave(create("op-diag-1", address, doc))
                 .setBlobId("b1")
                 .setDeclaredLength(payload.length)
@@ -1561,6 +1661,7 @@ class StreamingUploadAndReadIT {
                 java.time.Clock.systemUTC());
         var failingUploads = new DocumentUploads(failingSaves);
         var badDigestHeader = UploadHeader.newBuilder()
+                .setStreamed(ai.protomolt.proto.repo.v2.StreamedBody.getDefaultInstance())
                 .setSave(create("op-diag-mismatch", address(account, "doc-diag-mismatch"),
                         documentWithPendingBlob(account, "doc-diag-mismatch", "b1")))
                 .setBlobId("b1")
