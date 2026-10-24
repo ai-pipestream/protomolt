@@ -21,6 +21,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.concurrent.locks.ReentrantLock;
 
 /**
  * The curated counterpart of {@link ParquetChangeSink}: projects every
@@ -72,7 +73,7 @@ import java.util.UUID;
  * </ul>
  *
  * <p>Thread-safe: the crawler emits from virtual threads concurrently; every method is
- * synchronized.</p>
+ * guarded by a {@link ReentrantLock} so virtual threads park rather than pin.</p>
  */
 public final class ProjectedParquetChangeSink implements ChangeSink, AutoCloseable {
 
@@ -109,6 +110,7 @@ public final class ProjectedParquetChangeSink implements ChangeSink, AutoCloseab
     private final int batchSize;
     private final String runId;
     private final List<Message> buffer = new ArrayList<>();
+    private final ReentrantLock lock = new ReentrantLock();
     private int sequence;
 
     /**
@@ -189,44 +191,79 @@ public final class ProjectedParquetChangeSink implements ChangeSink, AutoCloseab
         } else {
             s3 = S3Clients.awsRegion(region);
         }
-        return Optional.of(new ProjectedParquetChangeSink(s3, bucket.trim(),
-                env.get(ENV_PREFIX), batchSize));
+        try {
+            return Optional.of(new ProjectedParquetChangeSink(s3, bucket.trim(),
+                    env.get(ENV_PREFIX), batchSize));
+        } catch (RuntimeException e) {
+            s3.close();
+            throw e;
+        }
     }
 
     /**
      * Projects one change into a content row and buffers it; flushes when the batch
      * size is reached. A change that fails to project is logged and skipped.
+     *
+     * @param change the Confluence change envelope to project and buffer
      */
     @Override
-    public synchronized void emit(ConfluenceChange change) {
-        Message row;
+    public void emit(ConfluenceChange change) {
+        lock.lock();
         try {
-            row = projection.project(change);
-        } catch (ProjectionException e) {
-            // A change that cannot project is data, not config: skip it, never wedge
-            // the crawl.
-            LOG.log(System.Logger.Level.WARNING,
-                    "confluence projected parquet sink: change {0} failed to project: {1}",
-                    change.getChangeId(), e.toString());
-            return;
-        }
-        buffer.add(row);
-        if (buffer.size() >= batchSize) {
-            flush();
+            Message row;
+            try {
+                row = projection.project(change);
+            } catch (ProjectionException e) {
+                // A change that cannot project is data, not config: skip it, never wedge
+                // the crawl.
+                LOG.log(System.Logger.Level.WARNING,
+                        "confluence projected parquet sink: change {0} failed to project: {1}",
+                        change.getChangeId(), e.toString());
+                return;
+            }
+            buffer.add(row);
+            if (buffer.size() >= batchSize) {
+                flushLocked();
+            }
+        } finally {
+            lock.unlock();
         }
     }
 
     /**
      * A completed sweep flushes the pending buffer, so part files align with crawl
      * runs. The snapshot marker itself is not exported.
+     *
+     * @param snapshot the completed crawl snapshot marker
      */
     @Override
-    public synchronized void snapshot(ConfluenceSnapshot snapshot) {
+    public void snapshot(ConfluenceSnapshot snapshot) {
         flush();
     }
 
     /** Flushes the pending buffer. */
-    public synchronized void flush() {
+    public void flush() {
+        lock.lock();
+        try {
+            flushLocked();
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    /** Flushes the pending buffer and closes the underlying client. */
+    @Override
+    public void close() {
+        lock.lock();
+        try {
+            flushLocked();
+            sink.close();
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    private void flushLocked() {
         if (buffer.isEmpty()) {
             return;
         }
@@ -244,13 +281,6 @@ public final class ProjectedParquetChangeSink implements ChangeSink, AutoCloseab
                     "confluence projected parquet sink: flush of {0} row(s) to {1} failed: {2}",
                     batch.size(), key, e.toString());
         }
-    }
-
-    /** Flushes the pending buffer and closes the underlying client. */
-    @Override
-    public synchronized void close() {
-        flush();
-        sink.close();
     }
 
     private static String trimSlashes(String value) {

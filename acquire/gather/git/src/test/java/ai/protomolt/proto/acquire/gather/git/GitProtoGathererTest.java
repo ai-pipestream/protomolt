@@ -399,6 +399,20 @@ class GitProtoGathererTest {
         assertThat(gatherer.isAvailable()).isTrue();
     }
 
+    @Test
+    void failedCloneOrIncompleteCacheDirDoesNotWedgeSubsequentClone() throws Exception {
+        Path cacheDir = tempDir.resolve("cache");
+        // Simulate an interrupted/failed clone that left a bare directory without .git.
+        Files.createDirectories(cacheDir.resolve("partial"));
+
+        String url = initUpstream();
+        writeUpstream("proto/common/v1/id.proto", COMMON_PROTO);
+        commitAll("initial");
+
+        ProtoSourceSet set = gatherer(url).cacheDir(cacheDir).build().gather();
+        assertThat(set.paths()).containsExactly("common/v1/id.proto");
+    }
+
     private static void deleteRecursively(Path root) throws IOException {
         try (Stream<Path> paths = Files.walk(root)) {
             paths.sorted(Comparator.reverseOrder()).forEach(path -> {

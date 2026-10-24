@@ -374,14 +374,16 @@ class OpenSearchSinkTaskEdgeCaseTest {
      */
     @Test
     void anEnsureIndexFailureAtStartIsAConnectException() {
+        FailingEnsureClient failingClient = new FailingEnsureClient();
         OpenSearchSinkTask task = new OpenSearchSinkTask();
-        task.clientFactory = config -> new FailingEnsureClient();
+        task.clientFactory = config -> failingClient;
 
         assertThatThrownBy(() -> task.start(props(Map.of())))
                 .isInstanceOf(ConnectException.class)
                 .isNotInstanceOf(RetriableException.class)
                 .hasMessageContaining("docs")
                 .hasMessageContaining("cluster unreachable");
+        assertThat(failingClient.closed).isTrue();
     }
 
     @Test
@@ -511,6 +513,8 @@ class OpenSearchSinkTaskEdgeCaseTest {
     }
 
     private static final class FailingEnsureClient implements OpenSearchSinkTask.IndexClient {
+        boolean closed;
+
         @Override
         public boolean ensureIndex(String index, IndexMapping mapping) throws IOException {
             throw new IOException("cluster unreachable");
@@ -524,6 +528,7 @@ class OpenSearchSinkTaskEdgeCaseTest {
 
         @Override
         public void close() {
+            closed = true;
         }
     }
 

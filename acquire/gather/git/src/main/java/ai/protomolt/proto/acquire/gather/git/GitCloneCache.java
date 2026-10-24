@@ -18,9 +18,11 @@ import java.nio.channels.FileLock;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
+import java.util.Comparator;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.locks.ReentrantLock;
+import java.util.stream.Stream;
 
 /**
  * Persistent clone cache: clone into the cache directory on first use, {@code fetch} and hard
@@ -63,15 +65,19 @@ final class GitCloneCache {
     private static Path checkoutLocked(Path cacheDir, String repoUrl, String ref,
                                        CredentialsProvider credentials, boolean offline)
             throws GatherException {
+        boolean hasGitCheckout = Files.isDirectory(cacheDir.resolve(".git"));
         if (offline) {
-            if (Files.isDirectory(cacheDir)) {
+            if (hasGitCheckout) {
                 return cacheDir;
             }
             throw new GatherException("Offline and no cached checkout for " + repoUrl + "@" + ref
                     + " (cache: " + cacheDir + ")");
         }
 
-        if (!Files.isDirectory(cacheDir)) {
+        if (!hasGitCheckout) {
+            if (Files.exists(cacheDir)) {
+                deleteRecursivelyQuietly(cacheDir);
+            }
             cloneRepo(repoUrl, credentials, cacheDir);
             resetTo(repoUrl, ref, cacheDir);
             return cacheDir;
@@ -91,16 +97,34 @@ final class GitCloneCache {
 
     private static void cloneRepo(String repoUrl, CredentialsProvider credentials, Path cacheDir)
             throws GatherException {
-        try {
-            CloneCommand clone = Git.cloneRepository()
-                    .setURI(repoUrl)
-                    .setDirectory(cacheDir.toFile());
-            if (credentials != null) {
-                clone.setCredentialsProvider(credentials);
-            }
-            clone.call().close();
+        CloneCommand clone = Git.cloneRepository()
+                .setURI(repoUrl)
+                .setDirectory(cacheDir.toFile());
+        if (credentials != null) {
+            clone.setCredentialsProvider(credentials);
+        }
+        try (Git ignored = clone.call()) {
+            // Clone succeeded; close the JGit handle via try-with-resources.
         } catch (Exception e) {
+            deleteRecursivelyQuietly(cacheDir);
             throw new GatherException("Failed cloning git repo " + repoUrl, e);
+        }
+    }
+
+    private static void deleteRecursivelyQuietly(Path root) {
+        if (!Files.exists(root)) {
+            return;
+        }
+        try (Stream<Path> paths = Files.walk(root)) {
+            paths.sorted(Comparator.reverseOrder()).forEach(path -> {
+                try {
+                    Files.deleteIfExists(path);
+                } catch (IOException ignored) {
+                    // Best-effort cleanup of a partial cache directory.
+                }
+            });
+        } catch (IOException ignored) {
+            // Best-effort cleanup of a partial cache directory.
         }
     }
 

@@ -62,13 +62,12 @@ public class ProtoMoltProtobufDeserializer implements Deserializer<Message> {
     @Override
     public void configure(Map<String, ?> configs, boolean isKey) {
         ProtoMoltSerdeConfig config = new ProtoMoltSerdeConfig(configs);
-        metrics = SerdeMetricsListeners.load(getClass().getClassLoader());
-        schemaIds = SchemaIds.create(config.getString(ProtoMoltSerdeConfig.SCHEMA_REGISTRY_URL),
-                config.getLong(ProtoMoltSerdeConfig.REGISTRY_RETRY_BACKOFF_MS), metrics);
+        String registryUrl = config.getString(ProtoMoltSerdeConfig.SCHEMA_REGISTRY_URL);
+        boolean hasRegistry = registryUrl != null;
         List<FileDescriptor> files = ProtoMoltProtobufSerializer.Descriptors
                 .loadIfPresent(config, getClass().getClassLoader());
         if (files == null) {
-            if (schemaIds == null) {
+            if (!hasRegistry) {
                 throw new ConfigException("One of "
                         + ProtoMoltSerdeConfig.DESCRIPTOR_SET_RESOURCE + ", "
                         + ProtoMoltSerdeConfig.DESCRIPTOR_SET_BASE64 + " or "
@@ -81,28 +80,42 @@ public class ProtoMoltProtobufDeserializer implements Deserializer<Message> {
             files = List.of();
         }
         String pinned = config.getString(ProtoMoltSerdeConfig.MESSAGE_TYPE);
-        if (pinned == null && schemaIds == null) {
+        if (pinned == null && !hasRegistry) {
             throw new ConfigException(ProtoMoltSerdeConfig.MESSAGE_TYPE + " is required when no "
                     + "registry is configured: a frame's index path is a position, not a name, "
                     + "and only a registry or a pinned type can turn it into one");
         }
-        pinnedType = pinned != null ? SerdeDescriptors.messageType(files, pinned) : null;
-        pinnedIndexPath = pinnedType != null ? ConfluentWireFormat.indexPath(pinnedType) : null;
-        validateOnRead = config.getBoolean(ProtoMoltSerdeConfig.VALIDATE_ON_READ);
-        qualityOnRead = config.getBoolean(ProtoMoltSerdeConfig.QUALITY_ON_READ);
-        validator = ProtoValidator.create();
-        quality = ai.protomolt.proto.quality.QualityScorer.create();
-        generated = new GeneratedMessages(files,
+        Descriptor nextPinnedType = pinned != null ? SerdeDescriptors.messageType(files, pinned) : null;
+        List<Integer> nextPinnedIndexPath =
+                nextPinnedType != null ? ConfluentWireFormat.indexPath(nextPinnedType) : null;
+        SerdeMapper nextMapper = SerdeMapper.parse(config.getList(ProtoMoltSerdeConfig.MAP_ON_READ),
+                ProtoMoltSerdeConfig.MAP_ON_READ);
+        SerdeMetricsListener nextMetrics = SerdeMetricsListeners.load(getClass().getClassLoader());
+        GeneratedMessages nextGenerated = new GeneratedMessages(files,
                 config.getBoolean(ProtoMoltSerdeConfig.GENERATED_CLASSES),
                 getClass().getClassLoader());
-        mapper = SerdeMapper.parse(config.getList(ProtoMoltSerdeConfig.MAP_ON_READ),
-                ProtoMoltSerdeConfig.MAP_ON_READ);
+        ProtoValidator nextValidator = ProtoValidator.create();
+        ai.protomolt.proto.quality.QualityScorer nextQuality =
+                ai.protomolt.proto.quality.QualityScorer.create();
+        close();
+        schemaIds = SchemaIds.create(registryUrl,
+                config.getLong(ProtoMoltSerdeConfig.REGISTRY_RETRY_BACKOFF_MS), nextMetrics);
+        metrics = nextMetrics;
+        pinnedType = nextPinnedType;
+        pinnedIndexPath = nextPinnedIndexPath;
+        validateOnRead = config.getBoolean(ProtoMoltSerdeConfig.VALIDATE_ON_READ);
+        qualityOnRead = config.getBoolean(ProtoMoltSerdeConfig.QUALITY_ON_READ);
+        validator = nextValidator;
+        quality = nextQuality;
+        generated = nextGenerated;
+        mapper = nextMapper;
     }
 
     @Override
     public void close() {
         if (schemaIds != null) {
             schemaIds.close();
+            schemaIds = null;
         }
     }
 

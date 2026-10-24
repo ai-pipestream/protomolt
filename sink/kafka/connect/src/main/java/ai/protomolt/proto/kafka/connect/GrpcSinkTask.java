@@ -69,6 +69,7 @@ public final class GrpcSinkTask extends SinkTask {
             headers.put(Metadata.Key.of("api_token", Metadata.ASCII_STRING_MARSHALLER),
                     config.apiToken());
         }
+        shutdownChannel();
         channel = channelFactory.apply(config);
         LOG.info("gRPC sink started: {} -> {} ({})", config.target(), config.method(),
                 method.isClientStreaming() ? "client-streaming per batch" : "unary per record");
@@ -158,6 +159,10 @@ public final class GrpcSinkTask extends SinkTask {
 
     @Override
     public void stop() {
+        shutdownChannel();
+    }
+
+    private void shutdownChannel() {
         if (channel != null) {
             channel.shutdown();
             try {
@@ -168,6 +173,7 @@ public final class GrpcSinkTask extends SinkTask {
                 Thread.currentThread().interrupt();
                 channel.shutdownNow();
             }
+            channel = null;
         }
     }
 
