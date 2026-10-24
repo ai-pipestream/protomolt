@@ -83,7 +83,7 @@ final class LinkRelations {
     /**
      * An RFC 8288 extension relation this format accepts: an absolute URI whose scheme is
      * http or https (case-insensitive, RFC 3986 schemes compare case-insensitively) with a
-     * non-empty authority.
+     * non-empty authority host.
      */
     private static boolean isHttpExtension(String value) {
         int colon = value.indexOf(':');
@@ -91,18 +91,34 @@ final class LinkRelations {
             return false;
         }
         String scheme = value.substring(0, colon);
-        if (!("http".equalsIgnoreCase(scheme) || "https".equalsIgnoreCase(scheme))) {
+        if (!(asciiEqualsIgnoreCase(scheme, "http") || asciiEqualsIgnoreCase(scheme, "https"))) {
             return false;
         }
-        String rest = value.substring(colon + 1);
-        if (rest.length() < 3 || rest.charAt(0) != '/' || rest.charAt(1) != '/') {
+        return hasAuthorityHost(value.substring(colon + 1)) && Rfc3986.isUri(value);
+    }
+
+    private static boolean hasAuthorityHost(String rest) {
+        if (!rest.startsWith("//")) {
             return false;
         }
-        char authorityStart = rest.charAt(2);
-        if (authorityStart == '/' || authorityStart == '?' || authorityStart == '#') {
-            return false; // an empty authority is no host to link to
+        String afterSlashes = rest.substring(2);
+        int end = afterSlashes.length();
+        for (int i = 0; i < end; i++) {
+            char c = afterSlashes.charAt(i);
+            if (c == '/' || c == '?' || c == '#') {
+                end = i;
+                break;
+            }
         }
-        return Rfc3986.isUri(value);
+        String authority = afterSlashes.substring(0, end);
+        int at = authority.indexOf('@');
+        String hostPort = at < 0 ? authority : authority.substring(at + 1);
+        if (hostPort.startsWith("[")) {
+            return hostPort.indexOf(']') > 1;
+        }
+        int portColon = hostPort.indexOf(':');
+        String host = portColon < 0 ? hostPort : hostPort.substring(0, portColon);
+        return !host.isEmpty(); // an empty host is nothing to link to
     }
 
     /** Whether the value is one of the bundled Dublin Core relation terms. */
@@ -115,6 +131,9 @@ final class LinkRelations {
         return Arrays.binarySearch(IANA, value) >= 0;
     }
 
+    /** The path portion of a Dublin Core term URI, matched case-sensitively. */
+    private static final String DUBLIN_CORE_PATH = "/dc/terms/";
+
     /** The namespace prefixes a Dublin Core term may carry in its URI form. */
     private static final String[] DUBLIN_CORE_PREFIXES = {
             "http://purl.org/dc/terms/", "https://purl.org/dc/terms/",
@@ -126,17 +145,41 @@ final class LinkRelations {
      * {@code isReferencedBy}, {@code requires} and {@code isRequiredBy}, {@code hasFormat}
      * and {@code isFormatOf}, {@code hasVersion} and {@code isVersionOf}. A term in its
      * {@code http://purl.org/dc/terms/} or {@code https://purl.org/dc/terms/} URI form
+     * (scheme and {@code purl.org} authority matched case-insensitively per RFC 3986)
      * answers its inverse in the same prefix form. Empty for every other value, including
      * Dublin Core terms with no paired inverse ({@code source}, {@code relation},
      * {@code conformsTo}).
      */
     static Optional<String> inverse(String value) {
         for (String prefix : DUBLIN_CORE_PREFIXES) {
-            if (value.startsWith(prefix)) {
+            if (hasDublinCorePrefix(value, prefix)) {
                 return bareInverse(value.substring(prefix.length())).map(name -> prefix + name);
             }
         }
         return bareInverse(value);
+    }
+
+    private static boolean hasDublinCorePrefix(String value, String prefix) {
+        if (value.length() <= prefix.length()) {
+            return false;
+        }
+        int pathStart = prefix.length() - DUBLIN_CORE_PATH.length();
+        return asciiEqualsIgnoreCase(value.substring(0, pathStart), prefix.substring(0, pathStart))
+                && value.startsWith(DUBLIN_CORE_PATH, pathStart);
+    }
+
+    private static boolean asciiEqualsIgnoreCase(String value, String lowerAscii) {
+        if (value.length() != lowerAscii.length()) {
+            return false;
+        }
+        for (int i = 0; i < lowerAscii.length(); i++) {
+            char c = value.charAt(i);
+            char folded = c >= 'A' && c <= 'Z' ? (char) (c + ('a' - 'A')) : c;
+            if (folded != lowerAscii.charAt(i)) {
+                return false;
+            }
+        }
+        return true;
     }
 
     private static Optional<String> bareInverse(String value) {
