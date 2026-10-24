@@ -1,7 +1,7 @@
 <template>
   <div data-testid="byte-reader">
     <div class="text-subtitle-2 mb-2">{{ title }}</div>
-    <v-row dense>
+    <v-row density="compact">
       <v-col cols="6" md="3">
         <v-text-field v-model="offsetText" label="Offset (bytes)" density="compact" hide-details data-testid="range-offset" />
       </v-col>
@@ -125,6 +125,7 @@ async function preview() {
     // The range as requested, ending the stream once the preview has its
     // bytes, so an object shorter than the preview is read to its end.
     const result = await props.read(wanted, out.sink, signal, track, PREVIEW_BYTES)
+    if (signal.aborted) return
     const bytes = out.bytes()
     outcome.value = { ...result, what: 'Preview' }
     previewView.value = isTextMediaType(result.mediaType || props.mediaType)
@@ -133,7 +134,7 @@ async function preview() {
   } catch (error) {
     failed(error, signal)
   } finally {
-    busy.value = null
+    if (!signal.aborted) busy.value = null
   }
 }
 
@@ -157,18 +158,24 @@ async function download() {
   busy.value = 'download'
   try {
     const result = await props.read(wanted, (chunk) => sink.write(chunk), signal, track)
+    if (signal.aborted) {
+      await sink.discard()
+      return
+    }
     await sink.finish()
     outcome.value = { ...result, what: 'Download' }
   } catch (error) {
     await sink.discard()
     failed(error, signal)
   } finally {
-    busy.value = null
+    if (!signal.aborted) busy.value = null
   }
 }
 
 function cancel() {
   scope.next()
+  busy.value = null
+  progress.value = null
   cancelled.value = true
 }
 </script>

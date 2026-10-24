@@ -22,7 +22,7 @@
 
       <ByteReader
         v-if="selected"
-        :key="selected.blobId"
+        :key="`${revision}:${selected.blobId}`"
         :title="selected.filename ?? selected.blobId"
         :filename="selected.filename ?? selected.blobId"
         :media-type="selected.mimeType"
@@ -33,7 +33,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, watch } from 'vue'
 import ByteReader from './ByteReader.vue'
 import RpcFailureAlert from './RpcFailureAlert.vue'
 import type { NodeAddress } from '@/gen/ai/protomolt/proto/repo/v1/address_pb'
@@ -53,6 +53,13 @@ const props = defineProps<{
 
 const clients = useRepositoryClients()
 const selected = ref<BlobRow | null>(null)
+
+watch(
+  () => [props.address, props.revision],
+  () => {
+    selected.value = null
+  },
+)
 
 function select(blob: BlobRow) {
   selected.value = blob

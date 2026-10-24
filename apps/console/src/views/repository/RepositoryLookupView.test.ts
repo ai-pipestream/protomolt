@@ -3,8 +3,13 @@ import { create } from '@bufbuild/protobuf'
 import { Code, ConnectError } from '@connectrpc/connect'
 import { describe, expect, it } from 'vitest'
 import {
+  ConceptFilterEvidenceSchema,
+  DocumentLookupSchema,
   DocumentService,
+  DocumentSummarySchema,
   GetOperationOutcomeResponseSchema,
+  ListDocumentsResponseSchema,
+  MountedConceptSchemeSchema,
   NoRecordedOutcomeSchema,
   RecordedOutcomeSchema,
 } from '@/gen/ai/protomolt/proto/repo/v2/document_service_pb'
@@ -107,6 +112,48 @@ describe('RepositoryLookupView, by call number', () => {
     await settle()
     expect(wrapper.get('[data-testid="call-error"]').text()).toContain('Graph ID is blank')
     expect(router.currentRoute.value.name).toBe('repository-lookup')
+    wrapper.unmount()
+  })
+
+  it('mounts the SKOS concept browser and syncs account ID when route.query.account changes', async () => {
+    const { wrapper, router } = await mountRepositoryView(
+      RepositoryLookupView,
+      { name: 'repository-lookup', query: { account: 'acct-a' } },
+      (r) =>
+        r.service(DocumentService, {
+          listDocuments(req) {
+            expect(req.accountId).toBe('acct-b')
+            expect(req.filter?.concept?.concept).toMatchObject({ schemeId: 'topics', conceptId: 'wind' })
+            return create(ListDocumentsResponseSchema, {
+              documents: [
+                create(DocumentSummarySchema, {
+                  address: testAddress({ accountId: 'acct-b', docId: 'doc-99' }),
+                  revision: 1n,
+                  lookup: create(DocumentLookupSchema, { title: 'Wind Farm' }),
+                }),
+              ],
+              conceptEvidence: create(ConceptFilterEvidenceSchema, {
+                expandedConcepts: 2,
+                mountedSchemes: [create(MountedConceptSchemeSchema, { schemeId: 'topics', version: 'v5' })],
+              }),
+            })
+          },
+        }),
+    )
+
+    expect(wrapper.find('[data-testid="concept-scheme-browser"]').exists()).toBe(true)
+    await router.push({ name: 'repository-lookup', query: { account: 'acct-b' } })
+    await settle()
+    expect((wrapper.get('[data-testid="call-account"] input').element as HTMLInputElement).value).toBe('acct-b')
+    expect((wrapper.get('[data-testid="concept-lookup-account"] input').element as HTMLInputElement).value).toBe('acct-b')
+
+    await wrapper.get('[data-testid="concept-lookup-scheme"] input').setValue('topics')
+    await wrapper.get('[data-testid="concept-lookup-concept"] input').setValue('wind')
+    await wrapper.get('[data-testid="concept-lookup-submit"]').trigger('click')
+    await settle()
+
+    expect(wrapper.get('[data-testid="concept-doc-row-doc-99"]').text()).toContain('Wind Farm')
+    expect(wrapper.get('[data-testid="mounted-scheme-chip-topics"]').text()).toContain('topics@v5')
     wrapper.unmount()
   })
 })
