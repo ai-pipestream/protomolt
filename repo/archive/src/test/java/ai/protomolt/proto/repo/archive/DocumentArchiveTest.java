@@ -14,6 +14,9 @@ import ai.protomolt.proto.repo.archive.v1.GetEntryRequest;
 import ai.protomolt.proto.repo.archive.v1.ListArchivesRequest;
 import ai.protomolt.proto.repo.archive.v1.ListEntriesRequest;
 import ai.protomolt.proto.repo.archive.v1.ListEntriesResponse;
+import ai.protomolt.proto.repo.archive.v1.PutEntryRequest;
+import ai.protomolt.proto.repo.archive.v1.RenditionContent;
+import ai.protomolt.proto.repo.archive.v1.RenditionDescriptor;
 import ai.protomolt.proto.repo.archive.v1.VersioningPolicy;
 import ai.protomolt.proto.repo.v1.Blob;
 import ai.protomolt.proto.repo.v1.BlobBag;
@@ -32,6 +35,8 @@ import ai.protomolt.proto.repo.v2.DocumentServiceGrpc;
 import ai.protomolt.proto.repo.v2.DocumentSummary;
 import ai.protomolt.proto.repo.v2.GetDocumentRequest;
 import ai.protomolt.proto.repo.v2.GetDocumentResponse;
+import ai.protomolt.proto.repo.v2.GetOperationOutcomeRequest;
+import ai.protomolt.proto.repo.v2.GetOperationOutcomeResponse;
 import ai.protomolt.proto.repo.v2.IntakeOrigin;
 import ai.protomolt.proto.repo.v2.ListDocumentsRequest;
 import ai.protomolt.proto.repo.v2.ListDocumentsResponse;
@@ -208,15 +213,34 @@ class DocumentArchiveTest {
     @Test
     void createGetListArchivesAndStatsOverInMemoryDocumentService() throws Exception {
         Map<NodeAddress, Document> definitions = new LinkedHashMap<>();
+        List<SaveDocumentRequest> entrySaves = new ArrayList<>();
         ByteString pdf = ByteString.copyFromUtf8("pdf-bytes");
         NodeAddress entryNode = ArchiveCoordinates.address(
                 EntryAddress.newBuilder().setAccountId(ACCOUNT).setArchive(ARCHIVE).setEntryId("e1").build());
 
         startService(new DocumentServiceGrpc.DocumentServiceImplBase() {
             @Override
+            public void getOperationOutcome(
+                    GetOperationOutcomeRequest request,
+                    StreamObserver<GetOperationOutcomeResponse> responseObserver) {
+                responseObserver.onNext(GetOperationOutcomeResponse.getDefaultInstance());
+                responseObserver.onCompleted();
+            }
+
+            @Override
             public void saveDocument(
                     SaveDocumentRequest request, StreamObserver<SaveDocumentResponse> responseObserver) {
                 NodeAddress addr = request.getTarget().getAddress();
+                if (!addr.getGraphId().startsWith(DocumentArchiveBindings.DEFINITION_GRAPH_PREFIX)) {
+                    synchronized (entrySaves) {
+                        entrySaves.add(request);
+                    }
+                    responseObserver.onNext(SaveDocumentResponse.newBuilder()
+                            .setAccession(Accession.newBuilder().setAddress(addr).setRevision(1L))
+                            .build());
+                    responseObserver.onCompleted();
+                    return;
+                }
                 if (definitions.containsKey(addr)) {
                     responseObserver.onError(Status.ABORTED.asRuntimeException());
                     return;
@@ -290,11 +314,27 @@ class DocumentArchiveTest {
                         .setVersioning(VersioningPolicy.VERSIONING_POLICY_RETAINED))
                 .build()).getArchive();
         assertThat(created.getName()).isEqualTo(ARCHIVE);
+        assertThat(bindings.find(ACCOUNT, ARCHIVE).orElseThrow().drive()).isEqualTo("intake");
 
         assertThat(archive.getArchive(GetArchiveRequest.newBuilder()
                 .setAccountId(ACCOUNT).setArchive(ARCHIVE).build()).getArchive()).isEqualTo(created);
         assertThat(archive.listArchives(ListArchivesRequest.newBuilder()
                 .setAccountId(ACCOUNT).build()).getArchivesList()).containsExactly(created);
+
+        archive.putEntry(PutEntryRequest.newBuilder()
+                .setAddress(EntryAddress.newBuilder()
+                        .setAccountId(ACCOUNT)
+                        .setArchive(ARCHIVE)
+                        .setEntryId("e1"))
+                .setTitle("Doc 1")
+                .addRenditions(RenditionContent.newBuilder()
+                        .setRendition(RenditionDescriptor.newBuilder()
+                                .setName("original")
+                                .setMediaType("application/pdf"))
+                        .setData(pdf))
+                .build());
+        assertThat(entrySaves).hasSize(1);
+        assertThat(entrySaves.getFirst().getDrive()).isEqualTo("intake");
 
         ArchiveStats stats = archive.getArchiveStats(GetArchiveStatsRequest.newBuilder()
                 .setAccountId(ACCOUNT).setArchive(ARCHIVE).build()).getStats();

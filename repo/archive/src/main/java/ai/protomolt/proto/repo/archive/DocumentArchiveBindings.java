@@ -119,7 +119,10 @@ public final class DocumentArchiveBindings implements ArchiveBindings {
         if (stored.isPresent()) {
             Map<String, String> meta = stored.get().getDocument().getSearchMetadata().getMetadataMap();
             String ds = meta.getOrDefault(DATASOURCE_ID_KEY, datasourceId);
-            String drive = meta.getOrDefault(STORAGE_DRIVE_KEY, storageDrive);
+            String drive = meta.getOrDefault(DRIVE_NAME_KEY, "");
+            if (drive.isBlank()) {
+                drive = meta.getOrDefault(STORAGE_DRIVE_KEY, storageDrive);
+            }
             VersioningPolicy policy = parseVersioning(meta.getOrDefault(VERSIONING_KEY, ""));
             return Optional.of(new ArchiveBinding(accountId, archive, ds, drive, policy));
         }

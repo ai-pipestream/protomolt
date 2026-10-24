@@ -132,6 +132,12 @@ public final class ConceptSchemeMounts implements ConceptSchemeCatalog {
         return Optional.ofNullable(snapshot.schemes().get(schemeId)).map(Scheme::membership);
     }
 
+    @Override
+    public ConceptSchemeCatalog snapshot() {
+        Snapshot pin = this.snapshot;
+        return schemeId -> Optional.ofNullable(pin.schemes().get(schemeId)).map(Scheme::membership);
+    }
+
     /**
      * Expands a query on {@code query} against the mounted schemes. Always included: the
      * queried concept, its {@code exact_match} closure across mounted schemes (symmetric and

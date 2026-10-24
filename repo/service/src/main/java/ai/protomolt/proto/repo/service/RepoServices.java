@@ -186,10 +186,10 @@ public final class RepoServices implements AutoCloseable {
      *
      * <p>Each entry in {@code paths} may be:
      * <ul>
-     *   <li>a directory whose immediate {@code .pb}, {@code .binpb}, or {@code .json} files
+     *   <li>a directory whose immediate {@code .pb} or {@code .binpb} files
      *       are loaded (scheme ID = filename stem before the extension),</li>
-     *   <li>a file path {@code /path/to/<schemeId>.{pb,binpb,json}} (scheme ID = filename stem), or</li>
-     *   <li>an explicit {@code <schemeId>=/path/to/file.{pb,binpb,json}} specification.</li>
+     *   <li>a file path {@code /path/to/<schemeId>.{pb,binpb}} (scheme ID = filename stem), or</li>
+     *   <li>an explicit {@code <schemeId>=/path/to/file.{pb,binpb}} specification.</li>
      * </ul>
      *
      * <p>Every loaded scheme is validated through {@link ai.protomolt.proto.config.ConceptSchemeMounts#follow};
@@ -262,7 +262,7 @@ public final class RepoServices implements AutoCloseable {
 
     private static boolean isSupportedConceptSchemeFile(java.nio.file.Path file) {
         String name = file.getFileName().toString().toLowerCase(java.util.Locale.ROOT);
-        return name.endsWith(".json") || name.endsWith(".pb") || name.endsWith(".binpb");
+        return name.endsWith(".pb") || name.endsWith(".binpb");
     }
 
     private static String schemeIdFromFileName(java.nio.file.Path file) {
@@ -270,9 +270,6 @@ public final class RepoServices implements AutoCloseable {
         String lower = name.toLowerCase(java.util.Locale.ROOT);
         if (lower.endsWith(".binpb")) {
             return name.substring(0, name.length() - ".binpb".length());
-        }
-        if (lower.endsWith(".json")) {
-            return name.substring(0, name.length() - ".json".length());
         }
         if (lower.endsWith(".pb")) {
             return name.substring(0, name.length() - ".pb".length());
@@ -290,21 +287,17 @@ public final class RepoServices implements AutoCloseable {
         if (!java.nio.file.Files.isRegularFile(file)) {
             throw new IllegalArgumentException("Concept scheme file does not exist: " + file);
         }
+        if (!isSupportedConceptSchemeFile(file)) {
+            throw new IllegalArgumentException(
+                    "Concept scheme file must be a binary protobuf (.pb or .binpb): " + file);
+        }
         if (out.containsKey(schemeId)) {
             throw new IllegalArgumentException("Duplicate concept scheme ID '" + schemeId + "' at " + file);
         }
         try {
-            String lower = file.getFileName().toString().toLowerCase(java.util.Locale.ROOT);
-            ai.protomolt.proto.types.ConceptScheme scheme;
-            if (lower.endsWith(".json")) {
-                var builder = ai.protomolt.proto.types.ConceptScheme.newBuilder();
-                com.google.protobuf.util.JsonFormat.parser()
-                        .merge(java.nio.file.Files.readString(file), builder);
-                scheme = builder.build();
-            } else {
-                scheme = ai.protomolt.proto.types.ConceptScheme.parseFrom(
-                        java.nio.file.Files.readAllBytes(file));
-            }
+            ai.protomolt.proto.types.ConceptScheme scheme =
+                    ai.protomolt.proto.types.ConceptScheme.parseFrom(
+                            java.nio.file.Files.readAllBytes(file));
             byte[] encoded = scheme.toByteArray();
             String version = java.util.HexFormat.of().formatHex(
                     java.security.MessageDigest.getInstance("SHA-256").digest(encoded)).substring(0, 16);

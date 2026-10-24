@@ -18,7 +18,6 @@ import ai.protomolt.proto.types.ConceptScheme;
 import ai.protomolt.proto.types.LangLabel;
 import ai.protomolt.proto.validate.spi.ConceptSchemeCatalog;
 import com.google.protobuf.ByteString;
-import com.google.protobuf.util.JsonFormat;
 import io.grpc.Context;
 import java.lang.reflect.Proxy;
 import java.nio.file.Files;
@@ -121,7 +120,7 @@ class RepoCallerBindingsTest {
     }
 
     @Test
-    void loadsConceptSchemesFromJsonProtobufAndDirectoriesAndRejectsInvalidSchemes(
+    void loadsConceptSchemesFromProtobufAndDirectoriesAndRejectsInvalidSchemes(
             @TempDir Path tempDir) throws Exception {
         ConceptScheme topicScheme = ConceptScheme.newBuilder()
                 .addConcepts(Concept.newBuilder()
@@ -141,15 +140,15 @@ class RepoCallerBindingsTest {
                         .build())
                 .build();
 
-        Path jsonFile = tempDir.resolve("topics.json");
-        Files.writeString(jsonFile, JsonFormat.printer().print(topicScheme));
+        Path binpbFile = tempDir.resolve("topics.binpb");
+        Files.write(binpbFile, topicScheme.toByteArray());
 
         Path subDir = Files.createDirectories(tempDir.resolve("schemes.d"));
         Path pbFile = subDir.resolve("regions.pb");
         Files.write(pbFile, regionScheme.toByteArray());
 
         ConceptSchemeMounts loaded = RepoServices.loadConceptSchemes(List.of(
-                Path.of("topics=" + jsonFile),
+                Path.of("topics=" + binpbFile),
                 subDir));
         assertThat(loaded.scheme("topics"))
                 .isPresent()
@@ -163,8 +162,15 @@ class RepoCallerBindingsTest {
                 .isEqualTo(Set.of("eu"));
 
         RepoServiceConfig envConfig = RepoServiceConfig.fromEnvironment(Map.of(
-                RepoServiceConfig.ENV_CONCEPT_SCHEMES, jsonFile + " , " + pbFile));
-        assertThat(envConfig.conceptSchemePaths()).containsExactly(jsonFile, pbFile);
+                RepoServiceConfig.ENV_CONCEPT_SCHEMES, binpbFile + " , " + pbFile));
+        assertThat(envConfig.conceptSchemePaths()).containsExactly(binpbFile, pbFile);
+
+        // Non-protobuf files are rejected.
+        Path jsonFile = tempDir.resolve("topics.json");
+        Files.writeString(jsonFile, "{}");
+        assertThatThrownBy(() -> RepoServices.loadConceptSchemes(List.of(jsonFile)))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining(".pb or .binpb");
 
         // Cyclic concept scheme is rejected fail-fast during loadConceptSchemes.
         ConceptScheme cyclic = ConceptScheme.newBuilder()
@@ -179,8 +185,8 @@ class RepoCallerBindingsTest {
                         .addBroader("a")
                         .build())
                 .build();
-        Path cyclicFile = tempDir.resolve("cyclic.json");
-        Files.writeString(cyclicFile, JsonFormat.printer().print(cyclic));
+        Path cyclicFile = tempDir.resolve("cyclic.pb");
+        Files.write(cyclicFile, cyclic.toByteArray());
         assertThatThrownBy(() -> RepoServices.loadConceptSchemes(List.of(cyclicFile)))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("Invalid concept scheme 'concept-scheme:cyclic'");
