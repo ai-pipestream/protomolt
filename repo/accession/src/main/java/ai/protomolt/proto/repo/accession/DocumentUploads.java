@@ -57,6 +57,23 @@ public final class DocumentUploads {
     }
 
     /**
+     * Checks an upload header through the same admission path used by UploadDocument,
+     * before an in-process adapter stages any payload bytes. This does not commit or
+     * reserve an operation: the final header and writer authority are checked again
+     * by the upload and its commit transaction.
+     *
+     * @param caller the authenticated repository caller
+     * @param header the translated upload header, including the caller's ACL rules
+     */
+    public void precheck(RepositoryCaller caller, UploadHeader header) {
+        try {
+            saves.precheckUpload(Objects.requireNonNull(caller, "caller"), header);
+        } catch (AccessionException failure) {
+            throw AccessionGrpcService.toStatus(failure);
+        }
+    }
+
+    /**
      * Executes a single streaming upload from an {@link UploadHeader} and payload {@link InputStream}.
      *
      * @param caller the authenticated repository caller

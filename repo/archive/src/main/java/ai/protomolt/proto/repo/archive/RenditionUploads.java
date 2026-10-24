@@ -84,6 +84,7 @@ public final class RenditionUploads {
     }
 
     private final DocumentArchive archive;
+    private final java.util.Optional<java.util.function.Consumer<UploadHeader>> precheck;
     private final DocumentServiceGrpc.DocumentServiceStub documents;
 
     /**
@@ -102,6 +103,24 @@ public final class RenditionUploads {
     public RenditionUploads(DocumentArchive archive, Channel documents) {
         this.archive = Objects.requireNonNull(archive, "archive");
         this.documents = DocumentServiceGrpc.newStub(Objects.requireNonNull(documents, "documents"));
+        this.precheck = java.util.Optional.empty();
+    }
+
+    /**
+     * Constructs a host-side translator that checks the translated header before
+     * staging primary-rendition bytes. Remote client adapters use the two-argument
+     * constructor; a host accepting scoped callers supplies its canonical upload gate.
+     * The final UploadDocument still performs its own admission and commit checks.
+     *
+     * @param archive the archive the upload is translated by
+     * @param documents the channel to the same v2 document service
+     * @param precheck the host's canonical header admission, throwing on refusal
+     */
+    public RenditionUploads(DocumentArchive archive, Channel documents,
+            java.util.function.Consumer<UploadHeader> precheck) {
+        this.archive = Objects.requireNonNull(archive, "archive");
+        this.documents = DocumentServiceGrpc.newStub(Objects.requireNonNull(documents, "documents"));
+        this.precheck = java.util.Optional.of(Objects.requireNonNull(precheck, "precheck"));
     }
 
     /**
@@ -304,6 +323,9 @@ public final class RenditionUploads {
                 return;
             }
             pending = (DocumentArchive.Pending) start;
+            if (precheck.isPresent()) {
+                precheck.get().accept(pending.header(ByteWindows.EMPTY));
+            }
             maxSpoolBytes = Math.max(0L, frame.getHeader().getSizeBytes()) + 1L;
             openDownstreamCall();
             if (!pending.needsWindows()) {
