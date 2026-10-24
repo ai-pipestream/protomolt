@@ -121,7 +121,8 @@
   build 25, conformance, console, integration; branch protection
   requires all of them; the forward workflow attaches them to each Forgejo
   main commit before GitHub main moves). A forward that cannot read branch
-  protection or branch rules stops. Absent protection, an empty check list,
+  protection or branch rules stops. A 200 body with a check list of the wrong
+  JSON type stops the same way. Absent protection, an empty check list,
   and an API or auth failure do not waive `build (25)`, `console`,
   `conformance`, and `integration`. Contexts configured on protection or
   branch rules are required as well.

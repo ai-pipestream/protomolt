@@ -34,24 +34,42 @@ required_contexts() {
     echo "GitHub branch rules response is not a rules array. GitHub main was not moved." >&2
     return 1
   fi
+  if ! printf '%s' "$rules_body" | jq -e '
+    all(.[]; type == "object")
+    and all(.[] | select(.type == "required_status_checks");
+      (.parameters | type == "object")
+      and ((.parameters.required_status_checks // []) | type == "array"
+        and all(.[]; type == "object" and (.context | type == "string")))
+      and ((.parameters.contexts // []) | type == "array" and all(.[]; type == "string")))
+  ' >/dev/null; then
+    echo "GitHub branch rules status-check list is malformed. GitHub main was not moved." >&2
+    return 1
+  fi
   if [ "$protection_status" = 200 ]; then
-    if ! printf '%s' "$protection_body" | jq -e 'type == "object" and (has("contexts") or has("checks"))' >/dev/null; then
-      echo "GitHub branch protection response has no status-check list. GitHub main was not moved." >&2
+    if ! printf '%s' "$protection_body" | jq -e '
+      type == "object" and (has("contexts") or has("checks"))
+      and ((.contexts // []) | type == "array" and all(.[]; type == "string"))
+      and ((.checks // []) | type == "array"
+        and all(.[]; type == "object" and (.context | type == "string")))
+    ' >/dev/null; then
+      echo "GitHub branch protection status-check list is malformed. GitHub main was not moved." >&2
       return 1
     fi
   fi
-  configured=$(
+  if ! configured=$(
     {
       if [ "$protection_status" = 200 ]; then
         printf '%s' "$protection_body" | jq -r '.contexts // [] | .[]'
-        printf '%s' "$protection_body" | jq -r '.checks // [] | .[].context // empty'
+        printf '%s' "$protection_body" | jq -r '.checks // [] | .[].context'
       fi
       printf '%s' "$rules_body" | jq -r '
         .[] | select(.type == "required_status_checks") | .parameters
-        | ((.required_status_checks // [])[]?.context), ((.contexts // [])[])
-        | select(. != null and . != "")'
+        | (.required_status_checks // [] | .[].context), (.contexts // [] | .[])'
     } | awk 'NF && !seen[$0]++'
-  )
+  ); then
+    echo "GitHub check policy could not be parsed. GitHub main was not moved." >&2
+    return 1
+  fi
   {
     documented_ci_contexts
     printf '%s\n' "$configured"

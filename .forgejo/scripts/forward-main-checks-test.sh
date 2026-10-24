@@ -52,6 +52,16 @@ assert_fail "transport failure" required_contexts 000 '' 200 '[]'
 assert_fail "protection server error" required_contexts 500 '{"message":"oops"}' 200 '[]'
 assert_fail "rules server error" required_contexts 404 '{"message":"Required status checks not enabled"}' 502 '<html>'
 assert_fail "malformed protection" required_contexts 200 '{"message":"not a policy"}' 200 '[]'
+assert_fail "protection contexts string" required_contexts 200 '{"contexts":"must-pass","checks":[]}' 200 '[]'
+assert_fail "protection contexts number" required_contexts 200 '{"contexts":5,"checks":[]}' 200 '[]'
+assert_fail "protection checks not an array" required_contexts 200 '{"contexts":[],"checks":"lint"}' 200 '[]'
+assert_fail "protection check context number" required_contexts 200 '{"contexts":[],"checks":[{"context":1}]}' 200 '[]'
+assert_fail "rules checks string" required_contexts 200 '{"contexts":[],"checks":[]}' 200 '[{"type":"required_status_checks","parameters":{"required_status_checks":"must-pass"}}]'
+assert_fail "rules contexts object" required_contexts 200 '{"contexts":[],"checks":[]}' 200 '[{"type":"required_status_checks","parameters":{"contexts":{"name":"lint"}}}]'
+assert_fail "rules parameters missing" required_contexts 404 '{"message":"Required status checks not enabled"}' 200 '[{"type":"required_status_checks"}]'
+
+empty_rule=$(required_contexts 200 '{"contexts":[],"checks":[]}' 200 '[{"type":"required_status_checks","parameters":{}},{"type":"deletion","parameters":{"weird":1}}]')
+assert_eq "other rule types and empty parameters add nothing" "$documented" "$empty_rule"
 
 success_runs='{"check_runs":[
   {"name":"build (25)","status":"completed","conclusion":"success","started_at":"2026-10-23T00:00:00Z"},
