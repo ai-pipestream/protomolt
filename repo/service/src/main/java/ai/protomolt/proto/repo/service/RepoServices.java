@@ -493,7 +493,10 @@ public final class RepoServices implements AutoCloseable {
                             return true;
                         });
                 this.v2Archive = new ai.protomolt.proto.repo.archive.DocumentArchive(
-                        interceptedChannel, archiveBindings, java.time.Clock.systemUTC());
+                        interceptedChannel, archiveBindings, java.time.Clock.systemUTC(),
+                        ai.protomolt.proto.repo.archive.DocumentArchive.DEFAULT_MAX_UNARY_GET_BYTES,
+                        ai.protomolt.proto.asset.bridge.BridgeEngine.standard(),
+                        new ai.protomolt.proto.repo.archive.UploadSpoolBudget(config.uploadSpoolBudgetBytes()));
                 this.legacyArchiveExists = (acct, arch) ->
                         storage.archiveLedger().findArchive(acct, arch).isPresent();
             } else {

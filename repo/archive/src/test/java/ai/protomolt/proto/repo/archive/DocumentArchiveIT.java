@@ -1259,6 +1259,81 @@ class DocumentArchiveIT {
     }
 
     @Test
+    void aSpooledPrimaryUploadReservesTheHostSpoolBudgetAndGivesItBack() throws Exception {
+        ByteString large = randomBytes(2 * 1024 * 1024, 7L);
+        ArchiveBindings retained = (account, name) -> Optional.of(new ArchiveBinding(
+                account, name, DATASOURCE, "", VersioningPolicy.VERSIONING_POLICY_RETAINED));
+
+        // A budget smaller than the declared size refuses the upload before any spool file is written.
+        UploadSpoolBudget small = new UploadSpoolBudget(1024 * 1024);
+        DocumentArchive bounded = new DocumentArchive(documentsChannel, retained, Clock.systemUTC(),
+                DocumentArchive.DEFAULT_MAX_UNARY_GET_BYTES, BridgeEngine.standard(), small);
+        EntryAddress refusedAddress = entry(RETAINED);
+        StatusRuntimeException refused = catchThrowableOfType(StatusRuntimeException.class,
+                () -> uploadThrough(new RenditionUploads(bounded), originalHeader(refusedAddress, large), large));
+        assertThat(refused.getStatus().getCode()).isEqualTo(Status.Code.RESOURCE_EXHAUSTED);
+        assertThat(refused.getStatus().getDescription()).contains("Upload spool budget exhausted");
+        assertThat(small.reservedBytes()).isZero();
+        assertThat(code(() -> archive.getEntry(GetEntryRequest.newBuilder()
+                .setAddress(refusedAddress).addRenditions("none").build()))).isEqualTo(Status.Code.NOT_FOUND);
+
+        // A budget that covers it lets the upload commit and gets every byte back afterwards.
+        UploadSpoolBudget enough = new UploadSpoolBudget(large.size() + 1L);
+        DocumentArchive covered = new DocumentArchive(documentsChannel, retained, Clock.systemUTC(),
+                DocumentArchive.DEFAULT_MAX_UNARY_GET_BYTES, BridgeEngine.standard(), enough);
+        UploadRenditionResponse uploaded = uploadThrough(new RenditionUploads(covered),
+                originalHeader(entry(RETAINED), large), large);
+        assertThat(uploaded.getVersion()).isEqualTo(1L);
+        assertThat(uploaded.getSizeBytes()).isEqualTo(large.size());
+        assertThat(enough.reservedBytes()).isZero();
+    }
+
+    private static UploadRenditionHeader originalHeader(EntryAddress address, ByteString bytes) {
+        return UploadRenditionHeader.newBuilder()
+                .setAddress(address)
+                .setRendition(RenditionDescriptor.newBuilder()
+                        .setName("original").setMediaType("application/octet-stream"))
+                .setSizeBytes(bytes.size())
+                .setExpectedSha256(RenditionReads.sha256Hex(bytes))
+                .build();
+    }
+
+    private static UploadRenditionResponse uploadThrough(RenditionUploads uploads, UploadRenditionHeader header,
+            ByteString bytes) throws Exception {
+        var result = new CompletableFuture<UploadRenditionResponse>();
+        StreamObserver<UploadRenditionRequest> requests = uploads.upload(new StreamObserver<>() {
+            @Override
+            public void onNext(UploadRenditionResponse value) {
+                result.complete(value);
+            }
+
+            @Override
+            public void onError(Throwable failure) {
+                result.completeExceptionally(failure);
+            }
+
+            @Override
+            public void onCompleted() {
+                result.complete(null);
+            }
+        });
+        requests.onNext(UploadRenditionRequest.newBuilder().setHeader(header).build());
+        for (int start = 0; start < bytes.size(); start += 64 * 1024) {
+            requests.onNext(UploadRenditionRequest.newBuilder()
+                    .setChunk(bytes.substring(start, Math.min(bytes.size(), start + 64 * 1024))).build());
+        }
+        requests.onCompleted();
+        try {
+            return result.get(60, TimeUnit.SECONDS);
+        } catch (java.util.concurrent.ExecutionException failure) {
+            if (failure.getCause() instanceof StatusRuntimeException status) {
+                throw status;
+            }
+            throw failure;
+        }
+    }
+
+    @Test
     void createGetAndListArchivesStoreAndProjectDefinitionsOverV2Documents() {
         String account = "acct-defs-" + UUID.randomUUID();
         ArchiveBindings v2Bindings = ArchiveBindings.overDocuments(

@@ -52,7 +52,7 @@ class RepoServiceConfigTest {
                 RepoServiceConfig.ENV_REDIS_TTL_SECONDS, RepoServiceConfig.ENV_REDIS_MAX_OBJECT_BYTES,
                 RepoServiceConfig.ENV_PURGE_INTERVAL_MS, RepoServiceConfig.ENV_SWEEP_INTERVAL_MS,
                 RepoServiceConfig.ENV_RECONCILE_MIN_AGE_MS, LedgerConfig.ENV_POOL_SIZE,
-                RepoServiceConfig.ENV_READ_BUDGET_BYTES);
+                RepoServiceConfig.ENV_READ_BUDGET_BYTES, RepoServiceConfig.ENV_UPLOAD_SPOOL_BUDGET_BYTES);
         var malformed = names.stream().flatMap(name -> java.util.stream.Stream.of("private-value", "", " ",
                 "1.5", "999999999999999999999999", "-1")
                 .map(value -> org.junit.jupiter.params.provider.Arguments.of(name, value)));
@@ -63,7 +63,8 @@ class RepoServiceConfigTest {
                 org.junit.jupiter.params.provider.Arguments.of(RepoServiceConfig.ENV_PURGE_INTERVAL_MS, "0"),
                 org.junit.jupiter.params.provider.Arguments.of(RepoServiceConfig.ENV_SWEEP_INTERVAL_MS, "0"),
                 org.junit.jupiter.params.provider.Arguments.of(LedgerConfig.ENV_POOL_SIZE, "0"),
-                org.junit.jupiter.params.provider.Arguments.of(RepoServiceConfig.ENV_READ_BUDGET_BYTES, "0")));
+                org.junit.jupiter.params.provider.Arguments.of(RepoServiceConfig.ENV_READ_BUDGET_BYTES, "0"),
+                org.junit.jupiter.params.provider.Arguments.of(RepoServiceConfig.ENV_UPLOAD_SPOOL_BUDGET_BYTES, "0")));
     }
 
     @org.junit.jupiter.params.ParameterizedTest
@@ -112,6 +113,16 @@ class RepoServiceConfigTest {
         assertThat(config.lifecycleEnabled()).isTrue();
         assertThat(config.ledger().maxPoolSize()).isEqualTo(LedgerConfig.DEFAULT_POOL_SIZE);
         assertThat(config.readBudgetBytes()).isEqualTo(256L * 1024 * 1024);
+        assertThat(config.uploadSpoolBudgetBytes()).isEqualTo(4L * 1024 * 1024 * 1024);
+    }
+
+    @Test void theUploadSpoolBudgetIsReadFromTheEnvironmentAndSurvivesConfigurationCopies() {
+        var config = RepoServiceConfig.fromEnvironment(java.util.Map.of(
+                RepoServiceConfig.ENV_UPLOAD_SPOOL_BUDGET_BYTES, "1048576"));
+        assertThat(config.uploadSpoolBudgetBytes()).isEqualTo(1024L * 1024);
+        assertThat(config.withConceptSchemePaths(java.util.List.of()).uploadSpoolBudgetBytes()).isEqualTo(1024L * 1024);
+        assertThat(config.withManagedStorage(ManagedStoragePolicy.disabled()).uploadSpoolBudgetBytes())
+                .isEqualTo(1024L * 1024);
     }
 
     @Test void managedQualificationSurvivesConfigurationCopies() {

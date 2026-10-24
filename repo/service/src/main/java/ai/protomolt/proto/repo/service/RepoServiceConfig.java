@@ -126,6 +126,13 @@ import java.util.List;
  * @param conceptSchemePaths optional paths (files, directories, or {@code schemeId=path} specs)
  *        to concept scheme definitions mounted at startup
  *        ({@code DOCUMENT_PLATFORM_CONCEPT_SCHEMES} or {@code PROTOMOLT_REPO_CONCEPT_SCHEME_PATHS})
+ * @param uploadSpoolBudgetBytes the host's local disk budget for archive uploads that carry
+ *        an entry's primary rendition and pass the 1 MiB in-memory characterization window
+ *        ({@code DOCUMENT_PLATFORM_UPLOAD_SPOOL_BUDGET_BYTES}, default 4294967296 = 4 GiB).
+ *        Each such upload reserves its declared {@code size_bytes} plus one byte before it
+ *        writes a spool file under {@code java.io.tmpdir} and gives it back when the spool is
+ *        deleted; a reservation the remaining budget does not cover fails the upload with
+ *        {@code RESOURCE_EXHAUSTED}
  */
 public record RepoServiceConfig(
         int grpcPort,
@@ -155,7 +162,41 @@ public record RepoServiceConfig(
         boolean s3ConditionalWrites,
         ManagedStoragePolicy managedStorage,
         long readBudgetBytes,
+        List<Path> conceptSchemePaths,
+        long uploadSpoolBudgetBytes) {
+
+    /** Compatibility constructor: with the default upload spool budget. */
+    public RepoServiceConfig(
+        int grpcPort,
+        LedgerConfig ledger,
+        String s3Endpoint,
+        String s3Region,
+        String s3AccessKey,
+        String s3SecretKey,
+        String defaultBucketBase,
+        int httpPort,
+        String blobStore,
+        String redisUri,
+        int redisTtlSeconds,
+        long redisMaxObjectBytes,
+        boolean lifecycleEnabled,
+        long purgeIntervalMs,
+        long sweepIntervalMs,
+        boolean reconcileEnabled,
+        boolean reconcileDryRun,
+        long reconcileMinAgeMs,
+        String kafkaBootstrapServers,
+        String kafkaTopic,
+        String schemaRegistryUrl,
+        String seedAccountId,
+        String purgeQueue,
+        String kafkaPurgeTopic,
+        boolean s3ConditionalWrites,
+        ManagedStoragePolicy managedStorage,
+        long readBudgetBytes,
         List<Path> conceptSchemePaths) {
+        this(grpcPort, ledger, s3Endpoint, s3Region, s3AccessKey, s3SecretKey, defaultBucketBase, httpPort, blobStore, redisUri, redisTtlSeconds, redisMaxObjectBytes, lifecycleEnabled, purgeIntervalMs, sweepIntervalMs, reconcileEnabled, reconcileDryRun, reconcileMinAgeMs, kafkaBootstrapServers, kafkaTopic, schemaRegistryUrl, seedAccountId, purgeQueue, kafkaPurgeTopic, s3ConditionalWrites, managedStorage, readBudgetBytes, conceptSchemePaths, DEFAULT_UPLOAD_SPOOL_BUDGET_BYTES);
+    }
 
     /** Compatibility constructor: without startup concept scheme paths. */
     public RepoServiceConfig(
@@ -251,7 +292,7 @@ public record RepoServiceConfig(
     }
 
     public RepoServiceConfig withManagedStorage(ManagedStoragePolicy policy) {
-        return new RepoServiceConfig(grpcPort, ledger, s3Endpoint, s3Region, s3AccessKey, s3SecretKey, defaultBucketBase, httpPort, blobStore, redisUri, redisTtlSeconds, redisMaxObjectBytes, lifecycleEnabled, purgeIntervalMs, sweepIntervalMs, reconcileEnabled, reconcileDryRun, reconcileMinAgeMs, kafkaBootstrapServers, kafkaTopic, schemaRegistryUrl, seedAccountId, purgeQueue, kafkaPurgeTopic, s3ConditionalWrites, policy, readBudgetBytes, conceptSchemePaths);
+        return new RepoServiceConfig(grpcPort, ledger, s3Endpoint, s3Region, s3AccessKey, s3SecretKey, defaultBucketBase, httpPort, blobStore, redisUri, redisTtlSeconds, redisMaxObjectBytes, lifecycleEnabled, purgeIntervalMs, sweepIntervalMs, reconcileEnabled, reconcileDryRun, reconcileMinAgeMs, kafkaBootstrapServers, kafkaTopic, schemaRegistryUrl, seedAccountId, purgeQueue, kafkaPurgeTopic, s3ConditionalWrites, policy, readBudgetBytes, conceptSchemePaths, uploadSpoolBudgetBytes);
     }
 
     /**
@@ -261,7 +302,7 @@ public record RepoServiceConfig(
      * @return the updated configuration
      */
     public RepoServiceConfig withConceptSchemePaths(List<Path> paths) {
-        return new RepoServiceConfig(grpcPort, ledger, s3Endpoint, s3Region, s3AccessKey, s3SecretKey, defaultBucketBase, httpPort, blobStore, redisUri, redisTtlSeconds, redisMaxObjectBytes, lifecycleEnabled, purgeIntervalMs, sweepIntervalMs, reconcileEnabled, reconcileDryRun, reconcileMinAgeMs, kafkaBootstrapServers, kafkaTopic, schemaRegistryUrl, seedAccountId, purgeQueue, kafkaPurgeTopic, s3ConditionalWrites, managedStorage, readBudgetBytes, paths);
+        return new RepoServiceConfig(grpcPort, ledger, s3Endpoint, s3Region, s3AccessKey, s3SecretKey, defaultBucketBase, httpPort, blobStore, redisUri, redisTtlSeconds, redisMaxObjectBytes, lifecycleEnabled, purgeIntervalMs, sweepIntervalMs, reconcileEnabled, reconcileDryRun, reconcileMinAgeMs, kafkaBootstrapServers, kafkaTopic, schemaRegistryUrl, seedAccountId, purgeQueue, kafkaPurgeTopic, s3ConditionalWrites, managedStorage, readBudgetBytes, paths, uploadSpoolBudgetBytes);
     }
 
 
@@ -326,6 +367,8 @@ public record RepoServiceConfig(
     public static final String ENV_KAFKA_PURGE_TOPIC = "DOCUMENT_PLATFORM_KAFKA_PURGE_TOPIC";
     /** Environment variable for the read-side byte budget shared by concurrent verified reads. */
     public static final String ENV_READ_BUDGET_BYTES = "DOCUMENT_PLATFORM_READ_BUDGET_BYTES";
+    /** Environment variable for the local disk budget of staged archive uploads. */
+    public static final String ENV_UPLOAD_SPOOL_BUDGET_BYTES = "DOCUMENT_PLATFORM_UPLOAD_SPOOL_BUDGET_BYTES";
     /** Environment variable for startup concept-scheme files or directories. */
     public static final String ENV_CONCEPT_SCHEMES = "DOCUMENT_PLATFORM_CONCEPT_SCHEMES";
     /** Alias environment variable for startup concept-scheme files or directories. */
@@ -364,6 +407,9 @@ public record RepoServiceConfig(
     public static final String DEFAULT_KAFKA_PURGE_TOPIC = "document-purges";
     /** Default read-side byte budget: 256 MiB shared by concurrent verified reads. */
     public static final long DEFAULT_READ_BUDGET_BYTES = 256L * 1024 * 1024;
+    /** Default local disk budget for staged archive uploads: 4 GiB per host. */
+    public static final long DEFAULT_UPLOAD_SPOOL_BUDGET_BYTES =
+            ai.protomolt.proto.repo.archive.UploadSpoolBudget.DEFAULT_CAPACITY_BYTES;
 
     /**
      * Compatibility constructor: the pre-lifecycle components, with the
@@ -566,6 +612,9 @@ public record RepoServiceConfig(
         if (readBudgetBytes < 1) {
             readBudgetBytes = DEFAULT_READ_BUDGET_BYTES;
         }
+        if (uploadSpoolBudgetBytes < 1) {
+            uploadSpoolBudgetBytes = DEFAULT_UPLOAD_SPOOL_BUDGET_BYTES;
+        }
         conceptSchemePaths = conceptSchemePaths == null ? List.of() : List.copyOf(conceptSchemePaths);
     }
 
@@ -630,7 +679,8 @@ public record RepoServiceConfig(
                 env.flag(ENV_S3_CONDITIONAL_WRITES, false),
                 ManagedStoragePolicy.fromEnvironment(environment),
                 env.number(ENV_READ_BUDGET_BYTES, DEFAULT_READ_BUDGET_BYTES, 1, Long.MAX_VALUE),
-                parseConceptSchemePaths(environment));
+                parseConceptSchemePaths(environment),
+                env.number(ENV_UPLOAD_SPOOL_BUDGET_BYTES, DEFAULT_UPLOAD_SPOOL_BUDGET_BYTES, 1, Long.MAX_VALUE));
     }
 
     static List<Path> parseConceptSchemePaths(java.util.Map<String, String> environment) {

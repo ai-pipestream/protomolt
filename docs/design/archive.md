@@ -789,8 +789,11 @@ settle copy are retired.
   non-`parsed`, non-bridge-derived rendition in `(name, sub_key)` order. On
   `PutEntry` and `UploadRendition` (captured through `WindowCapture` over the
   upload stream, keeping the 64 KiB leading and 128 KiB circular trailing
-  windows in fixed memory and spilling streams above 1 MiB to a bounded
-  temporary spool file before sending the single `UploadHeader` frame), the
+  windows in fixed memory and spilling streams above 1 MiB to a temporary
+  spool file before sending the single `UploadHeader` frame; the spool reserves
+  the declared `size_bytes` + 1 against the host's
+  `DOCUMENT_PLATFORM_UPLOAD_SPOOL_BUDGET_BYTES` budget first, and an upload the
+  remaining budget does not cover fails with `RESOURCE_EXHAUSTED`), the
   primary rendition's byte windows are characterized with
   `Characterizer.identify` and resolved with `Classifications.resolve` against
   the effective `declared` and `origin` facts. When the resolved

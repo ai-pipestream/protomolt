@@ -206,6 +206,7 @@ public final class DocumentArchive {
     private final Clock clock;
     private final long maxUnaryGetBytes;
     private final BridgeEngine bridgeEngine;
+    private final UploadSpoolBudget uploadSpoolBudget;
 
     /**
      * Constructs a {@link DocumentArchive} with {@link #DEFAULT_MAX_UNARY_GET_BYTES}
@@ -263,6 +264,29 @@ public final class DocumentArchive {
             Clock clock,
             long maxUnaryGetBytes,
             BridgeEngine bridgeEngine) {
+        this(documents, bindings, clock, maxUnaryGetBytes, bridgeEngine,
+                new UploadSpoolBudget(UploadSpoolBudget.DEFAULT_CAPACITY_BYTES));
+    }
+
+    /**
+     * Constructs a {@link DocumentArchive} with an explicit unary {@code GetEntry} byte limit,
+     * {@link BridgeEngine} and upload spool budget.
+     *
+     * @param documents the v2 document service the archive is stored through
+     * @param bindings the archive definitions
+     * @param clock stamps {@code created_at} on an entry's creating save
+     * @param maxUnaryGetBytes maximum total rendition bytes assembled in one unary {@code GetEntry}
+     * @param bridgeEngine the bridges this archive can execute
+     * @param uploadSpoolBudget the host's disk budget for staging large primary-rendition
+     *        uploads; share one instance across every archive a host serves
+     */
+    public DocumentArchive(
+            Channel documents,
+            ArchiveBindings bindings,
+            Clock clock,
+            long maxUnaryGetBytes,
+            BridgeEngine bridgeEngine,
+            UploadSpoolBudget uploadSpoolBudget) {
         Objects.requireNonNull(documents, "documents");
         Objects.requireNonNull(bindings, "bindings");
         if (maxUnaryGetBytes <= 0) {
@@ -278,6 +302,7 @@ public final class DocumentArchive {
         this.clock = Objects.requireNonNull(clock, "clock");
         this.maxUnaryGetBytes = maxUnaryGetBytes;
         this.bridgeEngine = Objects.requireNonNull(bridgeEngine, "bridgeEngine");
+        this.uploadSpoolBudget = Objects.requireNonNull(uploadSpoolBudget, "uploadSpoolBudget");
         this.views = new ArchiveViews();
     }
 
@@ -287,6 +312,10 @@ public final class DocumentArchive {
 
     ArchiveViews views() {
         return views;
+    }
+
+    UploadSpoolBudget uploadSpoolBudget() {
+        return uploadSpoolBudget;
     }
 
     // --------------------------------------------------- archive definitions
