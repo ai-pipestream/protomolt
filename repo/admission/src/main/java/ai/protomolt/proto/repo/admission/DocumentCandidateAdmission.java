@@ -307,12 +307,11 @@ public final class DocumentCandidateAdmission {
                         throw new ContentRefused(fragment.part() + " fragment holds link " + found.getFirst().fieldPath()
                                 + "; links belong in CORE", null);
                     links.addAll(found);
-                    // Concept tags share the CORE-rooted occurrence identity of links.
+                    // Concept tags share the CORE-rooted occurrence identity of links. A tag in another
+                    // part is checked the same way and stored with that part, but only CORE's are
+                    // catalogued: mapping carries an interpretation into CORE to make it filterable.
                     var tags = DocumentConcepts.extract(parsed, "");
-                    if (!tags.isEmpty() && fragment.part() != DocumentPart.DOCUMENT_PART_CORE)
-                        throw new ContentRefused(fragment.part() + " fragment holds concept tag " + tags.getFirst().fieldPath()
-                                + "; concept tags belong in CORE", null);
-                    concepts.addAll(tags);
+                    if (fragment.part() == DocumentPart.DOCUMENT_PART_CORE) concepts.addAll(tags);
                     switch (fragment.part()) {
                         case DOCUMENT_PART_CHUNKS -> DocumentFragmentConfinement.requireConfinedSegmentation(parsed,
                                 fragment.key().get(0), request.docId());
@@ -436,10 +435,7 @@ public final class DocumentCandidateAdmission {
                         } catch (DocumentConcepts.TagRefused refused) {
                             throw new ContentRefused("concept tags of " + envelope.getTypeUrl() + ": " + refused.getMessage(), refused);
                         }
-                        if (!rootTags.isEmpty() && fragment.part() != DocumentPart.DOCUMENT_PART_CORE)
-                            throw new ContentRefused(fragment.part() + " payload " + envelope.getTypeUrl()
-                                    + " holds concept tag " + rootTags.getFirst().fieldPath() + "; concept tags belong in CORE", null);
-                        concepts.addAll(rootTags);
+                        if (fragment.part() == DocumentPart.DOCUMENT_PART_CORE) concepts.addAll(rootTags);
                         decodedRemaining -= accepted.checked().payload().decodedBytes();
                         for (var terminal : accepted.checked().payload().opaqueTerminals()) {
                             var steps = new ArrayList<>(locator.getAccessList());

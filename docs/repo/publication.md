@@ -285,9 +285,14 @@ save as content. Reads and catalog
 rebuilds decode stored content without deciding membership again, so a host
 that has not mounted a scheme still reads what was admitted. Tags in a typed
 nested `Any` are read as links are, without a path segment for the `Any`. A
-tag outside CORE, one a map value reaches through a typed `Any`, or one whose
-field path is over 1024 UTF-8 bytes (`concept-catalog-storable`) fails the
-save.
+tag a map value reaches through a typed `Any`, or a CORE tag whose field path
+is over 1024 UTF-8 bytes (`concept-catalog-storable`), fails the save.
+
+A tag in another part, such as a parser's output in PARSED, is checked the
+same way (membership against the mounts, the canonical `ConceptRef`) and stored
+with that part, but it is not catalogued, so a concept filter does not match
+it. PARSED is the parser's claim-check output; the mapping step carries an
+interpretation worth filtering on into CORE.
 
 Tags project into `catalog_document_concepts` under the same
 `(field_path, ordinal)` identity as links: current revision only, replaced by
