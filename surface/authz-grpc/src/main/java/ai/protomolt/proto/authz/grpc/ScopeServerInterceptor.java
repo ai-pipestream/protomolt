@@ -149,6 +149,8 @@ public final class ScopeServerInterceptor implements ServerInterceptor {
      * compressed messages.
      *
      * @param builder the server builder to configure
+     * @throws IllegalStateException when {@code builder}'s decompressor registry cannot be
+     *         read; pass it to {@link #configure(ServerBuilder, DecompressorRegistry)} instead
      */
     public void configure(ServerBuilder<?> builder) {
         Objects.requireNonNull(builder, "builder");
@@ -309,7 +311,10 @@ public final class ScopeServerInterceptor implements ServerInterceptor {
             throw new IllegalStateException(
                     "Failed to inspect gRPC ServerBuilder decompressorRegistry", e);
         }
-        return DecompressorRegistry.getDefaultInstance();
+        // Installing the defaults here would drop the builder's own codecs without a word.
+        throw new IllegalStateException("Cannot read the decompressor registry of "
+                + builder.getClass().getName()
+                + "; pass it to configure(ServerBuilder, DecompressorRegistry)");
     }
 
     private static Object unwrapServerBuilder(Object current)

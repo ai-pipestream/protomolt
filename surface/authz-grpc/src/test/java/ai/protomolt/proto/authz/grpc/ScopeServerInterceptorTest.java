@@ -18,6 +18,7 @@ import io.grpc.ManagedChannel;
 import io.grpc.Metadata;
 import io.grpc.MethodDescriptor;
 import io.grpc.Server;
+import io.grpc.ServerBuilder;
 import io.grpc.ServerCall;
 import io.grpc.ServerInterceptor;
 import io.grpc.ServerServiceDefinition;
@@ -833,7 +834,8 @@ class ScopeServerInterceptorTest {
         Decompressor customDecompressor = customCodec;
         DecompressorRegistry customRegistry = DecompressorRegistry.getDefaultInstance()
                 .with(customDecompressor, true);
-        CompressorRegistry clientCompressors = CompressorRegistry.getDefaultInstance();
+        CompressorRegistry clientCompressors = CompressorRegistry.newEmptyInstance();
+        clientCompressors.register(new Codec.Gzip());
         clientCompressors.register(customCodec);
 
         AtomicInteger parses = new AtomicInteger();
@@ -895,6 +897,66 @@ class ScopeServerInterceptorTest {
         } finally {
             nettyChannel.shutdownNow();
             nettyServer.shutdownNow();
+        }
+    }
+
+    @Test
+    void configureRefusesABuilderWhoseDecompressorRegistryItCannotRead() {
+        ScopeServerInterceptor scopes = new ScopeServerInterceptor(
+                Map.of(HEALTH, Scopes.METRICS_QUERY), Map.of(), Set.of());
+        ServerBuilder<?> opaque = new OpaqueServerBuilder();
+
+        assertThatThrownBy(() -> scopes.configure(opaque))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining(OpaqueServerBuilder.class.getName())
+                .hasMessageContaining("configure(ServerBuilder, DecompressorRegistry)");
+    }
+
+    /** A builder with no registry field and no builder it forwards to that the walk can see. */
+    private static final class OpaqueServerBuilder extends ServerBuilder<OpaqueServerBuilder> {
+        @Override
+        public OpaqueServerBuilder directExecutor() {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public OpaqueServerBuilder executor(java.util.concurrent.Executor executor) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public OpaqueServerBuilder addService(ServerServiceDefinition service) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public OpaqueServerBuilder addService(io.grpc.BindableService bindableService) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public OpaqueServerBuilder fallbackHandlerRegistry(io.grpc.HandlerRegistry fallbackRegistry) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public OpaqueServerBuilder useTransportSecurity(java.io.File certChain, java.io.File privateKey) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public OpaqueServerBuilder decompressorRegistry(DecompressorRegistry registry) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public OpaqueServerBuilder compressorRegistry(CompressorRegistry registry) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public Server build() {
+            throw new UnsupportedOperationException();
         }
     }
 
