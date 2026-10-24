@@ -272,10 +272,14 @@ until then.
 A concept tag is a value of a `ConceptRef` field in CORE, including the typed
 `structured_data` payload, whose field rules bind it to concept schemes
 (`concept_schemes`, well-known types "Concept schemes (SKOS)"). A save decides
-each tag's membership against the concept schemes the host mounts
-(`DocumentSaves` takes the host's `ConceptSchemeCatalog`; the served
-repository gets them from `RepoServices.withConceptSchemes` and mounts none
-without it): a concept the mounted scheme lacks is `concept.member` and a
+each tag's membership against the concept schemes the host mounts;
+`DocumentSaves` takes the host's `ConceptSchemeCatalog`. The stock repository
+loads configured scheme files at boot from
+`DOCUMENT_PLATFORM_CONCEPT_SCHEMES`, or its alias
+`PROTOMOLT_REPO_CONCEPT_SCHEME_PATHS`. Embedding hosts can provide
+`RepoServiceConfig.conceptSchemePaths` or call `RepoServices.withConceptSchemes`.
+Without configured paths or supplied mounts, no schemes are mounted.
+A concept the mounted scheme lacks is `concept.member` and a
 bound scheme the host has not mounted is `concept.unmounted`, both
 `VALIDATION_FAILED`. A tag is read as the canonical `ConceptRef` and held to
 its own rules, whatever a self-contained payload schema declares under that
