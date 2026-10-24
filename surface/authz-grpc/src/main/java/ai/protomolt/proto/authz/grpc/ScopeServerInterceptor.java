@@ -50,7 +50,8 @@ public final class ScopeServerInterceptor implements ServerInterceptor {
     private static final int MAX_CALL_UNWRAP_DEPTH = 16;
     private static final ThreadLocal<InboundFrameTracker> PENDING_COMPRESSED_TRACKER =
             new ThreadLocal<>();
-    private static final DecompressorRegistry DECOMPRESSOR_REGISTRY = buildDecompressorRegistry();
+    private static final DecompressorRegistry DECOMPRESSOR_REGISTRY =
+            wrapDecompressorRegistry(DecompressorRegistry.getDefaultInstance());
 
     private final Map<String, String> serviceScopes;
     private final Map<String, String> methodScopes;
@@ -65,16 +66,17 @@ public final class ScopeServerInterceptor implements ServerInterceptor {
         }
     };
 
-    private static DecompressorRegistry buildDecompressorRegistry() {
-        DecompressorRegistry defaults = DecompressorRegistry.getDefaultInstance();
-        Set<String> advertised = defaults.getAdvertisedMessageEncodings();
+    static DecompressorRegistry wrapDecompressorRegistry(DecompressorRegistry base) {
+        Objects.requireNonNull(base, "base");
+        Set<String> advertised = base.getAdvertisedMessageEncodings();
         DecompressorRegistry registry = DecompressorRegistry.emptyInstance();
-        for (String encoding : defaults.getKnownMessageEncodings()) {
-            Decompressor delegate = defaults.lookupDecompressor(encoding);
+        for (String encoding : base.getKnownMessageEncodings()) {
+            Decompressor delegate = base.lookupDecompressor(encoding);
             if (delegate != null) {
-                registry = registry.with(
-                        new PayloadCapDecompressor(delegate),
-                        advertised.contains(encoding));
+                Decompressor wrapped = delegate instanceof PayloadCapDecompressor
+                        ? delegate
+                        : new PayloadCapDecompressor(delegate);
+                registry = registry.with(wrapped, advertised.contains(encoding));
             }
         }
         return registry;
@@ -138,16 +140,39 @@ public final class ScopeServerInterceptor implements ServerInterceptor {
     }
 
     /**
-     * Attaches the payload-cap-aware decompressor registry, {@link #streamTracerFactory()},
-     * and this interceptor to {@code builder} so positive per-scope payload caps and rate
-     * budgets are enforced on frame arrival before {@code halfClose()} for both uncompressed
-     * and compressed messages.
+     * Attaches the payload-cap-aware decompressor registry (preserving any decompressors
+     * already registered on {@code builder}), {@link #streamTracerFactory()}, and this
+     * interceptor to {@code builder} so positive per-scope payload caps and rate budgets
+     * are enforced on frame arrival before {@code halfClose()} for both uncompressed and
+     * compressed messages.
      *
      * @param builder the server builder to configure
+     * @throws IllegalStateException when {@code builder}'s decompressor registry cannot be
+     *         read; pass it to {@link #configure(ServerBuilder, DecompressorRegistry)} instead
      */
     public void configure(ServerBuilder<?> builder) {
         Objects.requireNonNull(builder, "builder");
-        builder.decompressorRegistry(DECOMPRESSOR_REGISTRY)
+        configure(builder, decompressorRegistryOf(builder));
+    }
+
+    /**
+     * Attaches {@code decompressorRegistry} wrapped with payload-cap inspection,
+     * {@link #streamTracerFactory()}, and this interceptor to {@code builder} so positive
+     * per-scope payload caps and rate budgets are enforced on frame arrival before
+     * {@code halfClose()} across all configured message encodings.
+     *
+     * @param builder the server builder to configure
+     * @param decompressorRegistry the decompressor registry whose codecs should be wrapped
+     */
+    public void configure(
+            ServerBuilder<?> builder, DecompressorRegistry decompressorRegistry) {
+        Objects.requireNonNull(builder, "builder");
+        Objects.requireNonNull(decompressorRegistry, "decompressorRegistry");
+        DecompressorRegistry wrapped =
+                decompressorRegistry == DecompressorRegistry.getDefaultInstance()
+                        ? DECOMPRESSOR_REGISTRY
+                        : wrapDecompressorRegistry(decompressorRegistry);
+        builder.decompressorRegistry(wrapped)
                 .addStreamTracerFactory(tracerFactory)
                 .intercept(this);
     }
@@ -265,7 +290,79 @@ public final class ScopeServerInterceptor implements ServerInterceptor {
             Caller.Budget budget, ScopeBudgets budgets) {
     }
 
-    private static Object rawDeframerOf(ServerCall<?, ?> call) {
+    static DecompressorRegistry decompressorRegistryOf(ServerBuilder<?> builder) {
+        try {
+            Object current = builder;
+            for (int depth = 0; current != null && depth < MAX_CALL_UNWRAP_DEPTH; depth++) {
+                Field registryField = findField(current.getClass(), "decompressorRegistry");
+                if (registryField != null
+                        && DecompressorRegistry.class.isAssignableFrom(registryField.getType())) {
+                    registryField.setAccessible(true);
+                    Object value = registryField.get(current);
+                    if (value instanceof DecompressorRegistry registry) {
+                        return registry;
+                    }
+                }
+                current = unwrapServerBuilder(current);
+            }
+        } catch (ReflectiveOperationException e) {
+            throw new IllegalStateException(
+                    "Failed to inspect gRPC ServerBuilder decompressorRegistry", e);
+        }
+        // Installing the defaults here would drop the builder's own codecs without a word.
+        throw new IllegalStateException("Cannot read the decompressor registry of "
+                + builder.getClass().getName()
+                + "; pass it to configure(ServerBuilder, DecompressorRegistry)");
+    }
+
+    private static Object unwrapServerBuilder(Object current)
+            throws ReflectiveOperationException {
+        Method delegateMethod = findNoArgMethod(current.getClass(), "delegate");
+        if (delegateMethod != null) {
+            delegateMethod.setAccessible(true);
+            Object next = delegateMethod.invoke(current);
+            if (next instanceof ServerBuilder<?> && next != current) {
+                return next;
+            }
+        }
+        for (Class<?> cursor = current.getClass();
+                cursor != null && cursor != ServerBuilder.class && cursor != Object.class;
+                cursor = cursor.getSuperclass()) {
+            for (Field field : cursor.getDeclaredFields()) {
+                if (Modifier.isStatic(field.getModifiers())) {
+                    continue;
+                }
+                field.setAccessible(true);
+                Object value = field.get(current);
+                if (value instanceof ServerBuilder<?> && value != current) {
+                    return value;
+                }
+            }
+        }
+        return null;
+    }
+
+    static boolean hasDeframerListenerHook(ServerCall<?, ?> call) {
+        Object deframer = rawDeframerOf(call);
+        if (deframer == null) {
+            return false;
+        }
+        Field listenerField = findField(deframer.getClass(), "listener");
+        if (listenerField == null) {
+            return false;
+        }
+        try {
+            listenerField.setAccessible(true);
+            Object current = listenerField.get(deframer);
+            return current != null
+                    && Proxy.isProxyClass(current.getClass())
+                    && Proxy.getInvocationHandler(current) instanceof DeframerListenerHandler;
+        } catch (ReflectiveOperationException e) {
+            throw new IllegalStateException("Failed to inspect gRPC MessageDeframer listener", e);
+        }
+    }
+
+    static Object rawDeframerOf(ServerCall<?, ?> call) {
         try {
             Object current = call;
             int depth = 0;

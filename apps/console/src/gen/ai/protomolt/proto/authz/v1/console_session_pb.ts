@@ -141,7 +141,7 @@ export const ConsoleSessionStatusSchema: GenMessage<ConsoleSessionStatus> = /*@_
  */
 export enum SignInFailure {
   /**
-   * SIGN_IN_FAILURE_UNSPECIFIED indicates no specific failure reason was recorded.
+   * No failure occurred (the sign-in completed), or no failure reason was set.
    *
    * @generated from enum value: SIGN_IN_FAILURE_UNSPECIFIED = 0;
    */

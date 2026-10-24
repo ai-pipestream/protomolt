@@ -23,6 +23,7 @@ import ai.protomolt.proto.repo.v2.DocumentTarget;
 import ai.protomolt.proto.repo.v2.DynamicTarget;
 import ai.protomolt.proto.repo.v2.ExpectedRevision;
 import ai.protomolt.proto.repo.v2.FieldViolation;
+import ai.protomolt.proto.repo.v2.GetDocumentRequest;
 import ai.protomolt.proto.repo.v2.IntakeOrigin;
 import ai.protomolt.proto.repo.v2.LinkField;
 import ai.protomolt.proto.repo.v2.LinksProto;
@@ -185,11 +186,60 @@ class RepoV2WiringIT {
         }
     }
 
+    @Test
+    void saveBudgetReportsSaveExhaustionAndIsIsolatedFromTheReadBudget() {
+        String account = "wiring-save-budget";
+        long budgetBytes = 200_000L;
+        try (var services = RepoServices.build(config(budgetBytes))) {
+            services.withAdmittedSchemas(List.of(FILE));
+            var channel = start(services);
+            try {
+                var documents = DocumentServiceGrpc.newBlockingStub(channel);
+                intakeDrive(channel, account);
+
+                assertThatThrownBy(() -> documents.saveDocument(save(account, "over-budget",
+                        p -> p.setField(PAPER.findFieldByName("title"), "x".repeat(250_000)))))
+                        .isInstanceOfSatisfying(StatusRuntimeException.class, failure -> {
+                            assertThat(failure.getStatus().getCode())
+                                    .isEqualTo(Status.Code.RESOURCE_EXHAUSTED);
+                            assertThat(failure.getStatus().getDescription())
+                                    .contains("Save buffer budget exhausted");
+                        });
+
+                try (var heldRead = services.readBudget().reserve(budgetBytes)) {
+                    var saved = documents.saveDocument(save(account, "within-budget", p -> {}));
+                    assertThat(saved.getAccession().getRevision()).isEqualTo(1L);
+
+                    assertThatThrownBy(() -> documents.getDocument(GetDocumentRequest.newBuilder()
+                            .setAddress(address(account, "within-budget"))
+                            .build()))
+                            .isInstanceOfSatisfying(StatusRuntimeException.class, failure -> {
+                                assertThat(failure.getStatus().getCode())
+                                        .isEqualTo(Status.Code.RESOURCE_EXHAUSTED);
+                                assertThat(failure.getStatus().getDescription())
+                                        .contains("Read buffer budget exhausted");
+                            });
+                }
+
+                var fetched = documents.getDocument(GetDocumentRequest.newBuilder()
+                        .setAddress(address(account, "within-budget"))
+                        .build());
+                assertThat(fetched.getDocument().getDocId()).isEqualTo("within-budget");
+            } finally {
+                channel.shutdownNow();
+            }
+        }
+    }
+
     // ------------------------------------------------------------------
     // Fixtures
     // ------------------------------------------------------------------
 
     private static RepoServiceConfig config() {
+        return config(0L);
+    }
+
+    private static RepoServiceConfig config(long readBudgetBytes) {
         return new RepoServiceConfig(
                 0,
                 new LedgerConfig(POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword()),
@@ -199,7 +249,11 @@ class RepoV2WiringIT {
                 LOCALSTACK.getSecretKey(),
                 "it-wiring",
                 0,
-                null, null, 0, 0L);
+                null, null, 0, 0L,
+                false, 0L, 0L, false, true, 0L,
+                null, null, null, null, null, null,
+                false, ManagedStoragePolicy.disabled(),
+                readBudgetBytes);
     }
 
     private static ManagedChannel start(RepoServices services) {
