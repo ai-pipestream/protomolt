@@ -202,7 +202,8 @@ class UploadHttpServerCredentialTest {
 
             HttpResponse<String> ok = send(target, "api_token", TOKEN);
 
-            assertThat(ok.statusCode()).as(ok.body()).isEqualTo(200);
+            // The recording archive answers NOT_FOUND once it has seen the caller.
+            assertThat(ok.statusCode()).as(ok.body()).isEqualTo(404);
             assertThat(captured.get().principalName()).isEqualTo("operator");
             assertThat(captured.get().processAuthority()).isTrue();
         }
@@ -214,7 +215,7 @@ class UploadHttpServerCredentialTest {
         // without a Connect gateway on the port.
         var captured = new java.util.concurrent.atomic.AtomicReference<ai.protomolt.proto.repo.spi.RepositoryCaller>();
         var bound = new java.util.concurrent.atomic.AtomicReference<ai.protomolt.proto.authz.AuthenticatedCaller>();
-        try (var direct = new UploadHttpServer(null, null, TOKEN, null, recordingArchive(captured), null,
+        try (var direct = UploadHttpServer.withArchive(null, null, TOKEN, recordingArchive(captured),
                 RepositoryConsole.notConfigured(), java.util.Map.of(), null,
                 ai.protomolt.proto.authz.RequestCallerResolver.bearer(TOKEN),
                 auth -> {
@@ -231,7 +232,7 @@ class UploadHttpServerCredentialTest {
             assertThat(captured.get()).isNull();
 
             HttpResponse<String> ok = send(target, "Authorization", "Bearer " + TOKEN);
-            assertThat(ok.statusCode()).as(ok.body()).isEqualTo(200);
+            assertThat(ok.statusCode()).as(ok.body()).isEqualTo(404);
             assertThat(bound.get().caller().name()).isEqualTo("operator");
             assertThat(captured.get().principalName()).isEqualTo("operator");
             assertThat(captured.get().processAuthority()).isTrue();
@@ -249,18 +250,47 @@ class UploadHttpServerCredentialTest {
                 HttpResponse.BodyHandlers.ofString());
     }
 
-    /** An archive port that records the caller of each upload and accepts it. */
-    static ai.protomolt.proto.repo.spi.ArchiveRepository recordingArchive(
+    /** A v2 archive whose document service records the caller of each upload and answers NOT_FOUND. */
+    static ai.protomolt.proto.repo.archive.DocumentArchive recordingArchive(
             java.util.concurrent.atomic.AtomicReference<ai.protomolt.proto.repo.spi.RepositoryCaller> captured) {
-        return (ai.protomolt.proto.repo.spi.ArchiveRepository) java.lang.reflect.Proxy.newProxyInstance(
-                UploadHttpServerCredentialTest.class.getClassLoader(),
-                new Class<?>[] { ai.protomolt.proto.repo.spi.ArchiveRepository.class },
-                (proxy, method, args) -> {
-                    captured.set((ai.protomolt.proto.repo.spi.RepositoryCaller) args[0]);
-                    ((java.io.InputStream) args[9]).readAllBytes();
-                    return new ai.protomolt.proto.repo.spi.ArchiveRepository.UploadResult(
-                            "entry-uuid", 1L, "sha", 1L, "obj", "root", false);
-                });
+        io.grpc.Channel recording = new io.grpc.Channel() {
+            @Override
+            public <RequestT, ResponseT> io.grpc.ClientCall<RequestT, ResponseT> newCall(
+                    io.grpc.MethodDescriptor<RequestT, ResponseT> methodDescriptor,
+                    io.grpc.CallOptions callOptions) {
+                captured.set(ArchiveCallerHandoff.REPOSITORY_CALLER.get());
+                return new io.grpc.ClientCall<>() {
+                    private Listener<ResponseT> listener;
+
+                    @Override
+                    public void start(Listener<ResponseT> responseListener, io.grpc.Metadata headers) {
+                        this.listener = responseListener;
+                    }
+
+                    @Override
+                    public void request(int numMessages) {}
+
+                    @Override
+                    public void cancel(String message, Throwable cause) {}
+
+                    @Override
+                    public void halfClose() {
+                        listener.onClose(io.grpc.Status.NOT_FOUND.withDescription("synthetic not found"),
+                                new io.grpc.Metadata());
+                    }
+
+                    @Override
+                    public void sendMessage(RequestT message) {}
+                };
+            }
+
+            @Override
+            public String authority() {
+                return "recording";
+            }
+        };
+        return new ai.protomolt.proto.repo.archive.DocumentArchive(
+                recording, (accountId, archive) -> java.util.Optional.empty(), java.time.Clock.systemUTC());
     }
 
     /** Credential and validation failures fire before the archive port is ever called. */
