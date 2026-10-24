@@ -117,7 +117,6 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.TreeMap;
 import java.util.UUID;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutionException;
 import java.util.stream.Collectors;
 
@@ -180,19 +179,12 @@ public final class DocumentArchive {
     private static final PartSelection BLOBS_ONLY = PartSelection.newBuilder()
             .addSelectors(ArchiveCoordinates.BLOBS).build();
 
-    private record MutationKey(String accountId, String operationId) {
-    }
-
-    private record RefusedMutation(String kind, String commandSha256, String refusalMessage) {
-    }
-
     private final DocumentServiceGrpc.DocumentServiceBlockingStub documents;
     private final DocumentServiceGrpc.DocumentServiceFutureStub futureDocuments;
     private final ArchiveBindings bindings;
     private final ArchiveViews views;
     private final Clock clock;
     private final long maxUnaryGetBytes;
-    private final Map<MutationKey, RefusedMutation> refusedMutations = new ConcurrentHashMap<>();
 
     /**
      * Constructs a {@link DocumentArchive} with {@link #DEFAULT_MAX_UNARY_GET_BYTES}.
@@ -971,10 +963,6 @@ public final class DocumentArchive {
      */
     Optional<Recorded> recordedOutcome(NodeAddress address, String operationId, String contentSha256,
             boolean derivedLastWriteWins) {
-        if (refusedMutations.containsKey(new MutationKey(address.getAccountId(), operationId))) {
-            throw ArchiveErrors.alreadyExists("operation_id", operationId
-                    + " is recorded for a request with other content");
-        }
         GetOperationOutcomeResponse outcome = documents.getOperationOutcome(GetOperationOutcomeRequest.newBuilder()
                 .setAccountId(address.getAccountId())
                 .setOperationId(operationId)
@@ -1654,11 +1642,6 @@ public final class DocumentArchive {
                         .setOperationId(operationId)
                         .build());
         if (!outcome.hasCommitted()) {
-            RefusedMutation local =
-                    refusedMutations.get(new MutationKey(request.getAccountId(), operationId));
-            if (local != null) {
-                throw ArchiveErrors.failedPrecondition(local.refusalMessage());
-            }
             throw ArchiveErrors.notFound("Archive mutation " + operationId + " does not exist");
         }
         RecordedOutcome recorded = outcome.getCommitted();
@@ -1691,10 +1674,6 @@ public final class DocumentArchive {
             String operationId,
             long expectedVersion,
             boolean derivedLastWriteWins) {
-        if (refusedMutations.containsKey(new MutationKey(address.getAccountId(), operationId))) {
-            throw ArchiveErrors.alreadyExists(
-                    "operation_id", operationId + " is recorded for a non-delete operation");
-        }
         GetOperationOutcomeResponse outcome = documents.getOperationOutcome(
                 GetOperationOutcomeRequest.newBuilder()
                         .setAccountId(address.getAccountId())
@@ -1705,10 +1684,14 @@ public final class DocumentArchive {
         }
         RecordedOutcome recorded = outcome.getCommitted();
         if (recorded.hasRejection()) {
+            String recordedKind =
+                    recorded.getRequestMetadataOrDefault(MUTATION_KIND_METADATA, "");
             String recordedSha256 =
                     recorded.getRequestMetadataOrDefault(MUTATION_SHA256_METADATA, "");
             String commandSha256 = ArchiveOperationKeys.deleteEntryCommandSha256(entryAddress);
-            if (!recordedSha256.isEmpty() && recordedSha256.equals(commandSha256)) {
+            if (recordedKind.equals(ArchiveMutationKind.ARCHIVE_MUTATION_KIND_DELETE_ENTRY.name())
+                    && !recordedSha256.isEmpty()
+                    && recordedSha256.equals(commandSha256)) {
                 throw mutationRejection(recorded);
             }
             throw ArchiveErrors.alreadyExists(
@@ -1790,15 +1773,6 @@ public final class DocumentArchive {
             String kind,
             String commandSha256,
             String refusalMessage) {
-        MutationKey key = new MutationKey(entryAddress.getAccountId(), operationId);
-        RefusedMutation local = refusedMutations.get(key);
-        if (local != null) {
-            if (local.commandSha256().equals(commandSha256)) {
-                return ArchiveErrors.failedPrecondition(local.refusalMessage());
-            }
-            return ArchiveErrors.alreadyExists(
-                    "operation_id", operationId + " is already recorded for another operation");
-        }
         GetOperationOutcomeResponse outcome = documents.getOperationOutcome(
                 GetOperationOutcomeRequest.newBuilder()
                         .setAccountId(entryAddress.getAccountId())
@@ -1806,19 +1780,16 @@ public final class DocumentArchive {
                         .build());
         if (outcome.hasCommitted()) {
             RecordedOutcome recorded = outcome.getCommitted();
+            String recordedKind =
+                    recorded.getRequestMetadataOrDefault(MUTATION_KIND_METADATA, "");
             String recordedSha256 =
                     recorded.getRequestMetadataOrDefault(MUTATION_SHA256_METADATA, "");
             if (recorded.hasRejection()
+                    && recordedKind.equals(kind)
                     && !recordedSha256.isEmpty()
                     && recordedSha256.equals(commandSha256)) {
                 return mutationRejection(recorded);
             }
-            return ArchiveErrors.alreadyExists(
-                    "operation_id", operationId + " is already recorded for another operation");
-        }
-        RefusedMutation racedLocal = refusedMutations.putIfAbsent(
-                key, new RefusedMutation(kind, commandSha256, refusalMessage));
-        if (racedLocal != null && !racedLocal.commandSha256().equals(commandSha256)) {
             return ArchiveErrors.alreadyExists(
                     "operation_id", operationId + " is already recorded for another operation");
         }
@@ -1837,7 +1808,6 @@ public final class DocumentArchive {
                 bindings.find(entryAddress.getAccountId(), entryAddress.getArchive());
         String datasourceId =
                 binding.map(ArchiveBinding::datasourceId).orElse(DEFAULT_DATASOURCE_ID);
-        String drive = binding.map(ArchiveBinding::drive).orElse("");
         NodeAddress syntheticAddress = NodeAddress.newBuilder()
                 .setAccountId(entryAddress.getAccountId())
                 .setGraphId(MUTATION_GRAPH_PREFIX + entryAddress.getAccountId())
@@ -1863,31 +1833,44 @@ public final class DocumentArchive {
                 .setOwner(SaveOwner.newBuilder()
                         .setIntake(IntakeOrigin.newBuilder().setDatasourceId(datasourceId)))
                 .setValidationMode(ValidationMode.VALIDATION_MODE_TYPED)
-                .setDrive(drive)
                 .putMetadata(MUTATION_KIND_METADATA, kind)
                 .putMetadata(MUTATION_SHA256_METADATA, commandSha256)
                 .putMetadata(MUTATION_REFUSAL_METADATA, refusalMessage)
                 .build();
         try {
             documents.saveDocument(request);
+            throw Status.INTERNAL
+                    .withDescription(
+                            "Refused archive mutation save unexpectedly succeeded for "
+                                    + operationId)
+                    .asRuntimeException();
         } catch (StatusRuntimeException failure) {
             Status.Code code = failure.getStatus().getCode();
-            if (code == Status.Code.FAILED_PRECONDITION || code == Status.Code.UNIMPLEMENTED) {
-                return;
+            if (code != Status.Code.FAILED_PRECONDITION && code != Status.Code.ALREADY_EXISTS) {
+                throw failure;
             }
-            if (code == Status.Code.ALREADY_EXISTS) {
-                GetOperationOutcomeResponse raced = documents.getOperationOutcome(
+            GetOperationOutcomeResponse recorded;
+            try {
+                recorded = documents.getOperationOutcome(
                         GetOperationOutcomeRequest.newBuilder()
                                 .setAccountId(entryAddress.getAccountId())
                                 .setOperationId(operationId)
                                 .build());
-                if (raced.hasCommitted()
-                        && raced.getCommitted().hasRejection()
-                        && raced.getCommitted()
-                                .getRequestMetadataOrDefault(MUTATION_SHA256_METADATA, "")
-                                .equals(commandSha256)) {
-                    return;
-                }
+            } catch (StatusRuntimeException lookupFailure) {
+                failure.addSuppressed(lookupFailure);
+                throw failure;
+            }
+            if (recorded.hasCommitted()
+                    && recorded.getCommitted().hasRejection()
+                    && recorded.getCommitted()
+                            .getRequestMetadataOrDefault(MUTATION_KIND_METADATA, "")
+                            .equals(kind)
+                    && recorded.getCommitted()
+                            .getRequestMetadataOrDefault(MUTATION_SHA256_METADATA, "")
+                            .equals(commandSha256)) {
+                return;
+            }
+            if (code == Status.Code.ALREADY_EXISTS || recorded.hasCommitted()) {
                 throw ArchiveErrors.alreadyExists(
                         "operation_id",
                         operationId + " is already recorded for another operation");

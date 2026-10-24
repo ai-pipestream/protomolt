@@ -539,44 +539,50 @@ class DocumentArchiveTest {
         String deleteEntryCommandSha256 =
                 ArchiveOperationKeys.deleteEntryCommandSha256(entryAddress);
 
+        Map<String, RecordedOutcome> recordedOutcomes = new LinkedHashMap<>();
+        recordedOutcomes.put(
+                saveOpId,
+                RecordedOutcome.newBuilder()
+                        .setAccession(Accession.newBuilder()
+                                .setAddress(node)
+                                .setRevision(1L)
+                                .setTombstone(false)
+                                .setCommittedAt(NOW))
+                        .setRecordedAt(NOW)
+                        .build());
+        recordedOutcomes.put(
+                rejectedUploadOpId,
+                RecordedOutcome.newBuilder()
+                        .setRejection(SaveRejection.newBuilder()
+                                .setReason(RejectionReason.REJECTION_REASON_UPLOAD_MISMATCH)
+                                .setMessage("upload sha256 mismatch"))
+                        .putRequestMetadata(DocumentArchive.CONTENT_SHA256_METADATA, "f".repeat(64))
+                        .setRecordedAt(NOW)
+                        .build());
+        recordedOutcomes.put(
+                rejectedMutationOpId,
+                RecordedOutcome.newBuilder()
+                        .setRejection(SaveRejection.newBuilder()
+                                .setReason(RejectionReason.REJECTION_REASON_WRITE_DENIED)
+                                .setMessage("writer denied"))
+                        .putRequestMetadata(
+                                DocumentArchive.MUTATION_KIND_METADATA,
+                                ArchiveMutationKind.ARCHIVE_MUTATION_KIND_DELETE_ENTRY.name())
+                        .putRequestMetadata(
+                                DocumentArchive.MUTATION_SHA256_METADATA,
+                                deleteEntryCommandSha256)
+                        .setRecordedAt(NOW)
+                        .build());
+
         startService(new DocumentServiceGrpc.DocumentServiceImplBase() {
             @Override
             public void getOperationOutcome(
                     GetOperationOutcomeRequest request,
                     StreamObserver<GetOperationOutcomeResponse> responseObserver) {
-                if (request.getOperationId().equals(saveOpId)) {
+                RecordedOutcome outcome = recordedOutcomes.get(request.getOperationId());
+                if (outcome != null) {
                     responseObserver.onNext(GetOperationOutcomeResponse.newBuilder()
-                            .setCommitted(RecordedOutcome.newBuilder()
-                                    .setAccession(Accession.newBuilder()
-                                            .setAddress(node)
-                                            .setRevision(1L)
-                                            .setTombstone(false)
-                                            .setCommittedAt(NOW))
-                                    .setRecordedAt(NOW))
-                            .build());
-                } else if (request.getOperationId().equals(rejectedUploadOpId)) {
-                    responseObserver.onNext(GetOperationOutcomeResponse.newBuilder()
-                            .setCommitted(RecordedOutcome.newBuilder()
-                                    .setRejection(SaveRejection.newBuilder()
-                                            .setReason(RejectionReason.REJECTION_REASON_UPLOAD_MISMATCH)
-                                            .setMessage("upload sha256 mismatch"))
-                                    .putRequestMetadata(
-                                            DocumentArchive.CONTENT_SHA256_METADATA, "f".repeat(64))
-                                    .setRecordedAt(NOW))
-                            .build());
-                } else if (request.getOperationId().equals(rejectedMutationOpId)) {
-                    responseObserver.onNext(GetOperationOutcomeResponse.newBuilder()
-                            .setCommitted(RecordedOutcome.newBuilder()
-                                    .setRejection(SaveRejection.newBuilder()
-                                            .setReason(RejectionReason.REJECTION_REASON_WRITE_DENIED)
-                                            .setMessage("writer denied"))
-                                    .putRequestMetadata(
-                                            DocumentArchive.MUTATION_KIND_METADATA,
-                                            ArchiveMutationKind.ARCHIVE_MUTATION_KIND_DELETE_ENTRY.name())
-                                    .putRequestMetadata(
-                                            DocumentArchive.MUTATION_SHA256_METADATA,
-                                            deleteEntryCommandSha256)
-                                    .setRecordedAt(NOW))
+                            .setCommitted(outcome)
                             .build());
                 } else {
                     responseObserver.onNext(GetOperationOutcomeResponse.newBuilder()
@@ -584,6 +590,34 @@ class DocumentArchiveTest {
                             .build());
                 }
                 responseObserver.onCompleted();
+            }
+
+            @Override
+            public void saveDocument(
+                    SaveDocumentRequest request,
+                    StreamObserver<SaveDocumentResponse> responseObserver) {
+                if (recordedOutcomes.containsKey(request.getOperationId())) {
+                    responseObserver.onError(Status.ALREADY_EXISTS
+                            .withDescription("operation_id already recorded")
+                            .asRuntimeException());
+                    return;
+                }
+                if (request.getDerivedFromCount() > 0) {
+                    recordedOutcomes.put(
+                            request.getOperationId(),
+                            RecordedOutcome.newBuilder()
+                                    .setRejection(SaveRejection.newBuilder()
+                                            .setReason(RejectionReason.REJECTION_REASON_UNSPECIFIED)
+                                            .setMessage("unreadable lineage"))
+                                    .putAllRequestMetadata(request.getMetadataMap())
+                                    .setRecordedAt(NOW)
+                                    .build());
+                    responseObserver.onError(Status.FAILED_PRECONDITION
+                            .withDescription("unreadable lineage")
+                            .asRuntimeException());
+                    return;
+                }
+                responseObserver.onError(Status.UNIMPLEMENTED.asRuntimeException());
             }
 
             @Override
@@ -726,6 +760,80 @@ class DocumentArchiveTest {
                                 .setReason("GDPR erasure")
                                 .build()));
         assertThat(reusedOnRendition.getStatus().getCode()).isEqualTo(Status.Code.ALREADY_EXISTS);
+    }
+
+    @Test
+    void refuseUnsupportedMutationPropagatesUnconfirmedSaveFailureAndUnimplemented()
+            throws Exception {
+        EntryAddress entryAddress = EntryAddress.newBuilder()
+                .setAccountId(ACCOUNT)
+                .setArchive(ARCHIVE)
+                .setEntryId("e-unconfirmed")
+                .build();
+        String unimplementedOpId = "88888888-2222-4333-8444-555555555555";
+        String unrecordedPreconditionOpId = "99999999-2222-4333-8444-555555555555";
+
+        startService(new DocumentServiceGrpc.DocumentServiceImplBase() {
+            @Override
+            public void getOperationOutcome(
+                    GetOperationOutcomeRequest request,
+                    StreamObserver<GetOperationOutcomeResponse> responseObserver) {
+                responseObserver.onNext(GetOperationOutcomeResponse.newBuilder()
+                        .setNone(NoRecordedOutcome.getDefaultInstance())
+                        .build());
+                responseObserver.onCompleted();
+            }
+
+            @Override
+            public void saveDocument(
+                    SaveDocumentRequest request,
+                    StreamObserver<SaveDocumentResponse> responseObserver) {
+                if (request.getOperationId().equals(unimplementedOpId)) {
+                    responseObserver.onError(Status.UNIMPLEMENTED
+                            .withDescription("saveDocument not mounted")
+                            .asRuntimeException());
+                    return;
+                }
+                responseObserver.onError(Status.FAILED_PRECONDITION
+                        .withDescription("pre-rejection failure without recorded outcome")
+                        .asRuntimeException());
+            }
+        });
+
+        ArchiveBindings bindings = (acct, name) -> Optional.of(
+                new ArchiveBinding(acct, name, "ds", "", VersioningPolicy.VERSIONING_POLICY_RETAINED));
+        DocumentArchive archive = new DocumentArchive(channel, bindings, FIXED_CLOCK);
+
+        StatusRuntimeException unimplemented = catchThrowableOfType(
+                StatusRuntimeException.class,
+                () -> archive.deleteRendition(
+                        unimplementedOpId,
+                        DeleteRenditionRequest.newBuilder()
+                                .setAddress(entryAddress)
+                                .setRendition("original")
+                                .setReason("GDPR erasure")
+                                .build()));
+        assertThat(unimplemented.getStatus().getCode()).isEqualTo(Status.Code.UNIMPLEMENTED);
+
+        StatusRuntimeException unconfirmed = catchThrowableOfType(
+                StatusRuntimeException.class,
+                () -> archive.pruneVersions(
+                        unrecordedPreconditionOpId,
+                        PruneVersionsRequest.newBuilder()
+                                .setAddress(entryAddress)
+                                .setKeepLatest(1)
+                                .build()));
+        assertThat(unconfirmed.getStatus().getCode()).isEqualTo(Status.Code.FAILED_PRECONDITION);
+        assertThat(unconfirmed.getStatus().getDescription())
+                .contains("pre-rejection failure without recorded outcome");
+
+        StatusRuntimeException notFoundAfterUnconfirmed = catchThrowableOfType(
+                StatusRuntimeException.class,
+                () -> archive.getArchiveMutation(GetArchiveMutationRequest.newBuilder()
+                        .setAccountId(ACCOUNT)
+                        .setOperationId(unrecordedPreconditionOpId)
+                        .build()));
+        assertThat(notFoundAfterUnconfirmed.getStatus().getCode()).isEqualTo(Status.Code.NOT_FOUND);
     }
 
     private void startService(DocumentServiceGrpc.DocumentServiceImplBase service) throws Exception {

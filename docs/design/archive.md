@@ -939,12 +939,15 @@ counters over the `archive:<account_id>` graph documents and revision manifests
   `FAILED_PRECONDITION`.** Under v2 keep-forever retention, neither destructive
   byte removal across versions (`DeleteRendition`) nor version pruning
   (`PruneVersions`) has a v2 counterpart until per-blob purge or §13 retention
-  lands. After request and `operation_id` validation, both record a refusal
-  outcome under `(account_id, operation_id)` (retaining `archive.mutation_kind`,
-  `archive.mutation_sha256`, and `archive.mutation_refusal` so retries and
-  `GetArchiveMutation` replay the refusal and conflicting `operation_id` reuse
-  fails with `ALREADY_EXISTS`) and refuse by name with gRPC status
-  `FAILED_PRECONDITION`:
+  lands. After request and `operation_id` validation (without checking archive
+  binding or entry existence first, since the operation is unconditionally
+  unsupported under keep-forever), both record a refusal outcome in
+  `DocumentService` under `(account_id, operation_id)` (retaining
+  `archive.mutation_kind`, `archive.mutation_sha256`, and
+  `archive.mutation_refusal`, and confirming the recorded rejection via
+  `GetOperationOutcome` so retries and `GetArchiveMutation` replay the refusal
+  and conflicting `operation_id` reuse fails with `ALREADY_EXISTS`) and refuse
+  by name with gRPC status `FAILED_PRECONDITION`:
   - `DeleteRendition`: `"DeleteRendition is not supported by the archive over v2 documents under keep-forever retention; destructive byte removal across versions requires per-blob purge or section 13 retention"`
   - `PruneVersions`: `"PruneVersions is not supported by the archive over v2 documents under keep-forever retention; removing retained versions requires section 13 retention"`
 
