@@ -226,14 +226,6 @@ final class RepoV2Wiring {
 
         @Override
         public PutResult put(PutSpec spec, byte[] body) {
-            if (java.lang.reflect.Proxy.isProxyClass(delegate.getClass())
-                    && !DocumentArchiveRepository.IN_PUT_ENTRY.get()) {
-                try {
-                    return delegate.conditionalPut(spec, body, WriteCondition.absent());
-                } catch (UnsupportedOperationException unsupported) {
-                    return delegate.put(spec, body);
-                }
-            }
             return delegate.put(spec, body);
         }
 

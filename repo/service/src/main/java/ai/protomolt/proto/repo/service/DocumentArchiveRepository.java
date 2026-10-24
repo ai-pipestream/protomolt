@@ -35,7 +35,6 @@ import ai.protomolt.proto.repo.archive.v1.ListVersionsResponse;
 import ai.protomolt.proto.repo.archive.v1.PutEntryRequest;
 import ai.protomolt.proto.repo.archive.v1.PutEntryResponse;
 import ai.protomolt.proto.repo.archive.v1.ReadRenditionRequest;
-import ai.protomolt.proto.repo.archive.v1.ReadRenditionResponse;
 import ai.protomolt.proto.repo.archive.v1.RenditionDescriptor;
 import ai.protomolt.proto.repo.archive.v1.RenditionManifestEntry;
 import ai.protomolt.proto.repo.archive.v1.RenditionReadHeader;
@@ -78,8 +77,6 @@ import java.util.function.Supplier;
  * {@code DocumentArchiveMutationGrpcService}.
  */
 final class DocumentArchiveRepository implements ArchiveRepository, ArchiveMutationRepository {
-
-    static final ThreadLocal<Boolean> IN_PUT_ENTRY = ThreadLocal.withInitial(() -> false);
 
     private static final int STREAM_CHUNK_BYTES = 64 * 1024;
     private static final long UPLOAD_READY_TIMEOUT_NANOS = TimeUnit.SECONDS.toNanos(60);
@@ -141,12 +138,7 @@ final class DocumentArchiveRepository implements ArchiveRepository, ArchiveMutat
             return callAsOperator(() -> archive.putEntry(request));
         }
         try (ArchivePutAdmission.Scope ignored = putAdmission.admit(request)) {
-            IN_PUT_ENTRY.set(true);
-            try {
-                return callAsOperator(() -> archive.putEntry(request));
-            } finally {
-                IN_PUT_ENTRY.remove();
-            }
+            return callAsOperator(() -> archive.putEntry(request));
         }
     }
 
@@ -206,53 +198,40 @@ final class DocumentArchiveRepository implements ArchiveRepository, ArchiveMutat
                     RepositoryException.Code.UNSUPPORTED,
                     "Streaming rendition reads are disabled in the bounded archive profile");
         }
-        return callAsOperator(() -> {
-            final RenditionReadHeader[] headerHolder = new RenditionReadHeader[1];
-            final ByteString[] dataHolder = new ByteString[] {ByteString.EMPTY};
-            final Throwable[] errorHolder = new Throwable[1];
-            reads.read(request, new StreamObserver<>() {
-                @Override
-                public void onNext(ReadRenditionResponse value) {
-                    if (value.hasHeader()) {
-                        headerHolder[0] = value.getHeader();
-                    } else if (value.hasData()) {
-                        dataHolder[0] = dataHolder[0].concat(value.getData());
-                    }
+        RenditionReads.OpenedRead opened = callAsOperator(() -> reads.open(request));
+        RenditionReadHeader header = opened.header();
+        RenditionManifestEntry entry = RenditionManifestEntry.newBuilder()
+                .setRendition(header.getRendition())
+                .setSizeBytes(header.getSizeBytes())
+                .setSha256(header.getSha256())
+                .setState(RenditionState.RENDITION_STATE_PRESENT)
+                .build();
+        InputStream stream = new java.io.FilterInputStream(opened.body()) {
+            @Override
+            public int read() throws IOException {
+                try {
+                    return super.read();
+                } catch (StatusRuntimeException failure) {
+                    throw toRepositoryException(failure);
                 }
-
-                @Override
-                public void onError(Throwable t) {
-                    errorHolder[0] = t;
-                }
-
-                @Override
-                public void onCompleted() {
-                }
-            });
-            if (errorHolder[0] != null) {
-                if (errorHolder[0] instanceof StatusRuntimeException sre) {
-                    throw sre;
-                }
-                if (errorHolder[0] instanceof RuntimeException re) {
-                    throw re;
-                }
-                throw new IllegalStateException("rendition read failed", errorHolder[0]);
             }
-            RenditionReadHeader header = headerHolder[0];
-            RenditionManifestEntry entry = RenditionManifestEntry.newBuilder()
-                    .setRendition(header.getRendition())
-                    .setSizeBytes(header.getSizeBytes())
-                    .setSha256(header.getSha256())
-                    .setState(RenditionState.RENDITION_STATE_PRESENT)
-                    .build();
-            return new RenditionStream(
-                    header.getVersion(),
-                    entry,
-                    header.getOffset(),
-                    header.getLength(),
-                    header.getWholeObject(),
-                    dataHolder[0].newInput());
-        });
+
+            @Override
+            public int read(byte[] b, int off, int len) throws IOException {
+                try {
+                    return super.read(b, off, len);
+                } catch (StatusRuntimeException failure) {
+                    throw toRepositoryException(failure);
+                }
+            }
+        };
+        return new RenditionStream(
+                header.getVersion(),
+                entry,
+                header.getOffset(),
+                header.getLength(),
+                header.getWholeObject(),
+                stream);
     }
 
     @Override
@@ -562,6 +541,15 @@ final class DocumentArchiveRepository implements ArchiveRepository, ArchiveMutat
 
                 return new ForwardingServerCallListener.SimpleForwardingServerCallListener<>(delegate) {
                     private boolean closed;
+                    private ArchivePutAdmission.Scope putScope;
+
+                    private void releasePutScope() {
+                        ArchivePutAdmission.Scope scope = putScope;
+                        putScope = null;
+                        if (scope != null) {
+                            scope.close();
+                        }
+                    }
 
                     @Override
                     public void onMessage(ReqT message) {
@@ -581,27 +569,21 @@ final class DocumentArchiveRepository implements ArchiveRepository, ArchiveMutat
                             }
                         }
                         if (putAdmission != null && message instanceof PutEntryRequest putReq) {
-                            try (ArchivePutAdmission.Scope ignored = putAdmission.admit(putReq)) {
-                                IN_PUT_ENTRY.set(true);
-                                try {
-                                    Context prev = operatorContext.attach();
-                                    try {
-                                        super.onMessage(message);
-                                    } finally {
-                                        operatorContext.detach(prev);
-                                    }
-                                } finally {
-                                    IN_PUT_ENTRY.remove();
-                                }
+                            releasePutScope();
+                            try {
+                                putScope = putAdmission.admit(putReq);
                             } catch (RepositoryException failure) {
                                 closed = true;
                                 call.close(toGrpcStatus(failure), new Metadata());
+                                return;
                             }
-                            return;
                         }
                         Context prev = operatorContext.attach();
                         try {
                             super.onMessage(message);
+                        } catch (RuntimeException | Error failure) {
+                            releasePutScope();
+                            throw failure;
                         } finally {
                             operatorContext.detach(prev);
                         }
@@ -610,6 +592,7 @@ final class DocumentArchiveRepository implements ArchiveRepository, ArchiveMutat
                     @Override
                     public void onHalfClose() {
                         if (closed) {
+                            releasePutScope();
                             return;
                         }
                         Context prev = operatorContext.attach();
@@ -617,6 +600,25 @@ final class DocumentArchiveRepository implements ArchiveRepository, ArchiveMutat
                             super.onHalfClose();
                         } finally {
                             operatorContext.detach(prev);
+                            releasePutScope();
+                        }
+                    }
+
+                    @Override
+                    public void onCancel() {
+                        try {
+                            super.onCancel();
+                        } finally {
+                            releasePutScope();
+                        }
+                    }
+
+                    @Override
+                    public void onComplete() {
+                        try {
+                            super.onComplete();
+                        } finally {
+                            releasePutScope();
                         }
                     }
                 };
