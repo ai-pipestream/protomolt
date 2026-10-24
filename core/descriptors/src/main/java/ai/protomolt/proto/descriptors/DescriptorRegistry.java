@@ -13,6 +13,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.locks.ReentrantLock;
 
 /**
  * Registry for managing Protocol Buffer descriptors.
@@ -36,6 +37,7 @@ public class DescriptorRegistry {
      * loader. Cleared by {@link #clear()} and {@link #addLoader(DescriptorLoader)}.
      */
     private final Set<String> knownMissingTypes = ConcurrentHashMap.newKeySet();
+    private final ReentrantLock autoLoadLock = new ReentrantLock();
 
     private volatile boolean autoLoadAttempted = false;
 
@@ -296,30 +298,38 @@ public class DescriptorRegistry {
     }
 
     /**
-     * Loads descriptors from available loaders.
+     * Loads descriptors from available loaders without holding an intrinsic monitor across loader I/O.
      */
-    public synchronized void autoLoadDescriptors() {
+    public void autoLoadDescriptors() {
         if (autoLoadAttempted) {
             return;
         }
-        autoLoadAttempted = true;
+        autoLoadLock.lock();
+        try {
+            if (autoLoadAttempted) {
+                return;
+            }
+            autoLoadAttempted = true;
 
-        List<DescriptorLoader> allLoaders = new ArrayList<>(manualLoaders);
+            List<DescriptorLoader> allLoaders = new ArrayList<>(manualLoaders);
 
-        for (DescriptorLoader loader : allLoaders) {
-            if (loader.isAvailable()) {
-                try {
-                    List<FileDescriptor> fileDescriptors = loader.loadDescriptors();
-                    int count = 0;
-                    for (FileDescriptor fd : fileDescriptors) {
-                        registerFile(fd);
-                        count += fd.getMessageTypes().size();
+            for (DescriptorLoader loader : allLoaders) {
+                if (loader.isAvailable()) {
+                    try {
+                        List<FileDescriptor> fileDescriptors = loader.loadDescriptors();
+                        int count = 0;
+                        for (FileDescriptor fd : fileDescriptors) {
+                            registerFile(fd);
+                            count += fd.getMessageTypes().size();
+                        }
+                        LOG.info("Loaded {} descriptors from {}", count, loader.getLoaderType());
+                    } catch (DescriptorLoader.DescriptorLoadException e) {
+                        LOG.warn("Failed to load descriptors from {}: {}", loader.getLoaderType(), e.getMessage());
                     }
-                    LOG.info("Loaded {} descriptors from {}", count, loader.getLoaderType());
-                } catch (DescriptorLoader.DescriptorLoadException e) {
-                    LOG.warn("Failed to load descriptors from {}: {}", loader.getLoaderType(), e.getMessage());
                 }
             }
+        } finally {
+            autoLoadLock.unlock();
         }
     }
 

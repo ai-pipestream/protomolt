@@ -9,6 +9,15 @@ import com.google.protobuf.DynamicMessage;
 import com.google.protobuf.Message;
 import org.junit.jupiter.api.Test;
 
+import java.util.ArrayList;
+import java.util.List;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
+
 import static com.google.protobuf.DescriptorProtos.DescriptorProto;
 import static com.google.protobuf.DescriptorProtos.FieldDescriptorProto;
 import static org.junit.jupiter.api.Assertions.*;
@@ -215,6 +224,55 @@ public class DescriptorRegistryTest {
         // Same full name is not a collision: the latest instance wins for both lookups.
         assertSame(rebuilt, registry.findDescriptorByFullName("pkg.one.Same"));
         assertSame(rebuilt, registry.findDescriptorBySimpleName("Same"));
+    }
+
+    @Test
+    void testConcurrentAutoLoadDescriptorsLoadsOnceWithoutMonitorLock() throws Exception {
+        DescriptorRegistry registry = new DescriptorRegistry();
+        FileDescriptor fd = createTestFileDescriptor();
+        AtomicInteger loadCount = new AtomicInteger();
+        AtomicBoolean holdsIntrinsicMonitor = new AtomicBoolean();
+        CountDownLatch startLatch = new CountDownLatch(1);
+
+        registry.addLoader(new DescriptorLoader() {
+            @Override
+            public List<FileDescriptor> loadDescriptors() {
+                loadCount.incrementAndGet();
+                holdsIntrinsicMonitor.set(Thread.holdsLock(registry));
+                return List.of(fd);
+            }
+
+            @Override
+            public FileDescriptor loadDescriptor(String fileName) {
+                return null;
+            }
+
+            @Override
+            public boolean isAvailable() {
+                return true;
+            }
+
+            @Override
+            public String getLoaderType() {
+                return "test-loader";
+            }
+        });
+
+        try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
+            List<Future<Descriptor>> futures = new ArrayList<>();
+            for (int i = 0; i < 8; i++) {
+                futures.add(executor.submit(() -> {
+                    startLatch.await(5, TimeUnit.SECONDS);
+                    return registry.findDescriptorBySimpleName("TestMessage");
+                }));
+            }
+            startLatch.countDown();
+            for (Future<Descriptor> future : futures) {
+                assertNotNull(future.get(5, TimeUnit.SECONDS));
+            }
+        }
+        assertEquals(1, loadCount.get());
+        assertFalse(holdsIntrinsicMonitor.get());
     }
 
     private static Descriptor createMessageInPackage(String packageName, String fileName, String messageName)
