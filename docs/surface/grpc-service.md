@@ -61,7 +61,7 @@ docker run -p 8080:8080 -p 9090:9090 pipestreamai/protomolt-serve --demo
 # NAS / Portainer still uses ghcr.io/ai-pipestream/protomolt-serve
 # or, from a release zip or a clone:
 ./gradlew :protomolt-serve:installDist
-serve/build/install/protomolt-serve/bin/protomolt-serve \
+apps/serve/build/install/protomolt-serve/bin/protomolt-serve \
     [--host <addr>] [--grpc-port <n>] [--http-port <n>] \
     [--registry-git <path> [--registry-port <n>]] \
     [--api-token <secret>] [--gather-cache <dir>] \
