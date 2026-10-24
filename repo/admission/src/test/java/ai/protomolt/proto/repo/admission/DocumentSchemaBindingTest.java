@@ -164,6 +164,108 @@ class DocumentSchemaBindingTest {
                 () -> { throw cancelled; })).isSameAs(cancelled);
     }
 
+    @Test
+    void reusesTheLinkedTypeForTheSameConditionBytesAndLimits() {
+        var types = new DocumentSchemaTypeCache(new DocumentSchemaTypeCache.Limits(8, 1_000_000));
+        var set = schema();
+        var condition = condition(set, "archive.Record");
+        var first = DocumentSchemaBinding.bind(condition, set.toByteString(), LIMITS, null, () -> {}, types);
+        ByteString again = set.toByteString();
+        var second = DocumentSchemaBinding.bind(condition, again, LIMITS, null, () -> {}, types);
+        assertThat(second.type()).isSameAs(first.type());
+        assertThat(second.artifact()).isSameAs(again);
+        assertThat(second.condition()).isSameAs(condition);
+        assertThat(second.artifactSha256()).isEqualTo(first.artifactSha256());
+        assertThat(types.size()).isEqualTo(1);
+
+        var nested = DocumentSchemaBinding.bind(condition(set, "archive.Record.Details"), set.toByteString(),
+                LIMITS, null, () -> {}, types);
+        assertThat(nested.type().getFullName()).isEqualTo("archive.Record.Details");
+        var otherLimits = new ClosedDescriptorSet.Limits(100_000, 10, 20, 9);
+        var relinked = DocumentSchemaBinding.bind(condition, set.toByteString(), otherLimits, null, () -> {}, types);
+        assertThat(relinked.type()).isNotSameAs(first.type());
+        assertThat(types.size()).isEqualTo(3);
+    }
+
+    @Test
+    void aCachedTypeIsNeverReturnedForDifferentBytesOrAWrongFingerprint() {
+        var types = new DocumentSchemaTypeCache(new DocumentSchemaTypeCache.Limits(8, 1_000_000));
+        var set = schema();
+        var condition = condition(set, "archive.Record");
+        DocumentSchemaBinding.bind(condition, set.toByteString(), LIMITS, null, () -> {}, types);
+        var changed = set.toBuilder();
+        changed.getFileBuilder(0).getMessageTypeBuilder(0).getFieldBuilder(0).setName("changed_name");
+        assertThatThrownBy(() -> DocumentSchemaBinding.bind(condition, changed.build().toByteString(), LIMITS, null,
+                () -> {}, types)).hasMessageContaining("fingerprint mismatch");
+        var wrong = condition.toBuilder().setDescriptorFingerprint(DescriptorFingerprints.fingerprint(changed.build())).build();
+        assertThatThrownBy(() -> DocumentSchemaBinding.bind(wrong, set.toByteString(), LIMITS, null, () -> {}, types))
+                .hasMessageContaining("fingerprint mismatch");
+        assertThat(types.size()).isEqualTo(1);
+        var cancelled = new CancellationException("stop cached binding");
+        assertThatThrownBy(() -> DocumentSchemaBinding.bind(condition, set.toByteString(), LIMITS, null,
+                () -> { throw cancelled; }, types)).isSameAs(cancelled);
+    }
+
+    @Test
+    void cancellingAColdBindAtAnyTickCachesNothing() {
+        var set = schema();
+        var condition = condition(set, "archive.Record");
+        var ticks = new java.util.concurrent.atomic.AtomicInteger();
+        var counted = new DocumentSchemaTypeCache(new DocumentSchemaTypeCache.Limits(8, 1_000_000));
+        DocumentSchemaBinding.bind(condition, set.toByteString(), LIMITS, null, ticks::incrementAndGet, counted);
+        int total = ticks.get();
+        assertThat(total).isGreaterThan(3);
+        for (int stopAt = 1; stopAt <= total; stopAt++) {
+            int stop = stopAt;
+            var seen = new java.util.concurrent.atomic.AtomicInteger();
+            var types = new DocumentSchemaTypeCache(new DocumentSchemaTypeCache.Limits(8, 1_000_000));
+            var cancelled = new CancellationException("stop at tick " + stop);
+            assertThatThrownBy(() -> DocumentSchemaBinding.bind(condition, set.toByteString(), LIMITS, null, () -> {
+                if (seen.incrementAndGet() == stop) throw cancelled;
+            }, types)).isSameAs(cancelled);
+            assertThat(types.size()).as("cached after cancelling at tick %s", stop).isZero();
+        }
+    }
+
+    @Test
+    void evictsTheLeastRecentlyUsedTypeAndSkipsArtifactsOverTheByteBound() {
+        var set = schema();
+        int size = set.toByteString().size();
+        var types = new DocumentSchemaTypeCache(new DocumentSchemaTypeCache.Limits(2, 3L * size));
+        var record = condition(set, "archive.Record");
+        var details = condition(set, "archive.Record.Details");
+        var common = condition(set, "archive.common.Common");
+        var first = DocumentSchemaBinding.bind(record, set.toByteString(), LIMITS, null, () -> {}, types);
+        DocumentSchemaBinding.bind(details, set.toByteString(), LIMITS, null, () -> {}, types);
+        assertThat(DocumentSchemaBinding.bind(record, set.toByteString(), LIMITS, null, () -> {}, types).type())
+                .isSameAs(first.type());
+        assertThatThrownBy(() -> DocumentSchemaBinding.bind(common, set.toByteString(), LIMITS, null, () -> {}, types))
+                .hasMessageContaining("outside");
+        var envelope = set.toBuilder().setUnknownFields(UnknownFieldSet.newBuilder().addField(999,
+                UnknownFieldSet.Field.newBuilder().addVarint(1).build()).build()).build().toByteString();
+        DocumentSchemaBinding.bind(record, envelope, LIMITS, null, () -> {}, types);
+        assertThat(types.size()).isEqualTo(2);
+        assertThat(types.artifactBytes()).isEqualTo(size + envelope.size());
+        assertThat(DocumentSchemaBinding.bind(record, set.toByteString(), LIMITS, null, () -> {}, types).type())
+                .isSameAs(first.type());
+
+        var tiny = new DocumentSchemaTypeCache(new DocumentSchemaTypeCache.Limits(2, size - 1));
+        var uncached = DocumentSchemaBinding.bind(record, set.toByteString(), LIMITS, null, () -> {}, tiny);
+        assertThat(tiny.size()).isZero();
+        assertThat(DocumentSchemaBinding.bind(record, set.toByteString(), LIMITS, null, () -> {}, tiny).type())
+                .isNotSameAs(uncached.type());
+    }
+
+    @Test
+    void theSharedCacheLinksARetainedContainerOnceAcrossCalls() {
+        var bytes = schema().toByteString();
+        var metadata = asset(bytes);
+        var first = DocumentSchemaAssetBinding.bind(metadata, bytes, LIMITS, () -> {});
+        var second = DocumentSchemaAssetBinding.bind(metadata, schema().toByteString(), LIMITS, () -> {});
+        assertThat(second.schema().type()).isSameAs(first.schema().type());
+        assertThat(second.metadata()).isSameAs(metadata);
+    }
+
     private static PublicationSchemaCondition condition(FileDescriptorSet set, String name) {
         return PublicationSchemaCondition.newBuilder().setTypeName(name)
                 .setDescriptorFingerprint(DescriptorFingerprints.fingerprint(set)).build();
