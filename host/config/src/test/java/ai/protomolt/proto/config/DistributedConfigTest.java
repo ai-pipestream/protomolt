@@ -165,4 +165,37 @@ class DistributedConfigTest {
                     .hasMessageContaining("subject");
         }
     }
+
+    @Test
+    void concurrentVirtualThreadRefreshAndListenerRegistrationProceedCleanly() throws Exception {
+        java.util.concurrent.atomic.AtomicInteger versionCounter =
+                new java.util.concurrent.atomic.AtomicInteger(1);
+        ConfigSource source = subject -> {
+            int v = versionCounter.getAndIncrement();
+            return Optional.of(new ConfigSource.Fetched(
+                    "v" + v, document(Math.min(100, v)).toByteArray()));
+        };
+        java.util.concurrent.CopyOnWriteArrayList<String> observed =
+                new java.util.concurrent.CopyOnWriteArrayList<>();
+        try (DistributedConfig config = DistributedConfig.over(source);
+                var vts = java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor()) {
+            DistributedConfig.Subscription<QueryMetricsRequest> subscription =
+                    config.subscribe("metrics-defaults",
+                            QueryMetricsRequest.getDefaultInstance());
+            subscription.onChange((applied, version) -> observed.add(version));
+
+            List<java.util.concurrent.Future<?>> tasks = new ArrayList<>();
+            for (int i = 0; i < 8; i++) {
+                tasks.add(vts.submit(() -> {
+                    subscription.onChange((applied, version) -> {});
+                    return config.refresh();
+                }));
+            }
+            for (java.util.concurrent.Future<?> task : tasks) {
+                task.get();
+            }
+            assertThat(subscription.current()).isPresent();
+            assertThat(observed).isNotEmpty();
+        }
+    }
 }

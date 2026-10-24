@@ -70,9 +70,14 @@ final class JobsFleetMount {
             WorkflowRunner runner = new WorkflowRunner(outboundPolicy, structured);
             worker = new WorkflowRunWorker(store, context, workflows, runner, config);
             if (jobs.kafkaBootstrap() != null) {
-                relay = new WorkflowRunEventRelay(store,
-                        WorkflowRunEventRelay.newProducer(jobs.kafkaBootstrap(), null),
-                        config.eventsTopic(), config.pollInterval(), 100);
+                var producer = WorkflowRunEventRelay.newProducer(jobs.kafkaBootstrap(), null);
+                try {
+                    relay = new WorkflowRunEventRelay(store, producer,
+                            config.eventsTopic(), config.pollInterval(), 100);
+                } catch (RuntimeException e) {
+                    closeQuietly(producer);
+                    throw e;
+                }
             }
             return new Prepared(database, store, config, runner, worker, relay);
         } catch (RuntimeException e) {
