@@ -1,10 +1,13 @@
 package ai.protomolt.proto.repo.archive;
 
+import ai.protomolt.proto.asset.characterize.ByteWindows;
+import ai.protomolt.proto.asset.characterize.WindowCapture;
 import ai.protomolt.proto.repo.archive.v1.UploadRenditionRequest;
 import ai.protomolt.proto.repo.archive.v1.UploadRenditionResponse;
 import ai.protomolt.proto.repo.v2.DocumentServiceGrpc;
 import ai.protomolt.proto.repo.v2.UploadDocumentRequest;
 import ai.protomolt.proto.repo.v2.UploadDocumentResponse;
+import com.google.protobuf.ByteString;
 import io.grpc.Channel;
 import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
@@ -12,8 +15,11 @@ import io.grpc.stub.ClientCallStreamObserver;
 import io.grpc.stub.ClientResponseObserver;
 import io.grpc.stub.ServerCallStreamObserver;
 import io.grpc.stub.StreamObserver;
+import java.io.IOException;
 import java.security.MessageDigest;
+import java.util.ArrayList;
 import java.util.HexFormat;
+import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.locks.ReentrantLock;
 
@@ -34,6 +40,14 @@ import java.util.concurrent.locks.ReentrantLock;
  * the rendition it recorded, and other bytes are {@code ALREADY_EXISTS}.</p>
  */
 public final class RenditionUploads {
+
+    /**
+     * Maximum bytes buffered before opening the downstream {@code UploadDocument}
+     * stream when an upload carries the entry's primary rendition, allowing both
+     * leading (64 KiB) and trailing (128 KiB) characterization windows to be
+     * captured into the single revision's CORE while keeping memory strictly bounded.
+     */
+    static final int MAX_CHARACTERIZE_BUFFER_BYTES = 1024 * 1024;
 
     private final DocumentArchive archive;
     private final DocumentServiceGrpc.DocumentServiceStub documents;
@@ -60,6 +74,8 @@ public final class RenditionUploads {
         private DocumentArchive.Verify verifying;
         private ClientCallStreamObserver<UploadDocumentRequest> upload;
         private final MessageDigest sent = RenditionReads.sha256();
+        private final List<ByteString> bufferedChunks = new ArrayList<>();
+        private int bufferedBytes;
         private long sentBytes;
         private boolean clientCompleted;
         private boolean waitingForUpload;
@@ -91,15 +107,27 @@ public final class RenditionUploads {
                         if (!frame.hasChunk()) {
                             throw ArchiveErrors.invalid("frame", "only the first frame of an upload is a header");
                         }
-                        frame.getChunk().asReadOnlyByteBufferList().forEach(sent::update);
-                        sentBytes += frame.getChunk().size();
+                        ByteString chunk = frame.getChunk();
+                        chunk.asReadOnlyByteBufferList().forEach(sent::update);
+                        sentBytes += chunk.size();
                         if (verifying != null) {
                             if (server != null) {
                                 server.request(1);
                             }
                             return;
                         }
-                        upload.onNext(UploadDocumentRequest.newBuilder().setData(frame.getChunk()).build());
+                        if (upload == null) {
+                            bufferedChunks.add(chunk);
+                            bufferedBytes += chunk.size();
+                            if (bufferedBytes >= MAX_CHARACTERIZE_BUFFER_BYTES) {
+                                openDownstreamUpload(capturedWindows(false));
+                                requestNext();
+                            } else if (server != null) {
+                                server.request(1);
+                            }
+                            return;
+                        }
+                        upload.onNext(UploadDocumentRequest.newBuilder().setData(chunk).build());
                         requestNext();
                     }
                 } catch (StatusRuntimeException failure) {
@@ -126,6 +154,15 @@ public final class RenditionUploads {
                 return;
             }
             pending = (DocumentArchive.Pending) start;
+            if (!pending.needsWindows()) {
+                openDownstreamUpload(ByteWindows.EMPTY);
+                requestNext();
+            } else if (server != null) {
+                server.request(1);
+            }
+        }
+
+        private void openDownstreamUpload(ByteWindows windows) {
             documents.uploadDocument(new ClientResponseObserver<UploadDocumentRequest, UploadDocumentResponse>() {
                 private UploadDocumentResponse result;
 
@@ -150,8 +187,12 @@ public final class RenditionUploads {
                     uploadCompleted(result);
                 }
             });
-            upload.onNext(UploadDocumentRequest.newBuilder().setHeader(pending.header()).build());
-            requestNext();
+            upload.onNext(UploadDocumentRequest.newBuilder().setHeader(pending.header(windows)).build());
+            for (ByteString chunk : bufferedChunks) {
+                upload.onNext(UploadDocumentRequest.newBuilder().setData(chunk).build());
+            }
+            bufferedChunks.clear();
+            bufferedBytes = 0;
         }
 
         private void requestNext() {
@@ -214,9 +255,34 @@ public final class RenditionUploads {
                     return;
                 }
                 clientCompleted = true;
+                if (upload == null) {
+                    try {
+                        openDownstreamUpload(capturedWindows(true));
+                    } catch (StatusRuntimeException failure) {
+                        fail(failure);
+                        return;
+                    }
+                }
                 upload.onCompleted();
             } finally {
                 lock.unlock();
+            }
+        }
+
+        private ByteWindows capturedWindows(boolean complete) {
+            ByteString buffered = ByteString.copyFrom(bufferedChunks);
+            if (!complete) {
+                int headLen = Math.min(buffered.size(), ByteWindows.DEFAULT_HEAD_BYTES);
+                return ByteWindows.ofHead(buffered.substring(0, headLen).toByteArray());
+            }
+            try (WindowCapture capture = new WindowCapture(buffered.newInput())) {
+                byte[] discard = new byte[8192];
+                while (capture.read(discard) >= 0) {
+                    // Drain buffered bytes through WindowCapture.
+                }
+                return capture.windows();
+            } catch (IOException impossible) {
+                throw new IllegalStateException(impossible);
             }
         }
 

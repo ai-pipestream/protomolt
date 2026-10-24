@@ -4,8 +4,21 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.Assertions.catchThrowableOfType;
 
+import ai.protomolt.proto.asset.v1.BridgeKind;
+import ai.protomolt.proto.asset.v1.BridgeStatus;
+import ai.protomolt.proto.asset.v1.Classification;
+import ai.protomolt.proto.asset.v1.ClassificationState;
+import ai.protomolt.proto.asset.v1.DelimitedTable;
+import ai.protomolt.proto.asset.v1.FormatFact;
+import ai.protomolt.proto.asset.v1.HeaderPresence;
+import ai.protomolt.proto.asset.v1.PdfDocument;
 import ai.protomolt.proto.repo.archive.v1.Archive;
 import ai.protomolt.proto.repo.archive.v1.ArchiveStats;
+import ai.protomolt.proto.repo.archive.v1.BridgeEntryRequest;
+import ai.protomolt.proto.repo.archive.v1.BridgeEntryResponse;
+import ai.protomolt.proto.repo.archive.v1.ClassificationStateCount;
+import ai.protomolt.proto.repo.archive.v1.ClassifyEntryRequest;
+import ai.protomolt.proto.repo.archive.v1.ClassifyEntryResponse;
 import ai.protomolt.proto.repo.archive.v1.CreateArchiveRequest;
 import ai.protomolt.proto.repo.archive.v1.EntryAddress;
 import ai.protomolt.proto.repo.archive.v1.GetArchiveRequest;
@@ -342,6 +355,143 @@ class DocumentArchiveTest {
         assertThat(stats.getVersions()).isEqualTo(1L);
         assertThat(stats.getCurrentBytes()).isEqualTo(pdf.size());
         assertThat(stats.getRetainedBytes()).isEqualTo(pdf.size());
+        assertThat(stats.getClassificationStatesList()).containsExactly(
+                ClassificationStateCount.newBuilder()
+                        .setState(ClassificationState.CLASSIFICATION_STATE_UNCLASSIFIED)
+                        .setCount(1L)
+                        .build());
+    }
+
+    @Test
+    void classifyEntryBridgeEntryAndClassificationFilterWorkOverInMemoryService() throws Exception {
+        ByteString csv = ByteString.copyFromUtf8("id,name\n1,Ada\n2,Grace\n");
+        NodeAddress entryNode = ArchiveCoordinates.address(
+                EntryAddress.newBuilder().setAccountId(ACCOUNT).setArchive(ARCHIVE).setEntryId("users.csv").build());
+        List<ListDocumentsRequest> listCalls = new ArrayList<>();
+        List<SaveDocumentRequest> saves = new ArrayList<>();
+        GetDocumentResponse[] currentHolder = {documentWithBlob(entryNode, 1L, "original", csv)};
+
+        startService(new DocumentServiceGrpc.DocumentServiceImplBase() {
+            @Override
+            public void getOperationOutcome(
+                    GetOperationOutcomeRequest request,
+                    StreamObserver<GetOperationOutcomeResponse> responseObserver) {
+                responseObserver.onNext(GetOperationOutcomeResponse.getDefaultInstance());
+                responseObserver.onCompleted();
+            }
+
+            @Override
+            public void getDocument(
+                    GetDocumentRequest request, StreamObserver<GetDocumentResponse> responseObserver) {
+                responseObserver.onNext(currentHolder[0]);
+                responseObserver.onCompleted();
+            }
+
+            @Override
+            public void readBlob(
+                    ReadBlobRequest request, StreamObserver<ReadBlobResponse> responseObserver) {
+                responseObserver.onNext(ReadBlobResponse.newBuilder()
+                        .setHeader(BlobHeader.getDefaultInstance())
+                        .build());
+                responseObserver.onNext(ReadBlobResponse.newBuilder().setData(csv).build());
+                responseObserver.onCompleted();
+            }
+
+            @Override
+            public void saveDocument(
+                    SaveDocumentRequest request, StreamObserver<SaveDocumentResponse> responseObserver) {
+                saves.add(request);
+                long nextRev = currentHolder[0].getManifest().getRevision() + 1;
+                Document.Builder updated = currentHolder[0].getDocument().toBuilder();
+                if (request.getDocument().hasSearchMetadata()) {
+                    updated.setSearchMetadata(request.getDocument().getSearchMetadata());
+                }
+                if (request.getDocument().hasStructuredData()) {
+                    updated.setStructuredData(request.getDocument().getStructuredData());
+                }
+                if (request.getDocument().hasBlobBag()) {
+                    updated.setBlobBag(request.getDocument().getBlobBag());
+                }
+                currentHolder[0] = currentHolder[0].toBuilder()
+                        .setDocument(updated)
+                        .setManifest(currentHolder[0].getManifest().toBuilder().setRevision(nextRev))
+                        .build();
+                responseObserver.onNext(SaveDocumentResponse.newBuilder()
+                        .setOperationId(request.getOperationId())
+                        .setAccession(Accession.newBuilder().setAddress(entryNode).setRevision(nextRev))
+                        .build());
+                responseObserver.onCompleted();
+            }
+
+            @Override
+            public void listDocuments(
+                    ListDocumentsRequest request, StreamObserver<ListDocumentsResponse> responseObserver) {
+                listCalls.add(request);
+                SearchMetadata sm = currentHolder[0].getDocument().getSearchMetadata();
+                responseObserver.onNext(ListDocumentsResponse.newBuilder()
+                        .addDocuments(DocumentSummary.newBuilder()
+                                .setAddress(entryNode)
+                                .setRevision(currentHolder[0].getManifest().getRevision())
+                                .setCommittedAt(NOW)
+                                .setLookup(DocumentLookup.newBuilder()
+                                        .setTitle(sm.getTitle())
+                                        .setCreationDate(NOW)
+                                        .putAllMetadata(sm.getMetadataMap())))
+                        .build());
+                responseObserver.onCompleted();
+            }
+        });
+
+        ArchiveBindings bindings = (acct, name) -> Optional.of(
+                new ArchiveBinding(acct, name, "ds", "", VersioningPolicy.VERSIONING_POLICY_RETAINED));
+        DocumentArchive archive = new DocumentArchive(channel, bindings, FIXED_CLOCK);
+        EntryAddress addr = EntryAddress.newBuilder()
+                .setAccountId(ACCOUNT).setArchive(ARCHIVE).setEntryId("users.csv").build();
+
+        // Refuses declaration without filename.
+        assertThatThrownBy(() -> archive.classifyEntry(ClassifyEntryRequest.newBuilder()
+                        .setAddress(addr)
+                        .setDeclared(FormatFact.newBuilder().setPdf(PdfDocument.getDefaultInstance()))
+                        .build()))
+                .isInstanceOfSatisfying(StatusRuntimeException.class, failure -> {
+                    assertThat(failure.getStatus().getCode()).isEqualTo(Status.Code.INVALID_ARGUMENT);
+                    assertThat(failure.getStatus().getDescription()).contains("declared.pdf.filename is required");
+                });
+
+        // ClassifyEntry with DelimitedTable declaration resolves to DECLARED.
+        ClassifyEntryResponse classified = archive.classifyEntry(ClassifyEntryRequest.newBuilder()
+                .setAddress(addr)
+                .setDeclared(FormatFact.newBuilder().setDelimited(DelimitedTable.newBuilder()
+                        .setFilename("users.csv")
+                        .setDelimiter(",")
+                        .setHeader(HeaderPresence.HEADER_PRESENCE_PRESENT)))
+                .build());
+        assertThat(classified.getClassification().getState())
+                .isEqualTo(ClassificationState.CLASSIFICATION_STATE_DECLARED);
+
+        // BridgeEntry runs dataset-schema bridge and saves derived rendition.
+        BridgeEntryResponse bridged = archive.bridgeEntry(BridgeEntryRequest.newBuilder()
+                .setAddress(addr)
+                .build());
+        assertThat(bridged.getVersion()).isEqualTo(3L);
+        assertThat(bridged.getOutcomesList()).hasSize(2);
+        assertThat(bridged.getOutcomes(0).getBridge()).isEqualTo(BridgeKind.BRIDGE_KIND_DATASET_SCHEMA);
+        assertThat(bridged.getOutcomes(0).getStatus()).isEqualTo(BridgeStatus.BRIDGE_STATUS_PRODUCED);
+        assertThat(bridged.getOutcomes(1).getBridge()).isEqualTo(BridgeKind.BRIDGE_KIND_TABULAR_DATASET);
+        assertThat(bridged.getOutcomes(1).getStatus()).isEqualTo(BridgeStatus.BRIDGE_STATUS_DEFERRED);
+
+        // ListEntries with classification_state sends MetadataMatch on archive.classification_state.
+        ListEntriesResponse listed = archive.listEntries(ListEntriesRequest.newBuilder()
+                .setAccountId(ACCOUNT)
+                .setArchive(ARCHIVE)
+                .setClassificationState(ClassificationState.CLASSIFICATION_STATE_DECLARED)
+                .build());
+        assertThat(listed.getEntriesCount()).isEqualTo(1);
+        assertThat(listed.getEntries(0).getClassification().getState())
+                .isEqualTo(ClassificationState.CLASSIFICATION_STATE_DECLARED);
+        assertThat(listCalls.getLast().getFilter().getMetadataList())
+                .extracting(m -> m.getKey() + "=" + m.getValue())
+                .containsExactly("archive.classification_state=CLASSIFICATION_STATE_DECLARED");
     }
 
     private void startService(DocumentServiceGrpc.DocumentServiceImplBase service) throws Exception {
