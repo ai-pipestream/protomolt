@@ -25,6 +25,7 @@ import java.util.SortedMap;
 import java.util.SortedSet;
 import java.util.TreeMap;
 import java.util.TreeSet;
+import java.util.concurrent.locks.ReentrantLock;
 
 /**
  * A {@link ConceptSchemeCatalog} that follows concept-scheme config documents off the
@@ -57,6 +58,7 @@ public final class ConceptSchemeMounts implements ConceptSchemeCatalog {
 
     private static final int MAX_SCHEME_ID_LENGTH = 200;
 
+    private final ReentrantLock lock = new ReentrantLock();
     private final int maxExpandedConcepts;
     private volatile Snapshot snapshot = new Snapshot(Map.of());
 
@@ -121,15 +123,26 @@ public final class ConceptSchemeMounts implements ConceptSchemeCatalog {
         return mounts;
     }
 
-    private synchronized void mount(String schemeId, ConceptScheme scheme, String version) {
-        Map<String, Scheme> schemes = new HashMap<>(snapshot.schemes());
-        schemes.put(schemeId, Scheme.of(schemeId, version, scheme));
-        snapshot = new Snapshot(Map.copyOf(schemes));
+    private void mount(String schemeId, ConceptScheme scheme, String version) {
+        lock.lock();
+        try {
+            Map<String, Scheme> schemes = new HashMap<>(snapshot.schemes());
+            schemes.put(schemeId, Scheme.of(schemeId, version, scheme));
+            snapshot = new Snapshot(Map.copyOf(schemes));
+        } finally {
+            lock.unlock();
+        }
     }
 
     @Override
     public Optional<ConceptSchemeCatalog.Mounted> scheme(String schemeId) {
         return Optional.ofNullable(snapshot.schemes().get(schemeId)).map(Scheme::membership);
+    }
+
+    @Override
+    public ConceptSchemeCatalog snapshot() {
+        Snapshot pin = this.snapshot;
+        return schemeId -> Optional.ofNullable(pin.schemes().get(schemeId)).map(Scheme::membership);
     }
 
     /**

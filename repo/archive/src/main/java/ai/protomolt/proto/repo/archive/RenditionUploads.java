@@ -15,6 +15,7 @@ import io.grpc.stub.StreamObserver;
 import java.security.MessageDigest;
 import java.util.HexFormat;
 import java.util.Objects;
+import java.util.concurrent.locks.ReentrantLock;
 
 /**
  * {@code UploadRendition} as one v2 {@code UploadDocument}: the header frame
@@ -54,6 +55,7 @@ public final class RenditionUploads {
     private final class Call implements StreamObserver<UploadRenditionRequest> {
         private final StreamObserver<UploadRenditionResponse> responses;
         private final ServerCallStreamObserver<UploadRenditionResponse> server;
+        private final ReentrantLock lock = new ReentrantLock();
         private DocumentArchive.Pending pending;
         private DocumentArchive.Verify verifying;
         private ClientCallStreamObserver<UploadDocumentRequest> upload;
@@ -73,33 +75,38 @@ public final class RenditionUploads {
         }
 
         @Override
-        public synchronized void onNext(UploadRenditionRequest frame) {
-            if (finished) {
-                return;
-            }
+        public void onNext(UploadRenditionRequest frame) {
+            lock.lock();
             try {
-                if (pending == null && verifying == null) {
-                    if (!frame.hasHeader()) {
-                        throw ArchiveErrors.invalid("frame", "the first frame of an upload must be the header");
-                    }
-                    start(frame);
-                } else {
-                    if (!frame.hasChunk()) {
-                        throw ArchiveErrors.invalid("frame", "only the first frame of an upload is a header");
-                    }
-                    frame.getChunk().asReadOnlyByteBufferList().forEach(sent::update);
-                    sentBytes += frame.getChunk().size();
-                    if (verifying != null) {
-                        if (server != null) {
-                            server.request(1);
-                        }
-                        return;
-                    }
-                    upload.onNext(UploadDocumentRequest.newBuilder().setData(frame.getChunk()).build());
-                    requestNext();
+                if (finished) {
+                    return;
                 }
-            } catch (StatusRuntimeException failure) {
-                fail(failure);
+                try {
+                    if (pending == null && verifying == null) {
+                        if (!frame.hasHeader()) {
+                            throw ArchiveErrors.invalid("frame", "the first frame of an upload must be the header");
+                        }
+                        start(frame);
+                    } else {
+                        if (!frame.hasChunk()) {
+                            throw ArchiveErrors.invalid("frame", "only the first frame of an upload is a header");
+                        }
+                        frame.getChunk().asReadOnlyByteBufferList().forEach(sent::update);
+                        sentBytes += frame.getChunk().size();
+                        if (verifying != null) {
+                            if (server != null) {
+                                server.request(1);
+                            }
+                            return;
+                        }
+                        upload.onNext(UploadDocumentRequest.newBuilder().setData(frame.getChunk()).build());
+                        requestNext();
+                    }
+                } catch (StatusRuntimeException failure) {
+                    fail(failure);
+                }
+            } finally {
+                lock.unlock();
             }
         }
 
@@ -158,44 +165,59 @@ public final class RenditionUploads {
             }
         }
 
-        private synchronized void uploadReady() {
-            if (waitingForUpload && !finished) {
-                waitingForUpload = false;
-                server.request(1);
+        private void uploadReady() {
+            lock.lock();
+            try {
+                if (waitingForUpload && !finished) {
+                    waitingForUpload = false;
+                    server.request(1);
+                }
+            } finally {
+                lock.unlock();
             }
         }
 
         @Override
-        public synchronized void onError(Throwable failure) {
-            finished = true;
-            if (upload != null) {
-                upload.cancel("The archive upload's client failed", failure);
+        public void onError(Throwable failure) {
+            lock.lock();
+            try {
+                finished = true;
+                if (upload != null) {
+                    upload.cancel("The archive upload's client failed", failure);
+                }
+            } finally {
+                lock.unlock();
             }
         }
 
         @Override
-        public synchronized void onCompleted() {
-            if (finished) {
-                return;
-            }
-            if (verifying != null) {
-                try {
-                    DocumentArchive.requireRecordedBytes(verifying.response(), sentSha256(), sentBytes);
-                } catch (StatusRuntimeException failure) {
-                    fail(failure);
+        public void onCompleted() {
+            lock.lock();
+            try {
+                if (finished) {
                     return;
                 }
-                finished = true;
-                responses.onNext(verifying.response());
-                responses.onCompleted();
-                return;
+                if (verifying != null) {
+                    try {
+                        DocumentArchive.requireRecordedBytes(verifying.response(), sentSha256(), sentBytes);
+                    } catch (StatusRuntimeException failure) {
+                        fail(failure);
+                        return;
+                    }
+                    finished = true;
+                    responses.onNext(verifying.response());
+                    responses.onCompleted();
+                    return;
+                }
+                if (pending == null) {
+                    fail(ArchiveErrors.invalid("frame", "an upload needs a header frame"));
+                    return;
+                }
+                clientCompleted = true;
+                upload.onCompleted();
+            } finally {
+                lock.unlock();
             }
-            if (pending == null) {
-                fail(ArchiveErrors.invalid("frame", "an upload needs a header frame"));
-                return;
-            }
-            clientCompleted = true;
-            upload.onCompleted();
         }
 
         private String sentSha256() {
@@ -214,11 +236,14 @@ public final class RenditionUploads {
                 fail(failure);
                 return;
             }
-            synchronized (this) {
+            lock.lock();
+            try {
                 if (finished) {
                     return;
                 }
                 finished = true;
+            } finally {
+                lock.unlock();
             }
             responses.onNext(response);
             responses.onCompleted();
@@ -232,13 +257,16 @@ public final class RenditionUploads {
                 String sha256 = null;
                 long size = 0;
                 if (pending.checkBytes()) {
-                    synchronized (this) {
+                    lock.lock();
+                    try {
                         if (!clientCompleted) {
                             // Not every byte has arrived, so a lost race cannot be told from other bytes.
                             throw status;
                         }
                         sha256 = sentSha256();
                         size = sentBytes;
+                    } finally {
+                        lock.unlock();
                     }
                 }
                 response = archive.uploadResponse(
@@ -252,22 +280,28 @@ public final class RenditionUploads {
                 fail(answer);
                 return;
             }
-            synchronized (this) {
+            lock.lock();
+            try {
                 if (finished) {
                     return;
                 }
                 finished = true;
+            } finally {
+                lock.unlock();
             }
             responses.onNext(response);
             responses.onCompleted();
         }
 
         private void fail(StatusRuntimeException failure) {
-            synchronized (this) {
+            lock.lock();
+            try {
                 if (finished) {
                     return;
                 }
                 finished = true;
+            } finally {
+                lock.unlock();
             }
             if (upload != null) {
                 upload.cancel("The archive upload failed", failure);

@@ -71,25 +71,36 @@ public class ProtoMoltProtobufSerializer implements Serializer<Message> {
     @Override
     public void configure(Map<String, ?> configs, boolean isKey) {
         ProtoMoltSerdeConfig config = new ProtoMoltSerdeConfig(configs);
-        files = Descriptors.load(config, getClass().getClassLoader());
+        List<FileDescriptor> nextFiles = Descriptors.load(config, getClass().getClassLoader());
         String pinned = config.getString(ProtoMoltSerdeConfig.MESSAGE_TYPE);
-        pinnedType = pinned != null ? SerdeDescriptors.messageType(files, pinned) : null;
+        Descriptor nextPinnedType =
+                pinned != null ? SerdeDescriptors.messageType(nextFiles, pinned) : null;
+        SerdeMapper nextMapper = SerdeMapper.parse(config.getList(ProtoMoltSerdeConfig.MAP_ON_WRITE),
+                ProtoMoltSerdeConfig.MAP_ON_WRITE);
+        SerdeMetricsListener nextMetrics = SerdeMetricsListeners.load(getClass().getClassLoader());
+        ProtoValidator nextValidator = ProtoValidator.create();
+        ai.protomolt.proto.quality.QualityScorer nextQuality =
+                ai.protomolt.proto.quality.QualityScorer.create();
+        ai.protomolt.proto.compat.CompatibilityChecker nextCompatChecker =
+                ai.protomolt.proto.compat.CompatibilityChecker.create();
+        close();
+        files = nextFiles;
+        pinnedType = nextPinnedType;
         configuredSchemaId = config.getInt(ProtoMoltSerdeConfig.USE_SCHEMA_ID);
         validateOnWrite = config.getBoolean(ProtoMoltSerdeConfig.VALIDATE_ON_WRITE);
         qualityOnWrite = config.getBoolean(ProtoMoltSerdeConfig.QUALITY_ON_WRITE);
         qualityMin = config.getDouble(ProtoMoltSerdeConfig.QUALITY_MIN);
-        validator = ProtoValidator.create();
-        quality = ai.protomolt.proto.quality.QualityScorer.create();
-        metrics = SerdeMetricsListeners.load(getClass().getClassLoader());
+        validator = nextValidator;
+        quality = nextQuality;
+        metrics = nextMetrics;
         schemaIds = SchemaIds.create(config.getString(ProtoMoltSerdeConfig.SCHEMA_REGISTRY_URL),
-                config.getLong(ProtoMoltSerdeConfig.REGISTRY_RETRY_BACKOFF_MS), metrics);
+                config.getLong(ProtoMoltSerdeConfig.REGISTRY_RETRY_BACKOFF_MS), nextMetrics);
         subjectOverride = config.getString(ProtoMoltSerdeConfig.SUBJECT);
         subjectStrategy = config.getString(ProtoMoltSerdeConfig.SUBJECT_NAME_STRATEGY);
         latestCompatibilityStrict =
                 config.getBoolean(ProtoMoltSerdeConfig.LATEST_COMPATIBILITY_STRICT);
-        compatChecker = ai.protomolt.proto.compat.CompatibilityChecker.create();
-        mapper = SerdeMapper.parse(config.getList(ProtoMoltSerdeConfig.MAP_ON_WRITE),
-                ProtoMoltSerdeConfig.MAP_ON_WRITE);
+        compatChecker = nextCompatChecker;
+        mapper = nextMapper;
         this.isKey = isKey;
     }
 
@@ -97,6 +108,7 @@ public class ProtoMoltProtobufSerializer implements Serializer<Message> {
     public void close() {
         if (schemaIds != null) {
             schemaIds.close();
+            schemaIds = null;
         }
     }
 

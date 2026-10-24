@@ -226,30 +226,46 @@ const latestVersion = computed(() =>
   versions.value.length ? versions.value[versions.value.length - 1] : null,
 )
 
+let loadGeneration = 0
+let versionGeneration = 0
+let descriptorGeneration = 0
+
 async function load() {
+  const gen = ++loadGeneration
+  const requestedSubject = subject.value
   loading.value = true
   error.value = ''
   try {
-    versions.value = await registryApi.listVersions(subject.value)
+    const listed = await registryApi.listVersions(requestedSubject)
+    if (gen !== loadGeneration || subject.value !== requestedSubject) return
+    versions.value = listed
     const queryVersion = Number(route.query.v)
     const wanted =
       Number.isInteger(queryVersion) && versions.value.includes(queryVersion)
         ? queryVersion
         : latestVersion.value
-    await Promise.all([selectVersion(wanted, false), loadConfig(), loadLatestEnvelope()])
+    await Promise.all([
+      selectVersion(wanted, false),
+      loadConfig(requestedSubject, gen),
+      loadLatestEnvelope(requestedSubject, gen),
+    ])
+    if (gen !== loadGeneration || subject.value !== requestedSubject) return
     // A registration invalidates the cached descriptor set.
     descriptorModel.value = null
     if (tab.value === 'types' || tab.value === 'try') await loadDescriptor(true)
   } catch (e) {
+    if (gen !== loadGeneration || subject.value !== requestedSubject) return
     error.value = errorMessage(e)
     versions.value = []
   } finally {
-    loading.value = false
+    if (gen === loadGeneration) loading.value = false
   }
 }
 
 async function selectVersion(version: number | null, updateQuery = true) {
   if (version == null) return
+  const gen = ++versionGeneration
+  const requestedSubject = subject.value
   selectedVersion.value = version
   if (updateQuery) {
     router.replace({ query: { ...route.query, v: String(version) } })
@@ -257,31 +273,40 @@ async function selectVersion(version: number | null, updateQuery = true) {
   envelopeLoading.value = true
   envelopeError.value = ''
   try {
-    envelope.value = await registryApi.getVersion(subject.value, version)
+    const result = await registryApi.getVersion(requestedSubject, version)
+    if (gen !== versionGeneration || subject.value !== requestedSubject) return
+    envelope.value = result
   } catch (e) {
+    if (gen !== versionGeneration || subject.value !== requestedSubject) return
     envelope.value = null
     envelopeError.value = errorMessage(e)
   } finally {
-    envelopeLoading.value = false
+    if (gen === versionGeneration) envelopeLoading.value = false
   }
 }
 
-async function loadLatestEnvelope() {
+async function loadLatestEnvelope(requestedSubject = subject.value, gen = loadGeneration) {
   try {
-    latestEnvelope.value = await registryApi.getVersion(subject.value, 'latest')
+    const latest = await registryApi.getVersion(requestedSubject, 'latest')
+    if (gen !== loadGeneration || subject.value !== requestedSubject) return
+    latestEnvelope.value = latest
   } catch {
+    if (gen !== loadGeneration || subject.value !== requestedSubject) return
     latestEnvelope.value = null
   }
 }
 
-async function loadConfig() {
+async function loadConfig(requestedSubject = subject.value, gen = loadGeneration) {
   try {
-    const subjectMode = await registryApi.subjectConfig(subject.value)
+    const subjectMode = await registryApi.subjectConfig(requestedSubject)
+    if (gen !== loadGeneration || subject.value !== requestedSubject) return
     if (subjectMode) {
       effectiveMode.value = subjectMode
       modeInherited.value = false
     } else {
-      effectiveMode.value = await registryApi.globalConfig()
+      const globalMode = await registryApi.globalConfig()
+      if (gen !== loadGeneration || subject.value !== requestedSubject) return
+      effectiveMode.value = globalMode
       modeInherited.value = true
     }
   } catch (e) {
@@ -297,16 +322,20 @@ function onModeChanged(mode: CompatibilityMode) {
 
 async function loadDescriptor(force = false) {
   if (descriptorModel.value && !force) return
+  const gen = ++descriptorGeneration
+  const requestedSubject = subject.value
   descriptorLoading.value = true
   descriptorError.value = ''
   try {
-    const bytes = await registryApi.descriptorSet(subject.value)
+    const bytes = await registryApi.descriptorSet(requestedSubject)
+    if (gen !== descriptorGeneration || subject.value !== requestedSubject) return
     descriptorModel.value = buildDescriptorModel(bytes)
   } catch (e) {
+    if (gen !== descriptorGeneration || subject.value !== requestedSubject) return
     descriptorModel.value = null
     descriptorError.value = errorMessage(e)
   } finally {
-    descriptorLoading.value = false
+    if (gen === descriptorGeneration) descriptorLoading.value = false
   }
 }
 
@@ -326,10 +355,15 @@ watch(tab, (t) => {
 })
 
 watch(subject, () => {
+  versionGeneration++
+  descriptorGeneration++
   tab.value = 'schema'
   descriptorModel.value = null
   descriptorError.value = ''
   envelope.value = null
+  latestEnvelope.value = null
+  effectiveMode.value = null
+  modeInherited.value = true
   load()
 })
 

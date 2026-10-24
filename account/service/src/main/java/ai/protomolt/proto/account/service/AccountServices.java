@@ -103,22 +103,46 @@ public final class AccountServices implements AutoCloseable {
         // Refused before the database pool opens, so a misconfiguration
         // leaves nothing to close.
         requireRepoCredential(config, repoApiToken);
-        this.database = new AccountDatabase(config.store());
-        this.store = new JdbcAccountStore();
-        this.identityResolver = new DirectAccountIdentityResolver();
-        this.repoChannel = repoChannel(config, repoApiToken);
-        this.driveProvisioner =
-                new DriveProvisioner(DriveServiceGrpc.newBlockingStub(repoChannel));
-        // Kafka eventing (DOCUMENT_PLATFORM_ACCOUNT_KAFKA_BOOTSTRAP_SERVERS):
-        // the transactional outbox. Unset = no outbox, no relay, no producer,
-        // and the commit points skip the outbox entirely (zero overhead).
-        this.eventOutbox = config.kafkaEnabled() ? new JdbcAccountEventOutbox(database) : null;
-        this.eventRelay = eventOutbox != null ? new AccountEventRelay(eventOutbox) : null;
-        this.eventProducer = eventOutbox != null
-                ? AccountEventRelay.newProducer(config.kafkaBootstrapServers(),
-                        config.schemaRegistryUrl()) : null;
-        this.accountService = new AccountGrpcService(database, store, eventOutbox, driveProvisioner);
-        this.services = List.of(accountService);
+        AccountDatabase openedDatabase = new AccountDatabase(config.store());
+        ManagedChannel openedRepoChannel = null;
+        KafkaProducer<String, Message> openedEventProducer = null;
+        try {
+            this.database = openedDatabase;
+            this.store = new JdbcAccountStore();
+            this.identityResolver = new DirectAccountIdentityResolver();
+            openedRepoChannel = repoChannel(config, repoApiToken);
+            this.repoChannel = openedRepoChannel;
+            this.driveProvisioner =
+                    new DriveProvisioner(DriveServiceGrpc.newBlockingStub(repoChannel));
+            // Kafka eventing (DOCUMENT_PLATFORM_ACCOUNT_KAFKA_BOOTSTRAP_SERVERS):
+            // the transactional outbox. Unset = no outbox, no relay, no producer,
+            // and the commit points skip the outbox entirely (zero overhead).
+            this.eventOutbox = config.kafkaEnabled() ? new JdbcAccountEventOutbox(database) : null;
+            this.eventRelay = eventOutbox != null ? new AccountEventRelay(eventOutbox) : null;
+            openedEventProducer = eventOutbox != null
+                    ? AccountEventRelay.newProducer(config.kafkaBootstrapServers(),
+                            config.schemaRegistryUrl()) : null;
+            this.eventProducer = openedEventProducer;
+            this.accountService = new AccountGrpcService(database, store, eventOutbox, driveProvisioner);
+            this.services = List.of(accountService);
+        } catch (RuntimeException | Error failure) {
+            if (openedEventProducer != null) {
+                try {
+                    openedEventProducer.close();
+                } catch (RuntimeException | Error suppressed) {
+                    failure.addSuppressed(suppressed);
+                }
+            }
+            if (openedRepoChannel != null) {
+                openedRepoChannel.shutdownNow();
+            }
+            try {
+                openedDatabase.close();
+            } catch (RuntimeException | Error suppressed) {
+                failure.addSuppressed(suppressed);
+            }
+            throw failure;
+        }
     }
 
     /**

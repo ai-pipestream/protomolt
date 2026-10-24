@@ -5,25 +5,41 @@ import ai.protomolt.proto.delegation.contract.DelegationValidation;
 import ai.protomolt.proto.delegation.v1.Transcript;
 
 import java.util.Optional;
+import java.util.concurrent.locks.ReentrantLock;
 
 /** Thread-safe, process-local transcript repository for tests and ephemeral deployments. */
 public final class InMemoryTranscriptRepository implements TranscriptRepository {
 
+    private final ReentrantLock lock = new ReentrantLock();
     private Transcript transcript;
 
-    @Override
-    public synchronized Optional<Transcript> load() {
-        return Optional.ofNullable(transcript);
+    /** Creates an empty in-memory transcript repository. */
+    public InMemoryTranscriptRepository() {
     }
 
     @Override
-    public synchronized void save(Transcript candidate) {
-        DelegationValidation.validate(candidate);
-        DelegationReducer.Result result = new DelegationReducer().reduce(candidate);
-        if (!result.clean()) {
-            DelegationReducer.Finding finding = result.findings().getLast();
-            throw new IllegalArgumentException(finding.kind() + ": " + finding.error());
+    public Optional<Transcript> load() {
+        lock.lock();
+        try {
+            return Optional.ofNullable(transcript);
+        } finally {
+            lock.unlock();
         }
-        transcript = candidate;
+    }
+
+    @Override
+    public void save(Transcript candidate) {
+        lock.lock();
+        try {
+            DelegationValidation.validate(candidate);
+            DelegationReducer.Result result = new DelegationReducer().reduce(candidate);
+            if (!result.clean()) {
+                DelegationReducer.Finding finding = result.findings().getLast();
+                throw new IllegalArgumentException(finding.kind() + ": " + finding.error());
+            }
+            transcript = candidate;
+        } finally {
+            lock.unlock();
+        }
     }
 }

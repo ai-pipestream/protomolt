@@ -12,6 +12,7 @@ import java.time.Clock;
 import java.time.Instant;
 import java.util.Objects;
 import java.util.concurrent.ExecutorService;
+import java.util.concurrent.locks.ReentrantLock;
 
 /**
  * The coordinator's lease clock: renewals, re-arming after a revision request, expiry
@@ -20,22 +21,22 @@ import java.util.concurrent.ExecutorService;
  * phase never expires here, and a revision request re-arms the lease when it hands the
  * task back.
  *
- * <p>The single monitor is preserved: the mutating methods are called with the
+ * <p>The single lock is preserved: the mutating methods are called with the
  * coordinator's {@code lock} (passed to the constructor) already held, and the expiry
- * timer task synchronizes on that same object. Frame emission stays with the coordinator
+ * timer task acquires that same lock. Frame emission stays with the coordinator
  * behind {@link CoordinatorFrames}; this schedule decides <em>when</em> a lease frame is
  * due, never how a frame becomes durable.
  */
 final class CoordinatorLeaseSchedule {
 
-    private final Object lock;
+    private final ReentrantLock lock;
     private final DelegationCoordinatorState state;
     private final Clock clock;
     private final boolean scheduleLeaseExpiries;
     private final ExecutorService runtimeTasks;
     private final CoordinatorFrames frames;
 
-    CoordinatorLeaseSchedule(Object lock, DelegationCoordinatorState state, Clock clock,
+    CoordinatorLeaseSchedule(ReentrantLock lock, DelegationCoordinatorState state, Clock clock,
             boolean scheduleLeaseExpiries, ExecutorService runtimeTasks,
             CoordinatorFrames frames) {
         this.lock = Objects.requireNonNull(lock, "lock");
@@ -155,7 +156,8 @@ final class CoordinatorLeaseSchedule {
                 if (!delay.isNegative() && !delay.isZero()) {
                     Thread.sleep(delay);
                 }
-                synchronized (lock) {
+                lock.lock();
+                try {
                     TaskRuntime task = state.tasks.get(taskId);
                     if (!state.closed && task != null && task.attempt == attempt
                             && task.leaseGeneration == generation
@@ -163,6 +165,8 @@ final class CoordinatorLeaseSchedule {
                             && task.phase == DelegationReducer.Phase.LEASED) {
                         expire(task, "lease deadline elapsed");
                     }
+                } finally {
+                    lock.unlock();
                 }
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();

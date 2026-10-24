@@ -182,7 +182,10 @@ catalog route or as a `MetricService` RPC.
 
 ### Registry
 
-Contributed by the registry role in `protomolt-registry-service`. Every one
+Contributed by the composed Git registry role in
+`protomolt-schema-registry-git-service` (`PublishConfigAction` lives in
+`protomolt-registry-service`, while `RegistryRemotesAction` and
+`RegistrySyncAction` live in `protomolt-schema-registry-git-service`). Every one
 requires `schema-write`.
 
 Each verb's envelope is the canonical proto3 JSON of a request message

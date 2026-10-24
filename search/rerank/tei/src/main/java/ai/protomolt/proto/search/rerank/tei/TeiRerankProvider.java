@@ -14,6 +14,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.locks.ReentrantLock;
 
 /**
  * {@link RerankProvider} that calls a Hugging Face Text Embeddings Inference (TEI) server
@@ -45,7 +46,7 @@ public final class TeiRerankProvider implements RerankProvider, AutoCloseable {
     /** Environment variable consulted when {@link #TARGET_PROPERTY} is unset: {@value}. */
     public static final String TARGET_ENVIRONMENT_VARIABLE = "PROTOMOLT_RERANK_TEI_TARGET";
 
-    private final Object lock = new Object();
+    private final ReentrantLock lock = new ReentrantLock();
     private final boolean callerOwned;
     private final Map<String, String> environment;
     private volatile ManagedChannel channel;
@@ -76,6 +77,8 @@ public final class TeiRerankProvider implements RerankProvider, AutoCloseable {
     /**
      * Connects to {@code target} ({@code host:port}) over plaintext. The provider owns the
      * channel; {@link #close()} shuts it down.
+     *
+     * @param target the gRPC target ({@code host:port}) of the TEI server
      */
     public TeiRerankProvider(String target) {
         this.target = Objects.requireNonNull(target, "target");
@@ -86,6 +89,8 @@ public final class TeiRerankProvider implements RerankProvider, AutoCloseable {
 
     /**
      * Reranks over a caller-owned channel. {@link #close()} leaves {@code channel} open.
+     *
+     * @param channel caller-owned gRPC channel connected to the TEI server
      */
     public TeiRerankProvider(ManagedChannel channel) {
         this.channel = Objects.requireNonNull(channel, "channel");
@@ -137,7 +142,7 @@ public final class TeiRerankProvider implements RerankProvider, AutoCloseable {
         boolean[] scored = new boolean[texts.size()];
         for (Rank rank : response.getRanksList()) {
             int index = rank.getIndex();
-            if (index >= texts.size()) {
+            if (index < 0 || index >= texts.size()) {
                 throw new IllegalStateException("TEI rerank returned rank index " + index
                         + " for a batch of " + texts.size() + " texts");
             }
@@ -166,10 +171,13 @@ public final class TeiRerankProvider implements RerankProvider, AutoCloseable {
         if (callerOwned) {
             return;
         }
-        synchronized (lock) {
+        lock.lock();
+        try {
             if (channel != null) {
                 channel.shutdown();
             }
+        } finally {
+            lock.unlock();
         }
     }
 
@@ -178,13 +186,16 @@ public final class TeiRerankProvider implements RerankProvider, AutoCloseable {
         if (open != null) {
             return open;
         }
-        synchronized (lock) {
+        lock.lock();
+        try {
             if (channel == null) {
                 String resolved = configuredTarget();
-                channel = ManagedChannelBuilder.forTarget(resolved).usePlaintext().build();
                 target = resolved;
+                channel = ManagedChannelBuilder.forTarget(resolved).usePlaintext().build();
             }
             return channel;
+        } finally {
+            lock.unlock();
         }
     }
 

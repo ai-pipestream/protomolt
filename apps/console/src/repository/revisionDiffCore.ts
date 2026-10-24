@@ -11,12 +11,12 @@
  * when the revision retained a schema for that exact occurrence and payload;
  * otherwise it is shown as its type URL and length.
  */
-import { ScalarType, create, equals, fromBinary, getOption, toBinary, type DescField, type DescMessage, type Message } from '@bufbuild/protobuf'
+import { ScalarType, create, equals, fromBinary, getOption, type DescField, type DescMessage, type Message } from '@bufbuild/protobuf'
 import { reflect, type ReflectList, type ReflectMap, type ReflectMessage } from '@bufbuild/protobuf/reflect'
 import { timestampDate, type Any, type Timestamp } from '@bufbuild/protobuf/wkt'
 import type { Client } from '@connectrpc/connect'
 import type { NodeAddress } from '@/gen/ai/protomolt/proto/repo/v1/address_pb'
-import { RepositoryOccurrenceKeyType, RepositorySchemaOccurrenceStepSchema, type RepositorySchemaOccurrenceStep } from '@/gen/ai/protomolt/proto/repo/v1/schema_occurrence_pb'
+import { RepositoryOccurrenceKeyType, type RepositorySchemaOccurrenceStep } from '@/gen/ai/protomolt/proto/repo/v1/schema_occurrence_pb'
 import { GetManifestRequestSchema, type DocumentService } from '@/gen/ai/protomolt/proto/repo/v2/document_service_pb'
 import {
   DocumentPart,
@@ -104,7 +104,9 @@ export function revisionFacts(manifest: DocumentManifest): RevisionFacts {
  * distinct descriptor set is fetched once and checked against its digest.
  */
 export class AnySchemas {
-  private constructor(private readonly byOccurrence: Map<string, { desc: DescMessage; retained: ResolvedOccurrence }>) {}
+  private constructor(
+    private readonly byOccurrence: Map<string, { desc: DescMessage; retained: ResolvedOccurrence; boundary: string }>,
+  ) {}
 
   static none(): AnySchemas {
     return new AnySchemas(new Map())
@@ -118,7 +120,7 @@ export class AnySchemas {
     signal: AbortSignal,
   ): Promise<AnySchemas> {
     const registries = new Map<string, Awaited<ReturnType<typeof retainedRegistry>>>()
-    const byOccurrence = new Map<string, { desc: DescMessage; retained: ResolvedOccurrence }>()
+    const byOccurrence = new Map<string, { desc: DescMessage; retained: ResolvedOccurrence; boundary: string }>()
     const opaque = new Set(validation.opaqueOccurrences.map((occurrence) => retainedLocationKey(occurrence.occurrence)))
     for (const occurrence of validation.resolvedOccurrences) {
       const schema = occurrence.schema
@@ -143,7 +145,10 @@ export class AnySchemas {
       if (desc === undefined) {
         throw new Error(`The retained descriptor set ${schema.descriptorSha256} does not define ${typeName}.`)
       }
-      byOccurrence.set(key, { desc, retained: occurrence })
+      const nextBoundary = terminal?.step.case === 'anyBoundary'
+        ? stepKey(terminal)
+        : boundaryKey(schema.typeUrl, occurrence.payloadSha256, occurrence.payloadLength, schema.descriptorSha256)
+      byOccurrence.set(key, { desc, retained: occurrence, boundary: nextBoundary })
     }
     return new AnySchemas(byOccurrence)
   }
@@ -152,13 +157,11 @@ export class AnySchemas {
   schemaOf(any: Any, location: AnyLocation): { desc: DescMessage; boundary: string } | null {
     const binding = this.byOccurrence.get(locationKey(location))
     if (binding === undefined) return null
-    const { retained, desc } = binding
+    const { retained, desc, boundary } = binding
     const schema = retained.schema!
     if (schema.typeUrl !== any.typeUrl || retained.payloadLength !== BigInt(any.value.length)
       || retained.payloadSha256 !== new Sha256().update(any.value).hex()) return null
-    const terminal = retained.occurrence!.steps.at(-1)!
-    return { desc, boundary: terminal.step.case === 'anyBoundary' ? stepKey(terminal)
-      : boundaryKey(any.typeUrl, retained.payloadSha256, retained.payloadLength, schema.descriptorSha256) }
+    return { desc, boundary }
   }
 }
 
@@ -182,8 +185,15 @@ function retainedLocationKey(locator: OccurrenceLocator | undefined): string {
   return locationKey({ part: locator.part, steps: locator.steps.map(stepKey) })
 }
 
-function boundaryKey(typeUrl: string, sha256: string, length: bigint, descriptorSha256: string): string {
-  return keyOf('anyBoundary', typeUrl, sha256, String(length), descriptorSha256)
+function boundaryKey(
+  typeUrl: string,
+  sha256: string,
+  length: bigint,
+  descriptorSha256: string,
+  typeName = '',
+  descriptorFingerprint = '',
+): string {
+  return keyOf('anyBoundary', typeUrl, sha256, String(length), descriptorSha256, typeName, descriptorFingerprint)
 }
 
 function stepKey(value: RepositorySchemaOccurrenceStep): string {
@@ -200,7 +210,15 @@ function stepKey(value: RepositorySchemaOccurrenceStep): string {
     case 'anyBoundary': {
       const boundary = step.value
       if (boundary.outcome.case !== 'resolved') throw new Error('An Any occurrence crosses an unresolved Any boundary.')
-      return keyOf('anyBoundary', new Sha256().update(toBinary(RepositorySchemaOccurrenceStepSchema, value)).hex())
+      const resolved = boundary.outcome.value
+      return boundaryKey(
+        boundary.typeUrl,
+        boundary.valueSha256,
+        boundary.valueSizeBytes,
+        resolved.artifactSha256,
+        resolved.schema?.typeName ?? '',
+        resolved.schema?.descriptorFingerprint ?? '',
+      )
     }
     default:
       throw new Error('An Any occurrence has an empty locator step.')
@@ -214,8 +232,13 @@ function mapStepKey(scalar: ScalarType, value: unknown): string {
   return keyOf('mapKey', String(type), kind, String(value))
 }
 
-function descend(location: AnyLocation, ...steps: string[]): AnyLocation {
-  return { part: location.part, steps: [...location.steps, ...steps] }
+function withStep(location: AnyLocation, step: string, fn: () => void): void {
+  location.steps.push(step)
+  try {
+    fn()
+  } finally {
+    location.steps.pop()
+  }
 }
 
 /** The flattened lines of one decoded fragment and the concept tags found in it. */
@@ -266,7 +289,6 @@ function walk(r: ReflectMessage, path: string, out: Flattened, schemas: AnySchem
     if (!r.isSet(field)) continue
     any = true
     const at = join(path, field.name)
-    const fieldLocation = descend(location, `fieldNumber:${field.number}`)
     switch (field.fieldKind) {
       case 'scalar':
         out.lines.push(`${at} = ${scalarText(field.scalar, r.get(field))}`)
@@ -275,27 +297,47 @@ function walk(r: ReflectMessage, path: string, out: Flattened, schemas: AnySchem
         out.lines.push(`${at} = ${enumText(field, r.get(field) as number)}`)
         break
       case 'message':
-        entry(r.get(field) as ReflectMessage, at, out, schemas, fieldLocation, boundConcept(field))
+        withStep(location, `fieldNumber:${field.number}`, () => {
+          entry(r.get(field) as ReflectMessage, at, out, schemas, location, boundConcept(field))
+        })
         break
       case 'list': {
         const list = r.get(field) as ReflectList
         const tag = boundConcept(field)
-        for (const [i, item] of list.entries()) {
-          const element = `${at}[${i}]`
-          if (field.listKind === 'message') entry(item as ReflectMessage, element, out, schemas, descend(fieldLocation, `repeatedIndex:${i}`), tag)
-          else if (field.listKind === 'enum') out.lines.push(`${element} = ${enumText(field, item as number)}`)
-          else out.lines.push(`${element} = ${scalarText(field.scalar, item)}`)
+        if (field.listKind === 'message') {
+          withStep(location, `fieldNumber:${field.number}`, () => {
+            for (const [i, item] of list.entries()) {
+              withStep(location, `repeatedIndex:${i}`, () => {
+                entry(item as ReflectMessage, `${at}[${i}]`, out, schemas, location, tag)
+              })
+            }
+          })
+        } else {
+          for (const [i, item] of list.entries()) {
+            const element = `${at}[${i}]`
+            if (field.listKind === 'enum') out.lines.push(`${element} = ${enumText(field, item as number)}`)
+            else out.lines.push(`${element} = ${scalarText(field.scalar, item)}`)
+          }
         }
         break
       }
       case 'map': {
         const map = r.get(field) as ReflectMap
         const entries = [...map.entries()].sort(([a], [b]) => (String(a) < String(b) ? -1 : String(a) > String(b) ? 1 : 0))
-        for (const [key, value] of entries) {
-          const element = `${at}[${JSON.stringify(String(key))}]`
-          if (field.mapKind === 'message') entry(value as ReflectMessage, element, out, schemas, descend(fieldLocation, mapStepKey(field.mapKey, key)), false)
-          else if (field.mapKind === 'enum') out.lines.push(`${element} = ${field.enum.value[value as number]?.name ?? `UNKNOWN(${value})`}`)
-          else out.lines.push(`${element} = ${scalarText(field.scalar, value)}`)
+        if (field.mapKind === 'message') {
+          withStep(location, `fieldNumber:${field.number}`, () => {
+            for (const [key, value] of entries) {
+              withStep(location, mapStepKey(field.mapKey, key), () => {
+                entry(value as ReflectMessage, `${at}[${JSON.stringify(String(key))}]`, out, schemas, location, false)
+              })
+            }
+          })
+        } else {
+          for (const [key, value] of entries) {
+            const element = `${at}[${JSON.stringify(String(key))}]`
+            if (field.mapKind === 'enum') out.lines.push(`${element} = ${field.enum.value[value as number]?.name ?? `UNKNOWN(${value})`}`)
+            else out.lines.push(`${element} = ${scalarText(field.scalar, value)}`)
+          }
         }
         break
       }
@@ -323,9 +365,10 @@ function entry(r: ReflectMessage, at: string, out: Flattened, schemas: AnySchema
       return
     }
     const decoded = reflect(binding.desc, fromBinary(binding.desc, any.value))
-    const nested = descend(location, binding.boundary)
-    if (binding.desc.typeName === ANY) entry(decoded, at, out, schemas, nested, false)
-    else walk(decoded, at, out, schemas, nested)
+    withStep(location, binding.boundary, () => {
+      if (binding.desc.typeName === ANY) entry(decoded, at, out, schemas, location, false)
+      else walk(decoded, at, out, schemas, location)
+    })
     return
   }
   if (conceptTag && typeName === CONCEPT_REF) {

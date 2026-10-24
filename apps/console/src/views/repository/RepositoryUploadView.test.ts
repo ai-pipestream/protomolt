@@ -99,6 +99,33 @@ afterEach(() => {
 })
 
 describe('RepositoryUploadView', () => {
+  it('looks up a deep-linked operation only when the account came from the query', async () => {
+    const linked: GetOperationOutcomeRequest[] = []
+    const fromQuery = await mountRepositoryView(
+      RepositoryUploadView,
+      { name: 'repository-upload', query: { account: 'acct-a', operationId: 'op-linked' } },
+      repository(linked),
+      { [REPOSITORY_SIGN_IN as symbol]: vi.fn() },
+    )
+    expect(linked).toHaveLength(1)
+    expect(linked[0]).toMatchObject({ accountId: 'acct-a', operationId: 'op-linked' })
+    fromQuery.wrapper.unmount()
+
+    const typed: GetOperationOutcomeRequest[] = []
+    const typing = await mountRepositoryView(
+      RepositoryUploadView,
+      { name: 'repository-upload', query: { operationId: 'op-typed' } },
+      repository(typed),
+      { [REPOSITORY_SIGN_IN as symbol]: vi.fn() },
+    )
+    await typing.wrapper.get('[data-testid="up-account"] input').setValue('a')
+    await settle()
+    await typing.wrapper.get('[data-testid="up-account"] input').setValue('acct-a')
+    await settle()
+    expect(typed).toHaveLength(0)
+    typing.wrapper.unmount()
+  })
+
   it('uploads a multi-MB file under a pre-chosen operation ID and opens the revision the route committed', async () => {
     const { wrapper, router, outcomes } = await mountUpload([saved])
     await wrapper.get('[data-testid="up-start"]').trigger('click')

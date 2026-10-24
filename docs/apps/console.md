@@ -329,11 +329,12 @@ the procedures the screens call, listed in `ConsoleProcedures` in
   decoded CORE and PARSED fragments. A fragment is decoded with the schema its
   revision retained and flattened into one `path = value` line per set field
   by protobuf reflection; a typed Any is entered only when the revision
-  retained a schema for that exact payload (type URL and SHA-256), and a
-  `ConceptRef` field that declares `concept_schemes` is listed as a tag. Link
-  lines leave out the target status, which describes the target now rather
-  than the revision. A section whose read failed shows its failure while the
-  other sections still compare.
+  retained a schema for that exact occurrence and payload (part, occurrence
+  locator, type URL, byte length and SHA-256), and a `ConceptRef` field that
+  declares `concept_schemes` is listed as a tag. Link lines leave out the
+  target status, which describes the target now rather than the revision. A
+  section whose read failed shows its failure while the other sections still
+  compare.
 - **Delete.** The current revision of a live document can be tombstoned
   through `DeleteDocument`. The confirmation names the call number and the
   revision it replaces and shows the operation ID chosen when it opened; the
@@ -359,11 +360,19 @@ the procedures the screens call, listed in `ConsoleProcedures` in
   with the same range, streaming and verification rules as raw files: a
   whole-object read must hash to the SHA-256 the manifest attests.
 - **Look up.** Open a document by its call number (account, graph, graph
-  address and document IDs, with an optional exact revision), or ask what
-  happened to an operation ID. `GetOperationOutcome` answers committed,
+  address and document IDs, with an optional exact revision), ask what
+  happened to an operation ID, or look up documents by SKOS concept and inspect
+  a `ConceptScheme` hierarchy. `GetOperationOutcome` answers committed,
   committed as a rejection, or no outcome yet, and an `UNAVAILABLE` status
   means the lookup itself could not answer. The four are shown differently:
-  no outcome does not mean the save failed.
+  no outcome does not mean the save failed. The SKOS concept lookup queries
+  `ListDocuments` with a `ConceptFilter` (`scheme_id`, `concept_id`, and
+  optional `narrower` and `close_match` expansion), displays the
+  `ConceptFilterEvidence` (`expanded_concepts`, consulted `mounted_schemes`
+  versions, and `unresolved_mappings`), and decodes `ConceptScheme` protobuf
+  definitions to browse top concepts, broader/narrower trees, symmetric
+  `related` links, deprecations (`replaced_by`), notations, and cross-scheme
+  mappings.
 
 - **Upload.** A file goes to the repository host's streaming route,
   `POST /v1/documents:upload`, as an intake document's raw file: account,

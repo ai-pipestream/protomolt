@@ -12,6 +12,7 @@ import com.google.protobuf.Descriptors.FileDescriptor;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
+import java.util.concurrent.locks.ReentrantLock;
 
 /**
  * A {@link DescriptorLoader} backed by a {@link ProtoGatherer}: sources are gathered and
@@ -26,6 +27,7 @@ public final class GatheringDescriptorLoader implements DescriptorLoader, AutoCl
 
     private final ProtoGatherer gatherer;
     private final ProtoSourceCompiler compiler;
+    private final ReentrantLock compileLock = new ReentrantLock();
 
     private volatile Compiled cached;
 
@@ -47,7 +49,8 @@ public final class GatheringDescriptorLoader implements DescriptorLoader, AutoCl
         if (current != null) {
             return current;
         }
-        synchronized (this) {
+        compileLock.lock();
+        try {
             if (cached == null) {
                 try {
                     ProtoSourceSet sources = gatherer.gather();
@@ -61,6 +64,8 @@ public final class GatheringDescriptorLoader implements DescriptorLoader, AutoCl
                 }
             }
             return cached;
+        } finally {
+            compileLock.unlock();
         }
     }
 
@@ -113,8 +118,13 @@ public final class GatheringDescriptorLoader implements DescriptorLoader, AutoCl
     }
 
     /** Drops the cached compilation; the next load gathers and compiles again. */
-    public synchronized void refresh() {
-        cached = null;
+    public void refresh() {
+        compileLock.lock();
+        try {
+            cached = null;
+        } finally {
+            compileLock.unlock();
+        }
     }
 
     @Override

@@ -91,7 +91,7 @@ This is a navigation inventory, not a claim that each file was individually revi
 - [java/ai/protomolt/proto/cel/CelEnvironmentFactoryTest.java](../../core/cel/src/test/java/ai/protomolt/proto/cel/CelEnvironmentFactoryTest.java)
 - [java/ai/protomolt/proto/cel/CelEvaluatorBehaviorTest.java](../../core/cel/src/test/java/ai/protomolt/proto/cel/CelEvaluatorBehaviorTest.java)
 - [java/ai/protomolt/proto/cel/CelEvaluatorTest.java](../../core/cel/src/test/java/ai/protomolt/proto/cel/CelEvaluatorTest.java)
-- [java/ai/protomolt/proto/cel/CelFixtures.java](../../core/cel/src/test/java/ai/protomolt/proto/cel/CelFixtures.java)
+- [java/ai/protomolt/proto/cel/CelFixtures.java](../../core/cel/src/testFixtures/java/ai/protomolt/proto/cel/CelFixtures.java)
 - [java/ai/protomolt/proto/cel/CelValidationContractTest.java](../../core/cel/src/test/java/ai/protomolt/proto/cel/CelValidationContractTest.java)
 - [java/ai/protomolt/proto/cel/CelValidationTest.java](../../core/cel/src/test/java/ai/protomolt/proto/cel/CelValidationTest.java)
 
@@ -1709,7 +1709,6 @@ This is a navigation inventory, not a claim that each file was individually revi
 ### Existing test sources (not executed in this audit)
 
 - [java/ai/protomolt/proto/mapper/cel/CelFilterSelectorTest.java](../../transform/mapper/cel/src/test/java/ai/protomolt/proto/mapper/cel/CelFilterSelectorTest.java)
-- [java/ai/protomolt/proto/mapper/cel/CelFixtures.java](../../transform/mapper/cel/src/test/java/ai/protomolt/proto/mapper/cel/CelFixtures.java)
 - [java/ai/protomolt/proto/mapper/cel/CelMappingRuleTest.java](../../transform/mapper/cel/src/test/java/ai/protomolt/proto/mapper/cel/CelMappingRuleTest.java)
 - [java/ai/protomolt/proto/mapper/cel/CelMappingUseCasesTest.java](../../transform/mapper/cel/src/test/java/ai/protomolt/proto/mapper/cel/CelMappingUseCasesTest.java)
 - [java/ai/protomolt/proto/mapper/cel/CelProtoMapperContractTest.java](../../transform/mapper/cel/src/test/java/ai/protomolt/proto/mapper/cel/CelProtoMapperContractTest.java)

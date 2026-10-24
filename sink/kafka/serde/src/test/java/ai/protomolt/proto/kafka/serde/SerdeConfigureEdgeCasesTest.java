@@ -93,4 +93,26 @@ class SerdeConfigureEdgeCasesTest {
                     .hasMessageContaining("is not a valid serde.cfg.v1.Event");
         }
     }
+
+    @Test
+    void protoMoltSerdeConfigureClosesSerializerWhenDeserializerConfigureFails() {
+        try (var serde = new ProtoMoltSerde()) {
+            assertThatThrownBy(() -> serde.configure(
+                    config(Map.of(ProtoMoltSerdeConfig.MAP_ON_READ, "not-a-valid-mapping-rule")),
+                    false))
+                    .isInstanceOf(org.apache.kafka.common.config.ConfigException.class);
+        }
+    }
+
+    @Test
+    void blankRegistryMustNotBypassMissingSchemaCheck() {
+        try (var deserializer = new ProtoMoltProtobufDeserializer()) {
+            assertThatThrownBy(() -> deserializer.configure(
+                    Map.of(ProtoMoltSerdeConfig.SCHEMA_REGISTRY_URL, ""), false))
+                    .isInstanceOf(org.apache.kafka.common.config.ConfigException.class);
+            assertThatThrownBy(() -> deserializer.configure(
+                    Map.of(ProtoMoltSerdeConfig.SCHEMA_REGISTRY_URL, "   "), false))
+                    .isInstanceOf(org.apache.kafka.common.config.ConfigException.class);
+        }
+    }
 }

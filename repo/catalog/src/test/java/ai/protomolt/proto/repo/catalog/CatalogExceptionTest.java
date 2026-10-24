@@ -45,6 +45,9 @@ class CatalogExceptionTest {
         var duplicate = CatalogException.from("insert part", new SQLException(null, "23505"));
         assertThat(duplicate).hasMessage("insert part failed: null");
         assertThat(duplicate.unavailable()).isFalse();
+        assertThat(duplicate.alreadyExists()).isTrue();
+        assertThat(failure.alreadyExists()).isFalse();
+        assertThat(CatalogException.from("cancel", new SQLException("cancelled", "57014")).alreadyExists()).isFalse();
     }
 
     @Test

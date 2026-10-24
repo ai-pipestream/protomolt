@@ -87,9 +87,10 @@ public final class AuthoringWorker {
             try (var store = AuthoringWorkerStateStore.open(stateDirectory, coordinator, fixture, workerId)) {
                 ManagedChannel control = ManagedChannelBuilder.forTarget(coordinator)
                         .usePlaintext().maxInboundMessageSize(16 * 1024 * 1024).build();
-                ManagedChannel external = ManagedChannelBuilder.forTarget(fixture)
-                        .usePlaintext().maxInboundMessageSize(4 * 1024 * 1024).build();
+                ManagedChannel external = null;
                 try {
+                    external = ManagedChannelBuilder.forTarget(fixture)
+                            .usePlaintext().maxInboundMessageSize(4 * 1024 * 1024).build();
                     Metadata headers = new Metadata();
                     headers.put(Metadata.Key.of("api_token", Metadata.ASCII_STRING_MARSHALLER), token);
                     var tasks = WorkflowAuthorTaskServiceGrpc.newBlockingStub(control)
@@ -124,8 +125,7 @@ public final class AuthoringWorker {
                         if (!changed) Thread.sleep(150);
                     }
                 } finally {
-                    external.shutdownNow().awaitTermination(5, TimeUnit.SECONDS);
-                    control.shutdownNow().awaitTermination(5, TimeUnit.SECONDS);
+                    shutdownChannels(external, control);
                 }
             }
         }
@@ -445,9 +445,10 @@ public final class AuthoringWorker {
         void run() throws Exception {
             ManagedChannel control = ManagedChannelBuilder.forTarget(coordinator)
                     .usePlaintext().maxInboundMessageSize(16 * 1024 * 1024).build();
-            ManagedChannel external = ManagedChannelBuilder.forTarget(fixture)
-                    .usePlaintext().maxInboundMessageSize(4 * 1024 * 1024).build();
+            ManagedChannel external = null;
             try {
+                external = ManagedChannelBuilder.forTarget(fixture)
+                        .usePlaintext().maxInboundMessageSize(4 * 1024 * 1024).build();
                 Metadata headers = new Metadata();
                 headers.put(Metadata.Key.of("api_token", Metadata.ASCII_STRING_MARSHALLER), token);
                 var tasks = WorkflowAuthorTaskServiceGrpc.newBlockingStub(control)
@@ -515,8 +516,7 @@ public final class AuthoringWorker {
                 waitForReview(tasks, candidate);
                 System.out.println("AuthoringWorker accepted task=" + taskId + " attempt=" + attempt);
             } finally {
-                external.shutdownNow().awaitTermination(5, TimeUnit.SECONDS);
-                control.shutdownNow().awaitTermination(5, TimeUnit.SECONDS);
+                shutdownChannels(external, control);
             }
         }
 
@@ -776,6 +776,33 @@ public final class AuthoringWorker {
             throw new IllegalStateException("could not serialize author offer", failure);
         }
         return sha(bytes);
+    }
+
+    static void shutdownChannels(ManagedChannel external, ManagedChannel control) {
+        if (external != null) {
+            external.shutdownNow();
+        }
+        if (control != null) {
+            control.shutdownNow();
+        }
+        boolean interrupted = false;
+        if (external != null) {
+            try {
+                external.awaitTermination(5, TimeUnit.SECONDS);
+            } catch (InterruptedException e) {
+                interrupted = true;
+            }
+        }
+        if (control != null) {
+            try {
+                control.awaitTermination(5, TimeUnit.SECONDS);
+            } catch (InterruptedException e) {
+                interrupted = true;
+            }
+        }
+        if (interrupted) {
+            Thread.currentThread().interrupt();
+        }
     }
 
     private static void require(boolean condition, String message) {

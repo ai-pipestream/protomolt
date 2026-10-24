@@ -5,6 +5,9 @@ import ai.protomolt.proto.meta.testdata.MaskerDoc;
 import ai.protomolt.proto.meta.testdata.SecretNote;
 import com.google.protobuf.Any;
 import com.google.protobuf.ByteString;
+import com.google.protobuf.DescriptorProtos;
+import com.google.protobuf.Descriptors;
+import com.google.protobuf.DynamicMessage;
 import org.junit.jupiter.api.Test;
 
 import java.nio.charset.StandardCharsets;
@@ -251,5 +254,85 @@ class SensitivityMaskerTest {
         MaskerDoc opened = (MaskerDoc) SensitivityMasker.mask(sealed, Set.of("pii"),
                 SensitivityMasker.Strategy.DECRYPT, KEY).message();
         assertThat(opened.getEnvelope().unpack(SecretNote.class).getBody()).isEqualTo("hidden");
+    }
+
+    @Test
+    void redactReachesInsideNestedAnyPayloads() throws Exception {
+        SecretNote note = SecretNote.newBuilder().setBody("hidden").setLabel("keep").build();
+        MaskerDoc doc = MaskerDoc.newBuilder()
+                .setEnvelope(Any.pack(Any.pack(note)))
+                .build();
+
+        SensitivityMasker.MaskResult result = SensitivityMasker.mask(doc, Set.of("pii"),
+                SensitivityMasker.Strategy.REDACT);
+        MaskerDoc masked = (MaskerDoc) result.message();
+
+        assertThat(result.unresolvedPaths()).isEmpty();
+        assertThat(result.maskedPaths()).contains("envelope.body");
+        Any innerAny = masked.getEnvelope().unpack(Any.class);
+        SecretNote maskedNote = innerAny.unpack(SecretNote.class);
+        assertThat(maskedNote.getBody()).isEqualTo("***");
+        assertThat(maskedNote.getLabel()).isEqualTo("keep");
+    }
+
+    @Test
+    void importedTypesResolvesNestedMessageTypesInsideAny() throws Exception {
+        DescriptorProtos.FieldOptions piiOptions = DescriptorProtos.FieldOptions.newBuilder()
+                .setExtension(MetadataProto.field, FieldMeta.newBuilder().setSensitivity("pii").build())
+                .build();
+        DescriptorProtos.DescriptorProto innerProto = DescriptorProtos.DescriptorProto.newBuilder()
+                .setName("Inner")
+                .addField(DescriptorProtos.FieldDescriptorProto.newBuilder()
+                        .setName("secret")
+                        .setNumber(1)
+                        .setType(DescriptorProtos.FieldDescriptorProto.Type.TYPE_STRING)
+                        .setOptions(piiOptions))
+                .addField(DescriptorProtos.FieldDescriptorProto.newBuilder()
+                        .setName("public_label")
+                        .setNumber(2)
+                        .setType(DescriptorProtos.FieldDescriptorProto.Type.TYPE_STRING))
+                .build();
+        DescriptorProtos.DescriptorProto outerProto = DescriptorProtos.DescriptorProto.newBuilder()
+                .setName("Outer")
+                .addField(DescriptorProtos.FieldDescriptorProto.newBuilder()
+                        .setName("envelope")
+                        .setNumber(1)
+                        .setType(DescriptorProtos.FieldDescriptorProto.Type.TYPE_MESSAGE)
+                        .setTypeName(".google.protobuf.Any"))
+                .addNestedType(innerProto)
+                .build();
+        DescriptorProtos.FileDescriptorProto fileProto = DescriptorProtos.FileDescriptorProto.newBuilder()
+                .setName("nested_any.proto")
+                .setPackage("acme.nested.v1")
+                .setSyntax("proto3")
+                .addDependency(Any.getDescriptor().getFile().getFullName())
+                .addMessageType(outerProto)
+                .build();
+        Descriptors.FileDescriptor file = Descriptors.FileDescriptor.buildFrom(
+                fileProto, new Descriptors.FileDescriptor[]{Any.getDescriptor().getFile()});
+        Descriptors.Descriptor outerDesc = file.findMessageTypeByName("Outer");
+        Descriptors.Descriptor innerDesc = outerDesc.findNestedTypeByName("Inner");
+
+        DynamicMessage innerMsg = DynamicMessage.newBuilder(innerDesc)
+                .setField(innerDesc.findFieldByName("secret"), "top-secret")
+                .setField(innerDesc.findFieldByName("public_label"), "visible")
+                .build();
+        Any packedInner = Any.newBuilder()
+                .setTypeUrl("type.googleapis.com/" + innerDesc.getFullName())
+                .setValue(innerMsg.toByteString())
+                .build();
+        DynamicMessage outerMsg = DynamicMessage.newBuilder(outerDesc)
+                .setField(outerDesc.findFieldByName("envelope"), packedInner)
+                .build();
+
+        SensitivityMasker.MaskResult result = SensitivityMasker.mask(
+                outerMsg, Set.of("pii"), SensitivityMasker.Strategy.REDACT);
+
+        assertThat(result.unresolvedPaths()).isEmpty();
+        assertThat(result.maskedPaths()).containsExactly("envelope.secret");
+        Any maskedAny = (Any) result.message().getField(outerDesc.findFieldByName("envelope"));
+        DynamicMessage maskedInner = DynamicMessage.parseFrom(innerDesc, maskedAny.getValue());
+        assertThat(maskedInner.getField(innerDesc.findFieldByName("secret"))).isEqualTo("***");
+        assertThat(maskedInner.getField(innerDesc.findFieldByName("public_label"))).isEqualTo("visible");
     }
 }

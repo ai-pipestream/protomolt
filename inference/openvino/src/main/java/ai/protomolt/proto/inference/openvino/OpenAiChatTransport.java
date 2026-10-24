@@ -147,8 +147,17 @@ public final class OpenAiChatTransport {
             throw new InferenceException("stream to " + model.getId() + " interrupted", e);
         }
         if (response.statusCode() != 200) {
-            throw new InferenceException("model " + model.getId() + " at " + model.getEndpoint()
-                    + " answered HTTP " + response.statusCode());
+            InferenceException failure = new InferenceException("model " + model.getId() + " at "
+                    + model.getEndpoint() + " answered HTTP " + response.statusCode());
+            java.io.InputStream bodyStream = response.body();
+            if (bodyStream != null) {
+                try {
+                    bodyStream.close();
+                } catch (IOException | RuntimeException | Error closeEx) {
+                    failure.addSuppressed(closeEx);
+                }
+            }
+            throw failure;
         }
         streamEvents(model, response, observer);
     }

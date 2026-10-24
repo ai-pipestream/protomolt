@@ -95,15 +95,22 @@ public final class JdbcApiKeyIdentityResolver implements ApiKeyIdentityResolver,
                     .locations(config.migrationLocation())
                     .load()
                     .migrate();
-        } catch (RuntimeException e) {
+        } catch (Throwable t) {
             // Don't leak the pool if migration fails.
-            this.dataSource.close();
-            throw e;
+            try {
+                this.dataSource.close();
+            } catch (Throwable suppressed) {
+                t.addSuppressed(suppressed);
+            }
+            throw t;
         }
     }
 
     @Override
     public Optional<IntakeScope> resolve(String credential) {
+        if (credential == null) {
+            throw new IllegalArgumentException("credential must not be null");
+        }
         String keyHash = sha256Hex(credential);
         try (Connection c = dataSource.getConnection();
                 PreparedStatement select = c.prepareStatement(SELECT_LIVE)) {
@@ -144,12 +151,15 @@ public final class JdbcApiKeyIdentityResolver implements ApiKeyIdentityResolver,
         }
         String keyHash = sha256Hex(credential);
         try (Connection c = dataSource.getConnection();
-                PreparedStatement insert = c.prepareStatement(INSERT_KEY)) {
+                PreparedStatement insert = c.prepareStatement(INSERT_KEY);
+                ScopedArray datasourceIds = ScopedArray.of(c, scope.datasourceIds());
+                ScopedArray drives = ScopedArray.of(c, scope.drives());
+                ScopedArray mimeTypes = ScopedArray.of(c, scope.mimeTypes())) {
             insert.setString(1, keyHash);
             insert.setString(2, scope.accountId());
-            insert.setArray(3, textArrayOf(c, scope.datasourceIds()));
-            insert.setArray(4, textArrayOf(c, scope.drives()));
-            insert.setArray(5, textArrayOf(c, scope.mimeTypes()));
+            insert.setArray(3, datasourceIds.array());
+            insert.setArray(4, drives.array());
+            insert.setArray(5, mimeTypes.array());
             insert.setLong(6, scope.maxPayloadBytes());
             insert.executeUpdate();
         } catch (SQLException e) {
@@ -175,6 +185,9 @@ public final class JdbcApiKeyIdentityResolver implements ApiKeyIdentityResolver,
      * @throws IllegalStateException when the store itself fails
      */
     public void revoke(String credential) {
+        if (credential == null) {
+            throw new IllegalArgumentException("credential must not be null");
+        }
         try (Connection c = dataSource.getConnection();
                 PreparedStatement revoke = c.prepareStatement(REVOKE_KEY)) {
             revoke.setString(1, sha256Hex(credential));
@@ -208,17 +221,27 @@ public final class JdbcApiKeyIdentityResolver implements ApiKeyIdentityResolver,
         return HexFormat.of().formatHex(digest.digest(credential.getBytes(StandardCharsets.UTF_8)));
     }
 
-    private static Set<String> textArray(ResultSet row, String column) throws SQLException {
-        Array array = row.getArray(column);
-        // The columns are NOT NULL DEFAULT '{}', so null only means a schema
-        // drifted out from under us — surface it as the store failure it is.
-        if (array == null) {
-            throw new SQLException("column " + column + " unexpectedly NULL");
+    static Set<String> textArray(ResultSet row, String column) throws SQLException {
+        try (ScopedArray array = new ScopedArray(row.getArray(column))) {
+            // The columns are NOT NULL DEFAULT '{}', so null only means a schema
+            // drifted out from under us — surface it as the store failure it is.
+            if (array.array() == null) {
+                throw new SQLException("column " + column + " unexpectedly NULL");
+            }
+            return Set.of((String[]) array.array().getArray());
         }
-        return Set.of((String[]) array.getArray());
     }
 
-    private static Array textArrayOf(Connection c, Set<String> values) throws SQLException {
-        return c.createArrayOf("text", values.toArray(String[]::new));
+    private record ScopedArray(Array array) implements AutoCloseable {
+        static ScopedArray of(Connection c, Set<String> values) throws SQLException {
+            return new ScopedArray(c.createArrayOf("text", values.toArray(String[]::new)));
+        }
+
+        @Override
+        public void close() throws SQLException {
+            if (array != null) {
+                array.free();
+            }
+        }
     }
 }

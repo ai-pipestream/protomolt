@@ -102,6 +102,62 @@ class DocumentConceptsTest {
                 .hasMessageContaining("no other fields");
     }
 
+    @Test void unknownFieldsOnConceptRefAreRefused() throws Exception {
+        var subject = REPORT.findFieldByName("subject");
+        var withUnknown = DynamicMessage.newBuilder(subject.getMessageType())
+                .mergeFrom(ref("subject", "physics").toByteString())
+                .setUnknownFields(com.google.protobuf.UnknownFieldSet.newBuilder()
+                        .addField(77, com.google.protobuf.UnknownFieldSet.Field.newBuilder().addVarint(1).build())
+                        .build())
+                .build();
+        var report = DynamicMessage.newBuilder(REPORT).setField(subject, withUnknown).build();
+        assertThatThrownBy(() -> DocumentConcepts.extract(report, "structured_data"))
+                .isInstanceOf(DocumentConcepts.TagRefused.class)
+                .hasMessageContaining("carries fields ai.protomolt.proto.types.v1.ConceptRef does not declare");
+    }
+
+    @Test void schemaChecksAndExtractionAreRememberedAndCancellable() throws Exception {
+        int length = 2048;
+        var bound = FieldOptions.newBuilder().setExtension(ValidateProto.field,
+                FieldRules.newBuilder().addConceptSchemes("subject").build());
+        var proto = FileDescriptorProto.newBuilder().setName("acme/v1/chain.proto").setPackage("acme.v1").setSyntax("proto3")
+                .addDependency(ConceptsProto.getDescriptor().getName())
+                .addDependency(ValidateProto.getDescriptor().getName());
+        for (int i = 0; i < length - 1; i++) {
+            proto.addMessageType(DescriptorProto.newBuilder().setName("C" + i)
+                    .addField(message("next", 1, ".acme.v1.C" + (i + 1), false)));
+        }
+        proto.addMessageType(DescriptorProto.newBuilder().setName("C" + (length - 1))
+                .addField(message("subject", 1, REF, false).setOptions(bound)));
+        var deps = new FileDescriptor[]{ConceptsProto.getDescriptor(), ValidateProto.getDescriptor()};
+        var bytes = FileDescriptor.buildFrom(proto.build(), deps).toProto().toByteString();
+        var head = FileDescriptor.buildFrom(FileDescriptorProto.parseFrom(bytes), deps).findMessageTypeByName("C0");
+
+        var runs = new int[1];
+        var checks = new DocumentConcepts.SchemaChecks(() -> runs[0]++);
+        assertThat(checks.declares(head)).isTrue();
+        int firstRuns = runs[0];
+        assertThat(firstRuns).isPositive().isLessThanOrEqualTo(3 * length + 8);
+        assertThat(checks.declares(head)).isTrue();
+        assertThat(runs[0]).isEqualTo(firstRuns);
+
+        var stopped = new java.util.concurrent.CancellationException("deadline expired");
+        var limited = new int[1];
+        assertThatThrownBy(() -> new DocumentConcepts.SchemaChecks(() -> {
+            if (++limited[0] > 50) throw stopped;
+        }).declares(head)).isSameAs(stopped);
+
+        var report = DynamicMessage.newBuilder(REPORT)
+                .setField(REPORT.findFieldByName("subject"), ref("subject", "science"))
+                .build();
+        var extractRuns = new int[1];
+        assertThat(DocumentConcepts.extract(report, "structured_data", () -> extractRuns[0]++)).hasSize(1);
+        assertThat(extractRuns[0]).isPositive();
+        assertThatThrownBy(() -> DocumentConcepts.extract(report, "structured_data", () -> {
+            throw stopped;
+        })).isSameAs(stopped);
+    }
+
     /**
      * forged.v1.Report, whose bound subject field uses a ConceptRef from a forged
      * ai/protomolt/proto/types/v1/concepts.proto: no rules, scheme_id of {@code schemeType}.

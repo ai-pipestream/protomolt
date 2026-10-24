@@ -15,6 +15,7 @@ import java.util.EnumMap;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.locks.ReentrantLock;
 
 /**
  * The published rules for telling containers apart by what is inside them.
@@ -31,6 +32,7 @@ import java.util.Map;
 public final class ContainerSignatures {
 
     private static final String BUNDLED = "container-signatures.xml";
+    private static final ReentrantLock LOAD_LOCK = new ReentrantLock();
 
     private static volatile ContainerSignatures bundled;
 
@@ -77,12 +79,15 @@ public final class ContainerSignatures {
     public static ContainerSignatures bundled() {
         ContainerSignatures loaded = bundled;
         if (loaded == null) {
-            synchronized (ContainerSignatures.class) {
+            LOAD_LOCK.lock();
+            try {
                 loaded = bundled;
                 if (loaded == null) {
                     loaded = loadBundled();
                     bundled = loaded;
                 }
+            } finally {
+                LOAD_LOCK.unlock();
             }
         }
         return loaded;
@@ -186,12 +191,20 @@ public final class ContainerSignatures {
         return byKind.getOrDefault(kind, List.of());
     }
 
-    /** The published version of this rule set, for provenance. */
+    /**
+     * The published version of this rule set, for provenance.
+     *
+     * @return the published version string
+     */
     public String version() {
         return version;
     }
 
-    /** The rules left out because a pattern in them would not compile. */
+    /**
+     * The rules left out because a pattern in them would not compile.
+     *
+     * @return the skipped rule descriptions
+     */
     public List<String> skipped() {
         return skipped;
     }
