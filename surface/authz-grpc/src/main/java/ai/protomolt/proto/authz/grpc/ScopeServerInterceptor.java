@@ -47,8 +47,6 @@ import java.util.concurrent.ConcurrentLinkedQueue;
  */
 public final class ScopeServerInterceptor implements ServerInterceptor {
 
-    private static final long MAX_DECOMPRESSED_COUNT_BYTES = 64L * 1024L;
-    private static final int SCRATCH_BUFFER_BYTES = 4096;
     private static final int MAX_CALL_UNWRAP_DEPTH = 16;
     private static final ThreadLocal<InboundFrameTracker> PENDING_COMPRESSED_TRACKER =
             new ThreadLocal<>();
@@ -501,6 +499,16 @@ public final class ScopeServerInterceptor implements ServerInterceptor {
             }
         }
 
+        private void refuseOverCap(Gate active) {
+            Optional<String> refusal = active.budgets().refuseOverCap(active.caller(), active.scope());
+            verdicts.add(new FrameVerdict(true, refusal.orElse(null)));
+            if (refusal.isPresent()) {
+                refused = true;
+                active.call().triggerEvent(new FrameCloseEvent(
+                        Status.RESOURCE_EXHAUSTED.withDescription(refusal.get())));
+            }
+        }
+
         private InputStream inspectCompressedStream(InputStream decompressed) throws IOException {
             Gate active = this.gate;
             if (active == null || refused) {
@@ -511,31 +519,29 @@ public final class ScopeServerInterceptor implements ServerInterceptor {
                 return decompressed;
             }
             int cap = (int) Math.min(rawCap, Integer.MAX_VALUE - 8);
-            byte[] prefix = decompressed.readNBytes(cap);
-            int next = decompressed.read();
-            if (next == -1) {
-                decompressed.close();
-                evaluateUncompressedSize(active, prefix.length);
-                if (refused) {
-                    return InputStream.nullInputStream();
-                }
-                return new ByteArrayInputStream(prefix);
-            }
-            long totalUncompressed = (long) prefix.length + 1L;
-            long countLimit = Math.max((long) cap + 1L, MAX_DECOMPRESSED_COUNT_BYTES);
-            byte[] scratch = new byte[SCRATCH_BUFFER_BYTES];
-            while (totalUncompressed < countLimit) {
-                int toRead = (int) Math.min(scratch.length, countLimit - totalUncompressed);
-                int read = decompressed.read(scratch, 0, toRead);
-                if (read < 0) {
-                    break;
-                }
-                totalUncompressed += read;
-            }
+            byte[] message = readWithinCap(decompressed, cap);
             decompressed.close();
-            evaluateUncompressedSize(active, totalUncompressed);
-            return InputStream.nullInputStream();
+            if (message == null) {
+                refuseOverCap(active);
+                return InputStream.nullInputStream();
+            }
+            evaluateUncompressedSize(active, message.length);
+            if (refused) {
+                return InputStream.nullInputStream();
+            }
+            return new ByteArrayInputStream(message);
         }
+    }
+
+    /**
+     * Reads a decompressed message of at most {@code cap} bytes. One byte past the cap
+     * settles the refusal, so an oversized message is never inflated further.
+     *
+     * @return the whole message, or {@code null} once more than {@code cap} bytes arrive
+     */
+    static byte[] readWithinCap(InputStream decompressed, int cap) throws IOException {
+        byte[] message = decompressed.readNBytes(cap);
+        return decompressed.read() == -1 ? message : null;
     }
 
     private static final class DeframerListenerHandler implements InvocationHandler {

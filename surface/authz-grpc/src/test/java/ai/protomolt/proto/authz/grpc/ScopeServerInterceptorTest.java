@@ -94,6 +94,43 @@ class ScopeServerInterceptorTest {
     }
 
     @Test
+    void anOverCapCompressedMessageStopsInflatingOneBytePastTheCap() throws Exception {
+        var compressed = new java.io.ByteArrayOutputStream();
+        try (var gzip = new java.util.zip.GZIPOutputStream(compressed)) {
+            gzip.write(new byte[1024 * 1024]);
+        }
+        AtomicInteger inflated = new AtomicInteger();
+        InputStream counting = new java.io.FilterInputStream(new java.util.zip.GZIPInputStream(
+                new java.io.ByteArrayInputStream(compressed.toByteArray()))) {
+            @Override
+            public int read() throws java.io.IOException {
+                int value = super.read();
+                if (value >= 0) {
+                    inflated.incrementAndGet();
+                }
+                return value;
+            }
+
+            @Override
+            public int read(byte[] buffer, int offset, int length) throws java.io.IOException {
+                int read = super.read(buffer, offset, length);
+                if (read > 0) {
+                    inflated.addAndGet(read);
+                }
+                return read;
+            }
+        };
+        assertThat(ScopeServerInterceptor.readWithinCap(counting, 1)).isNull();
+        assertThat(inflated.get()).isEqualTo(2);
+
+        byte[] exact = "abcd".getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        assertThat(ScopeServerInterceptor.readWithinCap(new java.io.ByteArrayInputStream(exact), 4))
+                .isEqualTo(exact);
+        assertThat(ScopeServerInterceptor.readWithinCap(new java.io.ByteArrayInputStream(exact), 3)).isNull();
+        assertThat(ScopeServerInterceptor.readWithinCap(InputStream.nullInputStream(), 1)).isEmpty();
+    }
+
+    @Test
     void theServiceDefaultAdmitsTheHoldingCaller() {
         assertThat(stub(ANALYST).check(HealthCheckRequest.getDefaultInstance())
                 .getStatus().getNumber()).isEqualTo(1);
@@ -464,7 +501,7 @@ class ScopeServerInterceptorTest {
             assertThat(closed.await(5, TimeUnit.SECONDS)).isTrue();
             assertThat(closeStatus.get().getCode()).isEqualTo(Status.Code.RESOURCE_EXHAUSTED);
             assertThat(closeStatus.get().getDescription())
-                    .contains("capped").contains("1027 bytes").contains("100-byte");
+                    .contains("capped").contains("more than 100 bytes").contains("100-byte");
             assertThat(parses.get()).isZero();
         } finally {
             nettyChannel.shutdownNow();
@@ -548,7 +585,7 @@ class ScopeServerInterceptorTest {
             assertThat(closed.await(5, TimeUnit.SECONDS)).isTrue();
             assertThat(closeStatus.get().getCode()).isEqualTo(Status.Code.RESOURCE_EXHAUSTED);
             assertThat(closeStatus.get().getDescription())
-                    .contains("capped").contains("1027 bytes").contains("100-byte");
+                    .contains("capped").contains("more than 100 bytes").contains("100-byte");
             assertThat(parses.get()).isZero();
 
             HealthCheckRequest small = HealthCheckRequest.newBuilder().setService("a").build();
@@ -620,7 +657,7 @@ class ScopeServerInterceptorTest {
             assertThat(closed.await(5, TimeUnit.SECONDS)).isTrue();
             assertThat(closeStatus.get().getCode()).isEqualTo(Status.Code.RESOURCE_EXHAUSTED);
             assertThat(closeStatus.get().getDescription())
-                    .contains("capped").contains("1027 bytes").contains("100-byte");
+                    .contains("capped").contains("more than 100 bytes").contains("100-byte");
             assertThat(parses.get()).isZero();
             assertThat(wrappedCalls.get()).isEqualTo(1);
 

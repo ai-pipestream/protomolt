@@ -15,7 +15,8 @@ import java.time.Duration;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
-import java.util.concurrent.TimeUnit;
+import java.util.concurrent.locks.Condition;
+import java.util.concurrent.locks.ReentrantLock;
 
 /**
  * Header-time admission for explicitly selected synchronous unary handlers.
@@ -48,6 +49,10 @@ public final class UnaryRequestAdmission implements ServerInterceptor, AutoClose
     private final Set<String> methods;
     private final Map<String, Integer> responseLimits;
     private final Set<String> openServices;
+    // A private lock, so code holding this public instance's monitor cannot stall
+    // admission or swallow the idle signal awaitIdle waits for.
+    private final ReentrantLock lock = new ReentrantLock();
+    private final Condition idle = lock.newCondition();
     private long reserved;
     private int active;
     private boolean closed;
@@ -162,8 +167,13 @@ public final class UnaryRequestAdmission implements ServerInterceptor, AutoClose
      *
      * @return the currently reserved bytes
      */
-    public synchronized long reservedBytes() {
-        return reserved;
+    public long reservedBytes() {
+        lock.lock();
+        try {
+            return reserved;
+        } finally {
+            lock.unlock();
+        }
     }
 
     /**
@@ -171,8 +181,13 @@ public final class UnaryRequestAdmission implements ServerInterceptor, AutoClose
      *
      * @return the active call count
      */
-    public synchronized int activeCalls() {
-        return active;
+    public int activeCalls() {
+        lock.lock();
+        try {
+            return active;
+        } finally {
+            lock.unlock();
+        }
     }
 
     @Override
@@ -208,11 +223,12 @@ public final class UnaryRequestAdmission implements ServerInterceptor, AutoClose
                                 return;
                             }
                             if (responseLimit != 0) {
-                                Status failure = !(message instanceof MessageLite proto)
+                                int size = message instanceof MessageLite proto
+                                        ? proto.getSerializedSize() : -1;
+                                Status failure = !(message instanceof MessageLite)
                                         ? Status.INTERNAL.withDescription(
                                                 "Bounded response must be protobuf")
-                                        : proto.getSerializedSize() < 0
-                                                || proto.getSerializedSize() > responseLimit
+                                        : size < 0 || size > responseLimit
                                         ? Status.RESOURCE_EXHAUSTED.withDescription(
                                                 "Unary response exceeds configured limit")
                                         : null;
@@ -258,18 +274,23 @@ public final class UnaryRequestAdmission implements ServerInterceptor, AutoClose
         }
     }
 
-    private synchronized Scope admit(int responseLimit) {
-        if (closed) {
-            throw Status.UNAVAILABLE.withDescription("Unary request admission is closed")
-                    .asRuntimeException();
+    private Scope admit(int responseLimit) {
+        lock.lock();
+        try {
+            if (closed) {
+                throw Status.UNAVAILABLE.withDescription("Unary request admission is closed")
+                        .asRuntimeException();
+            }
+            long bytes = 2L * maxRequestBytes + responseLimit;
+            if (active >= maxActive || bytes > capacityBytes - reserved) {
+                throw exhausted();
+            }
+            reserved += bytes;
+            active++;
+            return new Scope(bytes);
+        } finally {
+            lock.unlock();
         }
-        long bytes = 2L * maxRequestBytes + responseLimit;
-        if (active >= maxActive || bytes > capacityBytes - reserved) {
-            throw exhausted();
-        }
-        reserved += bytes;
-        active++;
-        return new Scope(bytes);
     }
 
     private static StatusRuntimeException exhausted() {
@@ -287,21 +308,31 @@ public final class UnaryRequestAdmission implements ServerInterceptor, AutoClose
 
         @Override
         public void close() {
-            synchronized (UnaryRequestAdmission.this) {
+            lock.lock();
+            try {
                 if (released) {
                     return;
                 }
                 released = true;
                 reserved -= bytes;
                 active--;
-                UnaryRequestAdmission.this.notifyAll();
+                if (active == 0) {
+                    idle.signalAll();
+                }
+            } finally {
+                lock.unlock();
             }
         }
     }
 
     @Override
-    public synchronized void close() {
-        closed = true;
+    public void close() {
+        lock.lock();
+        try {
+            closed = true;
+        } finally {
+            lock.unlock();
+        }
     }
 
     /**
@@ -311,16 +342,19 @@ public final class UnaryRequestAdmission implements ServerInterceptor, AutoClose
      * @return {@code true} if no calls remain active, {@code false} if the timeout elapsed
      * @throws InterruptedException if interrupted while waiting
      */
-    public synchronized boolean awaitIdle(Duration timeout) throws InterruptedException {
+    public boolean awaitIdle(Duration timeout) throws InterruptedException {
         if (timeout.isNegative()) {
             throw new IllegalArgumentException("Negative drain timeout");
         }
         long remaining = timeout.toNanos();
-        long started = System.nanoTime();
-        while (active != 0 && remaining > 0) {
-            TimeUnit.NANOSECONDS.timedWait(this, remaining);
-            remaining = timeout.toNanos() - (System.nanoTime() - started);
+        lock.lock();
+        try {
+            while (active != 0 && remaining > 0) {
+                remaining = idle.awaitNanos(remaining);
+            }
+            return active == 0;
+        } finally {
+            lock.unlock();
         }
-        return active == 0;
     }
 }
