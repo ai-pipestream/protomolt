@@ -49,10 +49,11 @@ public final class RerankedSemanticSearch {
      * @param textField name of the {@code _source} field holding each candidate's text; the
      *        reranker scores these texts
      * @param query the query text, embedded with {@code embedder}
-     * @param k how many hits to answer
+     * @param k how many hits to answer (must be positive)
      * @param candidates how deep the kNN recall list runs; must be at least {@code k}
      * @return up to {@code k} hits ordered by descending rerank score
-     * @throws IllegalArgumentException when {@code candidates} is smaller than {@code k}
+     * @throws IllegalArgumentException when {@code k} is not positive or when {@code candidates}
+     *         is smaller than {@code k}
      * @throws IOException when the engine cannot be reached or refuses the query
      * @throws IllegalStateException when a recalled hit lacks a String {@code textField} (the
      *         message names the hit id), or when the reranker returns a score list whose size
@@ -64,6 +65,9 @@ public final class RerankedSemanticSearch {
         Objects.requireNonNull(vectorField, "vectorField");
         Objects.requireNonNull(textField, "textField");
         Objects.requireNonNull(query, "query");
+        if (k <= 0) {
+            throw new IllegalArgumentException("k must be > 0, got " + k);
+        }
         if (candidates < k) {
             throw new IllegalArgumentException("candidates (" + candidates
                     + ") must be at least k (" + k

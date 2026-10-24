@@ -365,4 +365,30 @@ class OpenVinoProviderTest {
 
         assertThat(lastAuthorization.get()).isNull();
     }
+
+    @Test
+    void streamingHttpErrorFailsLoudAndReleasesStream() {
+        status = 503;
+        responseBody = "service unavailable";
+        GenerateStreamRequest streamRequest = GenerateStreamRequest.newBuilder()
+                .setModel("judge")
+                .addMessages(ChatTurn.newBuilder().setRole(Role.ROLE_USER).setContent("go"))
+                .build();
+
+        assertThatThrownBy(() -> provider.generateStream(model(), streamRequest, new ChunkObserver() {
+            @Override
+            public void onNext(GenerateStreamResponse chunk) {
+            }
+
+            @Override
+            public void onComplete() {
+            }
+
+            @Override
+            public void onError(InferenceException e) {
+            }
+        }))
+                .isInstanceOf(InferenceException.class)
+                .hasMessageContaining("HTTP 503");
+    }
 }

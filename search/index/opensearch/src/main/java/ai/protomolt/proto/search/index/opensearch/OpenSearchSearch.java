@@ -45,7 +45,10 @@ public final class OpenSearchSearch implements AutoCloseable {
      * @param baseUrl base URL of the OpenSearch node
      */
     public OpenSearchSearch(String baseUrl) {
-        this(baseUrl, HttpClient.newBuilder().connectTimeout(CONNECT_TIMEOUT).build(), true);
+        this(
+                Objects.requireNonNull(baseUrl, "baseUrl"),
+                HttpClient.newBuilder().connectTimeout(CONNECT_TIMEOUT).build(),
+                true);
     }
 
     /**

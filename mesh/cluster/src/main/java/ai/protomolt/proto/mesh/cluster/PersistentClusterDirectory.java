@@ -13,6 +13,7 @@ import java.time.Clock;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.Function;
 
 /**
@@ -57,7 +58,7 @@ public final class PersistentClusterDirectory {
     private final int retainedEvents;
 
     /** Serializes mutations, including their durable round trip. Never taken by a reader. */
-    private final Object writeLock = new Object();
+    private final ReentrantLock writeLock = new ReentrantLock();
 
     /**
      * The checkpoint the retained events replay onto, or null while the log still holds its
@@ -72,7 +73,13 @@ public final class PersistentClusterDirectory {
      */
     private volatile ClusterDirectory current;
 
-    /** Loads and replays any stored directory for {@code cluster}. */
+    /**
+     * Loads and replays any stored directory for {@code cluster}.
+     *
+     * @param cluster cluster identity descriptor
+     * @param clock clock used to evaluate presence and lease expiry
+     * @param events durable event repository
+     */
     public PersistentClusterDirectory(ClusterDescriptor cluster, Clock clock,
                                       ClusterEventRepository events) {
         this(cluster, clock, events, DEFAULT_RETAINED_EVENTS);
@@ -82,6 +89,9 @@ public final class PersistentClusterDirectory {
      * Loads and replays any stored directory, folding the log once more than
      * {@code retainedEvents} events accumulate beyond the last checkpoint.
      *
+     * @param cluster cluster identity descriptor
+     * @param clock clock used to evaluate presence and lease expiry
+     * @param events durable event repository
      * @param retainedEvents how many events may accumulate before the log is folded; at
      *     least one
      */
@@ -111,7 +121,12 @@ public final class PersistentClusterDirectory {
                 : ClusterDirectory.replay(cluster, stored.events(), clock);
     }
 
-    /** Registers or refreshes one node after the resulting event log is durable. */
+    /**
+     * Registers or refreshes one node after the resulting event log is durable.
+     *
+     * @param advertisement node advertisement to register
+     * @return outcome of applying the registration
+     */
     public ClusterDirectory.ApplyOutcome register(NodeAdvertisement advertisement) {
         return mutate(candidate -> candidate.register(advertisement));
     }
@@ -121,33 +136,65 @@ public final class PersistentClusterDirectory {
      * own and the node restates it every few seconds, so it never reaches the repository and
      * a heartbeat costs no durable write. See {@link ClusterDirectory#heartbeat} for why the
      * registered epoch, which stays durable, is what fences it.
+     *
+     * @param presence node presence heartbeat
+     * @return outcome of applying the heartbeat
      */
     public ClusterDirectory.ApplyOutcome heartbeat(NodePresence presence) {
         return soften(candidate -> candidate.heartbeat(presence));
     }
 
-    /** Registers or refreshes a processor after the resulting event log is durable. */
+    /**
+     * Registers or refreshes a processor after the resulting event log is durable.
+     *
+     * @param advertisement processor advertisement to register
+     * @return outcome of applying the processor registration
+     */
     public ClusterDirectory.ApplyOutcome registerProcessor(ProcessorAdvertisement advertisement) {
         return mutate(candidate -> candidate.registerProcessor(advertisement));
     }
 
-    /** Applies capacity after the resulting event log is durable. */
+    /**
+     * Applies capacity after the resulting event log is durable.
+     *
+     * @param capacity capacity advertisement to apply
+     * @return outcome of applying the capacity update
+     */
     public ClusterDirectory.ApplyOutcome updateCapacity(CapacityAdvertisement capacity) {
         return mutate(candidate -> candidate.updateCapacity(capacity));
     }
 
-    /** Sweeps expired identities after every emitted expiry event is durable. */
+    /**
+     * Sweeps expired identities after every emitted expiry event is durable.
+     *
+     * @return list of expiry events emitted by the sweep
+     */
     public List<ClusterEvent> sweep() {
         return mutate(ClusterDirectory::sweep);
     }
 
-    /** Returns eligible processors from the current memory projection. */
+    /**
+     * Returns eligible processors from the current memory projection.
+     *
+     * @param typeName protobuf message type name, or empty/null for any
+     * @param descriptorFingerprint descriptor fingerprint, or empty/null for any
+     * @param capability required capability, or empty/null for any
+     * @return eligible processor advertisements
+     */
     public List<ProcessorAdvertisement> eligibleProcessors(
             String typeName, String descriptorFingerprint, String capability) {
         return current.eligibleProcessors(typeName, descriptorFingerprint, capability);
     }
 
-    /** Returns capacity-aware eligible processors from the current memory projection. */
+    /**
+     * Returns capacity-aware eligible processors from the current memory projection.
+     *
+     * @param typeName protobuf message type name, or empty/null for any
+     * @param descriptorFingerprint descriptor fingerprint, or empty/null for any
+     * @param capability required capability, or empty/null for any
+     * @param payloadBytes payload size in bytes to check against capacity limits
+     * @return eligible processor advertisements
+     */
     public List<ProcessorAdvertisement> eligibleProcessors(
             String typeName, String descriptorFingerprint, String capability,
             long payloadBytes) {
@@ -155,32 +202,62 @@ public final class PersistentClusterDirectory {
                 capability, payloadBytes);
     }
 
-    /** Captures the current deterministic directory snapshot. */
+    /**
+     * Captures the current deterministic directory snapshot.
+     *
+     * @return current cluster snapshot
+     */
     public ClusterSnapshot snapshot() {
         return current.snapshot();
     }
 
-    /** Returns the registered node when present. */
+    /**
+     * Returns the registered node when present.
+     *
+     * @param nodeId node identifier
+     * @return registered node advertisement if present
+     */
     public Optional<NodeAdvertisement> node(String nodeId) {
         return current.node(nodeId);
     }
 
-    /** Returns the current node presence when present. */
+    /**
+     * Returns the current node presence when present.
+     *
+     * @param nodeId node identifier
+     * @return current node presence if present
+     */
     public Optional<NodePresence> presence(String nodeId) {
         return current.presence(nodeId);
     }
 
-    /** Returns the registered processor when present. */
+    /**
+     * Returns the registered processor when present.
+     *
+     * @param processorId processor identifier
+     * @return registered processor advertisement if present
+     */
     public Optional<ProcessorAdvertisement> processor(String processorId) {
         return current.processor(processorId);
     }
 
-    /** Returns the node-level capacity record when present. */
+    /**
+     * Returns the node-level capacity record when present.
+     *
+     * @param nodeId node identifier
+     * @return node capacity advertisement if present
+     */
     public Optional<CapacityAdvertisement> nodeCapacity(String nodeId) {
         return current.nodeCapacity(nodeId);
     }
 
-    /** Returns the processor-level capacity record when present. */
+    /**
+     * Returns the processor-level capacity record when present.
+     *
+     * @param nodeId node identifier
+     * @param processorId processor identifier
+     * @return processor capacity advertisement if present
+     */
     public Optional<CapacityAdvertisement> processorCapacity(String nodeId, String processorId) {
         return current.processorCapacity(nodeId, processorId);
     }
@@ -189,12 +266,18 @@ public final class PersistentClusterDirectory {
      * Returns the durable events retained beyond the last checkpoint. Before the first fold
      * this is the directory's complete history; afterwards the events before
      * {@link #checkpoint()} are folded into it rather than kept.
+     *
+     * @return retained durable cluster events
      */
     public List<ClusterEvent> eventLog() {
         return current.events();
     }
 
-    /** The checkpoint the retained events replay onto, empty while none has been folded. */
+    /**
+     * The checkpoint the retained events replay onto, empty while none has been folded.
+     *
+     * @return directory checkpoint if compacted
+     */
     public Optional<DirectoryCheckpoint> checkpoint() {
         return Optional.ofNullable(checkpoint);
     }
@@ -214,7 +297,8 @@ public final class PersistentClusterDirectory {
      */
     private ClusterDirectory.ApplyOutcome soften(
             Function<ClusterDirectory, ClusterDirectory.ApplyOutcome> operation) {
-        synchronized (writeLock) {
+        writeLock.lock();
+        try {
             ClusterDirectory candidate = current.copy();
             int priorSize = candidate.events().size();
             ClusterDirectory.ApplyOutcome outcome = operation.apply(candidate);
@@ -231,11 +315,14 @@ public final class PersistentClusterDirectory {
             }
             current = candidate;
             return outcome;
+        } finally {
+            writeLock.unlock();
         }
     }
 
     private <T> T mutate(Function<ClusterDirectory, T> operation) {
-        synchronized (writeLock) {
+        writeLock.lock();
+        try {
             ClusterDirectory candidate = restore(new ClusterEventRepository.StoredDirectory(
                     checkpoint, current.events()));
             // The rebuild knows only the presence that registration armed and the last fold
@@ -272,6 +359,8 @@ public final class PersistentClusterDirectory {
                 current = candidate;
             }
             return result;
+        } finally {
+            writeLock.unlock();
         }
     }
 }

@@ -22,6 +22,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.locks.ReentrantLock;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
@@ -56,7 +57,7 @@ public final class AcpConnection implements AutoCloseable {
     private final InputStream rawIn;
     private final BufferedReader in;
     private final OutputStream out;
-    private final Object writeLock = new Object();
+    private final ReentrantLock writeLock = new ReentrantLock();
     private final Map<String, CompletableFuture<JsonNode>> pending = new ConcurrentHashMap<>();
     private final ExecutorService handlers = Executors.newVirtualThreadPerTaskExecutor();
     private final CountDownLatch eof = new CountDownLatch(1);
@@ -92,7 +93,13 @@ public final class AcpConnection implements AutoCloseable {
         this.notificationHandler = handler;
     }
 
-    /** Sends a request and returns a future completed by its response's {@code result}. */
+    /**
+     * Sends a request and returns a future completed by its response's {@code result}.
+     *
+     * @param method the JSON-RPC method name
+     * @param params the optional request parameters, or {@code null}
+     * @return a future completed with the response {@code result} or exceptionally on error
+     */
     public CompletableFuture<JsonNode> request(String method, JsonNode params) {
         String id = "req-" + ids.incrementAndGet();
         ObjectNode message = MAPPER.createObjectNode();
@@ -103,8 +110,14 @@ public final class AcpConnection implements AutoCloseable {
             message.set("params", params);
         }
         CompletableFuture<JsonNode> future = new CompletableFuture<>();
-        pending.put(key(TextNode.valueOf(id)), future);
-        write(message);
+        String requestKey = key(TextNode.valueOf(id));
+        pending.put(requestKey, future);
+        try {
+            write(message);
+        } catch (RuntimeException | Error e) {
+            pending.remove(requestKey, future);
+            throw e;
+        }
         return future;
     }
 
@@ -221,15 +234,21 @@ public final class AcpConnection implements AutoCloseable {
         } catch (IOException e) {
             throw new UncheckedIOException(e);
         }
-        synchronized (writeLock) {
-            try {
-                out.write(bytes);
-                out.write('\n');
-                out.flush();
-            } catch (IOException e) {
-                throw new UncheckedIOException(e);
-            }
+        writeLock.lock();
+        try {
+            out.write(bytes);
+            out.write('\n');
+            out.flush();
+        } catch (IOException e) {
+            throw new UncheckedIOException(e);
+        } finally {
+            writeLock.unlock();
         }
+    }
+
+    /** Returns the number of in-flight outbound requests awaiting a response. */
+    int pendingRequestCount() {
+        return pending.size();
     }
 
     /** Ids are echoed verbatim by the peer, so the JSON token text is a stable map key. */
@@ -252,11 +271,12 @@ public final class AcpConnection implements AutoCloseable {
             rawIn.close();
         } catch (IOException ignored) {
         }
-        synchronized (writeLock) {
-            try {
-                out.close();
-            } catch (IOException ignored) {
-            }
+        writeLock.lock();
+        try {
+            out.close();
+        } catch (IOException ignored) {
+        } finally {
+            writeLock.unlock();
         }
         handlers.close();
         failAll(new EOFException("connection closed"));

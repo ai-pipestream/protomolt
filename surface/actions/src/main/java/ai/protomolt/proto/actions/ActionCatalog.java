@@ -12,6 +12,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.ServiceLoader;
+import java.util.concurrent.locks.ReentrantLock;
 
 /**
  * A framework-agnostic catalog of {@link ProtoAction}s: one registry of JSON-in/JSON-out verbs,
@@ -35,6 +36,7 @@ import java.util.ServiceLoader;
  */
 public final class ActionCatalog {
 
+    private final ReentrantLock lock = new ReentrantLock();
     private final ActionContext context;
     private final Map<String, ProtoAction> actions = new LinkedHashMap<>();
     private final ScopeBudgets budgets;
@@ -50,6 +52,9 @@ public final class ActionCatalog {
      * enforcement point passes one shared ledger through
      * {@link #defaults(ActionContext, ScopeBudgets)}, or a principal gets a separate
      * allowance per surface.
+     *
+     * @param context the shared action execution context
+     * @return a catalog populated with discovered action providers
      */
     public static ActionCatalog defaults(ActionContext context) {
         return defaults(context, new ScopeBudgets());
@@ -59,6 +64,10 @@ public final class ActionCatalog {
      * A catalog with the installed action providers registered,
      * spending on {@code budgets}. The node's other enforcement points take the same ledger, so a principal's per-scope
      * budget is one allowance however it reaches the node.
+     *
+     * @param context the shared action execution context
+     * @param budgets the shared spending ledger
+     * @return a catalog populated with discovered action providers
      */
     public static ActionCatalog defaults(ActionContext context, ScopeBudgets budgets) {
         ActionCatalog catalog = new ActionCatalog(context, budgets);
@@ -72,12 +81,23 @@ public final class ActionCatalog {
         return catalog;
     }
 
-    /** An empty catalog with the same authorization, budgets and contract checks as defaults. */
+    /**
+     * An empty catalog with the same authorization, budgets and contract checks as defaults.
+     *
+     * @param context the shared action execution context
+     * @param budgets the shared spending ledger
+     * @return an empty catalog
+     */
     public static ActionCatalog empty(ActionContext context, ScopeBudgets budgets) {
         return new ActionCatalog(context, budgets);
     }
 
-    /** An empty catalog with a private budget ledger. */
+    /**
+     * An empty catalog with a private budget ledger.
+     *
+     * @param context the shared action execution context
+     * @return an empty catalog
+     */
     public static ActionCatalog empty(ActionContext context) {
         return empty(context, new ScopeBudgets());
     }
@@ -85,18 +105,25 @@ public final class ActionCatalog {
     /**
      * Registers an action under its {@link ProtoAction#name()}.
      *
+     * @param action the action to register
+     * @return this catalog
      * @throws IllegalStateException when the name is taken — a plugin or built-in silently
      *         shadowing another action would change behavior by registration order; use
      *         {@link #replace} when overriding is the intent
      */
-    public synchronized ActionCatalog register(ProtoAction action) {
-        String name = checkedName(action);
-        ProtoAction existing = actions.putIfAbsent(name, action);
-        if (existing != null) {
-            throw new IllegalStateException("Action '" + name + "' is already registered ("
-                    + existing.getClass().getName() + "); use replace() to override it");
+    public ActionCatalog register(ProtoAction action) {
+        lock.lock();
+        try {
+            String name = checkedName(action);
+            ProtoAction existing = actions.putIfAbsent(name, action);
+            if (existing != null) {
+                throw new IllegalStateException("Action '" + name + "' is already registered ("
+                        + existing.getClass().getName() + "); use replace() to override it");
+            }
+            return this;
+        } finally {
+            lock.unlock();
         }
-        return this;
     }
 
     private static String checkedName(ProtoAction action) {
@@ -110,35 +137,61 @@ public final class ActionCatalog {
         return name;
     }
 
-    /** Deliberately replaces (or adds) an action — the explicit override path. */
-    public synchronized ActionCatalog replace(ProtoAction action) {
-        actions.put(checkedName(action), action);
-        return this;
+    /**
+     * Deliberately replaces (or adds) an action — the explicit override path.
+     *
+     * @param action the replacement action
+     * @return this catalog
+     */
+    public ActionCatalog replace(ProtoAction action) {
+        lock.lock();
+        try {
+            actions.put(checkedName(action), action);
+            return this;
+        } finally {
+            lock.unlock();
+        }
     }
 
     /**
      * The action registered under {@code name}.
      *
+     * @param name the registered action name
+     * @return the registered action
      * @throws ActionException {@code unknown-action} listing the available names
      */
-    public synchronized ProtoAction get(String name) throws ActionException {
-        ProtoAction action = actions.get(name);
-        if (action == null) {
-            ObjectNode details = JsonNodeFactory.instance.objectNode();
-            details.put("action", String.valueOf(name));
-            ArrayNode available = details.putArray("available");
-            actions.keySet().forEach(available::add);
-            throw new ActionException("unknown-action",
-                    "Unknown action '" + name + "'. Available actions: "
-                            + String.join(", ", actions.keySet()),
-                    details);
+    public ProtoAction get(String name) throws ActionException {
+        lock.lock();
+        try {
+            ProtoAction action = actions.get(name);
+            if (action == null) {
+                ObjectNode details = JsonNodeFactory.instance.objectNode();
+                details.put("action", String.valueOf(name));
+                ArrayNode available = details.putArray("available");
+                actions.keySet().forEach(available::add);
+                throw new ActionException("unknown-action",
+                        "Unknown action '" + name + "'. Available actions: "
+                                + String.join(", ", actions.keySet()),
+                        details);
+            }
+            return action;
+        } finally {
+            lock.unlock();
         }
-        return action;
     }
 
-    /** Registered action names, in registration order. */
-    public synchronized List<String> names() {
-        return List.copyOf(actions.keySet());
+    /**
+     * Registered action names, in registration order.
+     *
+     * @return an immutable snapshot of registered action names
+     */
+    public List<String> names() {
+        lock.lock();
+        try {
+            return List.copyOf(actions.keySet());
+        } finally {
+            lock.unlock();
+        }
     }
 
     /**
@@ -146,23 +199,36 @@ public final class ActionCatalog {
      * order. Subsequent registration or replacement on either catalog does not mutate the other.
      * The fork spends on the same ledger: a fork per session or per plugin set is one more way
      * into the same node, not a second allowance.
+     *
+     * @return an independent copy of this catalog sharing the same context and ledger
      */
-    public synchronized ActionCatalog fork() {
-        ActionCatalog fork = new ActionCatalog(context, budgets);
-        fork.actions.putAll(actions);
-        return fork;
+    public ActionCatalog fork() {
+        lock.lock();
+        try {
+            ActionCatalog fork = new ActionCatalog(context, budgets);
+            fork.actions.putAll(actions);
+            return fork;
+        } finally {
+            lock.unlock();
+        }
     }
 
     /**
      * The ledger this catalog spends on, for a host wiring another enforcement point over
      * the same node.
+     *
+     * @return the budget ledger backing this catalog
      */
     public ScopeBudgets budgets() {
         return budgets;
     }
 
-    /** The tool manifest: {@code [{name, description, inputSchema}, ...]}. */
-    public synchronized ArrayNode list() {
+    /**
+     * The tool manifest: {@code [{name, description, inputSchema}, ...]}.
+     *
+     * @return the tool manifest for an unrestricted operator caller
+     */
+    public ArrayNode list() {
         return list(Caller.operator());
     }
 
@@ -170,22 +236,30 @@ public final class ActionCatalog {
      * The tool manifest as {@code caller} sees it: only actions whose required scope the
      * caller holds. An action with no declared scope is invisible to a scoped caller for
      * the same reason {@link #execute(String, ObjectNode, Caller)} refuses it.
+     *
+     * @param caller the caller whose visible tool manifest is requested
+     * @return the filtered tool manifest
      */
-    public synchronized ArrayNode list(Caller caller) {
-        ArrayNode manifest = context.objectMapper().createArrayNode();
-        for (ProtoAction action : actions.values()) {
-            if (!caller.unrestricted()) {
-                String scope = action.requiredScope();
-                if (scope.isBlank() || !caller.holds(scope)) {
-                    continue;
+    public ArrayNode list(Caller caller) {
+        lock.lock();
+        try {
+            ArrayNode manifest = context.objectMapper().createArrayNode();
+            for (ProtoAction action : actions.values()) {
+                if (!caller.unrestricted()) {
+                    String scope = action.requiredScope();
+                    if (scope.isBlank() || !caller.holds(scope)) {
+                        continue;
+                    }
                 }
+                ObjectNode entry = manifest.addObject();
+                entry.put("name", action.name());
+                entry.put("description", action.description());
+                entry.set("inputSchema", action.inputSchema());
             }
-            ObjectNode entry = manifest.addObject();
-            entry.put("name", action.name());
-            entry.put("description", action.description());
-            entry.set("inputSchema", action.inputSchema());
+            return manifest;
+        } finally {
+            lock.unlock();
         }
-        return manifest;
     }
 
     /**

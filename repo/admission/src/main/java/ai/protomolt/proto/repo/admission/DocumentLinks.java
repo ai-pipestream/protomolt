@@ -13,6 +13,7 @@ import com.google.protobuf.InvalidProtocolBufferException;
 import com.google.protobuf.Message;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.IdentityHashMap;
@@ -21,6 +22,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
+import java.util.WeakHashMap;
 
 /**
  * Link declarations and link values (requirements §17). A link is a
@@ -49,6 +52,10 @@ public final class DocumentLinks {
     /** The full name of the link value type. */
     public static final String LINK_TYPE = DocumentLink.getDescriptor().getFullName();
     private static final ExtensionRegistry EXTENSIONS = registry();
+    private static final Map<FieldDescriptor, Optional<LinkField>> LINK_FIELDS =
+            Collections.synchronizedMap(new WeakHashMap<>());
+    private static final Map<Descriptor, Boolean> CANONICAL_LINKS =
+            Collections.synchronizedMap(new WeakHashMap<>());
 
     private DocumentLinks() {}
 
@@ -100,6 +107,9 @@ public final class DocumentLinks {
      * @throws SchemaRefused when the option does not parse or fails its own rules
      */
     public static Optional<LinkField> linkField(FieldDescriptor field) {
+        Objects.requireNonNull(field);
+        var cached = LINK_FIELDS.get(field);
+        if (cached != null) return cached;
         var options = field.getOptions();
         LinkField declared;
         if (options.hasExtension(LinksProto.link)) {
@@ -111,7 +121,9 @@ public final class DocumentLinks {
                 throw new SchemaRefused(field.getFullName(), "the link option does not parse: " + unreadable.getMessage());
             }
         } else {
-            return Optional.empty();
+            Optional<LinkField> empty = Optional.empty();
+            LINK_FIELDS.put(field, empty);
+            return empty;
         }
         if (!declared.getUnknownFields().asMap().isEmpty())
             throw new SchemaRefused(field.getFullName(), "the link option carries fields this server does not know");
@@ -119,7 +131,9 @@ public final class DocumentLinks {
         if (!checked.valid())
             throw new SchemaRefused(field.getFullName(), "the link option fails "
                     + checked.violations().getFirst().ruleId() + " at " + checked.violations().getFirst().path());
-        return Optional.of(declared);
+        Optional<LinkField> resolved = Optional.of(declared);
+        LINK_FIELDS.put(field, resolved);
+        return resolved;
     }
 
     /**
@@ -129,7 +143,7 @@ public final class DocumentLinks {
      * @throws SchemaRefused at the first field that breaks a rule
      */
     public static void requireLinkSchema(Descriptor type) {
-        check(type, () -> {});
+        check(type, new SchemaChecks(() -> {}));
     }
 
     /**
@@ -141,7 +155,7 @@ public final class DocumentLinks {
      * @throws SchemaRefused at the first field that breaks a rule
      */
     public static boolean declaresLinks(Descriptor type) {
-        return check(type, () -> {});
+        return check(type, new SchemaChecks(() -> {}));
     }
 
     /**
@@ -151,7 +165,8 @@ public final class DocumentLinks {
      * field is visited a bounded number of times and recursive types terminate. The
      * control runs once per type in each pass, so a deadline can stop a large graph.
      */
-    private static boolean check(Descriptor root, Runnable control) {
+    private static boolean check(Descriptor root, SchemaChecks checks) {
+        var control = checks.control();
         var types = new LinkedHashMap<String, Descriptor>();
         var pending = new ArrayDeque<Descriptor>();
         pending.add(root);
@@ -161,7 +176,7 @@ public final class DocumentLinks {
             if (type.getFullName().equals(Any.getDescriptor().getFullName()) || types.putIfAbsent(type.getFullName(), type) != null)
                 continue;
             for (var field : type.getFields()) {
-                var declared = linkField(field);
+                var declared = checks.linkField(field);
                 if (field.isMapField()) {
                     if (declared.isPresent()) throw new SchemaRefused(field.getFullName(), "a map field cannot be a link");
                     var value = mapValue(field);
@@ -209,6 +224,9 @@ public final class DocumentLinks {
                     throw new SchemaRefused(field.getFullName(), "a link cannot sit under a map value");
             }
         }
+        for (var type : types.values()) {
+            checks.checked.put(type, reaches.contains(type.getFullName()));
+        }
         return reaches.contains(root.getFullName());
     }
 
@@ -241,7 +259,7 @@ public final class DocumentLinks {
     }
 
     /** Enters no Any: for a CORE fragment, whose Any roots admission walks on their own. */
-    private static final Unpacker NONE = (at, typeUrl, value) -> Optional.empty();
+    static final Unpacker NONE = (at, typeUrl, value) -> Optional.empty();
 
     /**
      * The links in a message, in field number order and then element order, without
@@ -255,7 +273,38 @@ public final class DocumentLinks {
      *         carries fields this server's {@link DocumentLink} does not know
      */
     public static List<Link> extract(Message message, String prefix) {
-        return extract(message, prefix, List.of(), NONE, new SchemaChecks(() -> {}));
+        return extract(message, prefix, () -> {});
+    }
+
+    /**
+     * The links in a message, in field number order and then element order, without
+     * entering any {@link Any} value, running {@code control} at every walk step so a
+     * deadline or cancellation stops a large message.
+     *
+     * @param message a decoded message
+     * @param prefix the message's path in the document, or empty for the root
+     * @param control run at every walk step
+     * @return the links found
+     * @throws SchemaRefused when a declaration breaks a rule or a link value
+     *         carries fields this server's {@link DocumentLink} does not know
+     */
+    public static List<Link> extract(Message message, String prefix, Runnable control) {
+        return extract(message, prefix, List.of(), NONE, new SchemaChecks(control));
+    }
+
+    /**
+     * The links in a message without entering any {@link Any} value, reusing the
+     * admission's {@link SchemaChecks}.
+     *
+     * @param message a decoded message
+     * @param prefix the message's path in the document, or empty for the root
+     * @param checks the link-schema checks of this admission, and the control the walk runs
+     * @return the links found
+     * @throws SchemaRefused when a declaration breaks a rule or a link value
+     *         carries fields this server's {@link DocumentLink} does not know
+     */
+    static List<Link> extract(Message message, String prefix, SchemaChecks checks) {
+        return extract(message, prefix, List.of(), NONE, checks);
     }
 
     /**
@@ -294,6 +343,7 @@ public final class DocumentLinks {
     static final class SchemaChecks {
         private final Runnable control;
         private final Map<Descriptor, Boolean> checked = new IdentityHashMap<>();
+        private final Map<FieldDescriptor, Optional<LinkField>> fields = new IdentityHashMap<>();
 
         SchemaChecks(Runnable control) { this.control = Objects.requireNonNull(control); }
 
@@ -305,9 +355,17 @@ public final class DocumentLinks {
         boolean declares(Descriptor type) {
             var known = checked.get(type);
             if (known != null) return known;
-            boolean declares = check(type, control);
+            boolean declares = check(type, this);
             checked.put(type, declares);
             return declares;
+        }
+
+        Optional<LinkField> linkField(FieldDescriptor field) {
+            var known = fields.get(field);
+            if (known != null) return known;
+            var resolved = DocumentLinks.linkField(field);
+            fields.put(field, resolved);
+            return resolved;
         }
 
         Runnable control() { return control; }
@@ -316,6 +374,8 @@ public final class DocumentLinks {
     /** One extraction: the unpacker and the admission's schema checks. */
     private record Walk(Unpacker unpacker, SchemaChecks checks) {
         boolean declares(Descriptor type) { return checks.declares(type); }
+
+        Optional<LinkField> linkField(FieldDescriptor field) { return checks.linkField(field); }
 
         Runnable control() { return checks.control(); }
     }
@@ -349,7 +409,7 @@ public final class DocumentLinks {
                 requireNoLinkUnderMap(field, field, (List<?>) entry.getValue(), at, walk);
                 continue;
             }
-            var declared = linkField(field);
+            var declared = walk.linkField(field);
             boolean link = field.getMessageType().getFullName().equals(LINK_TYPE);
             if (link != declared.isPresent())
                 throw new SchemaRefused(field.getFullName(), declared.isPresent()
@@ -359,8 +419,10 @@ public final class DocumentLinks {
             for (int i = 0; i < values.size(); i++) {
                 var value = (Message) values.get(i);
                 if (field.isRepeated()) at.add(new DocumentSchemaOccurrences.Index(i));
-                if (link) found.add(new Link(path, field.isRepeated() ? i : 0, field.isRepeated(), declared.get(), value(field, value)));
-                else collect(value, field.isRepeated() ? path + "[" + i + "]" : path, at, walk, found);
+                if (link) {
+                    walk.control().run();
+                    found.add(new Link(path, field.isRepeated() ? i : 0, field.isRepeated(), declared.get(), value(field, value)));
+                } else collect(value, field.isRepeated() ? path + "[" + i + "]" : path, at, walk, found);
                 if (field.isRepeated()) at.removeLast();
             }
             at.removeLast();
@@ -426,26 +488,112 @@ public final class DocumentLinks {
 
     private static DocumentLink value(FieldDescriptor field, Message value) {
         if (value instanceof DocumentLink typed) return typed;
+        if (canonicalLink(value.getDescriptorForType())) {
+            if (hasUnknownFields(value))
+                throw new SchemaRefused(field.getFullName(), "the link value carries fields this server does not know");
+            var builder = DocumentLink.newBuilder();
+            copyCanonical(value, builder);
+            return builder.build();
+        }
         final DocumentLink link;
         try {
             link = DocumentLink.parseFrom(value.toByteString());
         } catch (InvalidProtocolBufferException unreadable) {
             throw new SchemaRefused(field.getFullName(), "the link value does not decode as " + LINK_TYPE);
         }
-        if (!unknown(link).isEmpty())
+        if (hasUnknownFields(link))
             throw new SchemaRefused(field.getFullName(), "the link value carries fields this server does not know");
         return link;
     }
 
-    private static List<Object> unknown(Message message) {
-        var found = new ArrayList<Object>();
-        if (!message.getUnknownFields().asMap().isEmpty()) found.add(message);
-        for (var value : message.getAllFields().values()) {
-            if (value instanceof Message nested) found.addAll(unknown(nested));
-            else if (value instanceof List<?> list)
-                for (var element : list) if (element instanceof Message nested) found.addAll(unknown(nested));
+    /** Whether {@code type} and every nested message it reaches match the compiled {@link DocumentLink} layout. */
+    private static boolean canonicalLink(Descriptor type) {
+        if (type == DocumentLink.getDescriptor()) return true;
+        var cached = CANONICAL_LINKS.get(type);
+        if (cached != null) return cached;
+        boolean matches = sameSchema(type, DocumentLink.getDescriptor(), new HashSet<>());
+        CANONICAL_LINKS.put(type, matches);
+        return matches;
+    }
+
+    private static boolean sameSchema(Descriptor have, Descriptor want, Set<Descriptor> seen) {
+        if (have == want) return true;
+        if (!have.getFullName().equals(want.getFullName())
+                || have.getFields().size() != want.getFields().size()
+                || have.getRealOneofs().size() != want.getRealOneofs().size())
+            return false;
+        if (!seen.add(have)) return true;
+        for (var wantField : want.getFields()) {
+            var haveField = have.findFieldByNumber(wantField.getNumber());
+            if (haveField == null
+                    || !haveField.getName().equals(wantField.getName())
+                    || haveField.getType() != wantField.getType()
+                    || haveField.isRepeated() != wantField.isRepeated()
+                    || haveField.isMapField() != wantField.isMapField()
+                    || haveField.hasDefaultValue() != wantField.hasDefaultValue()
+                    || haveField.hasPresence() != wantField.hasPresence())
+                return false;
+            var haveOneof = haveField.getRealContainingOneof();
+            var wantOneof = wantField.getRealContainingOneof();
+            if ((haveOneof == null) != (wantOneof == null)) return false;
+            if (wantOneof != null && (!haveOneof.getName().equals(wantOneof.getName())
+                    || haveOneof.getIndex() != wantOneof.getIndex()))
+                return false;
+            if (wantField.getJavaType() == FieldDescriptor.JavaType.ENUM
+                    && !haveField.getEnumType().getFullName().equals(wantField.getEnumType().getFullName()))
+                return false;
+            if (wantField.getJavaType() == FieldDescriptor.JavaType.MESSAGE
+                    && !sameSchema(haveField.getMessageType(), wantField.getMessageType(), seen))
+                return false;
         }
-        return found;
+        return true;
+    }
+
+    private static void copyCanonical(Message source, Message.Builder target) {
+        var targetType = target.getDescriptorForType();
+        for (var entry : source.getAllFields().entrySet()) {
+            var srcField = entry.getKey();
+            var dstField = targetType.findFieldByNumber(srcField.getNumber());
+            var val = entry.getValue();
+            if (dstField.getJavaType() == FieldDescriptor.JavaType.MESSAGE) {
+                if (dstField.isRepeated()) {
+                    for (var element : (List<?>) val) {
+                        var nested = target.newBuilderForField(dstField);
+                        copyCanonical((Message) element, nested);
+                        target.addRepeatedField(dstField, nested.build());
+                    }
+                } else {
+                    var nested = target.newBuilderForField(dstField);
+                    copyCanonical((Message) val, nested);
+                    target.setField(dstField, nested.build());
+                }
+            } else if (dstField.getJavaType() == FieldDescriptor.JavaType.ENUM) {
+                var enumType = dstField.getEnumType();
+                if (dstField.isRepeated()) {
+                    for (var element : (List<?>) val) {
+                        int number = ((com.google.protobuf.Descriptors.EnumValueDescriptor) element).getNumber();
+                        target.addRepeatedField(dstField, enumType.findValueByNumberCreatingIfUnknown(number));
+                    }
+                } else {
+                    int number = ((com.google.protobuf.Descriptors.EnumValueDescriptor) val).getNumber();
+                    target.setField(dstField, enumType.findValueByNumberCreatingIfUnknown(number));
+                }
+            } else {
+                target.setField(dstField, val);
+            }
+        }
+    }
+
+    private static boolean hasUnknownFields(Message message) {
+        if (!message.getUnknownFields().asMap().isEmpty()) return true;
+        for (var value : message.getAllFields().values()) {
+            if (value instanceof Message nested && hasUnknownFields(nested)) return true;
+            else if (value instanceof List<?> list) {
+                for (var element : list)
+                    if (element instanceof Message nested && hasUnknownFields(nested)) return true;
+            }
+        }
+        return false;
     }
 
     /** The same element subscript the validator writes into violation paths. */

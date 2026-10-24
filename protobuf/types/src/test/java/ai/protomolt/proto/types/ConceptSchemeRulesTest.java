@@ -288,12 +288,28 @@ class ConceptSchemeRulesTest {
         assertThat(check(scheme(concept("a").setIri("javascript:alert(1)"))).violations())
                 .extracting(Violation::path, Violation::ruleId)
                 .containsExactly(tuple("concepts[0].iri", "concept_scheme.iri_scheme"));
-        assertThat(check(scheme(concept("a").setIri("data:text/html,x"))).violations())
-                .extracting(Violation::ruleId)
-                .containsExactly("concept_scheme.iri_scheme");
-        assertThat(check(scheme(concept("a").setIri("schemeless"))).violations())
-                .extracting(Violation::ruleId)
-                .containsExactly("concept_scheme.iri_scheme");
+        for (String refused : new String[] {
+                "data:text/html,x",
+                "schemeless",
+                "http:foo",
+                "https:foo",
+                "HTTP:foo",
+                "http://",
+                "http:///path",
+                "http://@",
+                "http://@/x",
+                "http://user@/x",
+                "http://:80/x",
+                "https://?q",
+                "https://#f",
+                "urn:",
+                "urn://example.org/a",
+        }) {
+            assertThat(check(scheme(concept("a").setIri(refused))).violations())
+                    .as(refused)
+                    .extracting(Violation::ruleId)
+                    .containsExactly("concept_scheme.iri_scheme");
+        }
     }
 
     @Test
@@ -303,12 +319,15 @@ class ConceptSchemeRulesTest {
                 .setValue("530").setDatatypeIri("urn:example:ddc").build();
         assertThat(check(scheme(concept("a").addNotation(plain).addNotation(typed)))
                 .violations()).isEmpty();
-        ConceptNotation scripted = ConceptNotation.newBuilder()
-                .setValue("x").setDatatypeIri("vbscript:msgbox").build();
-        assertThat(check(scheme(concept("a").addNotation(plain).addNotation(scripted)))
-                .violations())
-                .extracting(Violation::path, Violation::ruleId)
-                .containsExactly(
-                        tuple("concepts[0].notation[1].datatype_iri", "concept_scheme.iri_scheme"));
+        for (String refused : new String[] {"vbscript:msgbox", "http:ddc", "https:///ddc", "http://:80/ddc"}) {
+            ConceptNotation bad = ConceptNotation.newBuilder()
+                    .setValue("x").setDatatypeIri(refused).build();
+            assertThat(check(scheme(concept("a").addNotation(plain).addNotation(bad)))
+                    .violations())
+                    .as(refused)
+                    .extracting(Violation::path, Violation::ruleId)
+                    .containsExactly(
+                            tuple("concepts[0].notation[1].datatype_iri", "concept_scheme.iri_scheme"));
+        }
     }
 }

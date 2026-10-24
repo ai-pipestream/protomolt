@@ -93,29 +93,39 @@ const versionItems = computed(() =>
 
 const stats = computed(() => diffStats(diff.value ?? []))
 
-async function schemaFor(version: number): Promise<string> {
-  const cached = schemaCache.get(version)
-  if (cached !== undefined) return cached
-  const envelope = await registryApi.getVersion(props.subject, version)
-  schemaCache.set(version, envelope.schema)
+let computeGeneration = 0
+
+async function schemaFor(requestedSubject: string, version: number): Promise<string> {
+  if (props.subject === requestedSubject) {
+    const cached = schemaCache.get(version)
+    if (cached !== undefined) return cached
+  }
+  const envelope = await registryApi.getVersion(requestedSubject, version)
+  if (props.subject === requestedSubject) {
+    schemaCache.set(version, envelope.schema)
+  }
   return envelope.schema
 }
 
 async function compute() {
   if (leftVersion.value == null || rightVersion.value == null) return
+  const gen = ++computeGeneration
+  const requestedSubject = props.subject
   loading.value = true
   error.value = ''
   try {
     const [oldText, newText] = await Promise.all([
-      schemaFor(leftVersion.value),
-      schemaFor(rightVersion.value),
+      schemaFor(requestedSubject, leftVersion.value),
+      schemaFor(requestedSubject, rightVersion.value),
     ])
+    if (gen !== computeGeneration || props.subject !== requestedSubject) return
     diff.value = diffLines(oldText, newText)
   } catch (e) {
+    if (gen !== computeGeneration || props.subject !== requestedSubject) return
     error.value = errorMessage(e)
     diff.value = null
   } finally {
-    loading.value = false
+    if (gen === computeGeneration) loading.value = false
   }
 }
 
@@ -129,6 +139,7 @@ watch(
   () => [props.subject, props.versions] as const,
   () => {
     schemaCache.clear()
+    diff.value = null
     const versions = props.versions
     if (versions.length >= 2) {
       leftVersion.value = versions[versions.length - 2]
@@ -136,12 +147,15 @@ watch(
     } else if (versions.length === 1) {
       leftVersion.value = versions[0]
       rightVersion.value = versions[0]
+    } else {
+      leftVersion.value = null
+      rightVersion.value = null
     }
   },
   { immediate: true },
 )
 
-watch([leftVersion, rightVersion], compute, { immediate: true })
+watch([() => props.subject, leftVersion, rightVersion], compute, { immediate: true })
 </script>
 
 <style scoped>

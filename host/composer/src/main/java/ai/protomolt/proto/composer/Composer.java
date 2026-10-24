@@ -17,6 +17,7 @@ import java.util.Set;
 import java.util.TreeSet;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.Function;
 import java.util.function.Supplier;
 import org.slf4j.Logger;
@@ -323,42 +324,63 @@ public final class Composer {
 
         private final class DefaultChannels implements Channels {
 
+            private final ReentrantLock lock = new ReentrantLock();
             private final Map<String, String> inProcess = new HashMap<>();
             private final Map<String, ManagedChannel> open = new HashMap<>();
 
             @Override
-            public synchronized void publishInProcess(String role, String inProcessName) {
-                String previous = inProcess.putIfAbsent(role, inProcessName);
-                if (previous != null) {
-                    throw new ComposerException("role " + role + " already published endpoint " + previous);
+            public void publishInProcess(String role, String inProcessName) {
+                lock.lock();
+                try {
+                    String previous = inProcess.putIfAbsent(role, inProcessName);
+                    if (previous != null) {
+                        throw new ComposerException("role " + role + " already published endpoint " + previous);
+                    }
+                } finally {
+                    lock.unlock();
                 }
             }
 
             @Override
-            public synchronized ManagedChannel to(String role) {
-                ManagedChannel existing = open.get(role);
-                if (existing != null) {
-                    return existing;
+            public ManagedChannel to(String role) {
+                lock.lock();
+                try {
+                    ManagedChannel existing = open.get(role);
+                    if (existing != null) {
+                        return existing;
+                    }
+                    ManagedChannel channel = openFor(role);
+                    open.put(role, channel);
+                    return channel;
+                } finally {
+                    lock.unlock();
                 }
-                ManagedChannel channel = openFor(role);
-                open.put(role, channel);
-                return channel;
             }
 
             @Override
-            public synchronized boolean isLocal(String role) {
-                return inProcess.containsKey(role);
+            public boolean isLocal(String role) {
+                lock.lock();
+                try {
+                    return inProcess.containsKey(role);
+                } finally {
+                    lock.unlock();
+                }
             }
 
             @Override
-            public synchronized String targetOf(String role) {
-                String local = inProcess.get(role);
-                if (local != null) {
-                    return Channels.IN_PROCESS_PREFIX + local;
+            public String targetOf(String role) {
+                lock.lock();
+                try {
+                    String local = inProcess.get(role);
+                    if (local != null) {
+                        return Channels.IN_PROCESS_PREFIX + local;
+                    }
+                    String target = remoteTarget(role);
+                    policy.validateTarget(target, false);
+                    return target;
+                } finally {
+                    lock.unlock();
                 }
-                String target = remoteTarget(role);
-                policy.validateTarget(target, false);
-                return target;
             }
 
             private ManagedChannel openFor(String role) {
@@ -391,63 +413,84 @@ public final class Composer {
                         + Channels.targetVariable(role) + " is not set");
             }
 
-            private synchronized void close() {
-                ComposerException failure = null;
-                for (ManagedChannel channel : open.values()) {
-                    try {
-                        channel.shutdownNow();
-                        if (!channel.awaitTermination(5, TimeUnit.SECONDS)) {
-                            throw new ComposerException("channel did not terminate within 5 seconds");
+            private void close() {
+                lock.lock();
+                try {
+                    ComposerException failure = null;
+                    for (ManagedChannel channel : open.values()) {
+                        try {
+                            channel.shutdownNow();
+                            if (!channel.awaitTermination(5, TimeUnit.SECONDS)) {
+                                throw new ComposerException("channel did not terminate within 5 seconds");
+                            }
+                        } catch (InterruptedException e) {
+                            Thread.currentThread().interrupt();
+                            failure = cleanupFailure(failure, "interrupted closing channel", e);
+                        } catch (RuntimeException e) {
+                            failure = cleanupFailure(failure, "channel failed to close", e);
                         }
-                    } catch (InterruptedException e) {
-                        Thread.currentThread().interrupt();
-                        failure = cleanupFailure(failure, "interrupted closing channel", e);
-                    } catch (RuntimeException e) {
-                        failure = cleanupFailure(failure, "channel failed to close", e);
                     }
-                }
-                open.clear();
-                if (failure != null) {
-                    throw failure;
+                    open.clear();
+                    if (failure != null) {
+                        throw failure;
+                    }
+                } finally {
+                    lock.unlock();
                 }
             }
         }
 
         private final class DefaultContributions implements Contributions {
 
+            private final ReentrantLock lock = new ReentrantLock();
             private final Map<Class<?>, List<Object>> byKind = new LinkedHashMap<>();
 
             @Override
-            public synchronized <T> void contribute(Class<T> kind, T contribution) {
-                if (wired) {
-                    throw new ComposerException("contribution of " + kind.getSimpleName()
-                            + " after the wire phase completed");
+            public <T> void contribute(Class<T> kind, T contribution) {
+                lock.lock();
+                try {
+                    if (wired) {
+                        throw new ComposerException("contribution of " + kind.getSimpleName()
+                                + " after the wire phase completed");
+                    }
+                    if (contribution == null) {
+                        throw new IllegalArgumentException("contribution must not be null");
+                    }
+                    byKind.computeIfAbsent(kind, key -> new ArrayList<>()).add(contribution);
+                } finally {
+                    lock.unlock();
                 }
-                if (contribution == null) {
-                    throw new IllegalArgumentException("contribution must not be null");
-                }
-                byKind.computeIfAbsent(kind, key -> new ArrayList<>()).add(contribution);
             }
 
             @Override
-            public synchronized <T> T shared(Class<T> kind, Supplier<T> factory) {
-                List<Object> existing = byKind.get(kind);
-                if (existing != null && !existing.isEmpty()) {
-                    return kind.cast(existing.getFirst());
+            public <T> T shared(Class<T> kind, Supplier<T> factory) {
+                lock.lock();
+                try {
+                    List<Object> existing = byKind.get(kind);
+                    if (existing != null && !existing.isEmpty()) {
+                        return kind.cast(existing.getFirst());
+                    }
+                    T created = factory.get();
+                    contribute(kind, created);
+                    return created;
+                } finally {
+                    lock.unlock();
                 }
-                T created = factory.get();
-                contribute(kind, created);
-                return created;
             }
 
             @Override
-            public synchronized <T> List<T> all(Class<T> kind) {
-                List<Object> contributions = byKind.getOrDefault(kind, List.of());
-                List<T> typed = new ArrayList<>(contributions.size());
-                for (Object contribution : contributions) {
-                    typed.add(kind.cast(contribution));
+            public <T> List<T> all(Class<T> kind) {
+                lock.lock();
+                try {
+                    List<Object> contributions = byKind.getOrDefault(kind, List.of());
+                    List<T> typed = new ArrayList<>(contributions.size());
+                    for (Object contribution : contributions) {
+                        typed.add(kind.cast(contribution));
+                    }
+                    return List.copyOf(typed);
+                } finally {
+                    lock.unlock();
                 }
-                return List.copyOf(typed);
             }
         }
     }

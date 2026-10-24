@@ -6,6 +6,7 @@ import java.time.Duration;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.locks.ReentrantLock;
 
 /**
  * Bridges a push-style {@link StreamSource} to a synchronous, pull-style consumer: the
@@ -30,17 +31,24 @@ public final class SourcePump implements StreamSource.Listener, AutoCloseable {
 
     private final BlockingQueue<Message> queue;
     private final int resumeAt;
-    private final Object flowLock = new Object();
+    private final ReentrantLock flowLock = new ReentrantLock();
     private volatile StreamSource.Handle handle;
     private volatile boolean paused;
     private volatile boolean completed;
     private volatile Throwable failure;
     private volatile boolean closed;
 
+    /** Creates a pump with {@link #DEFAULT_CAPACITY}. */
     public SourcePump() {
         this(DEFAULT_CAPACITY);
     }
 
+    /**
+     * Creates a pump with the specified queue capacity.
+     *
+     * @param capacity the maximum number of buffered messages; must be positive
+     * @throws IllegalArgumentException when {@code capacity} is not positive
+     */
     public SourcePump(int capacity) {
         if (capacity <= 0) {
             throw new IllegalArgumentException("capacity must be positive: " + capacity);
@@ -53,6 +61,8 @@ public final class SourcePump implements StreamSource.Listener, AutoCloseable {
      * Attaches the handle returned by {@link StreamSource#open}. The source may already be
      * pushing by the time {@code open} returns, so the pump tolerates a brief unattached
      * window: it cannot pause the source until this is called.
+     *
+     * @param handle the source handle to control
      */
     public void attach(StreamSource.Handle handle) {
         this.handle = handle;
@@ -91,6 +101,8 @@ public final class SourcePump implements StreamSource.Listener, AutoCloseable {
      * Takes the next message, waiting up to {@code timeout}. Returns {@code null} on a
      * quiet interval, and once the stream has ended and drained.
      *
+     * @param timeout the maximum duration to wait for a message
+     * @return the next message, or {@code null} if none arrived within {@code timeout} or the stream ended
      * @throws SourceException once the stream has failed and every message buffered before
      *         the failure has been returned
      */
@@ -127,17 +139,29 @@ public final class SourcePump implements StreamSource.Listener, AutoCloseable {
         }
     }
 
-    /** True once the stream has ended (completed, failed, or closed) and the queue is drained. */
+    /**
+     * True once the stream has ended (completed, failed, or closed) and the queue is drained.
+     *
+     * @return {@code true} if the stream is closed and drained
+     */
     public boolean isClosed() {
         return (completed || closed || failure != null) && queue.isEmpty();
     }
 
-    /** True once the source has signalled a normal end. */
+    /**
+     * True once the source has signalled a normal end.
+     *
+     * @return {@code true} if normal completion was signalled
+     */
     public boolean isCompleted() {
         return completed;
     }
 
-    /** How many messages are buffered right now; for tests and monitoring. */
+    /**
+     * How many messages are buffered right now; for tests and monitoring.
+     *
+     * @return the current queue depth
+     */
     public int depth() {
         return queue.size();
     }
@@ -158,22 +182,28 @@ public final class SourcePump implements StreamSource.Listener, AutoCloseable {
     }
 
     private void pauseSource() {
-        synchronized (flowLock) {
+        flowLock.lock();
+        try {
             StreamSource.Handle active = handle;
             if (!paused && active != null && !closed) {
                 paused = true;
                 active.pause();
             }
+        } finally {
+            flowLock.unlock();
         }
     }
 
     private void resumeIfDrained() {
-        synchronized (flowLock) {
+        flowLock.lock();
+        try {
             StreamSource.Handle active = handle;
             if (paused && active != null && queue.size() <= resumeAt) {
                 paused = false;
                 active.resume();
             }
+        } finally {
+            flowLock.unlock();
         }
     }
 }

@@ -16,6 +16,7 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.concurrent.locks.ReentrantLock;
 
 /**
  * {@link RerankProvider} that calls an OpenVINO Model Server (OVMS) rerank servable over the
@@ -57,7 +58,7 @@ public final class OvmsRerankProvider implements RerankProvider {
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
-    private final Object lock = new Object();
+    private final ReentrantLock lock = new ReentrantLock();
     private final HttpClient client;
     private final Map<String, String> environment;
     private volatile String baseUrl;
@@ -89,14 +90,24 @@ public final class OvmsRerankProvider implements RerankProvider {
     /**
      * Reranks against the servable {@code modelName} at {@code baseUrl} (e.g.
      * {@code http://localhost:8003}; a trailing slash is stripped).
+     *
+     * @param baseUrl base URL of the OVMS server
+     * @param modelName name of the OVMS rerank servable
      */
     public OvmsRerankProvider(String baseUrl, String modelName) {
-        this(baseUrl, modelName, defaultClient());
+        this(
+                Objects.requireNonNull(baseUrl, "baseUrl"),
+                Objects.requireNonNull(modelName, "modelName"),
+                defaultClient());
     }
 
     /**
      * Reranks over a caller-supplied {@link HttpClient}, for tests and for deployments that
      * customize the client.
+     *
+     * @param baseUrl base URL of the OVMS server
+     * @param modelName name of the OVMS rerank servable
+     * @param client HTTP client to send requests through
      */
     public OvmsRerankProvider(String baseUrl, String modelName, HttpClient client) {
         this.baseUrl = stripTrailingSlashes(Objects.requireNonNull(baseUrl, "baseUrl"));
@@ -211,37 +222,38 @@ public final class OvmsRerankProvider implements RerankProvider {
      * which set both fields.
      */
     private void resolveConfiguration() {
-        if (baseUrl != null && modelName != null) {
+        if (modelName != null && baseUrl != null) {
             return;
         }
-        synchronized (lock) {
-            if (baseUrl == null && modelName == null) {
-                String resolvedUrl = configured(URL_PROPERTY, URL_ENVIRONMENT_VARIABLE);
-                String resolvedModel = configured(MODEL_PROPERTY, MODEL_ENVIRONMENT_VARIABLE);
-                if (resolvedUrl == null || resolvedModel == null) {
-                    StringBuilder message = new StringBuilder(
-                            "OVMS rerank provider is not configured;");
-                    if (resolvedUrl == null) {
-                        message.append(" set the '").append(URL_PROPERTY)
-                                .append("' system property or the ")
-                                .append(URL_ENVIRONMENT_VARIABLE)
-                                .append(" environment variable to the server's base URL")
-                                .append(" (e.g. http://localhost:8003);");
-                    }
-                    if (resolvedModel == null) {
-                        message.append(" set the '").append(MODEL_PROPERTY)
-                                .append("' system property or the ")
-                                .append(MODEL_ENVIRONMENT_VARIABLE)
-                                .append(" environment variable to the servable name;");
-                    }
-                    throw new IllegalStateException(message.toString());
-                }
-                baseUrl = stripTrailingSlashes(resolvedUrl);
-                modelName = resolvedModel;
+        lock.lock();
+        try {
+            if (modelName != null && baseUrl != null) {
                 return;
             }
-            // The eager constructors never leave one field set and the other unset.
-            throw new IllegalStateException("OVMS rerank provider is not configured");
+            String resolvedUrl = configured(URL_PROPERTY, URL_ENVIRONMENT_VARIABLE);
+            String resolvedModel = configured(MODEL_PROPERTY, MODEL_ENVIRONMENT_VARIABLE);
+            if (resolvedUrl == null || resolvedModel == null) {
+                StringBuilder message = new StringBuilder(
+                        "OVMS rerank provider is not configured;");
+                if (resolvedUrl == null) {
+                    message.append(" set the '").append(URL_PROPERTY)
+                            .append("' system property or the ")
+                            .append(URL_ENVIRONMENT_VARIABLE)
+                            .append(" environment variable to the server's base URL")
+                            .append(" (e.g. http://localhost:8003);");
+                }
+                if (resolvedModel == null) {
+                    message.append(" set the '").append(MODEL_PROPERTY)
+                            .append("' system property or the ")
+                            .append(MODEL_ENVIRONMENT_VARIABLE)
+                            .append(" environment variable to the servable name;");
+                }
+                throw new IllegalStateException(message.toString());
+            }
+            baseUrl = stripTrailingSlashes(resolvedUrl);
+            modelName = resolvedModel;
+        } finally {
+            lock.unlock();
         }
     }
 

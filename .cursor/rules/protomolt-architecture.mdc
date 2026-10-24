@@ -3,16 +3,19 @@ description: Preserve ProtoMolt architecture and reuse its protobuf toolkit
 alwaysApply: true
 ---
 
-Read root AGENTS.md, especially "Start here: reuse and scope control", before
-editing or delegating. It is the canonical policy for every module.
+Read root AGENTS.md, especially "Start here: reuse and scope control" and
+"Protobuf toolkit & zero-regex quick reference", before editing or delegating.
+It is the canonical policy for every module.
 
 Read docs/design/protobuf-toolkit-audit.md and relevant source-index entries.
-Verify current branch and authorization. Main and ai-slop-archive-by-astra are
-protected during reconciliation. Audit completion does not authorize repairs.
+Verify current branch and authorization. Cut issue and feature branches from
+main; never push directly to main and leave ai-slop-archive-by-astra untouched.
 
-Use existing descriptor mapping, CEL, validation, parts and receipt machinery.
-For example, inspect ProtoFieldMapper and ProtoValidator instead of converting
-a typed message through JSON or Struct to manipulate or validate its fields.
+Use existing descriptor mapping, CEL, projection, validation, zero-regex format
+checkers (core/formats), parts and receipt machinery. For example, inspect
+ProtoFieldMapper, CelProtoMapper, MessageProjection, ProtoValidator and
+core/formats instead of converting a typed message through JSON or Struct or
+using java.util.regex.
 
 Never introduce a second public document API, authoritative JSON representation,
 arbitrary document ceiling or weakened validation as an implementation shortcut.

@@ -241,4 +241,62 @@ class InferenceServiceImplTest {
                         DescribeModelRequest.newBuilder().setModel("judge").build())
                 .getEntry().getProvider()).isEqualTo("stub");
     }
+
+    @Test
+    void streamProviderThrowingAfterObserverErrorDeliversSingleTerminalEvent() throws Exception {
+        InferenceEngines engines = new InferenceEngines(new InferenceCatalog(),
+                List.of(new InferenceProvider() {
+                    @Override
+                    public String id() {
+                        return "stub";
+                    }
+
+                    @Override
+                    public GenerateResponse generate(ModelEntry model, GenerateRequest request) {
+                        throw new UnsupportedOperationException();
+                    }
+
+                    @Override
+                    public void generateStream(ModelEntry model, GenerateStreamRequest request,
+                                               ChunkObserver observer) {
+                        observer.onError(new InferenceException("first terminal error"));
+                        throw new InferenceException("second thrown error");
+                    }
+                }));
+        engines.register(ModelEntry.newBuilder()
+                .setId("judge").setProvider("stub").setEndpoint("stub://local").build());
+
+        java.util.concurrent.atomic.AtomicInteger errorCount =
+                new java.util.concurrent.atomic.AtomicInteger();
+        java.util.concurrent.atomic.AtomicInteger completeCount =
+                new java.util.concurrent.atomic.AtomicInteger();
+        CountDownLatch done = new CountDownLatch(1);
+        try (InferenceServiceImpl service = new InferenceServiceImpl(engines)) {
+            service.generateStream(GenerateStreamRequest.newBuilder()
+                            .setModel("judge")
+                            .addMessages(ChatTurn.newBuilder()
+                                    .setRole(Role.ROLE_USER).setContent("go"))
+                            .build(),
+                    new StreamObserver<>() {
+                        @Override
+                        public void onNext(GenerateStreamResponse value) {
+                        }
+
+                        @Override
+                        public void onError(Throwable t) {
+                            errorCount.incrementAndGet();
+                            done.countDown();
+                        }
+
+                        @Override
+                        public void onCompleted() {
+                            completeCount.incrementAndGet();
+                            done.countDown();
+                        }
+                    });
+            assertThat(done.await(5, TimeUnit.SECONDS)).isTrue();
+        }
+        assertThat(errorCount.get()).isEqualTo(1);
+        assertThat(completeCount.get()).isZero();
+    }
 }

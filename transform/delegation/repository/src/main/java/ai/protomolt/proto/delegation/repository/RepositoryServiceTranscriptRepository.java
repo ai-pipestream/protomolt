@@ -25,6 +25,7 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.Supplier;
 
 /**
@@ -58,6 +59,7 @@ public final class RepositoryServiceTranscriptRepository implements TranscriptRe
     private final EncryptedRepositoryStateCodec codec;
     private final Duration rpcTimeout;
     private final DelegationReducer reducer = new DelegationReducer();
+    private final ReentrantLock stateLock = new ReentrantLock();
     private Transcript confirmed = Transcript.getDefaultInstance();
     private long confirmedRevision;
     private boolean failed;
@@ -109,13 +111,18 @@ public final class RepositoryServiceTranscriptRepository implements TranscriptRe
     }
 
     @Override
-    public synchronized Optional<Transcript> load() {
-        requireActive();
+    public Optional<Transcript> load() {
+        stateLock.lock();
         try {
-            return loadCurrent();
-        } catch (RuntimeException e) {
-            failed = true;
-            throw e;
+            requireActive();
+            try {
+                return loadCurrent();
+            } catch (RuntimeException e) {
+                failed = true;
+                throw e;
+            }
+        } finally {
+            stateLock.unlock();
         }
     }
 
@@ -153,24 +160,29 @@ public final class RepositoryServiceTranscriptRepository implements TranscriptRe
     }
 
     @Override
-    public synchronized void save(Transcript transcript) {
-        requireActive();
-        Objects.requireNonNull(transcript, "transcript");
-        validateTranscript(transcript, "transcript is invalid");
-        requireExtension(transcript);
-        EncryptedRepositoryState envelope = codec.encrypt(transcript.toByteArray(),
-                CONTENT_TYPE, transcript.getEntriesCount(), writeKeyReference,
-                storageContext());
-        var request = RepositoryStateDocuments.save(driveName, objectKey, envelope, confirmedRevision);
-        validateWire(request);
-        // Mark uncertain before dispatch. Only a fully verified acknowledgement
-        // makes this instance writable again, even if dispatch exits abnormally.
-        failed = true;
-        SaveDocumentResponse response = callInRepositoryContext(() -> callStub().saveDocument(request));
-        validateWire(response);
-        confirmedRevision = RepositoryStateDocuments.confirmSaved(request, response, "transcript");
-        confirmed = transcript;
-        failed = false;
+    public void save(Transcript transcript) {
+        stateLock.lock();
+        try {
+            requireActive();
+            Objects.requireNonNull(transcript, "transcript");
+            validateTranscript(transcript, "transcript is invalid");
+            requireExtension(transcript);
+            EncryptedRepositoryState envelope = codec.encrypt(transcript.toByteArray(),
+                    CONTENT_TYPE, transcript.getEntriesCount(), writeKeyReference,
+                    storageContext());
+            var request = RepositoryStateDocuments.save(driveName, objectKey, envelope, confirmedRevision);
+            validateWire(request);
+            // Mark uncertain before dispatch. Only a fully verified acknowledgement
+            // makes this instance writable again, even if dispatch exits abnormally.
+            failed = true;
+            SaveDocumentResponse response = callInRepositoryContext(() -> callStub().saveDocument(request));
+            validateWire(response);
+            confirmedRevision = RepositoryStateDocuments.confirmSaved(request, response, "transcript");
+            confirmed = transcript;
+            failed = false;
+        } finally {
+            stateLock.unlock();
+        }
     }
 
     private void requireActive() {

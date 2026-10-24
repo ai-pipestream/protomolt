@@ -107,6 +107,21 @@ class ApicurioProtobufParseFallbackEdgeCasesTest {
     }
 
     @Test
+    void negativeMessageIndexCountFails() {
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        out.write(ApicurioProtobufParseFallback.MAGIC_BYTE);
+        out.writeBytes(ByteBuffer.allocate(4).putInt(5).array());
+        out.write(1); // zigzag varint 1 decodes to -1
+
+        ApicurioProtobufParseFallback fallback =
+                new ApicurioProtobufParseFallback(Struct.class, 4, true, false);
+        assertThatThrownBy(() -> fallback.parse(out.toByteArray()))
+                .isInstanceOf(IllegalStateException.class)
+                .hasRootCauseInstanceOf(java.io.IOException.class)
+                .rootCause().hasMessageContaining("Negative message index count: -1");
+    }
+
+    @Test
     void skipDelimitedMessageAtEofFails() {
         // Varint length 5 with nothing after it.
         java.io.ByteArrayInputStream in = new java.io.ByteArrayInputStream(new byte[]{5});

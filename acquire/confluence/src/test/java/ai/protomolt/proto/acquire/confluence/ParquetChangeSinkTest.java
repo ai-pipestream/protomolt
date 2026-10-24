@@ -254,4 +254,27 @@ class ParquetChangeSinkTest {
                     .hasMessageContaining(ParquetChangeSink.ENV_BATCH_SIZE);
         }
     }
+
+    @Test
+    void concurrentVirtualThreadEmitsSerializeCleanly(@TempDir Path dir) throws Exception {
+        FakeS3 fake = new FakeS3();
+        try (ParquetChangeSink sink = new ParquetChangeSink(fake.client(), "lake-bucket",
+                "lake", 4);
+             var executor = java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor()) {
+            List<java.util.concurrent.Future<?>> futures = new ArrayList<>();
+            for (int i = 0; i < 12; i++) {
+                final int idx = i;
+                futures.add(executor.submit(() -> sink.emit(pageChange(idx))));
+            }
+            for (var future : futures) {
+                future.get();
+            }
+        }
+        assertThat(fake.puts).hasSize(3);
+        int totalRows = 0;
+        for (int i = 0; i < fake.puts.size(); i++) {
+            totalRows += readAll(fake.puts.get(i).bytes(), dir, "part-" + i + ".parquet").size();
+        }
+        assertThat(totalRows).isEqualTo(12);
+    }
 }

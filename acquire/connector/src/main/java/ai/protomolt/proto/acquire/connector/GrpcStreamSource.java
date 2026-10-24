@@ -9,6 +9,8 @@ import java.time.Duration;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.locks.Condition;
+import java.util.concurrent.locks.ReentrantLock;
 
 /**
  * A server-streaming gRPC method as a {@link StreamSource}. A pump thread pulls batches
@@ -30,16 +32,22 @@ public final class GrpcStreamSource implements StreamSource<GrpcSourcePlan> {
     public Handle open(GrpcSourcePlan plan, Listener listener) {
         DynamicGrpcStream stream = DynamicGrpcCalls.openServerStream(
                 plan.channel(), plan.method(), plan.request(), plan.options(), plan.headers());
-        GrpcHandle handle = new GrpcHandle(stream, listener);
-        handle.thread.start();
-        return handle;
+        try {
+            GrpcHandle handle = new GrpcHandle(stream, listener);
+            handle.thread.start();
+            return handle;
+        } catch (RuntimeException | Error e) {
+            stream.close();
+            throw e;
+        }
     }
 
     private static final class GrpcHandle implements Handle {
         private final DynamicGrpcStream stream;
         private final Listener listener;
         private final AtomicBoolean terminated = new AtomicBoolean();
-        private final Object pauseLock = new Object();
+        private final ReentrantLock pauseLock = new ReentrantLock();
+        private final Condition unpaused = pauseLock.newCondition();
         private final Thread thread;
         private volatile boolean paused;
         private volatile boolean running = true;
@@ -53,9 +61,9 @@ public final class GrpcStreamSource implements StreamSource<GrpcSourcePlan> {
 
         private void pump() {
             try {
-                while (running) {
+                while (running && !Thread.currentThread().isInterrupted()) {
                     awaitIfPaused();
-                    if (!running) {
+                    if (!running || Thread.currentThread().isInterrupted()) {
                         break;
                     }
                     List<DynamicMessage> batch;
@@ -91,30 +99,39 @@ public final class GrpcStreamSource implements StreamSource<GrpcSourcePlan> {
         }
 
         private void awaitIfPaused() {
-            synchronized (pauseLock) {
+            pauseLock.lock();
+            try {
                 while (paused && running) {
                     try {
-                        pauseLock.wait();
+                        unpaused.await();
                     } catch (InterruptedException e) {
                         Thread.currentThread().interrupt();
                         return;
                     }
                 }
+            } finally {
+                pauseLock.unlock();
             }
         }
 
         @Override
         public void pause() {
-            synchronized (pauseLock) {
+            pauseLock.lock();
+            try {
                 paused = true;
+            } finally {
+                pauseLock.unlock();
             }
         }
 
         @Override
         public void resume() {
-            synchronized (pauseLock) {
+            pauseLock.lock();
+            try {
                 paused = false;
-                pauseLock.notifyAll();
+                unpaused.signalAll();
+            } finally {
+                pauseLock.unlock();
             }
         }
 
