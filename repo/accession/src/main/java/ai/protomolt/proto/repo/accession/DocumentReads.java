@@ -1,5 +1,7 @@
 package ai.protomolt.proto.repo.accession;
 
+import ai.protomolt.proto.descriptors.ClosedDescriptorSet;
+import ai.protomolt.proto.descriptors.MessageWireBudget;
 import ai.protomolt.proto.repo.catalog.CatalogDataLoss;
 import ai.protomolt.proto.repo.catalog.CatalogException;
 import ai.protomolt.proto.repo.admission.DocumentAdmissionReservations;
@@ -9,6 +11,7 @@ import ai.protomolt.proto.repo.admission.DocumentLinks;
 import ai.protomolt.proto.repo.admission.DocumentRetainedDefinitions;
 import ai.protomolt.proto.repo.admission.DocumentSchemaAdmission;
 import ai.protomolt.proto.repo.catalog.Catalog;
+import ai.protomolt.proto.repo.codec.DocumentFragmentConfinement;
 import ai.protomolt.proto.repo.codec.DocumentPartCodec;
 import ai.protomolt.proto.repo.spi.DocumentAccessPolicy;
 import ai.protomolt.proto.repo.spi.RepositoryCaller;
@@ -18,20 +21,32 @@ import ai.protomolt.proto.repo.v1.Access;
 import ai.protomolt.proto.repo.v1.Document;
 import ai.protomolt.proto.repo.v1.NodeAddress;
 import ai.protomolt.proto.repo.v1.OwnershipContext;
+import ai.protomolt.proto.repo.v1.RepositoryAnyResolution;
+import ai.protomolt.proto.repo.v1.RepositoryOccurrenceKeyType;
+import ai.protomolt.proto.repo.v1.RepositoryOccurrenceMapKey;
+import ai.protomolt.proto.repo.v1.RepositoryResolvedSchema;
 import ai.protomolt.proto.repo.v1.RepositorySchemaAssetReference;
+import ai.protomolt.proto.repo.v1.RepositorySchemaOccurrenceStep;
 import ai.protomolt.proto.repo.v2.*;
+import com.google.protobuf.Any;
 import com.google.protobuf.ByteString;
 import com.google.protobuf.Descriptors;
+import com.google.protobuf.DynamicMessage;
 import com.google.protobuf.InvalidProtocolBufferException;
 import com.google.protobuf.Message;
 import com.google.protobuf.UnsafeByteOperations;
 import io.grpc.Status;
 import java.io.IOException;
 import java.time.Clock;
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.IdentityHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 import java.util.function.Function;
 
@@ -53,6 +68,20 @@ import java.util.function.Function;
 public final class DocumentReads {
     /** Largest payload of one part-data frame of a streamed read. */
     private static final int READ_FRAME_BYTES = 1024 * 1024;
+    /** Full protobuf type name of {@link Any}. */
+    private static final String ANY_FULL_NAME = Any.getDescriptor().getFullName();
+    /** Maximum distinct retained schema artifacts per revision read. */
+    private static final int MAX_RETAINED_ARTIFACTS = 64;
+    /** Maximum structural nesting depth of a CORE fragment. */
+    private static final int MAX_CORE_DEPTH = 64;
+    /** Maximum message node count of a CORE fragment. */
+    private static final int MAX_CORE_NODES = 1_000_000;
+    /** Maximum type URL length on a retained Any envelope. */
+    private static final int MAX_TYPE_URL_LENGTH = 4096;
+    /** Maximum message types reachable from a retained Any payload schema. */
+    private static final int MAX_PAYLOAD_SCHEMA_TYPES = 4096;
+    /** Maximum fields reachable from a retained Any payload schema. */
+    private static final int MAX_PAYLOAD_SCHEMA_FIELDS = 65536;
 
     private final Catalog catalog;
     private final DocumentSaves.Drives drives;
@@ -439,12 +468,15 @@ public final class DocumentReads {
                 .filter(occurrence -> occurrence.getOccurrence().getPart().equals(part)).toList();
         var recordedOpaque = validation.getOpaqueOccurrencesList().stream()
                 .filter(occurrence -> occurrence.getOccurrence().getPart().equals(part)).toList();
-        DocumentRetainedDefinitions.Reader retained = catalog::artifact;
+        var cachedArtifacts = new HashMap<String, Optional<ByteString>>();
+        DocumentRetainedDefinitions.Reader retained = hash -> cachedArtifacts.computeIfAbsent(hash, catalog::artifact);
         try {
             var container = DocumentRetainedDefinitions.definition(binding.getFragmentSchema(), retained);
+            var byReference = new HashMap<RepositorySchemaAssetReference, DocumentSchemaAdmission.Definition>();
             var byTypeUrl = new HashMap<String, DocumentSchemaAdmission.Definition>();
             for (var occurrence : recorded) {
-                var definition = DocumentRetainedDefinitions.definition(occurrence.getSchema(), retained);
+                var definition = byReference.computeIfAbsent(
+                        occurrence.getSchema(), schema -> DocumentRetainedDefinitions.definition(schema, retained));
                 var previous = byTypeUrl.putIfAbsent(occurrence.getSchema().getTypeUrl(), definition);
                 if (previous != null && !previous.equals(definition))
                     throw lost("The revision retains two schemas for " + occurrence.getSchema().getTypeUrl(), null);
@@ -482,7 +514,7 @@ public final class DocumentReads {
                  | DocumentCandidateAdmission.InvalidPayload | DocumentCandidateAdmission.ContentRefused
                  | DocumentCandidateAdmission.HostFailure | InvalidProtocolBufferException failure) {
             throw lost("Stored part does not decode with its retained schema: " + failure.getMessage(), failure);
-        } catch (DocumentCandidateAdmission.BudgetExhausted budget) {
+        } catch (DocumentCandidateAdmission.BudgetExhausted | ClosedDescriptorSet.LimitExceededException budget) {
             throw new AccessionException(Status.Code.RESOURCE_EXHAUSTED, "Retained schema budget exhausted: "
                     + budget.getMessage(), null, budget);
         }
@@ -515,10 +547,496 @@ public final class DocumentReads {
                 .orElseThrow(() -> lost("Revision " + stored.getRevision() + " has no CORE object", null));
         requirePartWithinCeiling(core.getRef());
         try (var lease = Objects.requireNonNull(reservations.reserve(core.getRef().getLength()), "reservation lease")) {
-            return decodeRetained(stored, DocumentSaves.CORE_SELECTOR, read(core.getRef())).links();
+            return decodeCoreLinks(stored, read(core.getRef()));
         }
     }
 
+    /**
+     * Decodes a revision's CORE fragment with its retained schemas and extracts its
+     * links without re-running candidate rule evaluation or concept tag extraction
+     * (issue #608). Every recorded resolved and opaque Any occurrence in CORE is
+     * verified against the stored bytes.
+     *
+     * @param stored the resolved revision manifest
+     * @param bytes the verified CORE part bytes
+     * @return the links of CORE in field order
+     */
+    private List<DocumentLinks.Link> decodeCoreLinks(StoredManifest stored, ByteString bytes) {
+        var validation = stored.getValidation();
+        var binding = validation.getPartSchemasList().stream()
+                .filter(schema -> schema.getPart().equals(DocumentSaves.CORE_SELECTOR)).findFirst()
+                .orElseThrow(() -> new AccessionException(Status.Code.DATA_LOSS, "Part has no retained schema binding", null));
+        var recorded = validation.getResolvedOccurrencesList().stream()
+                .filter(occurrence -> occurrence.getOccurrence().getPart().equals(DocumentSaves.CORE_SELECTOR)).toList();
+        var recordedOpaque = validation.getOpaqueOccurrencesList().stream()
+                .filter(occurrence -> occurrence.getOccurrence().getPart().equals(DocumentSaves.CORE_SELECTOR)).toList();
+        var leases = new ArrayList<DocumentAdmissionReservations.Lease>();
+        var artifacts = new HashMap<String, ByteString>();
+        var retainedBytes = new long[1];
+        DocumentRetainedDefinitions.Reader retained = hash -> {
+            var cached = artifacts.get(hash);
+            if (cached != null) return Optional.of(cached);
+            var loaded = catalog.artifact(hash);
+            if (loaded.isEmpty()) return Optional.empty();
+            var artifact = loaded.get();
+            if (!artifact.isEmpty()) {
+                if (artifacts.size() >= MAX_RETAINED_ARTIFACTS
+                        || artifact.size() > limits.maxRetainedBytes() - retainedBytes[0])
+                    throw new AccessionException(Status.Code.RESOURCE_EXHAUSTED,
+                            "Retained schema budget exhausted: retained artifact union exceeds limit", null);
+                leases.add(Objects.requireNonNull(reservations.reserve(artifact.size()), "reservation lease"));
+                retainedBytes[0] += artifact.size();
+                artifacts.put(hash, artifact);
+            }
+            return loaded;
+        };
+        try {
+            var container = DocumentRetainedDefinitions.definition(binding.getFragmentSchema(), retained);
+            var containerType = DocumentCandidateAdmission.containerType(container);
+            var byReference = new HashMap<RepositorySchemaAssetReference, RetainedSchema>();
+            var byTypeUrl = new HashMap<String, RetainedSchema>();
+            for (var occurrence : recorded) {
+                var schema = byReference.get(occurrence.getSchema());
+                if (schema == null) {
+                    if (byReference.size() + 1 >= limits.maxBindings())
+                        throw new AccessionException(Status.Code.RESOURCE_EXHAUSTED,
+                                "Retained schema budget exhausted: schema binding count exceeds limit", null);
+                    var definition = DocumentRetainedDefinitions.definition(occurrence.getSchema(), retained);
+                    schema = new RetainedSchema(
+                            occurrence.getSchema(), definition, DocumentCandidateAdmission.containerType(definition));
+                    byReference.put(occurrence.getSchema(), schema);
+                }
+                var previous = byTypeUrl.putIfAbsent(occurrence.getSchema().getTypeUrl(), schema);
+                if (previous != null && !previous.definition().equals(schema.definition()))
+                    throw lost("The revision retains two schemas for " + occurrence.getSchema().getTypeUrl(), null);
+            }
+            if (bytes.size() > limits.maxFragmentBytes())
+                throw new AccessionException(Status.Code.RESOURCE_EXHAUSTED,
+                        "Retained schema budget exhausted: candidate fragments exceed byte limit", null);
+            new MessageWireBudget(limits.maxWireValues(), limits.maxWireDepth(), () -> {}).check(bytes, containerType);
+            var input = bytes.newCodedInput();
+            input.setRecursionLimit(limits.maxWireDepth());
+            var parsed = DynamicMessage.getDefaultInstance(containerType).getParserForType().parseFrom(input);
+            input.checkLastTagWas(0);
+            if (input.getTotalBytesRead() != bytes.size())
+                throw new InvalidProtocolBufferException("Fragment was not completely consumed");
+            requireCoreLayout(containerType);
+            requireValidCoreContainer(parsed, "", 0, new int[1]);
+            DocumentFragmentConfinement.requireConfined(
+                    parsed, ai.protomolt.proto.repo.v1.DocumentPart.DOCUMENT_PART_CORE, stored.getAddress().getDocId());
+            DocumentLinks.requireLinkSchema(containerType);
+            var links = new ArrayList<>(DocumentLinks.extract(parsed, ""));
+            var attestedOpaque = new HashMap<List<RepositorySchemaOccurrenceStep>, OpaqueOccurrence>();
+            var expectedOpaque = new HashSet<DocumentCandidateAdmission.OpaqueFound>();
+            for (var occurrence : recordedOpaque) {
+                var steps = List.copyOf(occurrence.getOccurrence().getStepsList());
+                attestedOpaque.put(steps, occurrence);
+                expectedOpaque.add(new DocumentCandidateAdmission.OpaqueFound(
+                        ai.protomolt.proto.repo.v1.DocumentPart.DOCUMENT_PART_CORE,
+                        steps, occurrence.getTypeUrl(), occurrence.getSha256(), occurrence.getLength()));
+            }
+            var state = new CoreLinkWalkState(byTypeUrl, attestedOpaque, limits.maxDecodedBytes());
+            var structuredField = containerType.findFieldByNumber(Document.STRUCTURED_DATA_FIELD_NUMBER);
+            if (structuredField != null && parsed.hasField(structuredField)) {
+                var at = new ArrayList<RepositorySchemaOccurrenceStep>();
+                at.add(RepositorySchemaOccurrenceStep.newBuilder()
+                        .setFieldNumber(Document.STRUCTURED_DATA_FIELD_NUMBER).build());
+                walkCoreAny((Message) parsed.getField(structuredField), structuredField.getName(),
+                        at, 0, null, state, links);
+            }
+            if (!state.foundResolved.equals(new HashSet<>(recorded)))
+                throw lost("Stored part's Any occurrences differ from the retained record", null);
+            if (!state.foundOpaque.equals(expectedOpaque))
+                throw lost("Stored part's opaque occurrences differ from the retained record", null);
+            return List.copyOf(links);
+        } catch (DocumentSchemaAdmission.DataLoss | DocumentCandidateAdmission.HostFailure
+                 | IOException
+                 | IllegalArgumentException | UnsupportedOperationException failure) {
+            if (failure instanceof ClosedDescriptorSet.LimitExceededException
+                    || failure instanceof MessageWireBudget.LimitExceededException)
+                throw new AccessionException(Status.Code.RESOURCE_EXHAUSTED,
+                        "Retained schema budget exhausted: " + failure.getMessage(), null, failure);
+            throw lost("Stored part does not decode with its retained schema: " + failure.getMessage(), failure);
+        } finally {
+            for (var lease : leases) lease.close();
+        }
+    }
+
+    /**
+     * A retained payload schema reference bound to its verified definition and descriptor.
+     *
+     * @param reference the retained schema asset reference
+     * @param definition the verified retained schema definition
+     * @param type the container message descriptor resolved from {@code definition}
+     */
+    private record RetainedSchema(
+            RepositorySchemaAssetReference reference,
+            DocumentSchemaAdmission.Definition definition,
+            Descriptors.Descriptor type) {}
+
+    /** Mutable traversal state for one CORE link decode. */
+    private static final class CoreLinkWalkState {
+        private final Map<String, RetainedSchema> byTypeUrl;
+        private final Map<List<RepositorySchemaOccurrenceStep>, OpaqueOccurrence> attestedOpaque;
+        private final Set<ResolvedOccurrence> foundResolved = new HashSet<>();
+        private final Set<DocumentCandidateAdmission.OpaqueFound> foundOpaque = new HashSet<>();
+        private final Set<Descriptors.Descriptor> preparedSchemas = Collections.newSetFromMap(new IdentityHashMap<>());
+        private final Map<Descriptors.Descriptor, Boolean> declaresLinks = new IdentityHashMap<>();
+        private final Map<Descriptors.FieldDescriptor, LinkField> linkFields = new IdentityHashMap<>();
+        private long decodedRemaining;
+        private long schemaFields;
+        private long anyCount;
+
+        /** Creates walk state for one CORE link decode. */
+        CoreLinkWalkState(
+                Map<String, RetainedSchema> byTypeUrl,
+                Map<List<RepositorySchemaOccurrenceStep>, OpaqueOccurrence> attestedOpaque,
+                long decodedRemaining) {
+            this.byTypeUrl = byTypeUrl;
+            this.attestedOpaque = attestedOpaque;
+            this.decodedRemaining = decodedRemaining;
+        }
+
+        /** Checks and memoizes whether {@code type} declares any {@link DocumentLink} fields. */
+        boolean declaresLinks(Descriptors.Descriptor type) {
+            var known = declaresLinks.get(type);
+            if (known != null) return known;
+            boolean result = DocumentLinks.declaresLinks(type);
+            declaresLinks.put(type, result);
+            return result;
+        }
+
+        /** Resolves and memoizes the {@link LinkField} option declared on {@code field}. */
+        LinkField linkField(Descriptors.FieldDescriptor field) {
+            var cached = linkFields.get(field);
+            if (cached != null) return cached;
+            var resolved = DocumentLinks.linkField(field).orElseThrow(() ->
+                    new IllegalArgumentException(field.getFullName() + ": a " + DocumentLinks.LINK_TYPE + " field needs the link option"));
+            linkFields.put(field, resolved);
+            return resolved;
+        }
+
+        /** Verifies structural descriptor limits for {@code root} and its reachable message types once per decode. */
+        void prepareSchema(Descriptors.Descriptor root) {
+            if (preparedSchemas.contains(root)) return;
+            var pending = new ArrayList<Descriptors.Descriptor>();
+            addSchemaType(root, pending);
+            for (int i = 0; i < pending.size(); i++) {
+                var type = pending.get(i);
+                if (type.toProto().getExtensionRangeCount() != 0)
+                    throw new UnsupportedOperationException("payload schema needs extension resolution");
+                schemaFields += type.getFields().size();
+                if (schemaFields > MAX_PAYLOAD_SCHEMA_FIELDS)
+                    throw new IllegalArgumentException("schema field count exceeds limit");
+                for (var field : type.getFields()) {
+                    if (field.isMapField()) requireMapEntryDescriptor(field.getMessageType());
+                    if (field.getJavaType() == Descriptors.FieldDescriptor.JavaType.MESSAGE)
+                        addSchemaType(field.getMessageType(), pending);
+                }
+            }
+        }
+
+        /** Enqueues {@code type} for structural schema verification if not yet visited. */
+        private void addSchemaType(Descriptors.Descriptor type, ArrayList<Descriptors.Descriptor> pending) {
+            if (preparedSchemas.contains(type)) return;
+            if (preparedSchemas.size() == MAX_PAYLOAD_SCHEMA_TYPES)
+                throw new IllegalArgumentException("schema message count exceeds limit");
+            preparedSchemas.add(type);
+            pending.add(type);
+        }
+    }
+
+    /**
+     * Decodes a retained {@link Any} occurrence in CORE, records its resolved or opaque
+     * occurrence, and recursively extracts {@link DocumentLinks.Link} values.
+     */
+    private void walkCoreAny(
+            Message any,
+            String prefix,
+            ArrayList<RepositorySchemaOccurrenceStep> at,
+            int depth,
+            Descriptors.FieldDescriptor underMap,
+            CoreLinkWalkState state,
+            List<DocumentLinks.Link> links) throws IOException {
+        if (!any.getUnknownFields().asMap().isEmpty())
+            throw new IllegalArgumentException("unsupported Any envelope fields");
+        var anyType = any.getDescriptorForType();
+        var urlField = anyType.findFieldByNumber(1);
+        var valueField = anyType.findFieldByNumber(2);
+        if (anyType.getFields().size() != 2 || urlField == null || valueField == null
+                || !urlField.getName().equals("type_url") || !valueField.getName().equals("value")
+                || urlField.isRepeated() || valueField.isRepeated()
+                || urlField.isRequired() || valueField.isRequired()
+                || urlField.getContainingOneof() != null || valueField.getContainingOneof() != null
+                || urlField.hasDefaultValue() || valueField.hasDefaultValue()
+                || urlField.getType() != Descriptors.FieldDescriptor.Type.STRING
+                || valueField.getType() != Descriptors.FieldDescriptor.Type.BYTES)
+            throw new IllegalArgumentException("invalid Any envelope descriptor");
+        var typeUrl = (String) any.getField(urlField);
+        var value = (ByteString) any.getField(valueField);
+        var currentSteps = List.copyOf(at);
+        var opaque = state.attestedOpaque.get(currentSteps);
+        if (opaque != null) {
+            if (!opaque.getTypeUrl().equals(typeUrl))
+                throw new IllegalArgumentException("Attested opaque type at CORE is "
+                        + opaque.getTypeUrl() + " but the envelope is " + typeUrl);
+            state.foundOpaque.add(new DocumentCandidateAdmission.OpaqueFound(
+                    ai.protomolt.proto.repo.v1.DocumentPart.DOCUMENT_PART_CORE,
+                    currentSteps, typeUrl, DocumentPartCodec.sha256Hex(value), value.size()));
+            return;
+        }
+        if (typeUrl.isEmpty() || typeUrl.length() > MAX_TYPE_URL_LENGTH)
+            throw new IllegalArgumentException("invalid Any type URL");
+        if (depth > limits.maxWireDepth())
+            throw new IllegalArgumentException("aggregate payload depth exceeds limit");
+        if (state.decodedRemaining < 1 || value.size() > state.decodedRemaining)
+            throw new AccessionException(Status.Code.RESOURCE_EXHAUSTED,
+                    "Retained schema budget exhausted: candidate decoded payload budget exhausted", null);
+        var schema = state.byTypeUrl.get(typeUrl);
+        if (schema == null)
+            throw new IllegalArgumentException("No registered schema for " + typeUrl);
+        String suffix = "/" + schema.type().getFullName();
+        if (!typeUrl.endsWith(suffix) || typeUrl.length() <= suffix.length())
+            throw new IllegalArgumentException("accepted type URL does not identify the bound schema");
+        state.decodedRemaining -= value.size();
+        state.prepareSchema(schema.type());
+        new MessageWireBudget(limits.maxWireValues(), limits.maxWireDepth(), () -> {}).check(value, schema.type());
+        var input = value.newCodedInput();
+        input.setRecursionLimit(limits.maxWireDepth() - depth);
+        var decoded = DynamicMessage.parseFrom(schema.type(), input);
+        input.checkLastTagWas(0);
+        if (input.getTotalBytesRead() != value.size())
+            throw new InvalidProtocolBufferException("incomplete payload decode");
+        boolean declaresLinks = state.declaresLinks(schema.type());
+        if (underMap != null && declaresLinks)
+            throw new IllegalArgumentException(underMap.getFullName() + ": a link cannot sit under a map value");
+        var valueSha256 = DocumentPartCodec.sha256Hex(value);
+        var boundary = RepositorySchemaOccurrenceStep.newBuilder()
+                .setAnyBoundary(RepositoryAnyResolution.newBuilder()
+                        .setTypeUrl(typeUrl)
+                        .setValueSha256(valueSha256)
+                        .setValueSizeBytes(value.size())
+                        .setResolved(RepositoryResolvedSchema.newBuilder()
+                                .setSchema(schema.definition().metadata().getSchema())
+                                .setArtifactSha256(schema.reference().getDescriptorSha256())))
+                .build();
+        at.add(boundary);
+        var resolved = ResolvedOccurrence.newBuilder()
+                .setOccurrence(OccurrenceLocator.newBuilder()
+                        .setPart(DocumentSaves.CORE_SELECTOR)
+                        .addAllSteps(at))
+                .setSchema(schema.reference())
+                .setPayloadSha256(valueSha256)
+                .setPayloadLength(value.size())
+                .build();
+        if (!state.foundResolved.add(resolved))
+            throw new IllegalArgumentException("duplicate schema occurrence path");
+        try {
+            walkCorePayload(decoded, prefix, at, depth, underMap, state, links);
+        } finally {
+            at.removeLast();
+        }
+    }
+
+    /**
+     * Walks a decoded payload message inside CORE, extracting {@link DocumentLinks.Link}
+     * fields in descriptor order and descending into nested messages and {@link Any} fields.
+     */
+    private void walkCorePayload(
+            Message message,
+            String prefix,
+            ArrayList<RepositorySchemaOccurrenceStep> at,
+            int depth,
+            Descriptors.FieldDescriptor underMap,
+            CoreLinkWalkState state,
+            List<DocumentLinks.Link> links) throws IOException {
+        if (depth > limits.maxWireDepth())
+            throw new IllegalArgumentException("aggregate payload depth exceeds limit");
+        if (!message.getUnknownFields().asMap().isEmpty())
+            throw new IllegalArgumentException("unknown candidate fields cannot receive typed archival evidence");
+        var type = message.getDescriptorForType();
+        if (type.getFullName().equals(ANY_FULL_NAME)) {
+            if (++state.anyCount > limits.maxWireValues())
+                throw new IllegalArgumentException("Any occurrence limit exceeded");
+            walkCoreAny(message, prefix, at, depth + 1, underMap, state, links);
+            return;
+        }
+        for (var entry : message.getAllFields().entrySet()) {
+            var field = entry.getKey();
+            if (field.getJavaType() != Descriptors.FieldDescriptor.JavaType.MESSAGE) continue;
+            var path = prefix.isEmpty() ? field.getName() : prefix + "." + field.getName();
+            if (field.isMapField()) {
+                var keyField = field.getMessageType().findFieldByNumber(1);
+                var valueField = field.getMessageType().findFieldByNumber(2);
+                var keys = new HashSet<>();
+                at.add(RepositorySchemaOccurrenceStep.newBuilder().setFieldNumber(field.getNumber()).build());
+                try {
+                    for (var item : (List<?>) entry.getValue()) {
+                        var mapEntry = (Message) item;
+                        if (depth + 1 > limits.maxWireDepth())
+                            throw new IllegalArgumentException("aggregate payload depth exceeds limit");
+                        if (!mapEntry.getUnknownFields().asMap().isEmpty())
+                            throw new IllegalArgumentException("unknown candidate fields cannot receive typed archival evidence");
+                        var key = mapEntry.getField(keyField);
+                        if (!keys.add(key))
+                            throw new IllegalArgumentException("duplicate map keys cannot receive typed archival evidence");
+                        if (valueField.getJavaType() == Descriptors.FieldDescriptor.JavaType.MESSAGE
+                                && mapEntry.hasField(valueField)) {
+                            at.add(RepositorySchemaOccurrenceStep.newBuilder()
+                                    .setMapKey(mapKeyStep(keyField.getType(), key)).build());
+                            try {
+                                walkCorePayload((Message) mapEntry.getField(valueField), path, at,
+                                        depth + 2, underMap != null ? underMap : field, state, links);
+                            } finally {
+                                at.removeLast();
+                            }
+                        }
+                    }
+                } finally {
+                    at.removeLast();
+                }
+                continue;
+            }
+            boolean isLink = field.getMessageType().getFullName().equals(DocumentLinks.LINK_TYPE);
+            var values = field.isRepeated() ? (List<?>) entry.getValue() : List.of(entry.getValue());
+            at.add(RepositorySchemaOccurrenceStep.newBuilder().setFieldNumber(field.getNumber()).build());
+            try {
+                LinkField declared = isLink ? state.linkField(field) : null;
+                for (int i = 0; i < values.size(); i++) {
+                    var value = (Message) values.get(i);
+                    if (field.isRepeated())
+                        at.add(RepositorySchemaOccurrenceStep.newBuilder().setRepeatedIndex(i).build());
+                    try {
+                        if (isLink) {
+                            if (depth + 1 > limits.maxWireDepth())
+                                throw new IllegalArgumentException("aggregate payload depth exceeds limit");
+                            links.add(new DocumentLinks.Link(
+                                    path, field.isRepeated() ? i : 0, field.isRepeated(),
+                                    declared, parseLinkValue(field, value)));
+                        } else {
+                            walkCorePayload(value, field.isRepeated() ? path + "[" + i + "]" : path,
+                                    at, depth + 1, underMap, state, links);
+                        }
+                    } finally {
+                        if (field.isRepeated()) at.removeLast();
+                    }
+                }
+            } finally {
+                at.removeLast();
+            }
+        }
+    }
+
+    /** Verifies that the retained CORE container descriptor matches {@link Document}'s layout for {@code structured_data}. */
+    private static void requireCoreLayout(Descriptors.Descriptor type) {
+        var compiled = Document.getDescriptor();
+        if (!type.getFullName().equals(compiled.getFullName()))
+            throw new IllegalArgumentException("containing schema differs from supported Document layout");
+        var field = type.findFieldByNumber(Document.STRUCTURED_DATA_FIELD_NUMBER);
+        if (field == null) return;
+        var expected = compiled.findFieldByNumber(Document.STRUCTURED_DATA_FIELD_NUMBER);
+        if (field.getType() != expected.getType() || field.isRepeated() != expected.isRepeated()
+                || field.isMapField() != expected.isMapField()
+                || !field.getMessageType().getFullName().equals(expected.getMessageType().getFullName()))
+            throw new IllegalArgumentException("containing schema differs from supported Document layout at "
+                    + type.getFullName() + " field " + Document.STRUCTURED_DATA_FIELD_NUMBER);
+    }
+
+    /** Verifies that the CORE container has no unknown fields and no {@link Any} roots outside {@code structured_data}. */
+    private static void requireValidCoreContainer(Message message, String path, int depth, int[] visited) {
+        if (depth > MAX_CORE_DEPTH)
+            throw new IllegalArgumentException("Document nesting exceeds 64 levels at " + path);
+        if (++visited[0] > MAX_CORE_NODES)
+            throw new IllegalArgumentException("Document exceeds 1,000,000 nodes");
+        if (!message.getUnknownFields().asMap().isEmpty())
+            throw new IllegalArgumentException(DocumentSchemaAdmission.UNKNOWN_DOCUMENT_FIELDS);
+        if (message.getDescriptorForType().getFullName().equals(ANY_FULL_NAME)) {
+            if (!path.equals("structured_data"))
+                throw new IllegalArgumentException("An Any at " + path + " is not allowed");
+            return;
+        }
+        for (var entry : message.getAllFields().entrySet()) {
+            var field = entry.getKey();
+            if (field.getJavaType() != Descriptors.FieldDescriptor.JavaType.MESSAGE) continue;
+            String childPath = path.isEmpty() ? field.getName() : path + "." + field.getName();
+            if (field.isRepeated()) {
+                for (var child : (List<?>) entry.getValue())
+                    requireValidCoreContainer((Message) child, childPath, depth + 1, visited);
+            } else {
+                requireValidCoreContainer((Message) entry.getValue(), childPath, depth + 1, visited);
+            }
+        }
+    }
+
+    /** Verifies that a protobuf map-entry descriptor conforms to the synthetic map entry layout. */
+    private static void requireMapEntryDescriptor(Descriptors.Descriptor entry) {
+        var key = entry.findFieldByNumber(1);
+        var value = entry.findFieldByNumber(2);
+        if (entry.getFields().size() != 2 || key == null || value == null
+                || !key.getName().equals("key") || !value.getName().equals("value")
+                || key.isRepeated() || value.isRepeated() || key.isRequired() || value.isRequired()
+                || key.getContainingOneof() != null || value.getContainingOneof() != null
+                || key.hasDefaultValue() || value.hasDefaultValue())
+            throw new IllegalArgumentException("invalid map entry descriptor");
+        switch (key.getType()) {
+            case STRING, BOOL, INT32, SINT32, SFIXED32, UINT32, FIXED32,
+                    INT64, SINT64, SFIXED64, UINT64, FIXED64 -> {}
+            default -> throw new IllegalArgumentException("invalid map entry descriptor key type");
+        }
+    }
+
+    /** Encodes a protobuf map key into a {@link RepositoryOccurrenceMapKey} locator step. */
+    private static RepositoryOccurrenceMapKey mapKeyStep(Descriptors.FieldDescriptor.Type type, Object value) {
+        var result = RepositoryOccurrenceMapKey.newBuilder();
+        switch (type) {
+            case STRING -> result.setType(RepositoryOccurrenceKeyType.REPOSITORY_OCCURRENCE_KEY_TYPE_STRING).setStringValue((String) value);
+            case BOOL -> result.setType(RepositoryOccurrenceKeyType.REPOSITORY_OCCURRENCE_KEY_TYPE_BOOL).setBoolValue((Boolean) value);
+            case INT32 -> result.setType(RepositoryOccurrenceKeyType.REPOSITORY_OCCURRENCE_KEY_TYPE_INT32).setSignedValue((Integer) value);
+            case SINT32 -> result.setType(RepositoryOccurrenceKeyType.REPOSITORY_OCCURRENCE_KEY_TYPE_SINT32).setSignedValue((Integer) value);
+            case SFIXED32 -> result.setType(RepositoryOccurrenceKeyType.REPOSITORY_OCCURRENCE_KEY_TYPE_SFIXED32).setSignedValue((Integer) value);
+            case UINT32 -> result.setType(RepositoryOccurrenceKeyType.REPOSITORY_OCCURRENCE_KEY_TYPE_UINT32).setUnsignedValue(Integer.toUnsignedLong((Integer) value));
+            case FIXED32 -> result.setType(RepositoryOccurrenceKeyType.REPOSITORY_OCCURRENCE_KEY_TYPE_FIXED32).setUnsignedValue(Integer.toUnsignedLong((Integer) value));
+            case INT64 -> result.setType(RepositoryOccurrenceKeyType.REPOSITORY_OCCURRENCE_KEY_TYPE_INT64).setSignedValue((Long) value);
+            case SINT64 -> result.setType(RepositoryOccurrenceKeyType.REPOSITORY_OCCURRENCE_KEY_TYPE_SINT64).setSignedValue((Long) value);
+            case SFIXED64 -> result.setType(RepositoryOccurrenceKeyType.REPOSITORY_OCCURRENCE_KEY_TYPE_SFIXED64).setSignedValue((Long) value);
+            case UINT64 -> result.setType(RepositoryOccurrenceKeyType.REPOSITORY_OCCURRENCE_KEY_TYPE_UINT64).setUnsignedValue((Long) value);
+            case FIXED64 -> result.setType(RepositoryOccurrenceKeyType.REPOSITORY_OCCURRENCE_KEY_TYPE_FIXED64).setUnsignedValue((Long) value);
+            default -> throw new IllegalArgumentException("unsupported map key type");
+        }
+        return result.build();
+    }
+
+    /** Decodes a dynamic {@link DocumentLink} message and verifies that it carries no unknown fields. */
+    private static DocumentLink parseLinkValue(Descriptors.FieldDescriptor field, Message value) {
+        if (hasUnknownFields(value))
+            throw new IllegalArgumentException(field.getFullName() + ": the link value carries fields this server does not know");
+        if (value instanceof DocumentLink typed) return typed;
+        final DocumentLink link;
+        try {
+            link = DocumentLink.parseFrom(value.toByteString());
+        } catch (InvalidProtocolBufferException unreadable) {
+            throw new IllegalArgumentException(field.getFullName() + ": the link value does not decode as " + DocumentLinks.LINK_TYPE, unreadable);
+        }
+        if (hasUnknownFields(link))
+            throw new IllegalArgumentException(field.getFullName() + ": the link value carries fields this server does not know");
+        return link;
+    }
+
+    /** Returns {@code true} if {@code message} or any nested sub-message carries unknown fields. */
+    private static boolean hasUnknownFields(Message message) {
+        if (!message.getUnknownFields().asMap().isEmpty()) return true;
+        for (var value : message.getAllFields().values()) {
+            if (value instanceof Message nested && hasUnknownFields(nested)) return true;
+            if (value instanceof List<?> list) {
+                for (var element : list) {
+                    if (element instanceof Message nested && hasUnknownFields(nested)) return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    /** Builds a {@link Status.Code#DATA_LOSS} {@link AccessionException}. */
     private static AccessionException lost(String message, Throwable cause) {
         return new AccessionException(Status.Code.DATA_LOSS, message, null, cause);
     }
