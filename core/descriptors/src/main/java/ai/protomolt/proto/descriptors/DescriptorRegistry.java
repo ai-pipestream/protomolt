@@ -301,7 +301,7 @@ public class DescriptorRegistry {
      * Loads descriptors from available loaders without holding an intrinsic monitor across loader I/O.
      */
     public void autoLoadDescriptors() {
-        if (autoLoadAttempted) {
+        if (autoLoadAttempted || autoLoadLock.isHeldByCurrentThread()) {
             return;
         }
         autoLoadLock.lock();
@@ -309,24 +309,26 @@ public class DescriptorRegistry {
             if (autoLoadAttempted) {
                 return;
             }
-            autoLoadAttempted = true;
+            try {
+                List<DescriptorLoader> allLoaders = new ArrayList<>(manualLoaders);
 
-            List<DescriptorLoader> allLoaders = new ArrayList<>(manualLoaders);
-
-            for (DescriptorLoader loader : allLoaders) {
-                if (loader.isAvailable()) {
-                    try {
-                        List<FileDescriptor> fileDescriptors = loader.loadDescriptors();
-                        int count = 0;
-                        for (FileDescriptor fd : fileDescriptors) {
-                            registerFile(fd);
-                            count += fd.getMessageTypes().size();
+                for (DescriptorLoader loader : allLoaders) {
+                    if (loader.isAvailable()) {
+                        try {
+                            List<FileDescriptor> fileDescriptors = loader.loadDescriptors();
+                            int count = 0;
+                            for (FileDescriptor fd : fileDescriptors) {
+                                registerFile(fd);
+                                count += fd.getMessageTypes().size();
+                            }
+                            LOG.info("Loaded {} descriptors from {}", count, loader.getLoaderType());
+                        } catch (DescriptorLoader.DescriptorLoadException e) {
+                            LOG.warn("Failed to load descriptors from {}: {}", loader.getLoaderType(), e.getMessage());
                         }
-                        LOG.info("Loaded {} descriptors from {}", count, loader.getLoaderType());
-                    } catch (DescriptorLoader.DescriptorLoadException e) {
-                        LOG.warn("Failed to load descriptors from {}: {}", loader.getLoaderType(), e.getMessage());
                     }
                 }
+            } finally {
+                autoLoadAttempted = true;
             }
         } finally {
             autoLoadLock.unlock();

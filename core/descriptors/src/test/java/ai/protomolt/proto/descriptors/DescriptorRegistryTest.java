@@ -9,7 +9,6 @@ import com.google.protobuf.DynamicMessage;
 import com.google.protobuf.Message;
 import org.junit.jupiter.api.Test;
 
-import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
@@ -232,13 +231,23 @@ public class DescriptorRegistryTest {
         FileDescriptor fd = createTestFileDescriptor();
         AtomicInteger loadCount = new AtomicInteger();
         AtomicBoolean holdsIntrinsicMonitor = new AtomicBoolean();
-        CountDownLatch startLatch = new CountDownLatch(1);
+        CountDownLatch loaderEntered = new CountDownLatch(1);
+        CountDownLatch releaseLoader = new CountDownLatch(1);
 
         registry.addLoader(new DescriptorLoader() {
             @Override
-            public List<FileDescriptor> loadDescriptors() {
+            public List<FileDescriptor> loadDescriptors() throws DescriptorLoadException {
                 loadCount.incrementAndGet();
                 holdsIntrinsicMonitor.set(Thread.holdsLock(registry));
+                loaderEntered.countDown();
+                try {
+                    if (!releaseLoader.await(5, TimeUnit.SECONDS)) {
+                        throw new DescriptorLoadException("Timed out waiting to release loader");
+                    }
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    throw new DescriptorLoadException("Interrupted while waiting in loader", e);
+                }
                 return List.of(fd);
             }
 
@@ -259,17 +268,22 @@ public class DescriptorRegistryTest {
         });
 
         try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
-            List<Future<Descriptor>> futures = new ArrayList<>();
-            for (int i = 0; i < 8; i++) {
-                futures.add(executor.submit(() -> {
-                    startLatch.await(5, TimeUnit.SECONDS);
-                    return registry.findDescriptorBySimpleName("TestMessage");
-                }));
-            }
-            startLatch.countDown();
-            for (Future<Descriptor> future : futures) {
-                assertNotNull(future.get(5, TimeUnit.SECONDS));
-            }
+            Future<Descriptor> firstCaller = executor.submit(
+                    () -> registry.findDescriptorBySimpleName("TestMessage"));
+            assertTrue(loaderEntered.await(5, TimeUnit.SECONDS));
+
+            // Start a second caller while the first is still inside loadDescriptors();
+            // it must wait for the in-flight load to finish rather than returning null early.
+            Future<Descriptor> secondCaller = executor.submit(
+                    () -> registry.findDescriptorBySimpleName("TestMessage"));
+            Thread.sleep(50);
+            assertFalse(secondCaller.isDone(),
+                    "Second caller must wait for in-flight autoLoadDescriptors() to finish");
+
+            releaseLoader.countDown();
+
+            assertNotNull(firstCaller.get(5, TimeUnit.SECONDS));
+            assertNotNull(secondCaller.get(5, TimeUnit.SECONDS));
         }
         assertEquals(1, loadCount.get());
         assertFalse(holdsIntrinsicMonitor.get());
