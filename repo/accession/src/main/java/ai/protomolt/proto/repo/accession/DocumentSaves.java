@@ -762,7 +762,7 @@ public final class DocumentSaves {
                     ownership = ownership(parsedFragment, t.address(), t.base(), true);
                     requireOwnerMatches(t.request().getOwner(), ownership);
                     authorized = authority.authorize(t.caller(), t.request().getOwner(), t.address().getAccountId(),
-                            ownershit.hasConnectorId() ? Optional.of(ownershit.getConnectorId()) : Optional.empty(),
+                            ownership.hasConnectorId() ? Optional.of(ownership.getConnectorId()) : Optional.empty(),
                             t.request().getExpected().hasNone());
                 }
                 var storedFragments = new LinkedHashMap<>(t.storedFragments());
