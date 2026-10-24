@@ -19,7 +19,10 @@ import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.lang.reflect.Field;
+import java.lang.reflect.InvocationHandler;
+import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
+import java.lang.reflect.Proxy;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
@@ -205,36 +208,10 @@ public final class ScopeServerInterceptor implements ServerInterceptor {
 
             @Override
             public void onEvent(Object event) {
-                if (event instanceof FrameRefusalEvent refusalEvent) {
+                if (event instanceof FrameCloseEvent closeEvent) {
                     if (!refused) {
                         refused = true;
-                        call.close(Status.RESOURCE_EXHAUSTED
-                                .withDescription(refusalEvent.description()), new Metadata());
-                    }
-                    return;
-                }
-                if (event instanceof CompressedFrameArrivalEvent arrival) {
-                    if (refused || tracker == null) {
-                        return;
-                    }
-                    InputStream delayed = delayedMessageOf(call);
-                    if (delayed == null) {
-                        if (arrival.attempt() < 2) {
-                            call.triggerEvent(new CompressedFrameArrivalEvent(
-                                    arrival.attempt() + 1));
-                        }
-                        return;
-                    }
-                    PENDING_COMPRESSED_TRACKER.set(tracker);
-                    try {
-                        delayed.available();
-                    } catch (IOException e) {
-                        refused = true;
-                        call.close(Status.INTERNAL
-                                .withDescription("Failed to decompress inbound frame")
-                                .withCause(e), new Metadata());
-                    } finally {
-                        PENDING_COMPRESSED_TRACKER.remove();
+                        call.close(closeEvent.status(), new Metadata());
                     }
                     return;
                 }
@@ -278,10 +255,7 @@ public final class ScopeServerInterceptor implements ServerInterceptor {
         };
     }
 
-    private record FrameRefusalEvent(String description) {
-    }
-
-    private record CompressedFrameArrivalEvent(int attempt) {
+    private record FrameCloseEvent(Status status) {
     }
 
     private record FrameVerdict(boolean evaluated, String refusal) {
@@ -291,7 +265,7 @@ public final class ScopeServerInterceptor implements ServerInterceptor {
             Caller.Budget budget, ScopeBudgets budgets) {
     }
 
-    private static InputStream delayedMessageOf(ServerCall<?, ?> call) {
+    private static Object rawDeframerOf(ServerCall<?, ?> call) {
         try {
             Object current = call;
             while (current != null && !"io.grpc.internal.ServerCallImpl".equals(
@@ -306,7 +280,10 @@ public final class ScopeServerInterceptor implements ServerInterceptor {
             if (current == null) {
                 return null;
             }
-            Field streamField = current.getClass().getDeclaredField("stream");
+            Field streamField = findField(current.getClass(), "stream");
+            if (streamField == null) {
+                return null;
+            }
             streamField.setAccessible(true);
             Object stream = streamField.get(current);
             if (stream == null) {
@@ -321,26 +298,14 @@ public final class ScopeServerInterceptor implements ServerInterceptor {
             if (transportState == null) {
                 return null;
             }
-            Method listenerMethod = findNoArgMethod(transportState.getClass(), "listener");
-            if (listenerMethod == null) {
+            Field rawDeframerField = findField(transportState.getClass(), "rawDeframer");
+            if (rawDeframerField == null) {
                 return null;
             }
-            listenerMethod.setAccessible(true);
-            Object jumpListener = listenerMethod.invoke(transportState);
-            if (jumpListener == null) {
-                return null;
-            }
-            Field appListenerField = jumpListener.getClass().getDeclaredField("listener");
-            appListenerField.setAccessible(true);
-            Object appListener = appListenerField.get(jumpListener);
-            if (appListener == null) {
-                return null;
-            }
-            Field delayedMessageField = appListener.getClass().getDeclaredField("delayedMessage");
-            delayedMessageField.setAccessible(true);
-            return (InputStream) delayedMessageField.get(appListener);
-        } catch (ReflectiveOperationException | RuntimeException e) {
-            return null;
+            rawDeframerField.setAccessible(true);
+            return rawDeframerField.get(transportState);
+        } catch (ReflectiveOperationException e) {
+            throw new IllegalStateException("Failed to access gRPC MessageDeframer", e);
         }
     }
 
@@ -355,11 +320,33 @@ public final class ScopeServerInterceptor implements ServerInterceptor {
         return null;
     }
 
+    private static Field findField(Class<?> type, String name) {
+        for (Class<?> cursor = type; cursor != null; cursor = cursor.getSuperclass()) {
+            for (Field field : cursor.getDeclaredFields()) {
+                if (field.getName().equals(name)) {
+                    return field;
+                }
+            }
+        }
+        return null;
+    }
+
+    private static Object invokeTarget(Method method, Object target, Object[] args)
+            throws Throwable {
+        try {
+            return method.invoke(target, args);
+        } catch (InvocationTargetException e) {
+            throw e.getTargetException();
+        }
+    }
+
     private static final class InboundFrameTracker extends ServerStreamTracer {
         private final Context.Key<InboundFrameTracker> key;
         private final Queue<FrameVerdict> verdicts = new ConcurrentLinkedQueue<>();
         private volatile Gate gate;
         private volatile boolean refused;
+        private volatile boolean pendingCompressedFrame;
+        private boolean deframerListenerInstalled;
 
         private InboundFrameTracker(Context.Key<InboundFrameTracker> key) {
             this.key = key;
@@ -372,6 +359,29 @@ public final class ScopeServerInterceptor implements ServerInterceptor {
 
         private FrameVerdict pollVerdict() {
             return verdicts.poll();
+        }
+
+        private boolean isRefused() {
+            return refused;
+        }
+
+        private boolean consumePendingCompressedFrame() {
+            if (!pendingCompressedFrame) {
+                return false;
+            }
+            pendingCompressedFrame = false;
+            return true;
+        }
+
+        private void failDecompression(IOException cause) {
+            Gate active = this.gate;
+            if (active == null || refused) {
+                return;
+            }
+            refused = true;
+            active.call().triggerEvent(new FrameCloseEvent(Status.INTERNAL
+                    .withDescription("Failed to decompress inbound frame")
+                    .withCause(cause)));
         }
 
         @Override
@@ -388,8 +398,48 @@ public final class ScopeServerInterceptor implements ServerInterceptor {
             }
             if (optionalUncompressedSize >= 0) {
                 evaluateUncompressedSize(active, optionalUncompressedSize);
-            } else {
-                active.call().triggerEvent(new CompressedFrameArrivalEvent(0));
+            } else if (optionalWireSize >= 0 && installDeframerListener(active.call())) {
+                pendingCompressedFrame = true;
+            }
+        }
+
+        private boolean installDeframerListener(ServerCall<?, ?> call) {
+            if (deframerListenerInstalled) {
+                return true;
+            }
+            Object deframer = rawDeframerOf(call);
+            if (deframer == null) {
+                return false;
+            }
+            Field listenerField = findField(deframer.getClass(), "listener");
+            if (listenerField == null) {
+                return false;
+            }
+            Class<?> listenerInterface = listenerField.getType();
+            if (!listenerInterface.isInterface()) {
+                return false;
+            }
+            try {
+                listenerField.setAccessible(true);
+                Object current = listenerField.get(deframer);
+                if (current == null) {
+                    return false;
+                }
+                if (Proxy.isProxyClass(current.getClass())
+                        && Proxy.getInvocationHandler(current) instanceof DeframerListenerHandler) {
+                    deframerListenerInstalled = true;
+                    return true;
+                }
+                Object proxy = Proxy.newProxyInstance(
+                        listenerInterface.getClassLoader(),
+                        new Class<?>[]{listenerInterface},
+                        new DeframerListenerHandler(current, this));
+                listenerField.set(deframer, proxy);
+                deframerListenerInstalled = true;
+                return true;
+            } catch (ReflectiveOperationException e) {
+                throw new IllegalStateException(
+                        "Failed to attach gRPC MessageDeframer listener", e);
             }
         }
 
@@ -399,7 +449,8 @@ public final class ScopeServerInterceptor implements ServerInterceptor {
             verdicts.add(new FrameVerdict(true, refusal.orElse(null)));
             if (refusal.isPresent()) {
                 refused = true;
-                active.call().triggerEvent(new FrameRefusalEvent(refusal.get()));
+                active.call().triggerEvent(new FrameCloseEvent(
+                        Status.RESOURCE_EXHAUSTED.withDescription(refusal.get())));
             }
         }
 
@@ -437,6 +488,81 @@ public final class ScopeServerInterceptor implements ServerInterceptor {
             decompressed.close();
             evaluateUncompressedSize(active, totalUncompressed);
             return InputStream.nullInputStream();
+        }
+    }
+
+    private static final class DeframerListenerHandler implements InvocationHandler {
+        private final Object delegate;
+        private final InboundFrameTracker tracker;
+
+        private DeframerListenerHandler(Object delegate, InboundFrameTracker tracker) {
+            this.delegate = delegate;
+            this.tracker = tracker;
+        }
+
+        @Override
+        public Object invoke(Object proxy, Method method, Object[] args) throws Throwable {
+            if (!"messagesAvailable".equals(method.getName())
+                    || args == null
+                    || args.length != 1
+                    || args[0] == null
+                    || !tracker.consumePendingCompressedFrame()) {
+                return invokeTarget(method, delegate, args);
+            }
+            Object producer = args[0];
+            Class<?> producerInterface = method.getParameterTypes()[0];
+            Method nextMethod = findNoArgMethod(producerInterface, "next");
+            if (nextMethod == null) {
+                return invokeTarget(method, delegate, args);
+            }
+            InputStream first = (InputStream) invokeTarget(nextMethod, producer, new Object[0]);
+            if (first == null) {
+                return invokeTarget(method, delegate, args);
+            }
+            PENDING_COMPRESSED_TRACKER.set(tracker);
+            try {
+                first.available();
+                if (tracker.isRefused()) {
+                    first.close();
+                    return null;
+                }
+            } catch (IOException e) {
+                tracker.failDecompression(e);
+                return null;
+            } finally {
+                PENDING_COMPRESSED_TRACKER.remove();
+            }
+            Object preloadedProducer = Proxy.newProxyInstance(
+                    producerInterface.getClassLoader(),
+                    new Class<?>[]{producerInterface},
+                    new PreloadedProducerHandler(first, producer, nextMethod));
+            return invokeTarget(method, delegate, new Object[]{preloadedProducer});
+        }
+    }
+
+    private static final class PreloadedProducerHandler implements InvocationHandler {
+        private InputStream first;
+        private final Object delegateProducer;
+        private final Method nextMethod;
+
+        private PreloadedProducerHandler(
+                InputStream first, Object delegateProducer, Method nextMethod) {
+            this.first = first;
+            this.delegateProducer = delegateProducer;
+            this.nextMethod = nextMethod;
+        }
+
+        @Override
+        public Object invoke(Object proxy, Method method, Object[] args) throws Throwable {
+            if ("next".equals(method.getName()) && (args == null || args.length == 0)) {
+                InputStream current = this.first;
+                if (current != null) {
+                    this.first = null;
+                    return current;
+                }
+                return invokeTarget(nextMethod, delegateProducer, args);
+            }
+            return invokeTarget(method, delegateProducer, args);
         }
     }
 
