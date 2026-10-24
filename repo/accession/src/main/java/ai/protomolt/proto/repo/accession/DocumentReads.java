@@ -613,17 +613,7 @@ public final class DocumentReads {
             if (bytes.size() > limits.maxFragmentBytes())
                 throw new AccessionException(Status.Code.RESOURCE_EXHAUSTED,
                         "Retained schema budget exhausted: candidate fragments exceed byte limit", null);
-            var attestedOpaque = new HashMap<List<RepositorySchemaOccurrenceStep>, OpaqueOccurrence>();
-            var expectedOpaque = new HashSet<DocumentCandidateAdmission.OpaqueFound>();
-            for (var occurrence : recordedOpaque) {
-                var steps = List.copyOf(occurrence.getOccurrence().getStepsList());
-                attestedOpaque.put(steps, occurrence);
-                expectedOpaque.add(new DocumentCandidateAdmission.OpaqueFound(
-                        ai.protomolt.proto.repo.v1.DocumentPart.DOCUMENT_PART_CORE,
-                        steps, occurrence.getTypeUrl(), occurrence.getSha256(), occurrence.getLength()));
-            }
-            var state = new CoreLinkWalkState(byTypeUrl, attestedOpaque, limits);
-            state.wireBudget.check(bytes, containerType);
+            new MessageWireBudget(limits.maxWireValues(), limits.maxWireDepth(), () -> {}).check(bytes, containerType);
             var input = bytes.newCodedInput();
             input.setRecursionLimit(limits.maxWireDepth());
             var parsed = DynamicMessage.getDefaultInstance(containerType).getParserForType().parseFrom(input);
@@ -636,6 +626,16 @@ public final class DocumentReads {
                     parsed, ai.protomolt.proto.repo.v1.DocumentPart.DOCUMENT_PART_CORE, stored.getAddress().getDocId());
             DocumentLinks.requireLinkSchema(containerType);
             var links = new ArrayList<>(DocumentLinks.extract(parsed, ""));
+            var attestedOpaque = new HashMap<List<RepositorySchemaOccurrenceStep>, OpaqueOccurrence>();
+            var expectedOpaque = new HashSet<DocumentCandidateAdmission.OpaqueFound>();
+            for (var occurrence : recordedOpaque) {
+                var steps = List.copyOf(occurrence.getOccurrence().getStepsList());
+                attestedOpaque.put(steps, occurrence);
+                expectedOpaque.add(new DocumentCandidateAdmission.OpaqueFound(
+                        ai.protomolt.proto.repo.v1.DocumentPart.DOCUMENT_PART_CORE,
+                        steps, occurrence.getTypeUrl(), occurrence.getSha256(), occurrence.getLength()));
+            }
+            var state = new CoreLinkWalkState(byTypeUrl, attestedOpaque, limits);
             var structuredField = containerType.findFieldByNumber(Document.STRUCTURED_DATA_FIELD_NUMBER);
             if (structuredField != null && parsed.hasField(structuredField)) {
                 var at = new ArrayList<RepositorySchemaOccurrenceStep>();

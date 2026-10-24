@@ -468,6 +468,51 @@ class DocumentLinkReadsTest {
                         e -> assertThat(e.code()).isEqualTo(Status.Code.RESOURCE_EXHAUSTED));
     }
 
+    @Test
+    void containerAndPayloadWireBudgetsAreSeparateWhileNestedPayloadsShareOneBudget() {
+        var harness = new Harness();
+        var target = address("target-1");
+        harness.putTarget(target, "cat-1", false);
+
+        var searchMeta = SearchMetadata.newBuilder().setTitle("separate-budget");
+        for (int i = 0; i < 40; i++) {
+            searchMeta.putMetadata("k" + i, "v" + i);
+        }
+        var payload = citation(c -> {
+            c.setField(CITATION.findFieldByName("cites"), link(staticTarget(target, null)));
+            c.setField(CITATION.findFieldByName("related"), link(dynamicTarget("cat-1")));
+        });
+        var doc = document("separate-budget", payload).toBuilder()
+                .setSearchMetadata(searchMeta)
+                .build();
+        var src = address("separate-budget");
+        var stored = harness.storeAdmitted(src, 1L, doc, List.of());
+
+        // Under maxWireValues = 136, the CORE container (~135 wire values) and the structured_data
+        // payload (~15 wire values) each fit within 136 when budgeted separately (as in decodeRetained),
+        // whereas summing them into a single budget (~150) would falsely fail RESOURCE_EXHAUSTED.
+        var separateLimits = new DocumentSchemaAdmission.Limits(
+                LIMITS.maxFragments(), LIMITS.maxFragmentBytes(), LIMITS.maxRoots(),
+                LIMITS.maxEvidenceBytes(), LIMITS.maxBindings(), LIMITS.maxRetainedBytes(),
+                LIMITS.maxDecodedBytes(), 136L, LIMITS.maxWireDepth(), LIMITS.maxParserEntries());
+        var drives = new DocumentSaves.Drives(DRIVE, Map.of(DRIVE, harness.stack));
+        var separateReads = new DocumentReads(harness.catalog, drives, separateLimits, RESERVATIONS, Clock.systemUTC());
+        var separateLinkReads = new DocumentLinkReads(separateReads, new DocumentLists(harness.catalog));
+
+        var coreBytes = harness.stack.objects.get(stored.getParts(0).getRef().getKey());
+        assertThat(separateReads.decodeRetained(stored, DocumentSaves.CORE_SELECTOR, coreBytes).links()).hasSize(2);
+        assertThat(separateLinkReads.listLinks(READER, ListLinksRequest.newBuilder().setAddress(src).build())
+                .getLinksList()).hasSize(2);
+        assertThat(separateLinkReads.resolveLink(READER, ResolveLinkRequest.newBuilder()
+                .setAddress(src)
+                .setFieldPath("structured_data.related")
+                .setOrdinal(0)
+                .setPageSize(10)
+                .build()).getDocumentsList())
+                .extracting(summary -> summary.getAddress().getDocId())
+                .containsExactly("target-1");
+    }
+
     private static void assertDataLoss(Runnable action) {
         assertThatThrownBy(action::run)
                 .isInstanceOfSatisfying(AccessionException.class,
