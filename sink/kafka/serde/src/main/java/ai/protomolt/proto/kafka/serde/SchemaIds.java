@@ -66,10 +66,15 @@ final class SchemaIds implements AutoCloseable {
         this.nanoTime = nanoTime;
     }
 
+    /** Whether a non-blank schema registry URL is configured. */
+    static boolean isConfigured(String registryUrl) {
+        return registryUrl != null && !registryUrl.isBlank();
+    }
+
     /** @return null when no registry is configured, which is a supported way to run */
     static SchemaIds create(String registryUrl, long retryBackoffMillis,
                             SerdeMetricsListener metrics) {
-        return registryUrl == null || registryUrl.isBlank()
+        return !isConfigured(registryUrl)
                 ? null
                 : new SchemaIds(SchemaLookup.over(registryUrl), retryBackoffMillis, metrics,
                         System::nanoTime);

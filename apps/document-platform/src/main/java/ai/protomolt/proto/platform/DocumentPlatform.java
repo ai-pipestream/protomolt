@@ -735,6 +735,8 @@ public final class DocumentPlatform implements AutoCloseable {
     private static final class LocalLakeRollupSink
             implements ai.protomolt.proto.metric.spi.RollupSink {
 
+        private final java.util.concurrent.locks.ReentrantLock lock =
+                new java.util.concurrent.locks.ReentrantLock();
         private final Path dir;
         private JdbcCatalog catalog;
         private ai.protomolt.proto.metric.spi.RollupSink delegate;
@@ -745,11 +747,16 @@ public final class DocumentPlatform implements AutoCloseable {
         }
 
         @Override
-        public synchronized Written replace(String sourceSubject, String table,
+        public Written replace(String sourceSubject, String table,
                 List<String> dimensions, List<MeasureColumn> measures,
                 List<ai.protomolt.proto.metric.MetricRow> rows) {
-            initialize(true);
-            return delegate.replace(sourceSubject, table, dimensions, measures, rows);
+            lock.lock();
+            try {
+                initialize(true);
+                return delegate.replace(sourceSubject, table, dimensions, measures, rows);
+            } finally {
+                lock.unlock();
+            }
         }
 
         /**
@@ -761,7 +768,8 @@ public final class DocumentPlatform implements AutoCloseable {
         ai.protomolt.proto.metric.spi.MetricSubjectResolver resolver() {
             return subject -> {
                 IcebergRollupSubjects resolved;
-                synchronized (this) {
+                lock.lock();
+                try {
                     if (subjects == null) {
                         if (!java.nio.file.Files.exists(dir.resolve("catalog.db"))) {
                             return null;
@@ -769,12 +777,14 @@ public final class DocumentPlatform implements AutoCloseable {
                         initialize(false);
                     }
                     resolved = subjects;
+                } finally {
+                    lock.unlock();
                 }
                 return resolved.resolve(subject);
             };
         }
 
-        private synchronized void initialize(boolean create) {
+        private void initialize(boolean create) {
             if (delegate != null) {
                 return;
             }
@@ -795,28 +805,42 @@ public final class DocumentPlatform implements AutoCloseable {
                     "jdbc:sqlite:" + dir.resolve("catalog.db"),
                     CatalogProperties.WAREHOUSE_LOCATION, dir.toString(),
                     CatalogProperties.FILE_IO_IMPL, LocalFileIO.class.getName()));
-            org.apache.iceberg.catalog.Namespace namespace =
-                    org.apache.iceberg.catalog.Namespace.of(
-                            MetricsIcebergConfig.DEFAULT_NAMESPACE);
-            // This lake is the platform's own storage, like the search
-            // index directory, so the namespace is ours to create.
-            if (!jdbc.namespaceExists(namespace)) {
-                jdbc.createNamespace(namespace);
+            try {
+                org.apache.iceberg.catalog.Namespace namespace =
+                        org.apache.iceberg.catalog.Namespace.of(
+                                MetricsIcebergConfig.DEFAULT_NAMESPACE);
+                // This lake is the platform's own storage, like the search
+                // index directory, so the namespace is ours to create.
+                if (!jdbc.namespaceExists(namespace)) {
+                    jdbc.createNamespace(namespace);
+                }
+                catalog = jdbc;
+                delegate = new IcebergRollupSink(
+                        jdbc, MetricsIcebergConfig.DEFAULT_NAMESPACE);
+                subjects = new IcebergRollupSubjects(
+                        jdbc, MetricsIcebergConfig.DEFAULT_NAMESPACE);
+            } catch (RuntimeException | Error e) {
+                try {
+                    jdbc.close();
+                } catch (Exception cleanup) {
+                    e.addSuppressed(cleanup);
+                }
+                throw e;
             }
-            catalog = jdbc;
-            delegate = new IcebergRollupSink(
-                    jdbc, MetricsIcebergConfig.DEFAULT_NAMESPACE);
-            subjects = new IcebergRollupSubjects(
-                    jdbc, MetricsIcebergConfig.DEFAULT_NAMESPACE);
         }
 
-        synchronized void close() {
-            if (catalog != null) {
-                try {
-                    catalog.close();
-                } catch (Exception e) {
-                    LOG.warn("closing the default metrics lake failed", e);
+        void close() {
+            lock.lock();
+            try {
+                if (catalog != null) {
+                    try {
+                        catalog.close();
+                    } catch (Exception e) {
+                        LOG.warn("closing the default metrics lake failed", e);
+                    }
                 }
+            } finally {
+                lock.unlock();
             }
         }
     }

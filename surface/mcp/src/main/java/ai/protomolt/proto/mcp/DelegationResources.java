@@ -44,13 +44,25 @@ public final class DelegationResources implements McpResources {
     /** Upper bound on transcript entries one document returns. */
     public static final int MAX_TRANSCRIPT_ENTRIES = 256;
 
+    private static final String TRANSCRIPT_SUFFIX = "/transcript";
+
     private final DelegationBridge bridge;
 
+    /**
+     * Creates a delegation resource provider backed by {@code bridge}.
+     *
+     * @param bridge the live delegation bridge to expose
+     */
     public DelegationResources(DelegationBridge bridge) {
         this.bridge = Objects.requireNonNull(bridge, "bridge");
     }
 
-    /** The resource index: the workers and tasks roots only. */
+    /**
+     * The resource index: the workers and tasks roots only.
+     *
+     * @param mapper the JSON mapper used to construct the resource list
+     * @return the array of advertised delegation resource descriptors
+     */
     @Override
     public ArrayNode list(ObjectMapper mapper) {
         ArrayNode resources = mapper.createArrayNode();
@@ -65,7 +77,7 @@ public final class DelegationResources implements McpResources {
     public ArrayNode templates(ObjectMapper mapper) {
         ArrayNode templates = mapper.createArrayNode();
         ObjectNode entry = templates.addObject();
-        entry.put("uriTemplate", TASKS_URI + "/{taskId}/transcript");
+        entry.put("uriTemplate", TASKS_URI + "/{taskId}" + TRANSCRIPT_SUFFIX);
         entry.put("name", "delegation-transcript");
         entry.put("description",
                 "One delegation task's recorded frames in cursor order, bounded");
@@ -73,7 +85,13 @@ public final class DelegationResources implements McpResources {
         return templates;
     }
 
-    /** The contents of one resource, or empty when the URI is not served. */
+    /**
+     * The contents of one resource, or empty when the URI is not served.
+     *
+     * @param mapper the JSON mapper used to construct the resource document
+     * @param uri the requested MCP resource URI
+     * @return the rendered resource content node, or empty if the URI is not served
+     */
     @Override
     public Optional<ObjectNode> read(ObjectMapper mapper, String uri) {
         if (WORKERS_URI.equals(uri)) {
@@ -83,10 +101,17 @@ public final class DelegationResources implements McpResources {
             return Optional.of(contents(mapper, uri, tasksDocument(mapper)));
         }
         String prefix = TASKS_URI + "/";
-        if (uri.startsWith(prefix) && uri.endsWith("/transcript")) {
-            String taskId = URLDecoder.decode(
-                    uri.substring(prefix.length(), uri.length() - "/transcript".length()),
-                    StandardCharsets.UTF_8);
+        if (uri.startsWith(prefix)
+                && uri.endsWith(TRANSCRIPT_SUFFIX)
+                && uri.length() > prefix.length() + TRANSCRIPT_SUFFIX.length()) {
+            String taskId;
+            try {
+                taskId = URLDecoder.decode(
+                        uri.substring(prefix.length(), uri.length() - TRANSCRIPT_SUFFIX.length()),
+                        StandardCharsets.UTF_8);
+            } catch (IllegalArgumentException e) {
+                return Optional.empty();
+            }
             if (taskId.isBlank() || taskId.contains("/")) {
                 return Optional.empty();
             }

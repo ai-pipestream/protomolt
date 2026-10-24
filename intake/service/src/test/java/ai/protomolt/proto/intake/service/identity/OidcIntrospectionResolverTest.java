@@ -144,5 +144,16 @@ class OidcIntrospectionResolverTest {
                 .isInstanceOf(IllegalArgumentException.class);
         assertThatThrownBy(() -> new OidcIntrospectionResolver(endpoint, "id", ""))
                 .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> new OidcIntrospectionResolver(
+                endpoint, "id", "secret", null, java.time.Duration.ofSeconds(1)))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("http");
+        assertThatThrownBy(() -> new OidcIntrospectionResolver(
+                endpoint, "id", "secret", java.net.http.HttpClient.newHttpClient(), null))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("requestTimeout");
+        assertThatThrownBy(() -> resolver.resolve(null))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("credential");
     }
 }

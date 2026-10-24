@@ -399,6 +399,46 @@ class GitProtoGathererTest {
         assertThat(gatherer.isAvailable()).isTrue();
     }
 
+    @Test
+    void failedCloneOrIncompleteCacheDirDoesNotWedgeSubsequentClone() throws Exception {
+        Path cacheDir = tempDir.resolve("cache");
+        // Simulate an interrupted/failed clone that left a bare directory without .git.
+        Files.createDirectories(cacheDir.resolve("partial"));
+
+        String url = initUpstream();
+        writeUpstream("proto/common/v1/id.proto", COMMON_PROTO);
+        commitAll("initial");
+
+        ProtoSourceSet set = gatherer(url).cacheDir(cacheDir).build().gather();
+        assertThat(set.paths()).containsExactly("common/v1/id.proto");
+    }
+
+    @Test
+    void cleanupMustPreservePermissionFailure() throws Exception {
+        Path cacheDir = tempDir.resolve("readonly-cache");
+        Files.createDirectories(cacheDir);
+        Files.writeString(cacheDir.resolve("leftover.txt"), "partial");
+        org.junit.jupiter.api.Assumptions.assumeTrue(
+                cacheDir.toFile().setWritable(false),
+                "Filesystem does not enforce directory write permissions");
+        try {
+            // If running as root where write permission bits are bypassed, skip.
+            org.junit.jupiter.api.Assumptions.assumeFalse(
+                    Files.isWritable(cacheDir),
+                    "Current user bypasses read-only directory permissions");
+            String url = initUpstream();
+            writeUpstream("proto/common/v1/id.proto", COMMON_PROTO);
+            commitAll("initial");
+
+            assertThatThrownBy(gatherer(url).cacheDir(cacheDir).build()::gather)
+                    .isInstanceOf(GatherException.class)
+                    .hasMessageContaining("incomplete git cache")
+                    .hasCauseInstanceOf(IOException.class);
+        } finally {
+            cacheDir.toFile().setWritable(true);
+        }
+    }
+
     private static void deleteRecursively(Path root) throws IOException {
         try (Stream<Path> paths = Files.walk(root)) {
             paths.sorted(Comparator.reverseOrder()).forEach(path -> {

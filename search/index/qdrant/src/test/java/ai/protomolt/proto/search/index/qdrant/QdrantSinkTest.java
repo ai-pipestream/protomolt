@@ -192,6 +192,56 @@ class QdrantSinkTest {
         assertThat(headers.apiKeys).containsExactly("secret-key");
     }
 
+    @Test
+    void closeShutsDownNowWhenOwnedChannelDoesNotTerminateInTime() {
+        AtomicBoolean shutdownCalled = new AtomicBoolean();
+        AtomicBoolean shutdownNowCalled = new AtomicBoolean();
+        ManagedChannel nonTerminating = new ManagedChannel() {
+            @Override
+            public ManagedChannel shutdown() {
+                shutdownCalled.set(true);
+                return this;
+            }
+
+            @Override
+            public boolean isShutdown() {
+                return shutdownCalled.get() || shutdownNowCalled.get();
+            }
+
+            @Override
+            public boolean isTerminated() {
+                return false;
+            }
+
+            @Override
+            public ManagedChannel shutdownNow() {
+                shutdownNowCalled.set(true);
+                return this;
+            }
+
+            @Override
+            public boolean awaitTermination(long timeout, java.util.concurrent.TimeUnit unit) {
+                return false;
+            }
+
+            @Override
+            public <RequestT, ResponseT> io.grpc.ClientCall<RequestT, ResponseT> newCall(
+                    io.grpc.MethodDescriptor<RequestT, ResponseT> methodDescriptor,
+                    io.grpc.CallOptions callOptions) {
+                throw new UnsupportedOperationException();
+            }
+
+            @Override
+            public String authority() {
+                return "localhost:6334";
+            }
+        };
+        QdrantSink owned = new QdrantSink(nonTerminating, true, "");
+        owned.close();
+        assertThat(shutdownCalled).isTrue();
+        assertThat(shutdownNowCalled).isTrue();
+    }
+
     private static PointStruct point(String uuid, String vectorName, int dims) {
         DenseVector.Builder dense = DenseVector.newBuilder();
         for (int i = 0; i < dims; i++) {

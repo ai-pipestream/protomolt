@@ -71,7 +71,7 @@ publishes a snapshot version. A specific version can be forced with
 
 ## Build cost and the inner loop
 
-`settings.gradle` includes 181 modules, `build` runs the Docker-backed
+`settings.gradle` includes 184 modules, `build` runs the Docker-backed
 integration suites, and the conformance gate runs in-build, so
 a full `./gradlew build` is a long operation: expect tens of minutes on a
 developer laptop, dominated by the test and container time rather than

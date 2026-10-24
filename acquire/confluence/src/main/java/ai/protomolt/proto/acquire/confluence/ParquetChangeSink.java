@@ -18,6 +18,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.concurrent.locks.ReentrantLock;
 
 /**
  * Buffers the crawler's {@link ConfluenceChange} records per entity kind and flushes
@@ -60,7 +61,7 @@ import java.util.UUID;
  * </ul>
  *
  * <p>Thread-safe: the crawler emits from virtual threads concurrently; every method is
- * synchronized.</p>
+ * guarded by a {@link ReentrantLock} so virtual threads park rather than pin.</p>
  */
 public final class ParquetChangeSink implements ChangeSink, AutoCloseable {
 
@@ -94,6 +95,7 @@ public final class ParquetChangeSink implements ChangeSink, AutoCloseable {
     private final String runId;
     private final Map<String, List<ConfluenceChange>> buffers = new LinkedHashMap<>();
     private final Map<String, Integer> sequences = new LinkedHashMap<>();
+    private final ReentrantLock lock = new ReentrantLock();
 
     /**
      * @param s3 the client to upload through (see {@link S3Clients}); this sink closes
@@ -163,41 +165,72 @@ public final class ParquetChangeSink implements ChangeSink, AutoCloseable {
         } else {
             s3 = S3Clients.awsRegion(region);
         }
-        return Optional.of(new ParquetChangeSink(s3, bucket.trim(), env.get(ENV_PREFIX),
-                batchSize));
+        try {
+            return Optional.of(new ParquetChangeSink(s3, bucket.trim(), env.get(ENV_PREFIX),
+                    batchSize));
+        } catch (RuntimeException e) {
+            s3.close();
+            throw e;
+        }
     }
 
-    /** Buffers one change; flushes its entity kind when the batch size is reached. */
+    /**
+     * Buffers one change; flushes its entity kind when the batch size is reached.
+     *
+     * @param change the Confluence change envelope to buffer
+     */
     @Override
-    public synchronized void emit(ConfluenceChange change) {
-        String entityType = entityType(change);
-        List<ConfluenceChange> buffer = buffers.computeIfAbsent(entityType,
-                k -> new ArrayList<>());
-        buffer.add(change);
-        if (buffer.size() >= batchSize) {
-            flush(entityType);
+    public void emit(ConfluenceChange change) {
+        lock.lock();
+        try {
+            String entityType = entityType(change);
+            List<ConfluenceChange> buffer = buffers.computeIfAbsent(entityType,
+                    k -> new ArrayList<>());
+            buffer.add(change);
+            if (buffer.size() >= batchSize) {
+                flush(entityType);
+            }
+        } finally {
+            lock.unlock();
         }
     }
 
     /**
      * A completed sweep flushes every pending buffer, so part files align with crawl
      * runs. The snapshot marker itself is not exported.
+     *
+     * @param snapshot the completed crawl snapshot marker
      */
     @Override
-    public synchronized void snapshot(ConfluenceSnapshot snapshot) {
-        flushAll();
+    public void snapshot(ConfluenceSnapshot snapshot) {
+        lock.lock();
+        try {
+            flushAll();
+        } finally {
+            lock.unlock();
+        }
     }
 
     /** Flushes every pending buffer. */
-    public synchronized void flush() {
-        flushAll();
+    public void flush() {
+        lock.lock();
+        try {
+            flushAll();
+        } finally {
+            lock.unlock();
+        }
     }
 
     /** Flushes every pending buffer and closes the underlying client. */
     @Override
-    public synchronized void close() {
-        flushAll();
-        sink.close();
+    public void close() {
+        lock.lock();
+        try {
+            flushAll();
+            sink.close();
+        } finally {
+            lock.unlock();
+        }
     }
 
     private void flushAll() {

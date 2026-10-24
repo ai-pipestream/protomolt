@@ -1,8 +1,9 @@
 /**
- * Lookups by operation ID: GetOperationOutcome answers committed (an accession
- * or a recorded rejection) or no outcome yet, and an UNAVAILABLE status means
- * the lookup itself could not answer. The three are never merged: "no outcome"
- * does not mean the save failed, and "unavailable" does not mean "no outcome".
+ * Lookups by operation ID: GetOperationOutcome answers committed (an accession,
+ * an unchanged match, or a recorded rejection) or no outcome yet, and an
+ * UNAVAILABLE status means the lookup itself could not answer. The three are
+ * never merged: "no outcome" does not mean the save failed, and "unavailable"
+ * does not mean "no outcome".
  */
 import { create } from '@bufbuild/protobuf'
 import { Code, ConnectError, type Client } from '@connectrpc/connect'
@@ -16,7 +17,7 @@ import { instant } from './formatCore'
 import { rpcFailure, type RpcFailure } from './rpcErrorCore'
 
 export type OutcomeAnswer =
-  | { state: 'committed'; accession: Accession; recordedAt: string | null }
+  | { state: 'committed'; accession: Accession; recordedAt: string | null; unchanged?: boolean }
   | { state: 'rejected'; rejection: SaveRejection; recordedAt: string | null }
   | { state: 'none' }
   | { state: 'unavailable'; failure: RpcFailure }
@@ -59,9 +60,10 @@ export async function lookupOutcome(
     case 'committed': {
       const recordedAt = instant(state.value.recordedAt)
       const result = state.value.result
-      if (result.case === 'accession') return { state: 'committed', accession: result.value, recordedAt }
+      if (result.case === 'accession') return { state: 'committed', accession: result.value, recordedAt, unchanged: false }
+      if (result.case === 'unchanged') return { state: 'committed', accession: result.value, recordedAt, unchanged: true }
       if (result.case === 'rejection') return { state: 'rejected', rejection: result.value, recordedAt }
-      throw new Error('GetOperationOutcome recorded an outcome with neither an accession nor a rejection.')
+      throw new Error('GetOperationOutcome recorded an outcome with neither an accession, an unchanged match, nor a rejection.')
     }
     case undefined:
       throw new Error('GetOperationOutcome answered with neither committed nor none.')

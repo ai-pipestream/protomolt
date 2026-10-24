@@ -225,7 +225,7 @@ public final class SensitivityMasker {
             return any;
         }
         int before = pass.masked().size();
-        Message maskedPayload = maskMessage(payload, path, pass);
+        Message maskedPayload = maskNested(payload, path, pass);
         if (pass.masked().size() == before) {
             return any;
         }
@@ -252,9 +252,13 @@ public final class SensitivityMasker {
     }
 
     /**
-     * The default resolver: the message's own file and everything it imports. Enough when the
-     * packed type travels with the schema that declares the {@code Any} field, and honestly
-     * empty-handed when the payload is a type this schema never heard of.
+     * The default resolver: the message's own file and everything it imports, including nested
+     * message types. Enough when the packed type travels with the schema that declares the
+     * {@code Any} field, and honestly empty-handed when the payload is a type this schema never
+     * heard of.
+     *
+     * @param message the root message whose file and dependencies should be searched
+     * @return a resolver backed by the message's file and transitive dependencies
      */
     public static PayloadResolver importedTypes(Message message) {
         FileDescriptor root = message.getDescriptorForType().getFile();
@@ -267,18 +271,50 @@ public final class SensitivityMasker {
                     continue;
                 }
                 queue.addAll(file.getDependencies());
-                String pkg = file.getPackage();
-                if (!pkg.isEmpty() && !typeName.startsWith(pkg + ".")) {
-                    continue;
-                }
-                Descriptor found = file.findMessageTypeByName(
-                        pkg.isEmpty() ? typeName : typeName.substring(pkg.length() + 1));
+                Descriptor found = findTypeInFile(file, typeName);
                 if (found != null) {
                     return found;
                 }
             }
             return null;
         };
+    }
+
+    private static Descriptor findTypeInFile(FileDescriptor file, String typeName) {
+        String pkg = file.getPackage();
+        String relative;
+        if (pkg.isEmpty()) {
+            relative = typeName;
+        } else {
+            if (!typeName.startsWith(pkg + ".")) {
+                return null;
+            }
+            relative = typeName.substring(pkg.length() + 1);
+        }
+        if (relative.isEmpty()) {
+            return null;
+        }
+        int dot = relative.indexOf('.');
+        if (dot < 0) {
+            return file.findMessageTypeByName(relative);
+        }
+        Descriptor current = file.findMessageTypeByName(relative.substring(0, dot));
+        int start = dot + 1;
+        while (current != null && start <= relative.length()) {
+            int nextDot = relative.indexOf('.', start);
+            String segment = nextDot < 0
+                    ? relative.substring(start)
+                    : relative.substring(start, nextDot);
+            if (segment.isEmpty()) {
+                return null;
+            }
+            current = current.findNestedTypeByName(segment);
+            if (nextDot < 0) {
+                break;
+            }
+            start = nextDot + 1;
+        }
+        return current;
     }
 
     private static void apply(Message.Builder builder, FieldDescriptor field,

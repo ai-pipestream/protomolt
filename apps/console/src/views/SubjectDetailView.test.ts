@@ -102,4 +102,56 @@ describe('SubjectDetailView', () => {
     expect(wrapper.text()).toContain('Could not load subject')
     expect(wrapper.text()).toContain("Subject 'x' not found.")
   })
+
+  it('ignores stale responses from a previous subject when navigating between subjects', async () => {
+    let resolveSlowVersions!: (versions: number[]) => void
+    api.listVersions.mockImplementation((subj: string) => {
+      if (subj === 'slow/subject.proto') {
+        return new Promise<number[]>((resolve) => {
+          resolveSlowVersions = resolve
+        })
+      }
+      return Promise.resolve([10])
+    })
+    api.getVersion.mockImplementation(async (subj: string, v: number | 'latest') => ({
+      subject: subj,
+      id: v === 'latest' ? 99 : v,
+      version: v === 'latest' ? 10 : v,
+      schemaType: 'PROTOBUF',
+      schema: `// ${subj} v${v}`,
+      references: [],
+    }))
+
+    const router = createRouter({
+      history: createMemoryHistory(),
+      routes: [
+        { path: '/schema-registry', name: 'schema-registry-subjects', component: { template: '<div />' } },
+        {
+          path: '/schema-registry/subjects/:subject(.*)',
+          name: 'schema-registry-subject',
+          component: SubjectDetailView,
+        },
+      ],
+    })
+    await router.push(`/schema-registry/subjects/${encodeURIComponent('slow/subject.proto')}`)
+    await router.isReady()
+    const wrapper = mount(SubjectDetailView, {
+      global: { plugins: [vuetifyForTests(), router] },
+    })
+    await flushPromises()
+
+    // Navigate to fast/subject.proto before slow/subject.proto resolves
+    await router.push(`/schema-registry/subjects/${encodeURIComponent('fast/subject.proto')}`)
+    await flushPromises()
+    expect(wrapper.text()).toContain('fast/subject.proto')
+    expect(wrapper.text()).toContain('v10')
+
+    // Now resolve the stale slow/subject.proto request
+    resolveSlowVersions([1, 2, 3])
+    await flushPromises()
+    expect(wrapper.text()).toContain('fast/subject.proto')
+    expect(wrapper.text()).toContain('v10')
+    expect(wrapper.text()).not.toContain('v3')
+    wrapper.unmount()
+  })
 })

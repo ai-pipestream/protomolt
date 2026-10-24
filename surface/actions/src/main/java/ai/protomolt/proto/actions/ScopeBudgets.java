@@ -27,14 +27,13 @@ public final class ScopeBudgets {
 
     private static final long WINDOW_MILLIS = 60_000L;
 
-    private static final class Window {
-        long startMillis;
-        int admitted;
+    private record Window(long startMillis, int admitted) {
     }
 
     private final Map<String, Window> windows = new ConcurrentHashMap<>();
     private final LongSupplier clock;
 
+    /** Creates a budget ledger backed by {@link System#currentTimeMillis()}. */
     public ScopeBudgets() {
         this(System::currentTimeMillis);
     }
@@ -63,33 +62,36 @@ public final class ScopeBudgets {
                     + " bytes exceeds its " + budget.maxPayloadBytes()
                     + "-byte budget for '" + scope + "'");
         }
-        if (budget.requestsPerMinute() == 0) {
+        int limit = budget.requestsPerMinute();
+        if (limit == 0) {
             return Optional.empty();
         }
         long now = clock.getAsLong();
-        Window window = windows.computeIfAbsent(caller.name() + "\0" + scope,
-                key -> new Window());
-        synchronized (window) {
-            if (now - window.startMillis >= WINDOW_MILLIS) {
-                window.startMillis = now;
-                window.admitted = 0;
+        boolean[] exhausted = new boolean[1];
+        windows.compute(caller.name() + "\0" + scope, (key, window) -> {
+            boolean expired = window == null || now - window.startMillis() >= WINDOW_MILLIS;
+            long start = expired ? now : window.startMillis();
+            int admitted = expired ? 0 : window.admitted();
+            if (admitted >= limit) {
+                exhausted[0] = true;
+                return new Window(start, admitted);
             }
-            if (window.admitted >= budget.requestsPerMinute()) {
-                return Optional.of("caller '" + caller.name() + "' exhausted its "
-                        + budget.requestsPerMinute() + "-per-minute budget for '"
-                        + scope + "'");
-            }
-            window.admitted++;
+            exhausted[0] = false;
+            return new Window(start, admitted + 1);
+        });
+        if (exhausted[0]) {
+            return Optional.of("caller '" + caller.name() + "' exhausted its "
+                    + limit + "-per-minute budget for '"
+                    + scope + "'");
         }
         pruneExpired(now);
         return Optional.empty();
     }
 
     private void pruneExpired(long now) {
-        windows.entrySet().removeIf(entry -> {
-            synchronized (entry.getValue()) {
-                return now - entry.getValue().startMillis >= WINDOW_MILLIS;
-            }
-        });
+        for (String key : windows.keySet()) {
+            windows.computeIfPresent(key, (k, window) ->
+                    now - window.startMillis() >= WINDOW_MILLIS ? null : window);
+        }
     }
 }

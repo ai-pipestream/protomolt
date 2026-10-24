@@ -9,6 +9,14 @@ import com.google.protobuf.DynamicMessage;
 import com.google.protobuf.Message;
 import org.junit.jupiter.api.Test;
 
+import java.util.List;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
+
 import static com.google.protobuf.DescriptorProtos.DescriptorProto;
 import static com.google.protobuf.DescriptorProtos.FieldDescriptorProto;
 import static org.junit.jupiter.api.Assertions.*;
@@ -215,6 +223,70 @@ public class DescriptorRegistryTest {
         // Same full name is not a collision: the latest instance wins for both lookups.
         assertSame(rebuilt, registry.findDescriptorByFullName("pkg.one.Same"));
         assertSame(rebuilt, registry.findDescriptorBySimpleName("Same"));
+    }
+
+    @Test
+    void testConcurrentAutoLoadDescriptorsLoadsOnceWithoutMonitorLock() throws Exception {
+        DescriptorRegistry registry = new DescriptorRegistry();
+        FileDescriptor fd = createTestFileDescriptor();
+        AtomicInteger loadCount = new AtomicInteger();
+        AtomicBoolean holdsIntrinsicMonitor = new AtomicBoolean();
+        CountDownLatch loaderEntered = new CountDownLatch(1);
+        CountDownLatch releaseLoader = new CountDownLatch(1);
+
+        registry.addLoader(new DescriptorLoader() {
+            @Override
+            public List<FileDescriptor> loadDescriptors() throws DescriptorLoadException {
+                loadCount.incrementAndGet();
+                holdsIntrinsicMonitor.set(Thread.holdsLock(registry));
+                loaderEntered.countDown();
+                try {
+                    if (!releaseLoader.await(5, TimeUnit.SECONDS)) {
+                        throw new DescriptorLoadException("Timed out waiting to release loader");
+                    }
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    throw new DescriptorLoadException("Interrupted while waiting in loader", e);
+                }
+                return List.of(fd);
+            }
+
+            @Override
+            public FileDescriptor loadDescriptor(String fileName) {
+                return null;
+            }
+
+            @Override
+            public boolean isAvailable() {
+                return true;
+            }
+
+            @Override
+            public String getLoaderType() {
+                return "test-loader";
+            }
+        });
+
+        try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
+            Future<Descriptor> firstCaller = executor.submit(
+                    () -> registry.findDescriptorBySimpleName("TestMessage"));
+            assertTrue(loaderEntered.await(5, TimeUnit.SECONDS));
+
+            // Start a second caller while the first is still inside loadDescriptors();
+            // it must wait for the in-flight load to finish rather than returning null early.
+            Future<Descriptor> secondCaller = executor.submit(
+                    () -> registry.findDescriptorBySimpleName("TestMessage"));
+            Thread.sleep(50);
+            assertFalse(secondCaller.isDone(),
+                    "Second caller must wait for in-flight autoLoadDescriptors() to finish");
+
+            releaseLoader.countDown();
+
+            assertNotNull(firstCaller.get(5, TimeUnit.SECONDS));
+            assertNotNull(secondCaller.get(5, TimeUnit.SECONDS));
+        }
+        assertEquals(1, loadCount.get());
+        assertFalse(holdsIntrinsicMonitor.get());
     }
 
     private static Descriptor createMessageInPackage(String packageName, String fileName, String messageName)

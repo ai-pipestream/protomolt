@@ -10,6 +10,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.BiConsumer;
 import java.util.function.Function;
 import java.util.stream.Collectors;
@@ -37,6 +38,7 @@ public final class DistributedConfig implements AutoCloseable {
 
     private static final Logger LOG = LoggerFactory.getLogger(DistributedConfig.class);
 
+    private final ReentrantLock lock = new ReentrantLock();
     private final ConfigSource source;
     private final ProtoValidator validator = ProtoValidator.create();
     private final Map<String, Subscription<?>> subscriptions = new LinkedHashMap<>();
@@ -68,7 +70,7 @@ public final class DistributedConfig implements AutoCloseable {
      * @param <T> the config document's type
      * @return the subscription
      */
-    public synchronized <T extends Message> Subscription<T> subscribe(
+    public <T extends Message> Subscription<T> subscribe(
             String subject, T prototype) {
         return subscribe(subject, prototype, document -> ValidationResult.ok());
     }
@@ -86,7 +88,7 @@ public final class DistributedConfig implements AutoCloseable {
      * @param <T> the config document's type
      * @return the subscription
      */
-    public synchronized <T extends Message> Subscription<T> subscribe(
+    public <T extends Message> Subscription<T> subscribe(
             String subject, T prototype, Function<? super T, ValidationResult> check) {
         if (check == null) {
             throw new IllegalArgumentException("check must not be null");
@@ -97,13 +99,18 @@ public final class DistributedConfig implements AutoCloseable {
         if (prototype == null) {
             throw new IllegalArgumentException("prototype must not be null");
         }
-        if (subscriptions.containsKey(subject)) {
-            throw new IllegalArgumentException(
-                    "subject '" + subject + "' is already subscribed");
+        lock.lock();
+        try {
+            if (subscriptions.containsKey(subject)) {
+                throw new IllegalArgumentException(
+                        "subject '" + subject + "' is already subscribed");
+            }
+            Subscription<T> subscription = new Subscription<>(subject, prototype, check);
+            subscriptions.put(subject, subscription);
+            return subscription;
+        } finally {
+            lock.unlock();
         }
-        Subscription<T> subscription = new Subscription<>(subject, prototype, check);
-        subscriptions.put(subject, subscription);
-        return subscription;
     }
 
     /**
@@ -113,22 +120,27 @@ public final class DistributedConfig implements AutoCloseable {
      *
      * @return what this refresh applied, refused, skipped, and missed
      */
-    public synchronized RefreshOutcome refresh() {
-        List<String> applied = new ArrayList<>();
-        List<Refusal> refused = new ArrayList<>();
-        List<String> absent = new ArrayList<>();
-        int unchanged = 0;
-        for (Subscription<?> subscription : subscriptions.values()) {
-            switch (refreshOne(subscription, refused)) {
-                case APPLIED -> applied.add(subscription.subject());
-                case UNCHANGED -> unchanged++;
-                case ABSENT -> absent.add(subscription.subject());
-                case REFUSED -> {
+    public RefreshOutcome refresh() {
+        lock.lock();
+        try {
+            List<String> applied = new ArrayList<>();
+            List<Refusal> refused = new ArrayList<>();
+            List<String> absent = new ArrayList<>();
+            int unchanged = 0;
+            for (Subscription<?> subscription : subscriptions.values()) {
+                switch (refreshOne(subscription, refused)) {
+                    case APPLIED -> applied.add(subscription.subject());
+                    case UNCHANGED -> unchanged++;
+                    case ABSENT -> absent.add(subscription.subject());
+                    case REFUSED -> {
+                    }
                 }
             }
+            return new RefreshOutcome(List.copyOf(applied), List.copyOf(refused),
+                    unchanged, List.copyOf(absent));
+        } finally {
+            lock.unlock();
         }
-        return new RefreshOutcome(List.copyOf(applied), List.copyOf(refused),
-                unchanged, List.copyOf(absent));
     }
 
     private enum One { APPLIED, UNCHANGED, ABSENT, REFUSED }
@@ -206,6 +218,7 @@ public final class DistributedConfig implements AutoCloseable {
     /** One subject's typed subscription. */
     public static final class Subscription<T extends Message> {
 
+        private final ReentrantLock lock = new ReentrantLock();
         private final String subject;
         private final T prototype;
         private final Function<? super T, ValidationResult> check;
@@ -244,22 +257,32 @@ public final class DistributedConfig implements AutoCloseable {
          *
          * @param listener the change consumer
          */
-        public synchronized void onChange(BiConsumer<T, String> listener) {
+        public void onChange(BiConsumer<T, String> listener) {
             if (listener == null) {
                 throw new IllegalArgumentException("listener must not be null");
             }
-            listeners.add(listener);
+            lock.lock();
+            try {
+                listeners.add(listener);
+            } finally {
+                lock.unlock();
+            }
         }
 
-        private synchronized void apply(Applied<T> applied) {
-            current.set(applied);
-            for (BiConsumer<T, String> listener : listeners) {
-                try {
-                    listener.accept(applied.config(), applied.version());
-                } catch (RuntimeException e) {
-                    LOG.warn("config listener for '{}' failed at version {}",
-                            subject, applied.version(), e);
+        private void apply(Applied<T> applied) {
+            lock.lock();
+            try {
+                current.set(applied);
+                for (BiConsumer<T, String> listener : listeners) {
+                    try {
+                        listener.accept(applied.config(), applied.version());
+                    } catch (RuntimeException e) {
+                        LOG.warn("config listener for '{}' failed at version {}",
+                                subject, applied.version(), e);
+                    }
                 }
+            } finally {
+                lock.unlock();
             }
         }
     }

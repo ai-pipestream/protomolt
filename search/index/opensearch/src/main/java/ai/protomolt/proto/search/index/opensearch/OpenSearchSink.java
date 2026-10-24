@@ -55,7 +55,10 @@ public final class OpenSearchSink implements AutoCloseable {
      * @param baseUrl base URL of the OpenSearch node
      */
     public OpenSearchSink(String baseUrl) {
-        this(baseUrl, HttpClient.newBuilder().connectTimeout(CONNECT_TIMEOUT).build(), true);
+        this(
+                Objects.requireNonNull(baseUrl, "baseUrl"),
+                HttpClient.newBuilder().connectTimeout(CONNECT_TIMEOUT).build(),
+                true);
     }
 
     /**

@@ -356,7 +356,8 @@ class CoordinatorReviewRuntimeTest {
         DelegationReplay.restore(new DelegationReducer(), state, beforeCancel);
         assertThat(state.transcriptVersion).isEqualTo(beforeCancel.getEntriesCount());
 
-        Object lock = new Object();
+        java.util.concurrent.locks.ReentrantLock lock =
+                new java.util.concurrent.locks.ReentrantLock();
         java.util.concurrent.ExecutorService executor =
                 java.util.concurrent.Executors.newSingleThreadExecutor();
         try {
@@ -364,7 +365,8 @@ class CoordinatorReviewRuntimeTest {
                     CandidateReviewer.manual(), new MutableClock(START), REVIEW_WINDOW, false,
                     executor, new DelegationReducer(), new NoopFrames());
             DelegationCoordinatorState.TaskRuntime task = state.tasks.get(TASK);
-            synchronized (lock) {
+            lock.lock();
+            try {
                 DelegationReducer.ReviewState first = runtime.currentReview(task);
                 assertThat(first.status()).isEqualTo(DelegationReducer.ReviewStatus.DEFERRED);
                 // Nothing appended: the cached projection answers, instance-identical.
@@ -384,6 +386,8 @@ class CoordinatorReviewRuntimeTest {
                     assertThat(runtime.currentReview(task)).isSameAs(afterAppend);
                     previous = afterAppend;
                 }
+            } finally {
+                lock.unlock();
             }
         } finally {
             executor.shutdownNow();

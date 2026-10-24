@@ -234,6 +234,29 @@ describe('followOutcome', () => {
     expect(last.state).toBe('committed')
   })
 
+  it('settles when the recorded outcome is an unchanged match', async () => {
+    const client = routerClients((router) =>
+      router.service(DocumentService, {
+        getOperationOutcome() {
+          return create(GetOperationOutcomeResponseSchema, {
+            state: {
+              case: 'committed',
+              value: create(RecordedOutcomeSchema, {
+                result: {
+                  case: 'unchanged',
+                  value: create(AccessionSchema, { address: testAddress(), revision: 3n, previousRevision: 3n }),
+                },
+                recordedAt: at('2026-10-01T00:00:00Z'),
+              }),
+            },
+          })
+        },
+      }),
+    ).documents
+    const last = await followOutcome(client, 'acct-a', 'op-unchanged', new AbortController().signal, () => {}, noSleep)
+    expect(last).toMatchObject({ state: 'committed', unchanged: true })
+  })
+
   it('stops after the attempts with the last answer, keeping unavailable distinct from none', async () => {
     const client = routerClients((router) =>
       router.service(DocumentService, {

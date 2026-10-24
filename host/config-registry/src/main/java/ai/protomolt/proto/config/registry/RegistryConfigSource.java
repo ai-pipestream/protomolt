@@ -71,4 +71,9 @@ public final class RegistryConfigSource implements ConfigSource {
                 body.path("version").asText(),
                 Base64.getDecoder().decode(body.path("payloadBase64").asText())));
     }
+
+    @Override
+    public void close() {
+        http.close();
+    }
 }

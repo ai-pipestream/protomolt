@@ -74,14 +74,17 @@ public final class ContainerMembersBridge implements Bridge {
 
     @Override
     public Derivation derive(InputStream original, Context context) throws IOException {
-        PushbackInputStream head = new PushbackInputStream(
-                new BufferedInputStream(original), ZIP_MAGIC.length);
-        if (startsWith(head, GZIP_MAGIC)) {
-            // A compressed container: gunzip, then read what is inside. In
-            // the v1 routing that is always a tar.
-            return tar(new GZIPInputStream(head));
+        try (PushbackInputStream head = new PushbackInputStream(
+                new BufferedInputStream(original), ZIP_MAGIC.length)) {
+            if (startsWith(head, GZIP_MAGIC)) {
+                // A compressed container: gunzip, then read what is inside. In
+                // the v1 routing that is always a tar.
+                try (GZIPInputStream gzip = new GZIPInputStream(head)) {
+                    return tar(gzip);
+                }
+            }
+            return startsWith(head, ZIP_MAGIC) ? zip(head) : tar(head);
         }
-        return startsWith(head, ZIP_MAGIC) ? zip(head) : tar(head);
     }
 
     /** Peeks the stream's first bytes without consuming them. */
@@ -124,41 +127,42 @@ public final class ContainerMembersBridge implements Bridge {
 
     private Derivation zip(InputStream body) throws IOException {
         Listing listing = new Listing();
-        ZipInputStream reader = new ZipInputStream(body);
-        ZipEntry entry;
-        while ((entry = reader.getNextEntry()) != null) {
-            if (listing.full()) {
-                return listing.truncated("member limit " + maxMembers + " reached");
-            }
-            ContainerMember.Builder member = ContainerMember.newBuilder()
-                    .setPath(entry.getName())
-                    .setDirectory(entry.isDirectory());
-            if (entry.getLastModifiedTime() != null) {
-                member.setModifiedAt(Timestamps.fromMillis(
-                        entry.getLastModifiedTime().toMillis()));
-            }
-            if (entry.isDirectory()) {
-                listing.add(member.build());
-                continue;
-            }
-            // A streamed zip does not state its sizes up front, so the
-            // member's size is what actually came out of the decompressor.
-            MessageDigest digest = sha256();
-            long size = 0;
-            byte[] buffer = new byte[8192];
-            boolean hashing = listing.mayHash(0);
-            for (int n; (n = reader.read(buffer)) > 0; ) {
-                size += n;
-                if (hashing) {
-                    digest.update(buffer, 0, n);
-                    hashing = listing.hashed(n);
+        try (ZipInputStream reader = new ZipInputStream(body)) {
+            ZipEntry entry;
+            while ((entry = reader.getNextEntry()) != null) {
+                if (listing.full()) {
+                    return listing.truncated("member limit " + maxMembers + " reached");
                 }
+                ContainerMember.Builder member = ContainerMember.newBuilder()
+                        .setPath(entry.getName())
+                        .setDirectory(entry.isDirectory());
+                if (entry.getLastModifiedTime() != null) {
+                    member.setModifiedAt(Timestamps.fromMillis(
+                            entry.getLastModifiedTime().toMillis()));
+                }
+                if (entry.isDirectory()) {
+                    listing.add(member.build());
+                    continue;
+                }
+                // A streamed zip does not state its sizes up front, so the
+                // member's size is what actually came out of the decompressor.
+                MessageDigest digest = sha256();
+                long size = 0;
+                byte[] buffer = new byte[8192];
+                boolean hashing = listing.mayHash(0);
+                for (int n; (n = reader.read(buffer)) > 0; ) {
+                    size += n;
+                    if (hashing) {
+                        digest.update(buffer, 0, n);
+                        hashing = listing.hashed(n);
+                    }
+                }
+                member.setSizeBytes(size);
+                if (hashing) {
+                    member.setSha256(hex(digest));
+                }
+                listing.add(member.build());
             }
-            member.setSizeBytes(size);
-            if (hashing) {
-                member.setSha256(hex(digest));
-            }
-            listing.add(member.build());
         }
         return listing.complete();
     }

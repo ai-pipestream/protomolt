@@ -120,14 +120,27 @@ public final class RegistryModule implements ServiceModule {
             @Override
             public void close() {
                 if (server != null) {
-                    server.close();
+                    try {
+                        server.close();
+                    } catch (Throwable t) {
+                        try {
+                            store.close();
+                        } catch (Throwable suppressed) {
+                            t.addSuppressed(suppressed);
+                        }
+                        throw t;
+                    }
                 }
                 store.close();
             }
         };
     }
 
-    /** The store this node serves; valid after wiring. */
+    /**
+     * The store this node serves; valid after wiring.
+     *
+     * @return the git-backed schema registry store
+     */
     public GitSchemaRegistryStore store() {
         if (store == null) {
             throw new IllegalStateException("registry module has not wired");
@@ -135,7 +148,11 @@ public final class RegistryModule implements ServiceModule {
         return store;
     }
 
-    /** The bound HTTP port; only valid after start. */
+    /**
+     * The bound HTTP port; only valid after start.
+     *
+     * @return the bound HTTP port
+     */
     public int httpPort() {
         if (httpPort < 0) {
             throw new IllegalStateException("registry module has not started");
@@ -147,6 +164,9 @@ public final class RegistryModule implements ServiceModule {
      * A read view of the store's workflow definitions as parsed JSON. A stored
      * workflow that is not a JSON object is corrupt state, not a missing
      * workflow: it fails loudly instead of reading as "not found".
+     *
+     * @param store the git-backed schema registry store
+     * @return a workflow repository view over the store
      */
     public static WorkflowRepository workflowRepository(GitSchemaRegistryStore store) {
         return workflowRepository(store::workflow);
