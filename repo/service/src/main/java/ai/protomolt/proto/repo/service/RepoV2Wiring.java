@@ -15,6 +15,7 @@ import ai.protomolt.proto.repo.admission.DocumentSchemaAdmission;
 import ai.protomolt.proto.repo.admission.DocumentSchemas;
 import ai.protomolt.proto.repo.blob.spi.BlobStore;
 import ai.protomolt.proto.repo.catalog.CatalogConfig;
+import ai.protomolt.proto.repo.catalog.CatalogException;
 import ai.protomolt.proto.repo.catalog.PostgresCatalog;
 import ai.protomolt.proto.repo.codec.RepositoryNamespaces;
 import ai.protomolt.proto.repo.container.ledger.DriveLedger;
@@ -113,7 +114,7 @@ final class RepoV2Wiring {
         // the save (requirements §17); with none mounted they refuse
         // fail-closed. Listings, and ResolveLink through them, expand concept
         // filters against the same mounts.
-        ConceptSchemeCatalog mountedConcepts = schemeId -> conceptSchemes.get().scheme(schemeId);
+        Supplier<ConceptSchemeCatalog> mountedConcepts = conceptSchemes::get;
         // The save budget, sized like the read budget but tracked in its own
         // pool (up to 2x DOCUMENT_PLATFORM_READ_BUDGET_BYTES across concurrent
         // reads and saves): a unary save reserves its split fragments and
@@ -144,9 +145,12 @@ final class RepoV2Wiring {
             try {
                 catalog.registerCredential("repo-service",
                         RepoStepSaveRebinding.INTERNAL_STEP_CREDENTIAL_ID, "internal-step-writer");
-            } catch (RuntimeException concurrent) {
-                if (catalog.credential("repo-service",
-                        RepoStepSaveRebinding.INTERNAL_STEP_CREDENTIAL_ID).isEmpty()) throw concurrent;
+            } catch (CatalogException concurrent) {
+                if (concurrent.unavailable()
+                        || catalog.credential("repo-service",
+                                RepoStepSaveRebinding.INTERNAL_STEP_CREDENTIAL_ID).isEmpty()) {
+                    throw concurrent;
+                }
             }
         }
         OutboxRelay relay = null;

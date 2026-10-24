@@ -3,6 +3,7 @@ package ai.protomolt.proto.repo.service;
 import ai.protomolt.proto.authz.AccountBinding;
 import ai.protomolt.proto.authz.IntakeWriterScope;
 import ai.protomolt.proto.repo.catalog.Catalog;
+import ai.protomolt.proto.repo.catalog.CatalogException;
 import ai.protomolt.proto.repo.catalog.CatalogRecords;
 import ai.protomolt.proto.repo.spi.RepositoryCredentialBinding;
 import ai.protomolt.proto.repo.v2.IntakeOrigin;
@@ -19,6 +20,7 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.Supplier;
 
 /**
@@ -48,6 +50,7 @@ final class RepoBindingWriters {
 
     private final Supplier<? extends Catalog> catalog;
     private final Map<String, Reconciled> reconciled = new ConcurrentHashMap<>();
+    private final ReentrantLock reconcileLock = new ReentrantLock();
 
     private record Reconciled(AccountBinding binding, Optional<RepositoryCredentialBinding> credential) {}
 
@@ -76,7 +79,8 @@ final class RepoBindingWriters {
         Objects.requireNonNull(binding, "binding");
         Reconciled known = reconciled.get(binding.getPrincipal());
         if (known != null && known.binding().equals(binding)) return known.credential();
-        synchronized (this) {
+        reconcileLock.lock();
+        try {
             known = reconciled.get(binding.getPrincipal());
             if (known != null && known.binding().equals(binding)) return known.credential();
             Catalog store = catalog.get();
@@ -84,6 +88,8 @@ final class RepoBindingWriters {
             Optional<RepositoryCredentialBinding> credential = reconcile(store, binding);
             reconciled.put(binding.getPrincipal(), new Reconciled(binding, credential));
             return credential;
+        } finally {
+            reconcileLock.unlock();
         }
     }
 
@@ -96,9 +102,11 @@ final class RepoBindingWriters {
             if (binding.getIntakeWritersCount() == 0) return Optional.empty();
             try {
                 store.registerCredential(ISSUER, credentialId, principal);
-            } catch (RuntimeException concurrent) {
+            } catch (CatalogException concurrent) {
                 // Another host sharing the catalog registered it first.
-                if (store.credential(ISSUER, credentialId).isEmpty()) throw concurrent;
+                if (concurrent.unavailable() || store.credential(ISSUER, credentialId).isEmpty()) {
+                    throw concurrent;
+                }
             }
             credential = store.credential(ISSUER, credentialId);
         }
@@ -134,8 +142,11 @@ final class RepoBindingWriters {
             WriterGrant grant = scope.toBuilder().setGrantId(series + (issued + 1)).build();
             try {
                 store.installGrant(grant);
-            } catch (RuntimeException concurrent) {
+            } catch (CatalogException concurrent) {
                 // Another host sharing the catalog issued the same next ID first.
+                if (concurrent.unavailable()) {
+                    throw concurrent;
+                }
                 boolean installed = store.grants(accountId, ISSUER, credentialId).stream()
                         .anyMatch(existing -> !existing.revoked() && withoutId(existing.grant()).equals(scope));
                 if (!installed) throw concurrent;

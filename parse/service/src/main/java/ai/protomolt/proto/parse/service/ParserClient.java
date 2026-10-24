@@ -11,12 +11,15 @@ import ai.protomolt.proto.parse.plugin.v1.ParserPluginServiceGrpc;
 import com.google.protobuf.ByteString;
 import io.grpc.ManagedChannel;
 import io.grpc.Status;
+import io.grpc.stub.ClientCallStreamObserver;
 import io.grpc.stub.StreamObserver;
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.locks.ReentrantLock;
 
 /**
  * One parser target behind the {@code ParserPluginService} contract: the
@@ -39,6 +42,7 @@ public final class ParserClient {
     static final int CHUNK_BYTES = 1024 * 1024;
 
     private final ManagedChannel channel;
+    private final ReentrantLock infoLock = new ReentrantLock();
     private volatile GetParserInfoResponse info;
 
     /**
@@ -65,12 +69,15 @@ public final class ParserClient {
         if (cached != null) {
             return cached;
         }
-        synchronized (this) {
+        infoLock.lock();
+        try {
             if (info == null) {
                 info = ParserPluginServiceGrpc.newBlockingStub(channel)
                         .getParserInfo(GetParserInfoRequest.getDefaultInstance());
             }
             return info;
+        } finally {
+            infoLock.unlock();
         }
     }
 
@@ -107,8 +114,8 @@ public final class ParserClient {
         if (deadline == null || deadline.isZero() || deadline.isNegative()) {
             throw new IllegalArgumentException("deadline must be positive");
         }
-        List<DocumentClaims> claims = new ArrayList<>();
-        List<String> pageTexts = new ArrayList<>();
+        List<DocumentClaims> claims = Collections.synchronizedList(new ArrayList<>());
+        List<String> pageTexts = Collections.synchronizedList(new ArrayList<>());
         // Single-element holders written by the event observer, read after the latch.
         ParserOutput[] output = new ParserOutput[1];
         String[] error = new String[1];
@@ -163,23 +170,37 @@ public final class ParserClient {
         try {
             if (!done.await(deadline.toMillis() + TimeUnit.SECONDS.toMillis(10),
                     TimeUnit.MILLISECONDS)) {
-                return new ParseOutcome(null, List.copyOf(claims), List.copyOf(pageTexts),
+                cancelStream(requests, "parse stream did not terminate within its deadline", null);
+                return new ParseOutcome(null, snapshot(claims), snapshot(pageTexts),
                         true, "parse stream did not terminate within its deadline");
             }
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
-            return new ParseOutcome(null, List.copyOf(claims), List.copyOf(pageTexts),
+            cancelStream(requests, "parse interrupted", e);
+            return new ParseOutcome(null, snapshot(claims), snapshot(pageTexts),
                     true, "parse interrupted");
         }
         if (error[0] != null) {
-            return new ParseOutcome(null, List.copyOf(claims), List.copyOf(pageTexts),
+            return new ParseOutcome(null, snapshot(claims), snapshot(pageTexts),
                     true, error[0]);
         }
         if (output[0] == null) {
-            return new ParseOutcome(null, List.copyOf(claims), List.copyOf(pageTexts),
+            return new ParseOutcome(null, snapshot(claims), snapshot(pageTexts),
                     true, "parser completed without emitting a document");
         }
-        return new ParseOutcome(output[0], List.copyOf(claims), List.copyOf(pageTexts),
+        return new ParseOutcome(output[0], snapshot(claims), snapshot(pageTexts),
                 false, "");
+    }
+
+    private static void cancelStream(StreamObserver<ParseRequest> requests, String reason, Throwable cause) {
+        if (requests instanceof ClientCallStreamObserver<?> callObserver) {
+            callObserver.cancel(reason, cause);
+        }
+    }
+
+    private static <T> List<T> snapshot(List<T> synchronizedList) {
+        synchronized (synchronizedList) {
+            return List.copyOf(synchronizedList);
+        }
     }
 }

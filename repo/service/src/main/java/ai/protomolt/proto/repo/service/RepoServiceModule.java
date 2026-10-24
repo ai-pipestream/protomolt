@@ -79,6 +79,12 @@ public final class RepoServiceModule implements ServiceModule {
                 ? ConsoleSignIn.fromEnvironment(context.environment())
                 : ConsoleSignIn.none();
         services = RepoServices.build(config).withAccountBindings(accounts);
+        if (config.conceptSchemePaths().isEmpty()) {
+            var envConceptPaths = RepoServiceConfig.parseConceptSchemePaths(context.environment());
+            if (!envConceptPaths.isEmpty()) {
+                services.withConceptSchemes(RepoServices.loadConceptSchemes(envConceptPaths));
+            }
+        }
         String name = ROLE + "-" + context.nodeId();
         services.startInProcess(name);
         context.channels().publishInProcess(ROLE, name);
@@ -102,6 +108,11 @@ public final class RepoServiceModule implements ServiceModule {
                 // All modules are wired by the time any mount starts, so co-mounted
                 // contributions (the parse module's fleet document model) are visible here.
                 services.withAdmittedSchemas(context.contributions().all(com.google.protobuf.Descriptors.FileDescriptor.class));
+                List<ai.protomolt.proto.config.ConceptSchemeMounts> contributedSchemes =
+                        context.contributions().all(ai.protomolt.proto.config.ConceptSchemeMounts.class);
+                if (!contributedSchemes.isEmpty()) {
+                    services.withConceptSchemes(contributedSchemes.getFirst());
+                }
                 netty = services.startNetty(config.grpcPort(), credential, callers);
                 // Same rule as RepoServiceMain: 0 or "off" leaves the HTTP port, and
                 // every route on it, unbound.

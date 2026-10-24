@@ -182,6 +182,134 @@ public final class RepoServices implements AutoCloseable {
     }
 
     /**
+     * Loads and validates {@code ConceptScheme} definitions from files or directories.
+     *
+     * <p>Each entry in {@code paths} may be:
+     * <ul>
+     *   <li>a directory whose immediate {@code .pb} or {@code .binpb} files
+     *       are loaded (scheme ID = filename stem before the extension),</li>
+     *   <li>a file path {@code /path/to/<schemeId>.{pb,binpb}} (scheme ID = filename stem), or</li>
+     *   <li>an explicit {@code <schemeId>=/path/to/file.{pb,binpb}} specification.</li>
+     * </ul>
+     *
+     * <p>Every loaded scheme is validated through {@link ai.protomolt.proto.config.ConceptSchemeMounts#follow};
+     * any unreadable file, duplicate scheme ID, or validation refusal fails fast with
+     * {@link IllegalArgumentException}.
+     *
+     * @param paths paths to concept scheme files or directories
+     * @return the validated {@link ai.protomolt.proto.config.ConceptSchemeMounts}
+     */
+    public static ai.protomolt.proto.config.ConceptSchemeMounts loadConceptSchemes(
+            java.util.List<java.nio.file.Path> paths) {
+        java.util.Objects.requireNonNull(paths, "paths");
+        if (paths.isEmpty()) {
+            return ai.protomolt.proto.config.ConceptSchemeMounts.empty();
+        }
+        var loaded = new java.util.LinkedHashMap<String, ai.protomolt.proto.config.ConfigSource.Fetched>();
+        for (java.nio.file.Path entry : paths) {
+            java.util.Objects.requireNonNull(entry, "path entry");
+            String raw = entry.toString();
+            int eq = raw.indexOf('=');
+            if (eq > 0 && !java.nio.file.Files.exists(entry)) {
+                String schemeId = raw.substring(0, eq).trim();
+                java.nio.file.Path file = java.nio.file.Path.of(raw.substring(eq + 1).trim());
+                loadSingleConceptSchemeFile(schemeId, file, loaded);
+                continue;
+            }
+            if (!java.nio.file.Files.exists(entry)) {
+                throw new IllegalArgumentException("Concept scheme path does not exist: " + entry);
+            }
+            if (java.nio.file.Files.isDirectory(entry)) {
+                try (var stream = java.nio.file.Files.list(entry)) {
+                    var files = stream
+                            .filter(java.nio.file.Files::isRegularFile)
+                            .filter(RepoServices::isSupportedConceptSchemeFile)
+                            .sorted(java.util.Comparator.comparing(p -> p.getFileName().toString()))
+                            .toList();
+                    for (java.nio.file.Path file : files) {
+                        loadSingleConceptSchemeFile(schemeIdFromFileName(file), file, loaded);
+                    }
+                } catch (IOException failure) {
+                    throw new IllegalArgumentException(
+                            "Failed to list concept scheme directory " + entry + ": " + failure.getMessage(),
+                            failure);
+                }
+            } else {
+                loadSingleConceptSchemeFile(schemeIdFromFileName(entry), entry, loaded);
+            }
+        }
+        if (loaded.isEmpty()) {
+            return ai.protomolt.proto.config.ConceptSchemeMounts.empty();
+        }
+        var schemeIds = new java.util.ArrayList<String>(loaded.size());
+        var bySubject = new java.util.LinkedHashMap<String, ai.protomolt.proto.config.ConfigSource.Fetched>();
+        for (var e : loaded.entrySet()) {
+            schemeIds.add(e.getKey());
+            bySubject.put(ai.protomolt.proto.config.ConceptSchemeMounts.SUBJECT_PREFIX + e.getKey(), e.getValue());
+        }
+        ai.protomolt.proto.config.ConfigSource source = subject -> java.util.Optional.ofNullable(bySubject.get(subject));
+        try (var distributed = ai.protomolt.proto.config.DistributedConfig.over(source)) {
+            var mounts = ai.protomolt.proto.config.ConceptSchemeMounts.follow(distributed, schemeIds);
+            var refresh = distributed.refresh();
+            if (!refresh.refused().isEmpty()) {
+                var first = refresh.refused().getFirst();
+                throw new IllegalArgumentException(
+                        "Invalid concept scheme '" + first.subject() + "': " + first.reason());
+            }
+            return mounts;
+        }
+    }
+
+    private static boolean isSupportedConceptSchemeFile(java.nio.file.Path file) {
+        String name = file.getFileName().toString().toLowerCase(java.util.Locale.ROOT);
+        return name.endsWith(".pb") || name.endsWith(".binpb");
+    }
+
+    private static String schemeIdFromFileName(java.nio.file.Path file) {
+        String name = file.getFileName().toString();
+        String lower = name.toLowerCase(java.util.Locale.ROOT);
+        if (lower.endsWith(".binpb")) {
+            return name.substring(0, name.length() - ".binpb".length());
+        }
+        if (lower.endsWith(".pb")) {
+            return name.substring(0, name.length() - ".pb".length());
+        }
+        return name;
+    }
+
+    private static void loadSingleConceptSchemeFile(
+            String schemeId,
+            java.nio.file.Path file,
+            java.util.Map<String, ai.protomolt.proto.config.ConfigSource.Fetched> out) {
+        if (schemeId == null || schemeId.isBlank()) {
+            throw new IllegalArgumentException("Concept scheme ID must not be blank for file: " + file);
+        }
+        if (!java.nio.file.Files.isRegularFile(file)) {
+            throw new IllegalArgumentException("Concept scheme file does not exist: " + file);
+        }
+        if (!isSupportedConceptSchemeFile(file)) {
+            throw new IllegalArgumentException(
+                    "Concept scheme file must be a binary protobuf (.pb or .binpb): " + file);
+        }
+        if (out.containsKey(schemeId)) {
+            throw new IllegalArgumentException("Duplicate concept scheme ID '" + schemeId + "' at " + file);
+        }
+        try {
+            ai.protomolt.proto.types.ConceptScheme scheme =
+                    ai.protomolt.proto.types.ConceptScheme.parseFrom(
+                            java.nio.file.Files.readAllBytes(file));
+            byte[] encoded = scheme.toByteArray();
+            String version = java.util.HexFormat.of().formatHex(
+                    java.security.MessageDigest.getInstance("SHA-256").digest(encoded)).substring(0, 16);
+            out.put(schemeId, new ai.protomolt.proto.config.ConfigSource.Fetched(version, encoded));
+        } catch (IOException | java.security.NoSuchAlgorithmException failure) {
+            throw new IllegalArgumentException(
+                    "Failed to load concept scheme '" + schemeId + "' from " + file + ": " + failure.getMessage(),
+                    failure);
+        }
+    }
+
+    /**
      * Binds scoped callers to the accounts and ACL identities {@code resolver} names. The
      * document, drive and archive services all read the same binding. Until a composition
      * root calls this, a scoped caller is bound to no account and every account-addressed
@@ -269,6 +397,9 @@ public final class RepoServices implements AutoCloseable {
         ManagedArchiveServices startingArchive = null;
         try {
             this.config = config;
+            if (!config.conceptSchemePaths().isEmpty()) {
+                this.conceptSchemes = loadConceptSchemes(config.conceptSchemePaths());
+            }
             if (bounded == null && config.managedStorage().retentionQualified()
                     && (!config.lifecycleEnabled() || !("s3".equals(config.blobStore()) || "s3-redis-cache".equals(config.blobStore()))))
                 throw new IllegalArgumentException("Managed storage requires an S3 backing store and enabled lifecycle recovery");

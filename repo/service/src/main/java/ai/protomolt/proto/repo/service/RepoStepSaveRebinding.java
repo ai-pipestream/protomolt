@@ -4,6 +4,7 @@ import ai.protomolt.proto.authz.AuthenticatedCaller;
 import ai.protomolt.proto.authz.CredentialBinding;
 import ai.protomolt.proto.authz.grpc.CallerContexts;
 import ai.protomolt.proto.actions.Caller;
+import ai.protomolt.proto.repo.catalog.CatalogException;
 import ai.protomolt.proto.repo.catalog.PostgresCatalog;
 import ai.protomolt.proto.repo.spi.RepositoryCaller;
 import ai.protomolt.proto.repo.spi.RepositoryCredentialBinding;
@@ -142,7 +143,10 @@ final class RepoStepSaveRebinding {
             if (!present) {
                 try {
                     catalog.installGrant(grant);
-                } catch (RuntimeException concurrent) {
+                } catch (CatalogException concurrent) {
+                    if (concurrent.unavailable()) {
+                        throw concurrent;
+                    }
                     boolean nowPresent = catalog.grants(accountId, "repo-service", INTERNAL_STEP_CREDENTIAL_ID).stream()
                             .anyMatch(existing -> !existing.revoked() && existing.grant().equals(grant));
                     if (!nowPresent) throw concurrent;
