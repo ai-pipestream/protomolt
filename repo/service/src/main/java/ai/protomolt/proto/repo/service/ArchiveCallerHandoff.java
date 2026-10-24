@@ -12,7 +12,6 @@ import ai.protomolt.proto.repo.v1.DocumentSecurity;
 import ai.protomolt.proto.repo.v1.Principal;
 import ai.protomolt.proto.repo.v2.SaveDocumentRequest;
 import ai.protomolt.proto.repo.v2.UploadDocumentRequest;
-import ai.protomolt.proto.repo.v2.UploadDocumentResponse;
 import io.grpc.CallOptions;
 import io.grpc.Channel;
 import io.grpc.ClientCall;
@@ -35,7 +34,6 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
-import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * Propagates the authenticated caller resolved on an in-process archive entry door
@@ -50,8 +48,6 @@ final class ArchiveCallerHandoff {
 
     static final Context.Key<RepositoryCaller> REPOSITORY_CALLER =
             Context.key("protomolt-archive-repository-caller");
-    private static final Context.Key<AtomicBoolean> UPLOAD_COMMITTED =
-            Context.key("protomolt-archive-upload-committed");
 
     private static final Metadata.Key<String> CALL_KEY =
             Metadata.Key.of("protomolt-archive-call", Metadata.ASCII_STRING_MARSHALLER);
@@ -85,8 +81,7 @@ final class ArchiveCallerHandoff {
         Context context = Context.current().withValues(
                 CallerContexts.CALLER, effective.caller(),
                 CallerContexts.AUTHENTICATED_CALLER, effective,
-                REPOSITORY_CALLER, caller,
-                UPLOAD_COMMITTED, new AtomicBoolean(false));
+                REPOSITORY_CALLER, caller);
         Context previous = context.attach();
         try {
             return action.run();
@@ -162,9 +157,7 @@ final class ArchiveCallerHandoff {
                     }
                 }
                 RepositoryCaller repoCaller = REPOSITORY_CALLER.get();
-                AtomicBoolean uploadCommitted = UPLOAD_COMMITTED.get();
-                AuthenticatedCaller handedOff =
-                        uploadCommitted != null && uploadCommitted.get() ? null : auth;
+                AuthenticatedCaller handedOff = auth;
                 return new ForwardingClientCall.SimpleForwardingClientCall<>(
                         next.newCall(method, callOptions)) {
                     private String handoffId;
@@ -179,15 +172,6 @@ final class ArchiveCallerHandoff {
                         super.start(
                                 new ForwardingClientCallListener.SimpleForwardingClientCallListener<>(
                                         responseListener) {
-                                    @Override
-                                    public void onMessage(RespT message) {
-                                        if (message instanceof UploadDocumentResponse
-                                                && uploadCommitted != null) {
-                                            uploadCommitted.set(true);
-                                        }
-                                        super.onMessage(message);
-                                    }
-
                                     @Override
                                     public void onClose(Status status, Metadata trailers) {
                                         if (handoffId != null) {
