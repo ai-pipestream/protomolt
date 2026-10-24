@@ -58,7 +58,7 @@ naming the missing ones.
 | `DOCUMENT_PLATFORM_KAFKA_TOPIC` | `document-events` | non-blank text |
 | `DOCUMENT_PLATFORM_SCHEMA_REGISTRY_URL` | unset = registry-free (frames stamp schema id 0) | URL |
 | `DOCUMENT_PLATFORM_SEED_ACCOUNT_ID` | unset = no boot-time drive seeding | text; treat as permanent once used |
-| `DOCUMENT_PLATFORM_READ_BUDGET_BYTES` | `268435456` (256 MiB) | integer >= 1 |
+| `DOCUMENT_PLATFORM_READ_BUDGET_BYTES` | `268435456` (256 MiB) | integer >= 1; sizes both the verified-read budget and a separate v2 save-admission budget of the same capacity (up to `2 * DOCUMENT_PLATFORM_READ_BUDGET_BYTES` across concurrent reads and saves) |
 | `DOCUMENT_PLATFORM_PURGE_QUEUE` | `jdbc` | `jdbc` or `kafka`; `kafka` requires the bootstrap servers or the config fails fast |
 | `DOCUMENT_PLATFORM_KAFKA_PURGE_TOPIC` | `document-purges` | non-blank text; used only with the kafka purge queue |
 | `PROTOMOLT_CONSOLE_OIDC_ISSUER` | unset = console sign-in off | the OpenID provider's issuer URL; discovered at `/.well-known/openid-configuration` at boot, and a wrong one fails the boot |

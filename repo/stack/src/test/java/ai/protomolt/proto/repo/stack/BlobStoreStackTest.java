@@ -2,14 +2,29 @@ package ai.protomolt.proto.repo.stack;
 
 import static org.assertj.core.api.Assertions.*;
 
+import ai.protomolt.proto.repo.blob.s3.S3BlobStore;
 import ai.protomolt.proto.repo.blob.spi.BlobStore;
+import com.sun.net.httpserver.HttpServer;
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.net.InetSocketAddress;
+import java.net.URI;
+import java.nio.charset.StandardCharsets;
+import java.time.Duration;
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
+import software.amazon.awssdk.auth.credentials.AwsBasicCredentials;
+import software.amazon.awssdk.auth.credentials.StaticCredentialsProvider;
+import software.amazon.awssdk.http.urlconnection.UrlConnectionHttpClient;
+import software.amazon.awssdk.regions.Region;
+import software.amazon.awssdk.services.s3.S3Client;
+import software.amazon.awssdk.services.s3.model.S3Exception;
 
 /**
  * Item 5 of the review of 1a240b18f: a provider retry cannot rewind a stream under
@@ -31,15 +46,15 @@ class BlobStoreStackTest {
             assertThat(read.readAllBytes()).isEqualTo(body);
         }
 
-        // A single-part streamed put streams directly to the provider and refuses a
-        // provider rewind, even when the caller's stream supports mark/reset.
+        // A single-part streamed put streams through the provider and lets a marked
+        // provider retry reset the stack's bounded replay buffer without touching the caller's stream.
         var small = "seven b".getBytes();
         store.attempts = 0;
-        assertThatThrownBy(() -> stack.put(new ByteArrayInputStream(small), small.length))
-                .isInstanceOf(IOException.class)
-                .hasStackTraceContaining("Stack write streams cannot be rewound");
+        var one = stack.put(new Unrewindable(small), small.length);
+        assertThat(store.attempts).isEqualTo(2);
         assertThat(store.streamedPuts).isEqualTo(1);
-        assertThat(store.objects).hasSize(1);
+        assertThat(store.objects.get(one.getKey())).isEqualTo(small);
+        assertThat(one.getSha256()).isEqualTo(VerifyingInputStream.sha256Hex(small));
 
         // A larger streamed put goes in parts; each part's retry resends that part's buffer.
         store.attempts = 0;
@@ -49,6 +64,92 @@ class BlobStoreStackTest {
         assertThat(store.objects.get(many.getKey())).isEqualTo(body);
         assertThat(many.getSha256()).isEqualTo(VerifyingInputStream.sha256Hex(body));
         assertThat(store.streamedPuts).isZero();
+
+        // A provider without multipart that tries to rewind a larger streamed put (or a reset
+        // without mark) is refused, and the provider exception is retained as suppressed.
+        var noMultipartRetry = new RetryingStore() {
+            @Override public PutResult putMultipart(PutSpec spec, InputStream stream, int partSize) {
+                throw new UnsupportedOperationException("multipart streamed write is unsupported");
+            }
+        };
+        var fallbackStack = new BlobStoreStack("s1", noMultipartRetry, "bucket", "prefix", 8, () -> {});
+        assertThatThrownBy(() -> fallbackStack.put(new ByteArrayInputStream(body), body.length))
+                .isInstanceOf(IOException.class)
+                .hasMessage("Stack write streams cannot be rewound")
+                .satisfies(failure -> assertThat(failure.getSuppressed()).hasSize(1));
+        assertThat(noMultipartRetry.objects).isEmpty();
+    }
+
+    @Test void singlePartS3PutsRetryOnTransientFailureAndSurfaceUnrecoveredFailure() throws Exception {
+        var body = new byte[200_000];
+        for (int i = 0; i < body.length; i++) body[i] = (byte) (i * 17 + 3);
+        var receivedBodies = Collections.synchronizedList(new ArrayList<byte[]>());
+        var failCount = new AtomicInteger(1);
+
+        var server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/", exchange -> {
+            byte[] uploaded = exchange.getRequestBody().readAllBytes();
+            receivedBodies.add(uploaded);
+            if (failCount.getAndDecrement() > 0) {
+                byte[] err = "<Error><Code>SlowDown</Code><Message>Reduce your request rate.</Message></Error>"
+                        .getBytes(StandardCharsets.UTF_8);
+                exchange.getResponseHeaders().set("Content-Type", "application/xml");
+                exchange.sendResponseHeaders(503, err.length);
+                try (var out = exchange.getResponseBody()) {
+                    out.write(err);
+                }
+            } else {
+                exchange.getResponseHeaders().set("ETag", "\"etag-retried\"");
+                exchange.sendResponseHeaders(200, -1);
+            }
+            exchange.close();
+        });
+        server.start();
+        try (var sdk = S3Client.builder()
+                .endpointOverride(URI.create("http://127.0.0.1:" + server.getAddress().getPort()))
+                .region(Region.US_EAST_1)
+                .forcePathStyle(true)
+                .credentialsProvider(StaticCredentialsProvider.create(AwsBasicCredentials.create("test", "test")))
+                .httpClientBuilder(UrlConnectionHttpClient.builder()
+                        .connectionTimeout(Duration.ofSeconds(2))
+                        .socketTimeout(Duration.ofSeconds(5)))
+                .overrideConfiguration(c -> c.apiCallTimeout(Duration.ofSeconds(10))
+                        .retryStrategy(r -> r.maxAttempts(2)))
+                .build()) {
+            var stack = new BlobStoreStack("s3-retry", new S3BlobStore(sdk), "bucket", "prefix");
+
+            // First PutObject reads all 200,000 bytes (past the SDK's 128 KiB default mark limit)
+            // and fails with 503 SlowDown; the second attempt resets and rereads the same bytes.
+            var ref = stack.put(new Unrewindable(body), body.length);
+            assertThat(receivedBodies).hasSize(2);
+            assertThat(decodeAwsChunked(receivedBodies.get(0))).isEqualTo(body);
+            assertThat(decodeAwsChunked(receivedBodies.get(1))).isEqualTo(body);
+            assertThat(ref.getLength()).isEqualTo(body.length);
+            assertThat(ref.getSha256()).isEqualTo(VerifyingInputStream.sha256Hex(body));
+
+            // When every allowed attempt fails with a retryable error, the upload does not complete
+            // and the stack surfaces the failure.
+            receivedBodies.clear();
+            failCount.set(5);
+            assertThatThrownBy(() -> stack.put(new Unrewindable(body), body.length))
+                    .isInstanceOf(IOException.class)
+                    .hasMessage("Stack write failed")
+                    .hasRootCauseInstanceOf(S3Exception.class);
+            assertThat(receivedBodies).hasSize(2);
+
+            // A short or long body fails before completing and is never retried into a valid put.
+            receivedBodies.clear();
+            failCount.set(0);
+            assertThatThrownBy(() -> stack.put(new Unrewindable(body), body.length + 1L))
+                    .isInstanceOf(IOException.class)
+                    .hasMessageContaining("ended at " + body.length + " of " + (body.length + 1));
+            assertThatThrownBy(() -> stack.put(new Unrewindable(body), body.length - 1L))
+                    .isInstanceOf(IOException.class)
+                    .hasMessageContaining("longer than its declared length " + (body.length - 1));
+            assertThat(receivedBodies).isEmpty();
+        } finally {
+            server.stop(0);
+        }
     }
 
     @Test void singlePartStreamedPutsStreamWithBoundedBuffersAndEnforceExactLength() throws Exception {
@@ -170,6 +271,24 @@ class BlobStoreStackTest {
         @Override public void headObject(String bucket, String key) {}
     }
 
+    /** Extracts payload bytes from an AWS SDK {@code aws-chunked} request body. */
+    private static byte[] decodeAwsChunked(byte[] raw) {
+        var out = new java.io.ByteArrayOutputStream();
+        int pos = 0;
+        while (pos < raw.length) {
+            int lineEnd = pos;
+            while (lineEnd + 1 < raw.length && !(raw[lineEnd] == '\r' && raw[lineEnd + 1] == '\n')) lineEnd++;
+            var header = new String(raw, pos, lineEnd - pos, StandardCharsets.US_ASCII);
+            int semi = header.indexOf(';');
+            int chunkLen = Integer.parseInt((semi < 0 ? header : header.substring(0, semi)).trim(), 16);
+            pos = lineEnd + 2;
+            if (chunkLen == 0) break;
+            out.write(raw, pos, chunkLen);
+            pos += chunkLen + 2;
+        }
+        return out.toByteArray();
+    }
+
     /** The caller's stream: any rewind attempt fails the test. */
     private static final class Unrewindable extends ByteArrayInputStream {
         Unrewindable(byte[] bytes) { super(bytes); }
@@ -251,7 +370,7 @@ class BlobStoreStackTest {
     }
 
     /** Fails the first attempt after consuming the body, then retries like the SDK: mark/reset. */
-    private static final class RetryingStore implements BlobStore {
+    private static class RetryingStore implements BlobStore {
         final Map<String, byte[]> objects = new HashMap<>();
         int attempts;
         int streamedPuts;
