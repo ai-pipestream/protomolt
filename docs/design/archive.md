@@ -907,14 +907,58 @@ counters over the `archive:<account_id>` graph documents and revision manifests
 `VERSIONING_POLICY_NONE`), and `ListEntriesResponse.total_count` reports
 `ListDocumentsResponse.total_matching` before pagination.
 
+### 7. `ArchiveMutationService` over v2
+
+`DocumentArchive` and `DocumentArchiveMutationGrpcService` serve
+`ArchiveMutationService` over `DocumentService`:
+
+- **`DeleteEntry` -> `DeleteDocument` (tombstone).** `DeleteEntry` resolves the
+  entry's section 1 call number, checks `GetOperationOutcome` first for an
+  idempotent replay of `operation_id`, and otherwise sends `DeleteDocument`
+  at the entry's current revision (or the caller-supplied `expected_version`).
+  Under keep-forever, logical deletion commits a tombstone revision and removes
+  no physical object bytes, so the returned `ArchiveMutationReceipt` reports
+  `kind = ARCHIVE_MUTATION_KIND_DELETE_ENTRY`,
+  `state = ARCHIVE_MUTATION_STATE_COMPLETED`, `entry_deleted = true`,
+  `versions_removed = 0`, `versions_tombstoned = 0`, and zero object counters
+  (`objects_targeted = 0`, `objects_pending = 0`,
+  `objects_confirmed_absent = 0`), with `command_sha256` equal to the lowercase
+  hex SHA-256 of the deterministic protobuf encoding of `ArchiveMutationRequest`
+  with `operation_id` cleared. Once tombstoned, `GetEntry` and
+  `GetEntryManifest` at `version = 0` return `NOT_FOUND`, `ListEntries` and
+  `GetArchiveStats` omit the deleted entry, and a retry with the same
+  `operation_id` replays the recorded receipt.
+- **`GetArchiveMutation` -> `GetOperationOutcome`.** `GetArchiveMutation` reads
+  the account's recorded outcome for `operation_id` from `DocumentService`: a
+  committed tombstone accession under `archive:<account_id>` projects to the
+  same completed `ArchiveMutationReceipt`, a recorded archive mutation rejection
+  (tagged with `archive.mutation_kind`) is rethrown with its recorded refusal
+  status, and an unknown or non-mutation operation ID (including a committed or
+  rejected `PutEntry` or `UploadRendition`) returns `NOT_FOUND`.
+- **`DeleteRendition` and `PruneVersions` refused by name with
+  `FAILED_PRECONDITION`.** Under v2 keep-forever retention, neither destructive
+  byte removal across versions (`DeleteRendition`) nor version pruning
+  (`PruneVersions`) has a v2 counterpart until per-blob purge or §13 retention
+  lands. After request and `operation_id` validation (without checking archive
+  binding or entry existence first, since the operation is unconditionally
+  unsupported under keep-forever), both record a refusal outcome in
+  `DocumentService` under `(account_id, operation_id)` (retaining
+  `archive.mutation_kind`, `archive.mutation_sha256`, and
+  `archive.mutation_refusal`, and confirming the recorded rejection via
+  `GetOperationOutcome` so retries and `GetArchiveMutation` replay the refusal
+  and conflicting `operation_id` reuse fails with `ALREADY_EXISTS`) and refuse
+  by name with gRPC status `FAILED_PRECONDITION`:
+  - `DeleteRendition`: `"DeleteRendition is not supported by the archive over v2 documents under keep-forever retention; destructive byte removal across versions requires per-blob purge or section 13 retention"`
+  - `PruneVersions`: `"PruneVersions is not supported by the archive over v2 documents under keep-forever retention; removing retained versions requires section 13 retention"`
+
 ### Not settled here
 
 Each needs its own follow-up issue under #535 before the ledger retires:
 
-- **`ArchiveMutationService`.** `DeleteEntry` maps to `DeleteDocument` (a
-  tombstone). `DeleteRendition` (RTBF bytes removal across versions) and
-  `PruneVersions` have no v2 counterpart under keep-forever; they need either
-  per-blob purge or §13 retention, and until then are refused by name.
+- **`DeleteRendition` and `PruneVersions` byte removal.** `DeleteEntry` and
+  `GetArchiveMutation` run over `DeleteDocument` and `GetOperationOutcome`
+  (section 7 above); `DeleteRendition` and `PruneVersions` are refused by name
+  with `FAILED_PRECONDITION` until per-blob purge or §13 retention lands.
 - **Host cutover (#632).** Switching `RepoServices` from `JdbcArchiveStore` to
   `DocumentArchiveGrpcService` once `ArchiveMutationService` and the HTTP upload
   route cut over.
