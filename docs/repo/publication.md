@@ -270,10 +270,11 @@ until then.
 
 ### Concept tags
 
-A concept tag is a value of a `ConceptRef` field in CORE, including the typed
-`structured_data` payload, whose field rules bind it to concept schemes
-(`concept_schemes`, well-known types "Concept schemes (SKOS)"). A save decides
-each tag's membership against the concept schemes the host mounts;
+A concept tag is a value of a `ConceptRef` field in any part, including the
+typed `structured_data` payload in CORE and parser outputs in PARSED, whose
+field rules bind it to concept schemes (`concept_schemes`, well-known types
+"Concept schemes (SKOS)"); only CORE's are catalogued. A save decides each
+tag's membership against the concept schemes the host mounts;
 `DocumentSaves` takes the host's `ConceptSchemeCatalog`. The stock repository
 loads configured scheme files at boot from
 `DOCUMENT_PLATFORM_CONCEPT_SCHEMES`, or its alias
@@ -297,7 +298,12 @@ A tag in another part, such as a parser's output in PARSED, is checked the
 same way (membership against the mounts, the canonical `ConceptRef`) and stored
 with that part, but it is not catalogued, so a concept filter does not match
 it. PARSED is the parser's claim-check output; the mapping step carries an
-interpretation worth filtering on into CORE.
+interpretation worth filtering on into CORE. During a rolling upgrade over a
+shared store, a host built before `#656` that reads a PARSED part containing a
+bound `ConceptRef` saved by a newer host refuses it in
+`DocumentReads.decodeRetained` (`ContentRefused`, surfacing as `DATA_LOSS`), so
+readers should be upgraded before writers emit bound `ConceptRef` tags in
+PARSED.
 
 Tags project into `catalog_document_concepts` under the same
 `(field_path, ordinal)` identity as links: current revision only, replaced by
@@ -355,6 +361,13 @@ rejection instead of re-running admission. Malformed requests, permission
 failures and revision conflicts record nothing — with one recorded
 exception: `OPAQUE_NOT_ALLOWED` maps to `PERMISSION_DENIED` and **is**
 recorded, whereas `WRITE_DENIED` is unrecorded.
+
+A field violation's `field_path` is rooted at the part's container message
+in every part, the way link and concept-tag paths are: a payload rule that
+fails inside CORE's typed `structured_data` reports
+`structured_data.<field>`, and one inside a parser's output reports
+`parser_results["<parser>"].document.shape.<field>`. Crossing a nested `Any`
+adds no segment of its own.
 
 Errors are gRPC statuses carrying the `errors.proto` detail messages
 (`SaveRejection`, `RevisionConflict`, `OperationReuse`, `ItemError`, field
