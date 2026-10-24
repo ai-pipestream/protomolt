@@ -128,14 +128,25 @@ class UploadHttpServerV2DelegationIT {
 
     @Test void theArchiveRouteStillReachesTheArchivePort() throws Exception {
         byte[] body = "frozen rendition".getBytes(StandardCharsets.UTF_8);
-        var response = post(UploadHttpServer.ARCHIVE_UPLOAD_PATH
-                + "?account_id=acct-1&archive=records&entry_id=entry-1&filename=r.bin", TOKEN, body, null);
-        assertThat(response.statusCode()).as(response.body()).isEqualTo(200);
-        assertThat(response.body()).contains("\"entry_uuid\":\"entry-uuid-1\"", "\"rendition\":\"original\"");
+        var response = client.send(HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + server.port()
+                        + UploadHttpServer.ARCHIVE_UPLOAD_PATH
+                        + "?account_id=acct-1&archive=records&entry_id=entry-1&filename=r.bin"))
+                .header("Authorization", "Bearer " + TOKEN).header("Content-Type", "text/plain")
+                .POST(HttpRequest.BodyPublishers.ofByteArray(body)).build(), HttpResponse.BodyHandlers.ofByteArray());
+        assertThat(response.statusCode()).isEqualTo(200);
+        assertThat(response.headers().firstValue("Content-Type")).contains("application/protobuf");
+        var receipt = ai.protomolt.proto.repo.archive.v1.UploadRenditionResponse.parseFrom(response.body());
+        assertThat(receipt.getEntryUuid()).isEqualTo("entry-uuid-1");
+        assertThat(receipt.getVersion()).isEqualTo(1);
+        assertThat(receipt.getSha256()).isEqualTo("sha");
+        assertThat(receipt.getSizeBytes()).isEqualTo(body.length);
+        assertThat(receipt.getObjectKey()).isEqualTo("objects/original");
+        assertThat(receipt.getRootChecksum()).isEqualTo("root");
         assertThat(archiveCalls).singleElement().satisfies(call -> {
             assertThat(call.get("address")).isEqualTo(EntryAddress.newBuilder()
                     .setAccountId("acct-1").setArchive("records").setEntryId("entry-1").build());
             assertThat(call.get("body")).isEqualTo(body);
+            assertThat(((RenditionDescriptor) call.get("rendition")).getName()).isEqualTo("original");
         });
     }
 
@@ -179,7 +190,7 @@ class UploadHttpServerV2DelegationIT {
                         throw new UnsupportedOperationException(method.getName());
                     }
                     byte[] bytes = ((InputStream) args[9]).readAllBytes();
-                    archiveCalls.add(Map.of("address", args[1], "body", bytes));
+                    archiveCalls.add(Map.of("address", args[1], "body", bytes, "rendition", args[2]));
                     var descriptor = (RenditionDescriptor) args[2];
                     return new ArchiveRepository.UploadResult("entry-uuid-1", 1L, "sha", bytes.length,
                             "objects/" + descriptor.getName(), "root", false);

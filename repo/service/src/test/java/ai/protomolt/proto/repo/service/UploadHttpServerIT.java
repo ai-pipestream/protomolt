@@ -1,5 +1,8 @@
 package ai.protomolt.proto.repo.service;
 
+import ai.protomolt.proto.repo.archive.RenditionUploads;
+import ai.protomolt.proto.repo.v2.GetDocumentRequest;
+import ai.protomolt.proto.repo.v1.Access;
 import ai.protomolt.proto.actions.Caller;
 import ai.protomolt.proto.authz.AccountBinding;
 import ai.protomolt.proto.authz.AccountBindingResolver;
@@ -197,6 +200,12 @@ class UploadHttpServerIT {
                 + "&rendition=original";
         URI uploadUri = URI.create("http://localhost:" + http.port() + queryPath);
 
+        var unsupported = client.send(HttpRequest.newBuilder(URI.create(uploadUri + "&filename=ignored.pdf"))
+                .header("api_token", OPERATOR_TOKEN).header("X-Content-Sha256", sha256)
+                .POST(HttpRequest.BodyPublishers.ofByteArray(payload)).build(), HttpResponse.BodyHandlers.ofByteArray());
+        assertThat(unsupported.statusCode()).isEqualTo(400);
+        assertThat(com.google.rpc.Status.parseFrom(unsupported.body()).getMessage()).contains("PutEntry");
+
         HttpRequest firstRequest = HttpRequest.newBuilder(uploadUri)
                 .header("api_token", OPERATOR_TOKEN)
                 .header("Content-Type", "application/pdf")
@@ -205,7 +214,7 @@ class UploadHttpServerIT {
                 .build();
         HttpResponse<byte[]> firstResponse = client.send(firstRequest, HttpResponse.BodyHandlers.ofByteArray());
         assertThat(firstResponse.statusCode()).isEqualTo(200);
-        assertThat(firstResponse.headers().firstValue("Content-Type")).contains("application/proto");
+        assertThat(firstResponse.headers().firstValue("Content-Type")).contains("application/protobuf");
         assertThat(firstResponse.headers().firstValue("X-Replayed")).contains("false");
 
         UploadRenditionResponse firstProto = UploadRenditionResponse.parseFrom(firstResponse.body());
@@ -571,7 +580,8 @@ class UploadHttpServerIT {
 
             // 7. Archive definitions grant public READ only, never public WRITE: a scoped caller
             // (alice-writer) cannot overwrite the archive-def document via DocumentService.saveDocument.
-            AuthenticatedCaller aliceAuth = AuthenticatedCaller.unbound(Caller.scoped("alice-writer", Set.of()));
+            AuthenticatedCaller aliceAuth = scopedHttp.callers().resolve(ai.protomolt.proto.authz.RequestHeaders.of(
+                    Map.of("Authorization", java.util.List.of("Bearer token-alice")))).orElseThrow();
             RepositoryCaller aliceRepoCaller = new RepositoryCaller(
                     "alice-writer",
                     false,
@@ -583,7 +593,12 @@ class UploadHttpServerIT {
                     .build();
             try {
                 DocumentServiceGrpc.DocumentServiceBlockingStub docs = DocumentServiceGrpc.newBlockingStub(
-                        ArchiveCallerHandoff.interceptChannel(scopedDocsChannel));
+                        new RenditionUploads(scopedHost.documentArchive()).channel());
+                var definition = ArchiveCallerHandoff.callWithCaller(aliceRepoCaller, aliceAuth,
+                        () -> docs.getDocument(GetDocumentRequest.newBuilder()
+                                .setAddress(DocumentArchiveBindings.definitionAddress(ACCOUNT, archiveName)).build()));
+                assertThat(definition.getDocument().getOwnership().getSecurity().getPermissionsList())
+                        .isNotEmpty().allSatisfy(rule -> assertThat(rule.getAccess()).isEqualTo(Access.ACCESS_READ));
                 StatusRuntimeException defOverwriteDenied = catchThrowableOfType(
                         StatusRuntimeException.class,
                         () -> ArchiveCallerHandoff.callWithCaller(aliceRepoCaller, aliceAuth, () ->

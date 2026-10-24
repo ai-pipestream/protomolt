@@ -327,7 +327,16 @@ public final class RenditionUploads {
                     throw Status.INTERNAL.withDescription("UploadDocument completed without a response")
                             .asRuntimeException();
                 }
-                response = archive.finishUpload(pending, result.getSaved(), sentSha256(), sentBytes);
+                lock.lock();
+                try {
+                    if (!result.getSaved().getReplayed() && !clientCompleted) {
+                        throw Status.INTERNAL.withDescription("UploadDocument completed before all upload bytes")
+                                .asRuntimeException();
+                    }
+                    response = archive.finishUpload(pending, result.getSaved(), sentSha256(), sentBytes);
+                } finally {
+                    lock.unlock();
+                }
             } catch (StatusRuntimeException failure) {
                 fail(failure);
                 return;

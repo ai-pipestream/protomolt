@@ -385,13 +385,31 @@ queries over an ordinary subject.
 
 ### HTTP `POST /v1/archive:upload`
 
-The archive's zero-dependency door on the same HTTP server as the document
-upload route: the body is one rendition's bytes, identity rides query
-parameters or headers (`account_id`, `archive`, `entry_id`, `rendition`
-defaulting to `original`, `filename`, `Content-Type`, optional
-`X-Content-Sha256`), `Content-Length` is required, and the body streams
-through a digest straight to storage. Success returns a JSON receipt with
-the entry UUID, version, SHA-256, size, object key, and root checksum.
+The archive rendition route shares the document upload HTTP server. The body is
+raw rendition bytes; `account_id`, `archive`, `entry_id`, `rendition` (default
+`original`), `sub_key`, `schema_subject`, `module`, `operation_id` and
+`expected_version` ride query parameters or corresponding `x-` headers (query
+wins). `Content-Length` is required; `Content-Type` describes the rendition and
+`X-Content-Sha256` optionally declares its digest. A blank operation ID requires
+the digest and derives a deterministic retry ID.
+
+The v2 path streams through `RenditionUploads` into `UploadDocument`, waiting for
+downstream readiness before reading another 64 KiB chunk. Early replay or refusal
+answers without draining the remaining request body and closes the HTTP connection.
+Success is binary `UploadRenditionResponse` with `Content-Type: application/protobuf`;
+errors are binary `google.rpc.Status` with the same content type and the matching
+HTTP status. This replaces the former hand-built JSON receipt, including its
+invented `deduplicated` field. The v2 receipt uses revision, size, SHA-256,
+candidate root checksum, operation ID and replay status; legacy physical-key and
+entry-UUID fields remain absent on v2. A legacy archive also returns the existing
+protobuf response type, populated from its upload result.
+
+For v2, `filename`, `title` and `source_uri` are refused rather than silently
+ignored; set entry metadata through `PutEntry`. Legacy uploads still accept
+`filename`. Scoped uploads stamp READ and WRITE rules only for the caller's ACL
+identities. An identityless writer creates no such rules; its successful commit
+receipt does not grant subsequent read access. Archive definitions grant public
+READ within their account, never public WRITE.
 
 ### HTTP `POST /v1/documents:upload`
 

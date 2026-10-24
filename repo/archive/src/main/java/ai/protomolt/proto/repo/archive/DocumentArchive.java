@@ -1395,6 +1395,14 @@ public final class DocumentArchive {
         Accession accession = saved.getAccession();
         String rootChecksum = accession.getValidation().getCandidateSha256();
         if (!saved.getReplayed() && !rootChecksum.isEmpty()) {
+            if (pending.header().hasEncodedPart()) {
+                var part = accession.getManifest().getPartsList().stream()
+                        .filter(p -> p.getSelector().equals(pending.header().getEncodedPart().getSelector()))
+                        .findFirst().orElseThrow(() -> ArchiveErrors.dataLoss(
+                                "Committed upload has no streamed part in its manifest", null));
+                sentSha256 = part.getSha256();
+                sentBytes = part.getSizeBytes();
+            }
             UploadRenditionResponse response = UploadRenditionResponse.newBuilder()
                     .setVersion(accession.getRevision())
                     .setSha256(sentSha256)
