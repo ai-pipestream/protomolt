@@ -3,7 +3,6 @@ package ai.protomolt.proto.repo.service;
 import ai.protomolt.proto.repo.engine.DriveProvisioner;
 
 import ai.protomolt.proto.repo.spi.ArchiveRepository;
-import ai.protomolt.proto.repo.spi.RepositoryCaller;
 import ai.protomolt.proto.repo.engine.ArchiveOperations;
 
 import ai.protomolt.proto.authz.AccountBindingResolver;
@@ -635,6 +634,12 @@ public final class RepoServices implements AutoCloseable {
         return driveOperations;
     }
 
+    /** Host read byte budget shared by verified v2 document reads and streamed rendition reads. */
+    ReadByteBudget readBudget() {
+        requireOpen();
+        return readBudget;
+    }
+
     /**
      * The wired gRPC services for hosts that register them on their own builder.
      * Qualified managed storage also mounts ArchiveMutationService. Starts managed
@@ -778,7 +783,10 @@ public final class RepoServices implements AutoCloseable {
     /**
      * {@link #startHttp(int, String, RepositoryConsole)} plus {@code routes}, extra context
      * path to handler mounted on the same port before it starts ({@link UploadHttpServer}
-     * names the paths it refuses).
+     * names the paths it refuses). Each upload resolves its caller the way the Connect
+     * gateway start does, through {@link #requestCallers} and this host's account bindings,
+     * with the operator token as the only credential: the operator token uploads as the
+     * process-authority caller it names, and any other credential answers 401.
      *
      * @param port the listen port (0 = ephemeral)
      * @param apiToken nonblank operator credential every upload request must present
@@ -791,11 +799,11 @@ public final class RepoServices implements AutoCloseable {
         requireOpen();
         requireFullProfile();
         RepositoryNetworkAuthentication.requireOperatorToken(apiToken);
+        RequestCallerResolver resolved = boundWriters(requestCallers(apiToken, null, Optional.empty()));
         if (managedArchive != null) startLifecycle();
-        return startHttp(port, new UploadHttpServer(v2Uploads,
-                () -> new RepositoryCaller("http-upload", true), apiToken,
+        return startHttp(port, new UploadHttpServer(v2Uploads, null, apiToken,
                 v2Archive, archiveOperations, legacyArchiveExists,
-                console, routes, null, null, null));
+                console, routes, null, resolved, callerBindings::bind));
     }
 
     /**
@@ -822,9 +830,7 @@ public final class RepoServices implements AutoCloseable {
         requireFullProfile();
         RepositoryNetworkAuthentication.requireOperatorToken(apiToken);
         Objects.requireNonNull(requestCallers, "requestCallers");
-        // A principal whose account binding lists intake writers is resolved with the
-        // writer credential the host keeps for it, on the gateway and the upload route alike.
-        RequestCallerResolver resolved = headers -> requestCallers.resolve(headers).map(callerBindings::withBindingWriter);
+        RequestCallerResolver resolved = boundWriters(requestCallers);
         if (managedArchive != null) startLifecycle();
         List<ServerServiceDefinition> definitions = services.stream()
                 .map(BindableService::bindService)
@@ -833,8 +839,7 @@ public final class RepoServices implements AutoCloseable {
                 new ConnectLimits(CONNECT_MESSAGE_BYTES, CONNECT_MESSAGE_BYTES));
         UploadHttpServer http;
         try {
-            http = new UploadHttpServer(v2Uploads,
-                    () -> new RepositoryCaller("http-upload", true), apiToken,
+            http = new UploadHttpServer(v2Uploads, null, apiToken,
                     v2Archive, archiveOperations, legacyArchiveExists,
                     console, routes, gateway, resolved, callerBindings::bind);
         } catch (RuntimeException | Error failure) {
@@ -865,6 +870,14 @@ public final class RepoServices implements AutoCloseable {
                 : RequestCallerResolver.bearer(apiToken, credentialStores);
         return sessions.<RequestCallerResolver>map(store -> RequestCallerResolver.firstOf(List.of(bearer, store)))
                 .orElse(bearer);
+    }
+
+    /**
+     * A principal whose account binding lists intake writers is resolved with the writer
+     * credential the host keeps for it, on the gateway and the upload routes alike.
+     */
+    private RequestCallerResolver boundWriters(RequestCallerResolver requestCallers) {
+        return headers -> requestCallers.resolve(headers).map(callerBindings::withBindingWriter);
     }
 
     private UploadHttpServer startHttp(int port, UploadHttpServer http) {

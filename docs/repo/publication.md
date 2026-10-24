@@ -128,9 +128,10 @@ evidence during admission) against a dedicated save-side byte budget of
 `DOCUMENT_PLATFORM_READ_BUDGET_BYTES` until the commit finishes; on
 `UploadDocument`, a streamed encoded part reserves per received 64 KiB
 chunk while a streamed raw blob flows straight to the stack. Exhaustion
-fails fast before any drive registration or stack write with
-`RESOURCE_EXHAUSTED` (`Save buffer budget exhausted`), leaving the
-`operation_id` unrecorded. Because the save-side budget is a separate pool
+fails fast before any stack write (and on unary `SaveDocument`, before any
+drive registration) with `RESOURCE_EXHAUSTED` (`Save buffer budget
+exhausted`), leaving the `operation_id` unrecorded. Because the save-side
+budget is a separate pool
 of `DOCUMENT_PLATFORM_READ_BUDGET_BYTES` alongside the read-side
 `ReadByteBudget` (`Read buffer budget exhausted`), concurrent read and save
 paths can hold up to `2 * DOCUMENT_PLATFORM_READ_BUDGET_BYTES` in combined
@@ -272,11 +273,15 @@ until then.
 A concept tag is a value of a `ConceptRef` field in any part, including the
 typed `structured_data` payload in CORE and parser outputs in PARSED, whose
 field rules bind it to concept schemes (`concept_schemes`, well-known types
-"Concept schemes (SKOS)"); only CORE's are catalogued. A save decides
-each tag's membership against the concept schemes the host mounts
-(`DocumentSaves` takes the host's `ConceptSchemeCatalog`; the served
-repository gets them from `RepoServices.withConceptSchemes` and mounts none
-without it): a concept the mounted scheme lacks is `concept.member` and a
+"Concept schemes (SKOS)"); only CORE's are catalogued. A save decides each
+tag's membership against the concept schemes the host mounts;
+`DocumentSaves` takes the host's `ConceptSchemeCatalog`. The stock repository
+loads configured scheme files at boot from
+`DOCUMENT_PLATFORM_CONCEPT_SCHEMES`, or its alias
+`PROTOMOLT_REPO_CONCEPT_SCHEME_PATHS`. Embedding hosts can provide
+`RepoServiceConfig.conceptSchemePaths` or call `RepoServices.withConceptSchemes`.
+Without configured paths or supplied mounts, no schemes are mounted.
+A concept the mounted scheme lacks is `concept.member` and a
 bound scheme the host has not mounted is `concept.unmounted`, both
 `VALIDATION_FAILED`. A tag is read as the canonical `ConceptRef` and held to
 its own rules, whatever a self-contained payload schema declares under that
