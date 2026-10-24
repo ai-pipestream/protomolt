@@ -1,6 +1,7 @@
 # The registry
 
-`protomolt-registry` and `protomolt-registry-service` are a protobuf schema
+`protomolt-registry`, `protomolt-schema-registry-git`, and `protomolt-registry-service`
+form a protobuf schema
 registry whose storage is a Git repository: every registration is a commit,
 history is `git log`, review and replication are whatever your Git hosting
 already does. The server fronts that storage with the Confluent subjects
@@ -9,11 +10,13 @@ protocol, so existing serializers and clients: including ProtoMolt's own
 
 ## The store
 
-`SchemaRegistryStore` is the storage SPI: subjects, ascending versions,
+`SchemaRegistryStore` (`protomolt-registry`, `ai.protomolt.proto.registry`) is the
+storage SPI: subjects, ascending versions,
 global IDs, content-identity lookup, and per-subject compatibility
 configuration falling back to a global default (`BACKWARD`). Two
-implementations ship: `GitSchemaRegistryStore` and an in-memory store for
-tests and embedding.
+implementations ship: `GitSchemaRegistryStore` in `protomolt-schema-registry-git`
+(`ai.protomolt.proto.schema.registry.git`) and an in-memory store in
+`protomolt-registry` for tests and embedding.
 
 The same store owns compiled descriptor sets by lowercase SHA-256 fingerprint.
 The Git implementation writes them under `descriptors/sha256/`. Writes verify
@@ -103,8 +106,10 @@ against us, we speak the protocol.
 ## Federation
 
 A registry federates by treating another mesh's registry repository as an
-ordinary git remote of its own. `RegistryFederation` (over the Git store)
-manages the remotes and runs sync; the composed registry role exposes it as
+ordinary git remote of its own. `RegistryFederation` (in `protomolt-schema-registry-git`,
+over the Git store)
+manages the remotes and runs sync; the composed Git registry role in
+`protomolt-schema-registry-git-service` exposes it as
 two [actions](../surface/actions.md): `registry-remotes` (list/add/remove;
 remotes are node-local git config, never a commit) and `registry-sync`.
 

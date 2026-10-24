@@ -24,7 +24,8 @@ the jobs store) and RustFS for object storage. Ports:
 
 | Port | Surface |
 | --- | --- |
-| 9090 | repo-service gRPC (DocumentService, DriveService, health, reflection) |
+| 9090 | repo-service gRPC (DocumentService, DriveService, ArchiveService, health, reflection) |
+| 8080 | repo-service HTTP (bulk upload, Connect gateway, and `/console`) |
 | 9092 | intake gRPC (`IntakeService`, API-key authenticated) |
 | 9093 | parsing coordinator gRPC (`ParseCoordinatorService`) |
 | 9094 | search service gRPC (`SearchService`, `SearchIndexService`) |
