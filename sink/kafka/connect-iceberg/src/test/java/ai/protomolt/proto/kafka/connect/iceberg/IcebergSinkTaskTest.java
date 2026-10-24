@@ -226,4 +226,27 @@ class IcebergSinkTaskTest {
                 .isInstanceOf(ConnectException.class)
                 .hasMessageContaining("Nope");
     }
+
+    @Test
+    void startClosesOpenedCatalogWhenEnsureTableFails() throws Exception {
+        java.util.concurrent.atomic.AtomicBoolean closed =
+                new java.util.concurrent.atomic.AtomicBoolean();
+        InMemoryCatalog closeTrackingCatalog = new InMemoryCatalog() {
+            @Override
+            public void close() throws java.io.IOException {
+                closed.set(true);
+                super.close();
+            }
+        };
+        closeTrackingCatalog.initialize("test-fail-" + NEXT.incrementAndGet(), Map.of());
+        // Deliberately omit namespace creation and choose a bad partition field so ensureTable fails.
+        Map<String, String> props = config("protobuf");
+        props.put(IcebergSinkConfig.PARTITION, "nonexistent_field:identity");
+        IcebergSinkTask failingTask = new IcebergSinkTask();
+        failingTask.catalogFactory = cfg -> closeTrackingCatalog;
+
+        assertThatThrownBy(() -> failingTask.start(props))
+                .isInstanceOf(RuntimeException.class);
+        assertThat(closed.get()).isTrue();
+    }
 }

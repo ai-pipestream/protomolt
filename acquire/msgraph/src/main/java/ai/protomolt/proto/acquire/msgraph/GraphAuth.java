@@ -29,10 +29,18 @@ import java.util.function.Consumer;
  */
 public final class GraphAuth {
 
-    /** Where tokens come from; override {@code authority} only in tests. */
+    /**
+     * Where tokens come from; override {@code authority} only in tests.
+     *
+     * @param authority    the Entra authority base URL (defaults to {@code https://login.microsoftonline.com})
+     * @param tenantId     the Entra tenant ID
+     * @param clientId     the Entra application (client) ID
+     * @param clientSecret the client secret for application permissions, or {@code null} for delegated
+     */
     public record Config(String authority, String tenantId, String clientId,
                          String clientSecret) {
 
+        /** Normalizes {@code authority} and validates required fields. */
         public Config {
             authority = authority == null || authority.isBlank()
                     ? "https://login.microsoftonline.com" : GraphFiles.stripTrailingSlashes(authority);
@@ -40,43 +48,94 @@ public final class GraphAuth {
             Objects.requireNonNull(clientId, "clientId");
         }
 
+        /**
+         * Creates a delegated (device-code) configuration.
+         *
+         * @param tenantId the Entra tenant ID
+         * @param clientId the Entra application (client) ID
+         * @return the delegated configuration
+         */
         public static Config delegated(String tenantId, String clientId) {
             return new Config(null, tenantId, clientId, null);
         }
 
+        /**
+         * Creates an application (client-credentials) configuration.
+         *
+         * @param tenantId     the Entra tenant ID
+         * @param clientId     the Entra application (client) ID
+         * @param clientSecret the application client secret
+         * @return the application configuration
+         */
         public static Config application(String tenantId, String clientId, String clientSecret) {
             return new Config(null, tenantId, clientId,
                     Objects.requireNonNull(clientSecret, "clientSecret"));
         }
     }
 
-    /** An issued token; {@code refreshToken} is null in the client-credentials flow. */
+    /**
+     * An issued token; {@code refreshToken} is null in the client-credentials flow.
+     *
+     * @param accessToken  the bearer access token
+     * @param expiresAt    when the access token expires
+     * @param refreshToken the refresh token, or {@code null} when not issued
+     */
     public record Token(String accessToken, Instant expiresAt, String refreshToken) {
 
+        /**
+         * Returns whether the token is expired (including a 60-second safety margin).
+         *
+         * @return {@code true} if the token should be refreshed
+         */
         public boolean expired() {
             return Instant.now().isAfter(expiresAt.minusSeconds(60));
         }
     }
 
-    /** What the operator must do to finish a device-code sign-in. */
+    /**
+     * What the operator must do to finish a device-code sign-in.
+     *
+     * @param verificationUri the URL the operator visits to enter {@code userCode}
+     * @param userCode        the short code the operator enters
+     * @param message         the human-readable instruction string from Entra
+     */
     public record DeviceCodePrompt(String verificationUri, String userCode, String message) {
     }
 
     private static final ObjectMapper JSON = new ObjectMapper();
+    private static final Duration DEFAULT_REQUEST_TIMEOUT = Duration.ofSeconds(30);
 
     private final Config config;
     private final HttpClient http;
+    private final Duration requestTimeout;
 
+    /**
+     * Creates an OAuth2 helper with default HTTP client and timeouts.
+     *
+     * @param config the Entra OAuth2 configuration
+     */
     public GraphAuth(Config config) {
-        this(config, HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(20)).build());
+        this(config, HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(20)).build(),
+                DEFAULT_REQUEST_TIMEOUT);
     }
 
     GraphAuth(Config config, HttpClient http) {
-        this.config = Objects.requireNonNull(config, "config");
-        this.http = http;
+        this(config, http, DEFAULT_REQUEST_TIMEOUT);
     }
 
-    /** Application permissions against {@code https://graph.microsoft.com/.default}. */
+    GraphAuth(Config config, HttpClient http, Duration requestTimeout) {
+        this.config = Objects.requireNonNull(config, "config");
+        this.http = Objects.requireNonNull(http, "http");
+        this.requestTimeout = Objects.requireNonNull(requestTimeout, "requestTimeout");
+    }
+
+    /**
+     * Application permissions against {@code https://graph.microsoft.com/.default}.
+     *
+     * @return the issued access token
+     * @throws IOException          when the token request fails
+     * @throws InterruptedException when the calling thread is interrupted
+     */
     public Token clientCredentials() throws IOException, InterruptedException {
         if (config.clientSecret() == null) {
             throw new IllegalStateException("The client-credentials flow needs a clientSecret");
@@ -93,6 +152,12 @@ public final class GraphAuth {
      * Delegated sign-in: surfaces the verification URL and code through {@code prompt},
      * then blocks (polling at the server-directed interval) until the operator approves,
      * the code expires, or the flow is denied.
+     *
+     * @param scope  the OAuth2 scope string to request
+     * @param prompt callback receiving the verification URL and user code
+     * @return the issued token
+     * @throws IOException          when the device-code flow fails or expires
+     * @throws InterruptedException when the calling thread is interrupted
      */
     public Token deviceCode(String scope, Consumer<DeviceCodePrompt> prompt)
             throws IOException, InterruptedException {
@@ -132,7 +197,15 @@ public final class GraphAuth {
         throw new IOException("Device-code sign-in expired before it was approved");
     }
 
-    /** Exchanges a delegated refresh token for a fresh access token. */
+    /**
+     * Exchanges a delegated refresh token for a fresh access token.
+     *
+     * @param refreshToken the refresh token to exchange
+     * @param scope        the OAuth2 scope string
+     * @return the refreshed token
+     * @throws IOException          when the token exchange fails
+     * @throws InterruptedException when the calling thread is interrupted
+     */
     public Token refresh(String refreshToken, String scope)
             throws IOException, InterruptedException {
         JsonNode response = postForm(tokenEndpoint(), Map.of(
@@ -191,6 +264,7 @@ public final class GraphAuth {
                     .append(URLEncoder.encode(value, StandardCharsets.UTF_8));
         });
         HttpResponse<String> response = http.send(HttpRequest.newBuilder(URI.create(url))
+                        .timeout(requestTimeout)
                         .header("content-type", "application/x-www-form-urlencoded")
                         .POST(HttpRequest.BodyPublishers.ofString(body.toString()))
                         .build(),

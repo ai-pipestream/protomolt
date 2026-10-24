@@ -158,11 +158,20 @@ public final class RepoChangeSink implements ChangeSink, AutoCloseable {
      * @return the ready sink
      */
     public static RepoChangeSink create(ConfluenceConnectorConfig config) {
+        Objects.requireNonNull(config, "config");
+        if (!config.repoEnabled()) {
+            throw new IllegalArgumentException("repoTarget cannot be null or blank");
+        }
         ManagedChannel channel = ManagedChannelBuilder.forTarget(config.repoTarget())
                 .usePlaintext()
                 .build();
-        return new RepoChangeSink(DocumentServiceGrpc.newBlockingStub(channel),
-                config.repoDrive(), config.repoAccountId(), config.repoDatasourceId(), channel);
+        try {
+            return new RepoChangeSink(DocumentServiceGrpc.newBlockingStub(channel),
+                    config.repoDrive(), config.repoAccountId(), config.repoDatasourceId(), channel);
+        } catch (RuntimeException e) {
+            channel.shutdownNow();
+            throw e;
+        }
     }
 
     /** The deterministic doc id one Confluence entity id maps to. */
@@ -407,13 +416,22 @@ public final class RepoChangeSink implements ChangeSink, AutoCloseable {
         return body.getRaw().getValue();
     }
 
-    /** Shuts the channel down when this sink created it; a no-op otherwise. */
+    /**
+     * Shuts the channel down when this sink created it; a no-op otherwise.
+     *
+     * @throws InterruptedException when interrupted while waiting for channel termination
+     */
     @Override
     public void close() throws InterruptedException {
         if (channel != null) {
             channel.shutdown();
-            if (!channel.awaitTermination(5, TimeUnit.SECONDS)) {
+            try {
+                if (!channel.awaitTermination(5, TimeUnit.SECONDS)) {
+                    channel.shutdownNow();
+                }
+            } catch (InterruptedException e) {
                 channel.shutdownNow();
+                throw e;
             }
         }
     }

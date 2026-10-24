@@ -87,19 +87,26 @@ public final class OpenSearchSinkTask extends SinkTask {
         mapping = context.mappingFactory().create(descriptor);
         if (client != null) {
             client.close();
+            client = null;
         }
-        client = clientFactory.apply(config);
-        if (config.ensureIndex()) {
-            try {
-                boolean created = client.ensureIndex(config.index(), mapping);
-                if (created) {
-                    LOG.info("Created OpenSearch index '{}' from the {} mapping",
-                            config.index(), descriptor.getFullName());
+        IndexClient openedClient = clientFactory.apply(config);
+        try {
+            if (config.ensureIndex()) {
+                try {
+                    boolean created = openedClient.ensureIndex(config.index(), mapping);
+                    if (created) {
+                        LOG.info("Created OpenSearch index '{}' from the {} mapping",
+                                config.index(), descriptor.getFullName());
+                    }
+                } catch (IOException e) {
+                    throw new ConnectException("Ensuring OpenSearch index '" + config.index()
+                            + "' failed: " + e.getMessage(), e);
                 }
-            } catch (IOException e) {
-                throw new ConnectException("Ensuring OpenSearch index '" + config.index()
-                        + "' failed: " + e.getMessage(), e);
             }
+            client = openedClient;
+        } catch (RuntimeException | Error e) {
+            openedClient.close();
+            throw e;
         }
         LOG.info("OpenSearch sink started: {} -> index {} ({} mapped field(s))",
                 descriptor.getFullName(), config.index(), mapping.fields().size());
