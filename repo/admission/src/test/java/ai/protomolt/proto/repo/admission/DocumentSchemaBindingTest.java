@@ -185,6 +185,11 @@ class DocumentSchemaBindingTest {
         var relinked = DocumentSchemaBinding.bind(condition, set.toByteString(), otherLimits, null, () -> {}, types);
         assertThat(relinked.type()).isNotSameAs(first.type());
         assertThat(types.size()).isEqualTo(3);
+        var stricter = new ClosedDescriptorSet.Limits(100_000, 1, 20, 10);
+        assertThatThrownBy(() -> DocumentSchemaBinding.bind(condition, set.toByteString(), stricter, null, () -> {}, types))
+                .as("a type cached under looser limits does not pass stricter ones")
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThat(types.size()).isEqualTo(3);
     }
 
     @Test
@@ -228,32 +233,75 @@ class DocumentSchemaBindingTest {
     }
 
     @Test
+    void anEquivalentClosureInOtherBytesIsVerifiedThenSharesTheCachedType() {
+        var types = new DocumentSchemaTypeCache(new DocumentSchemaTypeCache.Limits(8, 1_000_000));
+        var set = schema();
+        var condition = condition(set, "archive.Record");
+        var first = DocumentSchemaBinding.bind(condition, set.toByteString(), LIMITS, null, () -> {}, types);
+        var reversed = FileDescriptorSet.newBuilder().addFile(set.getFile(1)).addFile(set.getFile(0)).build().toByteString();
+        var ticks = new java.util.concurrent.atomic.AtomicInteger();
+        var other = DocumentSchemaBinding.bind(condition, reversed, LIMITS, null, ticks::incrementAndGet, types);
+        assertThat(ticks.get()).as("the other bytes were verified in full").isGreaterThan(3);
+        assertThat(other.type()).isSameAs(first.type());
+        assertThat(other.artifact()).isSameAs(reversed);
+        assertThat(other.artifactSha256()).isNotEqualTo(first.artifactSha256());
+        assertThat(types.size()).isEqualTo(1);
+        assertThat(types.artifactBytes()).isEqualTo(reversed.size());
+        var again = DocumentSchemaBinding.bind(condition, reversed, LIMITS, null, () -> {}, types);
+        assertThat(again.artifactSha256()).isEqualTo(other.artifactSha256());
+        assertThat(again.type()).isSameAs(first.type());
+    }
+
+    @Test
     void evictsTheLeastRecentlyUsedTypeAndSkipsArtifactsOverTheByteBound() {
         var set = schema();
         int size = set.toByteString().size();
         var types = new DocumentSchemaTypeCache(new DocumentSchemaTypeCache.Limits(2, 3L * size));
         var record = condition(set, "archive.Record");
         var details = condition(set, "archive.Record.Details");
-        var common = condition(set, "archive.common.Common");
         var first = DocumentSchemaBinding.bind(record, set.toByteString(), LIMITS, null, () -> {}, types);
-        DocumentSchemaBinding.bind(details, set.toByteString(), LIMITS, null, () -> {}, types);
+        var nested = DocumentSchemaBinding.bind(details, set.toByteString(), LIMITS, null, () -> {}, types);
         assertThat(DocumentSchemaBinding.bind(record, set.toByteString(), LIMITS, null, () -> {}, types).type())
                 .isSameAs(first.type());
-        assertThatThrownBy(() -> DocumentSchemaBinding.bind(common, set.toByteString(), LIMITS, null, () -> {}, types))
-                .hasMessageContaining("outside");
-        var envelope = set.toBuilder().setUnknownFields(UnknownFieldSet.newBuilder().addField(999,
-                UnknownFieldSet.Field.newBuilder().addVarint(1).build()).build()).build().toByteString();
-        DocumentSchemaBinding.bind(record, envelope, LIMITS, null, () -> {}, types);
+        assertThatThrownBy(() -> DocumentSchemaBinding.bind(condition(set, "archive.common.Common"), set.toByteString(),
+                LIMITS, null, () -> {}, types)).hasMessageContaining("outside");
         assertThat(types.size()).isEqualTo(2);
-        assertThat(types.artifactBytes()).isEqualTo(size + envelope.size());
+        var otherLimits = new ClosedDescriptorSet.Limits(100_000, 10, 20, 9);
+        DocumentSchemaBinding.bind(record, set.toByteString(), otherLimits, null, () -> {}, types);
+        assertThat(types.size()).isEqualTo(2);
+        assertThat(types.artifactBytes()).isEqualTo(2L * size);
         assertThat(DocumentSchemaBinding.bind(record, set.toByteString(), LIMITS, null, () -> {}, types).type())
-                .isSameAs(first.type());
+                .as("the recently used entry survives").isSameAs(first.type());
+        assertThat(DocumentSchemaBinding.bind(details, set.toByteString(), LIMITS, null, () -> {}, types).type())
+                .as("the least recently used entry was evicted").isNotSameAs(nested.type());
 
         var tiny = new DocumentSchemaTypeCache(new DocumentSchemaTypeCache.Limits(2, size - 1));
         var uncached = DocumentSchemaBinding.bind(record, set.toByteString(), LIMITS, null, () -> {}, tiny);
         assertThat(tiny.size()).isZero();
         assertThat(DocumentSchemaBinding.bind(record, set.toByteString(), LIMITS, null, () -> {}, tiny).type())
                 .isNotSameAs(uncached.type());
+    }
+
+    @Test
+    void aHitNeedsTheExactBytesAndKeepsNoSliceOfTheCallersBuffer() {
+        var types = new DocumentSchemaTypeCache(new DocumentSchemaTypeCache.Limits(8, 1_000_000));
+        var set = schema();
+        var condition = condition(set, "archive.Record");
+        var bytes = set.toByteString();
+        var padded = ByteString.copyFromUtf8("prefix").concat(bytes).concat(ByteString.copyFromUtf8("suffix"));
+        var slice = padded.substring(6, 6 + bytes.size());
+        var first = DocumentSchemaBinding.bind(condition, slice, LIMITS, null, () -> {}, types);
+        assertThat(types.artifactBytes()).isEqualTo(bytes.size());
+        var hit = new java.util.concurrent.atomic.AtomicInteger();
+        var second = DocumentSchemaBinding.bind(condition, bytes, LIMITS, null, hit::incrementAndGet, types);
+        assertThat(second.type()).isSameAs(first.type());
+        assertThat(second.artifactSha256()).isEqualTo(first.artifactSha256());
+        assertThat(hit.get()).as("a hit checks control without relinking").isEqualTo(2);
+        var cancelled = new CancellationException("stop at the hit");
+        var seen = new java.util.concurrent.atomic.AtomicInteger();
+        assertThatThrownBy(() -> DocumentSchemaBinding.bind(condition, bytes, LIMITS, null, () -> {
+            if (seen.incrementAndGet() == 2) throw cancelled;
+        }, types)).isSameAs(cancelled);
     }
 
     @Test

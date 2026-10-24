@@ -337,9 +337,9 @@ Every save is admitted before anything is written:
    segments must match the text they span (its digest is computed
    server-side), and an embedding set must bind to the segmentation digest
    and segment IDs it claims. Legacy `semantic_results` writes are refused.
-   A schema closure is linked once per host and reused by later saves and
-   reads (`ListLinks`, `ResolveLink`) that present the same descriptor
-   bytes; the bytes are still read and their digest checked on every call.
+   A schema closure is linked once per host and reused by later saves,
+   `ListLinks` and `ResolveLink` calls that present the same descriptor
+   bytes; retained artifacts are still loaded and digest-checked each time.
 3. **Authorization** — the caller's account, the document ACL, and the
    writer grant for step saves (checked live at commit, retained as
    `WriterGrantEvidence`).

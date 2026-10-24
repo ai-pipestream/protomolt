@@ -59,7 +59,7 @@ final class DocumentSchemaBinding {
     /**
      * As {@link #bind(PublicationSchemaCondition, ByteString, ClosedDescriptorSet.Limits,
      * DocumentAdmissionReservations, Runnable)}, reusing a type {@code types} linked earlier
-     * from the same condition, artifact digest and limits instead of relinking the closure.
+     * from the same condition, artifact bytes and limits instead of relinking the closure.
      */
     static DocumentSchemaBinding bind(PublicationSchemaCondition condition, ByteString artifact,
             ClosedDescriptorSet.Limits limits, DocumentAdmissionReservations reservations, Runnable control,
@@ -74,11 +74,12 @@ final class DocumentSchemaBinding {
                 || !CONDITIONS.validate(condition).valid()) {
             throw new IllegalArgumentException("invalid publication schema condition");
         }
-        String digest = sha256(artifact, control);
-        control.run();
-        var key = new DocumentSchemaTypeCache.Key(limits, condition, digest);
-        Descriptor cached = types.find(key);
-        if (cached != null) return new DocumentSchemaBinding(condition, artifact, digest, cached);
+        var key = new DocumentSchemaTypeCache.Key(limits, condition);
+        var cached = types.find(key, artifact);
+        if (cached != null) {
+            control.run();
+            return new DocumentSchemaBinding(condition, artifact, cached.artifactSha256(), cached.type());
+        }
         List<FileDescriptor> files = ClosedDescriptorSet.load(artifact, limits);
         control.run();
         Descriptor type = findType(files, condition.getTypeName(), control);
@@ -104,8 +105,9 @@ final class DocumentSchemaBinding {
         if (!fingerprint.equals(condition.getDescriptorFingerprint())) {
             throw new IllegalArgumentException("schema descriptor fingerprint mismatch");
         }
+        String digest = sha256(artifact, control);
         control.run();
-        return new DocumentSchemaBinding(condition, artifact, digest, types.put(key, type, artifact.size()));
+        return new DocumentSchemaBinding(condition, artifact, digest, types.put(key, type, artifact, digest));
     }
 
     private static Descriptor findType(List<FileDescriptor> files, String name, Runnable control) {
