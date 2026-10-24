@@ -99,6 +99,67 @@ class UploadHttpServerCredentialTest {
         }
     }
 
+    @Test
+    void requestCallerResolverHandlesArchiveRouteUnauthenticatedAndOutageAndBindsCaller() throws Exception {
+        var capturedCaller = new java.util.concurrent.atomic.AtomicReference<ai.protomolt.proto.repo.spi.RepositoryCaller>();
+        ai.protomolt.proto.repo.spi.ArchiveRepository recording =
+                (ai.protomolt.proto.repo.spi.ArchiveRepository) java.lang.reflect.Proxy.newProxyInstance(
+                        UploadHttpServerCredentialTest.class.getClassLoader(),
+                        new Class<?>[] { ai.protomolt.proto.repo.spi.ArchiveRepository.class },
+                        (proxy, method, args) -> {
+                            capturedCaller.set((ai.protomolt.proto.repo.spi.RepositoryCaller) args[0]);
+                            ((java.io.InputStream) args[9]).readAllBytes();
+                            return new ai.protomolt.proto.repo.spi.ArchiveRepository.UploadResult(
+                                    "entry-uuid-scoped", 1L, "sha", 1L, "obj", "root", false);
+                        });
+        ai.protomolt.proto.authz.RequestCallerResolver resolver =
+                ai.protomolt.proto.authz.RequestCallerResolver.bearer(TOKEN, token -> switch (token) {
+                    case "session-alice" -> java.util.Optional.of(
+                            ai.protomolt.proto.actions.Caller.scoped("alice", java.util.Set.of()));
+                    case "store-down" -> throw new IllegalStateException("credential store down");
+                    default -> java.util.Optional.empty();
+                });
+        try (var scopedServer = new UploadHttpServer(null, null, TOKEN, null, recording, null,
+                RepositoryConsole.notConfigured(), java.util.Map.of(), null, resolver,
+                auth -> new ai.protomolt.proto.repo.spi.RepositoryCaller(
+                        auth.caller().name(), false, java.util.Set.of("acct-1"),
+                        java.util.Set.of()))) {
+            String scopedBase = "http://127.0.0.1:" + scopedServer.start(0);
+            String target = scopedBase + UploadHttpServer.ARCHIVE_UPLOAD_PATH
+                    + "?account_id=acct-1&archive=arc&entry_id=e1";
+
+            // Unauthenticated -> 401
+            HttpResponse<String> unauth = client.send(
+                    HttpRequest.newBuilder(URI.create(target))
+                            .POST(HttpRequest.BodyPublishers.ofByteArray(new byte[] {1}))
+                            .build(),
+                    HttpResponse.BodyHandlers.ofString());
+            assertThat(unauth.statusCode()).isEqualTo(401);
+
+            // Outage -> 503
+            HttpResponse<String> outage = client.send(
+                    HttpRequest.newBuilder(URI.create(target))
+                            .header("Authorization", "Bearer store-down")
+                            .POST(HttpRequest.BodyPublishers.ofByteArray(new byte[] {1}))
+                            .build(),
+                    HttpResponse.BodyHandlers.ofString());
+            assertThat(outage.statusCode()).isEqualTo(503);
+
+            // Authenticated scoped caller -> 200 with bound RepositoryCaller
+            HttpResponse<String> ok = client.send(
+                    HttpRequest.newBuilder(URI.create(target))
+                            .header("Authorization", "Bearer session-alice")
+                            .POST(HttpRequest.BodyPublishers.ofByteArray(new byte[] {1}))
+                            .build(),
+                    HttpResponse.BodyHandlers.ofString());
+            assertThat(ok.statusCode()).as(ok.body()).isEqualTo(200);
+            assertThat(capturedCaller.get()).isNotNull();
+            assertThat(capturedCaller.get().principalName()).isEqualTo("alice");
+            assertThat(capturedCaller.get().processAuthority()).isFalse();
+            assertThat(capturedCaller.get().accountIds()).containsExactly("acct-1");
+        }
+    }
+
     /** Credential and validation failures fire before the archive port is ever called. */
     static ai.protomolt.proto.repo.spi.ArchiveRepository unimplementedArchive() {
         return (ai.protomolt.proto.repo.spi.ArchiveRepository) java.lang.reflect.Proxy.newProxyInstance(

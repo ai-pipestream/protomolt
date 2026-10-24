@@ -54,6 +54,8 @@ dependencies {
     // Parts-based v2 accession: the outbox relay's publisher port and the
     // streaming HTTP upload handler this host mounts.
     implementation project(':protomolt-repo-accession')
+    // Archive over v2 documents: the streaming HTTP archive upload route.
+    api project(':protomolt-repo-archive')
     // The console's Connect calls on the repository HTTP port.
     api project(':protomolt-http-connect')
     // Descriptor closures/fingerprints for module-contributed admission schemas.

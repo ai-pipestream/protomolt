@@ -2030,12 +2030,27 @@ public final class DocumentArchive {
     }
 
     /** The archive receipt of a committed (or raced and replayed) upload. */
-    UploadRenditionResponse finishUpload(Pending pending, SaveDocumentResponse saved) {
+    UploadRenditionResponse finishUpload(
+            Pending pending, SaveDocumentResponse saved, String sentSha256, long sentBytes) {
         if (saved.getReplayed() && pending.derivedLastWriteWins()) {
             // v2 replayed another attempt of this operation that committed after our lookup.
             requireStillCurrent(pending.address(), pending.operationId(), saved.getAccession().getRevision());
         }
-        GetDocumentResponse committed = read(pending.address(), revision(saved.getAccession().getRevision()),
+        Accession accession = saved.getAccession();
+        String rootChecksum = accession.getValidation().getCandidateSha256();
+        if (!saved.getReplayed() && !rootChecksum.isEmpty()) {
+            UploadRenditionResponse response = UploadRenditionResponse.newBuilder()
+                    .setVersion(accession.getRevision())
+                    .setSha256(sentSha256)
+                    .setSizeBytes(sentBytes)
+                    .setRootChecksum(rootChecksum)
+                    .setOperationId(pending.operationId())
+                    .setReplayed(false)
+                    .build();
+            requireValidView(response);
+            return response;
+        }
+        GetDocumentResponse committed = read(pending.address(), revision(accession.getRevision()),
                 CORE_AND_BLOBS);
         return uploadResponse(committed, pending.rendition(), pending.operationId(), saved.getReplayed());
     }
