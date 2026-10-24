@@ -1295,6 +1295,82 @@ class DocumentArchiveIT {
     }
 
     @Test
+    void oneAccountCannotReadOrListAnotherAccountsArchivesOrEntries() {
+        String accountA = "acct-iso-a-" + UUID.randomUUID();
+        String accountB = "acct-iso-b-" + UUID.randomUUID();
+        Archive sharedA = archive.createArchive(CreateArchiveRequest.newBuilder()
+                .setArchive(Archive.newBuilder()
+                        .setAccountId(accountA)
+                        .setName("shared")
+                        .setDriveName("intake")
+                        .setVersioning(VersioningPolicy.VERSIONING_POLICY_RETAINED)
+                        .setDescription("account A"))
+                .build()).getArchive();
+        archive.createArchive(CreateArchiveRequest.newBuilder()
+                .setArchive(Archive.newBuilder()
+                        .setAccountId(accountA)
+                        .setName("only-a")
+                        .setDriveName("intake")
+                        .setVersioning(VersioningPolicy.VERSIONING_POLICY_RETAINED))
+                .build());
+
+        // The same archive name in another account is a separate definition, not ALREADY_EXISTS.
+        Archive sharedB = archive.createArchive(CreateArchiveRequest.newBuilder()
+                .setArchive(Archive.newBuilder()
+                        .setAccountId(accountB)
+                        .setName("shared")
+                        .setDriveName("pipeline")
+                        .setVersioning(VersioningPolicy.VERSIONING_POLICY_NONE)
+                        .setDescription("account B"))
+                .build()).getArchive();
+
+        // Definitions: B sees only its own.
+        assertThat(code(() -> archive.getArchive(GetArchiveRequest.newBuilder()
+                .setAccountId(accountB).setArchive("only-a").build()))).isEqualTo(Status.Code.NOT_FOUND);
+        assertThat(archive.getArchive(GetArchiveRequest.newBuilder()
+                .setAccountId(accountB).setArchive("shared").build()).getArchive()).isEqualTo(sharedB);
+        assertThat(archive.getArchive(GetArchiveRequest.newBuilder()
+                .setAccountId(accountA).setArchive("shared").build()).getArchive()).isEqualTo(sharedA);
+        assertThat(archive.listArchives(ListArchivesRequest.newBuilder()
+                .setAccountId(accountB).setLimit(10).build()).getArchivesList()).containsExactly(sharedB);
+        assertThat(archive.listArchives(ListArchivesRequest.newBuilder()
+                .setAccountId(accountA).setLimit(10).build()).getArchivesList())
+                .extracting(Archive::getName).containsExactlyInAnyOrder("shared", "only-a");
+
+        // Entries: an entry in A's archive is invisible under the same archive and entry id in B.
+        EntryAddress inA = EntryAddress.newBuilder()
+                .setAccountId(accountA).setArchive("shared").setEntryId("doc-1").build();
+        EntryAddress sameInB = inA.toBuilder().setAccountId(accountB).build();
+        archive.putEntry(firstPut(inA).build());
+
+        assertThat(code(() -> archive.getEntry(GetEntryRequest.newBuilder().setAddress(sameInB).build())))
+                .isEqualTo(Status.Code.NOT_FOUND);
+        assertThat(code(() -> archive.getEntryManifest(GetEntryManifestRequest.newBuilder()
+                .setAddress(sameInB).build()))).isEqualTo(Status.Code.NOT_FOUND);
+        assertThat(code(() -> read(ReadRenditionRequest.newBuilder().setAddress(sameInB)
+                .setRendition("original").build()))).isEqualTo(Status.Code.NOT_FOUND);
+        ListEntriesResponse listedB = archive.listEntries(ListEntriesRequest.newBuilder()
+                .setAccountId(accountB).setArchive("shared").setLimit(10).build());
+        assertThat(listedB.getEntriesList()).isEmpty();
+        assertThat(listedB.getTotalCount()).isZero();
+        ArchiveStats statsB = archive.getArchiveStats(GetArchiveStatsRequest.newBuilder()
+                .setAccountId(accountB).setArchive("shared").build()).getStats();
+        assertThat(statsB.getEntries()).isZero();
+        assertThat(statsB.getRetainedBytes()).isZero();
+
+        // B cannot write into an archive only A defined.
+        EntryAddress intoOnlyA = EntryAddress.newBuilder()
+                .setAccountId(accountB).setArchive("only-a").setEntryId("doc-2").build();
+        assertThat(code(() -> archive.putEntry(firstPut(intoOnlyA).build()))).isEqualTo(Status.Code.NOT_FOUND);
+
+        // A still reads its own entry.
+        assertThat(archive.getEntry(GetEntryRequest.newBuilder().setAddress(inA).build())
+                .getInfo().getTitle()).isEqualTo("Quarterly report");
+        assertThat(archive.listEntries(ListEntriesRequest.newBuilder()
+                .setAccountId(accountA).setArchive("shared").setLimit(10).build()).getTotalCount()).isEqualTo(1);
+    }
+
+    @Test
     void archiveStatsAndListEntriesTotalCountTrackRetainedAndUnversionedEntries() {
         String account = "acct-stats-" + UUID.randomUUID();
         archive.createArchive(CreateArchiveRequest.newBuilder()
