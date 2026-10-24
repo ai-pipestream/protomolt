@@ -301,27 +301,7 @@ public final class UploadHttpServer implements AutoCloseable {
             RenditionUploads baseUploads = new RenditionUploads(v2Archive);
             this.v2ArchiveUploads = new RenditionUploads(
                     v2Archive,
-                    ArchiveCallerHandoff.interceptChannel(baseUploads.channel()),
-                    header -> {
-                        var caller = Objects.requireNonNull(ArchiveCallerHandoff.REPOSITORY_CALLER.get(),
-                                "archive upload caller");
-                        if (uploads == null) {
-                            // A remote archive-only embedding has no local document gate.
-                            // Only explicit process authority can stage there; scoped
-                            // callers must use a host with canonical admission available.
-                            if (caller.processAuthority()) return;
-                            throw Status.FAILED_PRECONDITION.withDescription(
-                                    "Scoped archive uploads require canonical document admission")
-                                    .asRuntimeException();
-                        }
-                        var request = ai.protomolt.proto.repo.v2.UploadDocumentRequest.newBuilder()
-                                .setHeader(header).build();
-                        if (!caller.processAuthority()
-                                && !header.getSave().getDocument().getOwnership().hasSecurity()) {
-                            request = ArchiveCallerHandoff.withUploaderSecurity(request, caller);
-                        }
-                        uploads.precheck(caller, request.getHeader());
-                    });
+                    ArchiveCallerHandoff.interceptChannel(baseUploads.channel()));
         }
         this.legacyArchiveExists = legacyArchiveExists;
         this.console = Objects.requireNonNull(console, "console");

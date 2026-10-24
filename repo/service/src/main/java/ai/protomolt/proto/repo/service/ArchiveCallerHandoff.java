@@ -269,7 +269,7 @@ final class ArchiveCallerHandoff {
      * caller, matching {@code UploadHttpHandler.uploadSecurity}. A scoped caller that
      * presents no ACL identities writes no rules.
      */
-    static UploadDocumentRequest withUploaderSecurity(
+    private static UploadDocumentRequest withUploaderSecurity(
             UploadDocumentRequest request, RepositoryCaller caller) {
         if (caller.identities().isEmpty()) {
             return request;
