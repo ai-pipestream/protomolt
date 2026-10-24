@@ -82,6 +82,33 @@ describe('OperationOutcomeInspector', () => {
     wrapper.unmount()
   })
 
+  it('renders a recorded unchanged outcome distinctly from a new or replaced revision and links the matched revision', async () => {
+    const unchanged: Response = create(GetOperationOutcomeResponseSchema, {
+      state: {
+        case: 'committed',
+        value: create(RecordedOutcomeSchema, {
+          result: {
+            case: 'unchanged',
+            value: create(AccessionSchema, {
+              address: testAddress({ accountId: 'acct-a', docId: 'doc-1', graphAddressId: 'ds-1' }),
+              revision: 3n,
+              previousRevision: 3n,
+            }),
+          },
+          recordedAt: at('2026-10-01T00:00:00Z'),
+        }),
+      },
+    })
+    const { wrapper } = await mounted(() => unchanged, { accountId: 'acct-a', initialOperationId: 'op-unchanged' })
+    const panel = wrapper.get('[data-testid="outcome-committed"]')
+    expect(panel.text()).toContain('Unchanged — matched revision 3 of doc-1 (no new revision)')
+    expect(wrapper.get('[data-testid="outcome-unchanged"]').text()).toContain('matched revision 3 (no new revision)')
+    expect(wrapper.find('[data-testid="outcome-new"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="outcome-replaced"]').exists()).toBe(false)
+    expect(wrapper.get('[data-testid="outcome-open"]').attributes('href')).toContain('revision=3')
+    wrapper.unmount()
+  })
+
   it('looks up a later initial operation ID and ignores a cleared one', async () => {
     const { wrapper, seen } = await mounted(() => committed,
         { accountId: 'acct-a', initialOperationId: 'op-1' })

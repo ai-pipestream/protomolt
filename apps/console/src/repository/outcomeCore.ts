@@ -1,10 +1,12 @@
 /**
  * Operation outcome display: lookupCore answers the wire states (committed with
- * an accession or a recorded rejection, no recorded outcome, unavailable) and
- * this turns one answer into what the inspector shows, including the router
- * location of a committed revision. The wire carries no unchanged flag: a save
- * that replaced nothing is a new document (previous revision 0), anything else
- * names the revision it replaced.
+ * an accession, an unchanged match, or a recorded rejection, no recorded
+ * outcome, unavailable) and this turns one answer into what the inspector
+ * shows, including the router location of the committed or matched revision.
+ * An unchanged match (RecordedOutcome.result.unchanged) names the existing
+ * revision the save matched without adding a new revision; a committed
+ * accession with previous revision 0 is a new document, and any other committed
+ * accession names the revision it replaced.
  */
 import type { Client } from '@connectrpc/connect'
 import { RejectionReasonSchema } from '@/gen/ai/protomolt/proto/repo/v2/errors_pb'
@@ -34,6 +36,7 @@ export type OutcomeView =
       datasourceId: string
       revision: string
       previousRevision: string
+      unchanged: boolean
       newDocument: boolean
       tombstone: boolean
       recordedAt: string | null
@@ -54,13 +57,15 @@ export function describeOutcome(answer: OutcomeAnswer): OutcomeView {
     case 'committed': {
       const accession = answer.accession
       const address = accession.address
+      const unchanged = answer.unchanged === true
       return {
         kind: 'committed',
         docId: address?.docId ?? '',
         datasourceId: address?.graphAddressId ?? '',
         revision: accession.revision.toString(),
         previousRevision: accession.previousRevision.toString(),
-        newDocument: accession.previousRevision === 0n,
+        unchanged,
+        newDocument: !unchanged && accession.previousRevision === 0n,
         tombstone: accession.tombstone,
         recordedAt: answer.recordedAt,
         route: address

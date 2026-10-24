@@ -20,13 +20,21 @@
       <div v-if="view" class="mt-3" :data-testid="`outcome-${view.kind}`">
         <v-alert v-if="view.kind === 'committed'" type="success" variant="tonal" density="compact">
           <div class="font-weight-medium d-flex align-center ga-2">
-            Committed
-            <v-chip v-if="view.newDocument" size="x-small" data-testid="outcome-new">new document</v-chip>
+            {{ view.unchanged ? 'Unchanged' : 'Committed' }}
+            <v-chip v-if="view.unchanged" size="x-small" data-testid="outcome-unchanged">
+              matched revision {{ view.revision }} (no new revision)
+            </v-chip>
+            <v-chip v-else-if="view.newDocument" size="x-small" data-testid="outcome-new">new document</v-chip>
             <v-chip v-else size="x-small" data-testid="outcome-replaced">replaced revision {{ view.previousRevision }}</v-chip>
             <v-chip v-if="view.tombstone" size="x-small" color="warning">tombstone</v-chip>
           </div>
           <div class="text-body-2">
-            Revision {{ view.revision }} of <span class="text-mono">{{ view.docId }}</span>
+            <template v-if="view.unchanged">
+              Unchanged — matched revision {{ view.revision }} of <span class="text-mono">{{ view.docId }}</span> (no new revision)
+            </template>
+            <template v-else>
+              Revision {{ view.revision }} of <span class="text-mono">{{ view.docId }}</span>
+            </template>
             <span v-if="view.datasourceId"> (datasource <span class="text-mono">{{ view.datasourceId }}</span>)</span><span v-if="view.recordedAt">, recorded {{ view.recordedAt }}</span>.
           </div>
           <v-btn v-if="view.route" size="small" variant="tonal" class="mt-2" data-testid="outcome-open"
@@ -56,10 +64,11 @@
 <script setup lang="ts">
 /**
  * Looks up one operation ID in the account and shows its durable outcome: a
- * committed accession (with a link to the revision), a recorded rejection with
- * its violations, or the no-outcome state. The account comes from the hosting
- * view. An initial operation ID (a ?operationId deep link) is looked up on
- * mount, and a later initial ID is looked up when it changes.
+ * committed accession or unchanged match (with a link to the revision), a
+ * recorded rejection with its violations, or the no-outcome state. The account
+ * comes from the hosting view. An initial operation ID (a ?operationId deep
+ * link) is looked up on mount, and a later initial ID is looked up when it
+ * changes.
  */
 import { onMounted, ref, shallowRef, watch } from 'vue'
 import RpcFailureAlert from '@/components/repository/RpcFailureAlert.vue'

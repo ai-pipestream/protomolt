@@ -60,7 +60,36 @@ describe('describeOutcome', () => {
       }),
       recordedAt: null,
     })
-    expect(tombstone).toMatchObject({ kind: 'committed', tombstone: true, newDocument: false })
+    expect(tombstone).toMatchObject({ kind: 'committed', tombstone: true, newDocument: false, unchanged: false })
+  })
+
+  it('marks an unchanged recorded outcome distinctly from a new or replaced revision while keeping its revision route', () => {
+    const unchanged = describeOutcome({
+      state: 'committed',
+      unchanged: true,
+      accession: create(AccessionSchema, {
+        address: testAddress({ accountId: 'acct-a', docId: 'doc-1', graphAddressId: 'ds-1' }),
+        revision: 3n,
+        previousRevision: 3n,
+      }),
+      recordedAt: '2026-10-01T00:00:00.000Z',
+    })
+    expect(unchanged).toMatchObject({
+      kind: 'committed',
+      docId: 'doc-1',
+      datasourceId: 'ds-1',
+      revision: '3',
+      previousRevision: '3',
+      unchanged: true,
+      newDocument: false,
+      tombstone: false,
+      recordedAt: '2026-10-01T00:00:00.000Z',
+    })
+    if (unchanged.kind !== 'committed') throw new Error('unreachable')
+    expect(unchanged.route).toMatchObject({
+      name: 'repository-document',
+      query: { account: 'acct-a', doc: 'doc-1', node: 'ds-1', revision: '3' },
+    })
   })
 
   it('shows a rejection with its reason label and violations', () => {
@@ -112,7 +141,35 @@ describe('inspectOutcome', () => {
       },
     }))
     const view = await inspectOutcome(client, 'acct-a', 'op-9', signal())
-    expect(view).toMatchObject({ kind: 'committed', revision: '2', newDocument: true })
+    expect(view).toMatchObject({ kind: 'committed', revision: '2', newDocument: true, unchanged: false })
+  })
+
+  it('answers the unchanged display form when RecordedOutcome.result is unchanged', async () => {
+    const client = server(create(GetOperationOutcomeResponseSchema, {
+      state: {
+        case: 'committed',
+        value: create(RecordedOutcomeSchema, {
+          result: {
+            case: 'unchanged',
+            value: create(AccessionSchema, {
+              address: testAddress({ accountId: 'acct-a', docId: 'doc-1', graphAddressId: 'ds-1' }),
+              revision: 3n,
+              previousRevision: 3n,
+            }),
+          },
+          recordedAt: at('2026-10-03T00:00:00Z'),
+        }),
+      },
+    }))
+    const view = await inspectOutcome(client, 'acct-a', 'op-unchanged', signal())
+    expect(view).toMatchObject({
+      kind: 'committed',
+      docId: 'doc-1',
+      revision: '3',
+      previousRevision: '3',
+      unchanged: true,
+      newDocument: false,
+    })
   })
 
   it('answers none for a recorded nothing', async () => {
