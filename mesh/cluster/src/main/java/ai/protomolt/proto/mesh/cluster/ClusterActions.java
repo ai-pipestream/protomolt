@@ -24,7 +24,6 @@ import ai.protomolt.proto.mesh.cluster.v1.RegisterProcessorRequest;
 import ai.protomolt.proto.mesh.cluster.v1.RegisterProcessorResponse;
 import ai.protomolt.proto.mesh.cluster.v1.SweepRequest;
 import ai.protomolt.proto.mesh.cluster.v1.SweepResponse;
-import ai.protomolt.proto.mesh.cluster.v1.SweepResponse;
 import ai.protomolt.proto.mesh.cluster.v1.UpdateCapacityRequest;
 import ai.protomolt.proto.mesh.cluster.v1.UpdateCapacityResponse;
 import com.fasterxml.jackson.databind.node.JsonNodeFactory;
@@ -46,7 +45,13 @@ public final class ClusterActions {
     private ClusterActions() {
     }
 
-    /** Registers the node, processor, capacity, liveness, snapshot, and sweep actions. */
+    /**
+     * Registers the node, processor, capacity, liveness, snapshot, and sweep actions.
+     *
+     * @param catalog action catalog to register into
+     * @param directory persistent cluster directory backing the actions
+     * @return the given catalog for chaining
+     */
     public static ActionCatalog register(ActionCatalog catalog,
                                          PersistentClusterDirectory directory) {
         Objects.requireNonNull(catalog, "catalog");

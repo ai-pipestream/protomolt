@@ -108,10 +108,13 @@ public final class JobsModule implements ServiceModule {
 
             @Override
             public void close() {
-                if (worker != null) {
-                    worker.close();
+                try {
+                    if (worker != null) {
+                        worker.close();
+                    }
+                } finally {
+                    database.close();
                 }
-                database.close();
             }
         };
     }

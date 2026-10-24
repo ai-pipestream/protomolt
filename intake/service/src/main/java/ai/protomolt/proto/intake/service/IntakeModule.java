@@ -63,21 +63,35 @@ public final class IntakeModule implements ServiceModule {
 
     @Override
     public ServiceMount wire(NodeContext context) throws Exception {
-        ApiKeyIdentityResolver resolver = config.resolver() != null
-                ? config.resolver()
-                : IntakeServiceMain.selectResolver(context.environment());
+        boolean ownsResolver = config.resolver() == null;
+        ApiKeyIdentityResolver resolver = ownsResolver
+                ? IntakeServiceMain.selectResolver(context.environment())
+                : config.resolver();
         // The node's channel to repo: in-process when co-mounted, otherwise opened by the
         // node's remote opener, which presents the node's credential to a guarded repo.
-        services = IntakeServices.build(
-                new IntakeServiceConfig(
-                        config.grpcPort(),
-                        context.channels().targetOf("repo"),
-                        config.maxPayloadBytes()),
-                resolver,
-                context.channels().to("repo"));
-        String inProcessName = ROLE + "-" + context.nodeId();
-        inProcess = services.startInProcess(inProcessName);
-        context.channels().publishInProcess(ROLE, inProcessName);
+        try {
+            services = IntakeServices.build(
+                    new IntakeServiceConfig(
+                            config.grpcPort(),
+                            context.channels().targetOf("repo"),
+                            config.maxPayloadBytes()),
+                    resolver,
+                    context.channels().to("repo"));
+            String inProcessName = ROLE + "-" + context.nodeId();
+            inProcess = services.startInProcess(inProcessName);
+            context.channels().publishInProcess(ROLE, inProcessName);
+        } catch (Exception e) {
+            if (services != null) {
+                services.close();
+            }
+            if (ownsResolver && resolver instanceof AutoCloseable closeable) {
+                try {
+                    closeable.close();
+                } catch (Exception ignored) {
+                }
+            }
+            throw e;
+        }
         return new ServiceMount() {
             @Override
             public void start() throws Exception {
@@ -89,16 +103,35 @@ public final class IntakeModule implements ServiceModule {
 
             @Override
             public void close() {
-                if (http != null) {
-                    http.close();
+                try {
+                    if (http != null) {
+                        http.close();
+                    }
+                } finally {
+                    try {
+                        inProcess.shutdownNow();
+                    } finally {
+                        try {
+                            services.close();
+                        } finally {
+                            if (ownsResolver && resolver instanceof AutoCloseable closeable) {
+                                try {
+                                    closeable.close();
+                                } catch (Exception ignored) {
+                                }
+                            }
+                        }
+                    }
                 }
-                inProcess.shutdownNow();
-                services.close();
             }
         };
     }
 
-    /** The bound gRPC port; only valid after start. */
+    /**
+     * The bound gRPC port; only valid after start.
+     *
+     * @return the bound gRPC TCP port
+     */
     public int grpcPort() {
         if (netty == null) {
             throw new IllegalStateException("intake module has not started");

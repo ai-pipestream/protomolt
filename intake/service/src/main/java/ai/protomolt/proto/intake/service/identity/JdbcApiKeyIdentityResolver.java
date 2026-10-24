@@ -104,6 +104,9 @@ public final class JdbcApiKeyIdentityResolver implements ApiKeyIdentityResolver,
 
     @Override
     public Optional<IntakeScope> resolve(String credential) {
+        if (credential == null) {
+            throw new IllegalArgumentException("credential must not be null");
+        }
         String keyHash = sha256Hex(credential);
         try (Connection c = dataSource.getConnection();
                 PreparedStatement select = c.prepareStatement(SELECT_LIVE)) {
@@ -145,13 +148,25 @@ public final class JdbcApiKeyIdentityResolver implements ApiKeyIdentityResolver,
         String keyHash = sha256Hex(credential);
         try (Connection c = dataSource.getConnection();
                 PreparedStatement insert = c.prepareStatement(INSERT_KEY)) {
-            insert.setString(1, keyHash);
-            insert.setString(2, scope.accountId());
-            insert.setArray(3, textArrayOf(c, scope.datasourceIds()));
-            insert.setArray(4, textArrayOf(c, scope.drives()));
-            insert.setArray(5, textArrayOf(c, scope.mimeTypes()));
-            insert.setLong(6, scope.maxPayloadBytes());
-            insert.executeUpdate();
+            Array datasourceIds = null;
+            Array drives = null;
+            Array mimeTypes = null;
+            try {
+                datasourceIds = textArrayOf(c, scope.datasourceIds());
+                drives = textArrayOf(c, scope.drives());
+                mimeTypes = textArrayOf(c, scope.mimeTypes());
+                insert.setString(1, keyHash);
+                insert.setString(2, scope.accountId());
+                insert.setArray(3, datasourceIds);
+                insert.setArray(4, drives);
+                insert.setArray(5, mimeTypes);
+                insert.setLong(6, scope.maxPayloadBytes());
+                insert.executeUpdate();
+            } finally {
+                freeQuietly(datasourceIds);
+                freeQuietly(drives);
+                freeQuietly(mimeTypes);
+            }
         } catch (SQLException e) {
             if (UNIQUE_VIOLATION.equals(e.getSQLState())) {
                 throw new IllegalArgumentException(
@@ -175,6 +190,9 @@ public final class JdbcApiKeyIdentityResolver implements ApiKeyIdentityResolver,
      * @throws IllegalStateException when the store itself fails
      */
     public void revoke(String credential) {
+        if (credential == null) {
+            throw new IllegalArgumentException("credential must not be null");
+        }
         try (Connection c = dataSource.getConnection();
                 PreparedStatement revoke = c.prepareStatement(REVOKE_KEY)) {
             revoke.setString(1, sha256Hex(credential));
@@ -215,10 +233,23 @@ public final class JdbcApiKeyIdentityResolver implements ApiKeyIdentityResolver,
         if (array == null) {
             throw new SQLException("column " + column + " unexpectedly NULL");
         }
-        return Set.of((String[]) array.getArray());
+        try {
+            return Set.of((String[]) array.getArray());
+        } finally {
+            freeQuietly(array);
+        }
     }
 
     private static Array textArrayOf(Connection c, Set<String> values) throws SQLException {
         return c.createArrayOf("text", values.toArray(String[]::new));
+    }
+
+    private static void freeQuietly(Array array) {
+        if (array != null) {
+            try {
+                array.free();
+            } catch (SQLException ignored) {
+            }
+        }
     }
 }

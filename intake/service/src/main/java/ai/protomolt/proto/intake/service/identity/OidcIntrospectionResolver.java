@@ -74,7 +74,10 @@ public final class OidcIntrospectionResolver implements ApiKeyIdentityResolver {
      * @param clientSecret this resolver's client secret
      */
     public OidcIntrospectionResolver(URI introspectionEndpoint, String clientId, String clientSecret) {
-        this(introspectionEndpoint, clientId, clientSecret,
+        this(
+                requireEndpoint(introspectionEndpoint),
+                requireNonBlank(clientId, "clientId"),
+                requireNonBlank(clientSecret, "clientSecret"),
                 HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).build(),
                 Duration.ofSeconds(10));
     }
@@ -94,25 +97,42 @@ public final class OidcIntrospectionResolver implements ApiKeyIdentityResolver {
             String clientSecret,
             HttpClient http,
             Duration requestTimeout) {
-        if (introspectionEndpoint == null) {
-            throw new IllegalArgumentException("introspectionEndpoint must not be null");
+        this.introspectionEndpoint = requireEndpoint(introspectionEndpoint);
+        String validClientId = requireNonBlank(clientId, "clientId");
+        String validClientSecret = requireNonBlank(clientSecret, "clientSecret");
+        if (http == null) {
+            throw new IllegalArgumentException("http must not be null");
         }
-        if (clientId == null || clientId.isBlank()) {
-            throw new IllegalArgumentException("clientId must not be blank");
+        if (requestTimeout == null) {
+            throw new IllegalArgumentException("requestTimeout must not be null");
         }
-        if (clientSecret == null || clientSecret.isBlank()) {
-            throw new IllegalArgumentException("clientSecret must not be blank");
-        }
-        this.introspectionEndpoint = introspectionEndpoint;
         this.basicCredentials =
                 Base64.getEncoder()
-                        .encodeToString((clientId + ":" + clientSecret).getBytes(StandardCharsets.UTF_8));
+                        .encodeToString(
+                                (validClientId + ":" + validClientSecret).getBytes(StandardCharsets.UTF_8));
         this.http = http;
         this.requestTimeout = requestTimeout;
     }
 
+    private static URI requireEndpoint(URI introspectionEndpoint) {
+        if (introspectionEndpoint == null) {
+            throw new IllegalArgumentException("introspectionEndpoint must not be null");
+        }
+        return introspectionEndpoint;
+    }
+
+    private static String requireNonBlank(String value, String name) {
+        if (value == null || value.isBlank()) {
+            throw new IllegalArgumentException(name + " must not be blank");
+        }
+        return value;
+    }
+
     @Override
     public Optional<IntakeScope> resolve(String credential) {
+        if (credential == null) {
+            throw new IllegalArgumentException("credential must not be null");
+        }
         Struct claims = introspect(credential);
         boolean active =
                 claims.getFieldsMap().getOrDefault(

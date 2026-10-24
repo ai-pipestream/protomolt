@@ -113,8 +113,9 @@ public final class JdbcAccountStore implements AccountStore {
             conditions.add("status = ?");
         }
         String where = conditions.isEmpty() ? "" : " WHERE " + String.join(" AND ", conditions);
+        Array ids = null;
         try {
-            Array ids = accountIds == null ? null
+            ids = accountIds == null ? null
                     : c.createArrayOf("text", accountIds.toArray(new String[0]));
             long total;
             try (PreparedStatement count = c.prepareStatement(
@@ -144,6 +145,13 @@ public final class JdbcAccountStore implements AccountStore {
             return new ListAccountsResult(rows, total);
         } catch (SQLException e) {
             throw AccountStoreException.wrap("list accounts failed", e);
+        } finally {
+            if (ids != null) {
+                try {
+                    ids.free();
+                } catch (SQLException ignored) {
+                }
+            }
         }
     }
 

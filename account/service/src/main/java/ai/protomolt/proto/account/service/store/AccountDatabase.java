@@ -112,7 +112,11 @@ public final class AccountDatabase implements AutoCloseable {
     public <T> T readOnly(Function<Connection, T> work) {
         try (Connection c = dataSource.getConnection()) {
             c.setReadOnly(true);
-            return work.apply(c);
+            try {
+                return work.apply(c);
+            } finally {
+                c.setReadOnly(false);
+            }
         } catch (SQLException e) {
             throw AccountStoreException.wrap("read-only work failed", e);
         }

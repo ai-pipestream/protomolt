@@ -50,6 +50,7 @@ import java.util.Optional;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.locks.ReentrantLock;
 
 /**
  * Confluent-subjects-protocol facade over a {@link SchemaRegistryStore}: JDK
@@ -100,13 +101,25 @@ public final class SchemaRegistryServer implements AutoCloseable {
     private final ObjectMapper json = new ObjectMapper();
     private final ScopeBudgets budgets;
     private final ProtoSourceCompiler compiler = new ProtoSourceCompiler();
+    private final ReentrantLock lifecycleLock = new ReentrantLock();
     private final AtomicReference<HttpServer> httpServer = new AtomicReference<>();
     private volatile ExecutorService executor;
 
+    /**
+     * Creates a server with default configuration over {@code store}.
+     *
+     * @param store backing schema registry store
+     */
     public SchemaRegistryServer(SchemaRegistryStore store) {
         this(SchemaRegistryServerConfig.defaults(), store);
     }
 
+    /**
+     * Creates a server with the given configuration and backing store.
+     *
+     * @param config server configuration
+     * @param store backing schema registry store
+     */
     public SchemaRegistryServer(SchemaRegistryServerConfig config, SchemaRegistryStore store) {
         this(config, store, null);
     }
@@ -117,6 +130,10 @@ public final class SchemaRegistryServer implements AutoCloseable {
      * input schemas; {@code POST .../actions/{name}} executes one with a JSON body. Action
      * failures map to the action error envelope with {@code unknown-action} as 404,
      * {@code invalid-input} as 400, {@code invalid-response} as 500, and other action errors by code.
+     *
+     * @param config server configuration
+     * @param store backing schema registry store
+     * @param actions optional action catalog to mount
      */
     public SchemaRegistryServer(SchemaRegistryServerConfig config, SchemaRegistryStore store,
                                 ActionCatalog actions) {
@@ -128,6 +145,11 @@ public final class SchemaRegistryServer implements AutoCloseable {
      * principal: reads require {@code schema-read}, writes require {@code schema-write},
      * and the action endpoint dispatches through the scoped catalog so each verb's own
      * declaration applies.
+     *
+     * @param config server configuration
+     * @param store backing schema registry store
+     * @param actions optional action catalog to mount
+     * @param resolver optional access-policy caller resolver
      */
     public SchemaRegistryServer(SchemaRegistryServerConfig config, SchemaRegistryStore store,
                                 ActionCatalog actions,
@@ -146,34 +168,47 @@ public final class SchemaRegistryServer implements AutoCloseable {
         this.resolver = resolver;
     }
 
-    /** Starts the server and returns the bound port. */
+    /**
+     * Starts the server and returns the bound port.
+     *
+     * @return the bound TCP port
+     */
     public int start() {
-        if (httpServer.get() != null) {
-            throw new IllegalStateException("Server already started");
-        }
-        HttpServer server;
+        lifecycleLock.lock();
         try {
-            server = HttpServer.create(new InetSocketAddress(config.host(), config.port()), 0);
-        } catch (IOException e) {
-            throw new IllegalStateException("Failed to start schema registry server", e);
+            if (httpServer.get() != null) {
+                throw new IllegalStateException("Server already started");
+            }
+            HttpServer server;
+            try {
+                server = HttpServer.create(new InetSocketAddress(config.host(), config.port()), 0);
+            } catch (IOException e) {
+                throw new IllegalStateException("Failed to start schema registry server", e);
+            }
+            ExecutorService workerPool = Executors.newVirtualThreadPerTaskExecutor();
+            try {
+                server.createContext("/", this::handle);
+                server.setExecutor(workerPool);
+                server.start();
+            } catch (Throwable t) {
+                // The socket is bound after create(); release it before rethrowing.
+                server.stop(0);
+                workerPool.shutdownNow();
+                throw new IllegalStateException("Failed to start schema registry server", t);
+            }
+            this.executor = workerPool;
+            httpServer.set(server);
+            return server.getAddress().getPort();
+        } finally {
+            lifecycleLock.unlock();
         }
-        ExecutorService workerPool = Executors.newVirtualThreadPerTaskExecutor();
-        try {
-            server.createContext("/", this::handle);
-            server.setExecutor(workerPool);
-            server.start();
-        } catch (Throwable t) {
-            // The socket is bound after create(); release it before rethrowing.
-            server.stop(0);
-            workerPool.shutdownNow();
-            throw new IllegalStateException("Failed to start schema registry server", t);
-        }
-        this.executor = workerPool;
-        httpServer.set(server);
-        return server.getAddress().getPort();
     }
 
-    /** The bound port (useful with {@code port = 0}). */
+    /**
+     * The bound port (useful with {@code port = 0}).
+     *
+     * @return the bound TCP port
+     */
     public int actualPort() {
         HttpServer server = httpServer.get();
         if (server == null) {
@@ -182,19 +217,31 @@ public final class SchemaRegistryServer implements AutoCloseable {
         return server.getAddress().getPort();
     }
 
+    /**
+     * Returns the server configuration.
+     *
+     * @return server configuration
+     */
     public SchemaRegistryServerConfig config() {
         return config;
     }
 
     @Override
     public void close() {
-        HttpServer server = httpServer.getAndSet(null);
+        HttpServer server;
+        ExecutorService workerPool;
+        lifecycleLock.lock();
+        try {
+            server = httpServer.getAndSet(null);
+            workerPool = executor;
+            executor = null;
+        } finally {
+            lifecycleLock.unlock();
+        }
         if (server != null) {
             // Small grace period so in-flight exchanges can finish.
             server.stop(1);
         }
-        ExecutorService workerPool = executor;
-        executor = null;
         if (workerPool != null) {
             workerPool.shutdown();
         }
