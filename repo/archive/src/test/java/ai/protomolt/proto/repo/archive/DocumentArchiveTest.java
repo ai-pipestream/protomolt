@@ -84,6 +84,7 @@ import ai.protomolt.proto.repo.v2.SaveOwner;
 import ai.protomolt.proto.repo.v2.SaveRejection;
 import ai.protomolt.proto.repo.v2.UploadDocumentRequest;
 import ai.protomolt.proto.repo.v2.UploadDocumentResponse;
+import ai.protomolt.proto.repo.v2.UploadHeader;
 import ai.protomolt.proto.repo.v2.ValidationStatus;
 import com.google.protobuf.ByteString;
 import com.google.protobuf.Timestamp;
@@ -1012,65 +1013,11 @@ class DocumentArchiveTest {
     }
 
     @Test
-    void flowControlledUploadWaitsForDownstreamReadinessAndResumesOnReadyCallback() throws Exception {
-        ByteString chunkBytes = ByteString.copyFromUtf8("flow-controlled-bytes");
-        NodeAddress entryNode = ArchiveCoordinates.address(
-                EntryAddress.newBuilder().setAccountId(ACCOUNT).setArchive(ARCHIVE).setEntryId("e-flow").build());
-        AtomicBoolean committed = new AtomicBoolean(false);
-
-        startService(new DocumentServiceGrpc.DocumentServiceImplBase() {
-            @Override
-            public void getOperationOutcome(
-                    GetOperationOutcomeRequest request,
-                    StreamObserver<GetOperationOutcomeResponse> responseObserver) {
-                responseObserver.onNext(GetOperationOutcomeResponse.getDefaultInstance());
-                responseObserver.onCompleted();
-            }
-
-            @Override
-            public void listRevisions(
-                    ListRevisionsRequest request,
-                    StreamObserver<ListRevisionsResponse> responseObserver) {
-                responseObserver.onNext(ListRevisionsResponse.getDefaultInstance());
-                responseObserver.onCompleted();
-            }
-
-            @Override
-            public StreamObserver<UploadDocumentRequest> uploadDocument(
-                    StreamObserver<UploadDocumentResponse> responseObserver) {
-                return new StreamObserver<>() {
-                    @Override
-                    public void onNext(UploadDocumentRequest value) {
-                    }
-
-                    @Override
-                    public void onError(Throwable t) {
-                        responseObserver.onError(t);
-                    }
-
-                    @Override
-                    public void onCompleted() {
-                        committed.set(true);
-                        responseObserver.onNext(UploadDocumentResponse.newBuilder()
-                                .setSaved(SaveDocumentResponse.newBuilder()
-                                        .setAccession(Accession.newBuilder().setAddress(entryNode).setRevision(1L)))
-                                .build());
-                        responseObserver.onCompleted();
-                    }
-                };
-            }
-
-            @Override
-            public void getDocument(
-                    GetDocumentRequest request, StreamObserver<GetDocumentResponse> responseObserver) {
-                if (!committed.get()) {
-                    responseObserver.onError(Status.NOT_FOUND.asRuntimeException());
-                    return;
-                }
-                responseObserver.onNext(documentWithBlob(entryNode, 1L, "original", chunkBytes));
-                responseObserver.onCompleted();
-            }
-        });
+    void aStreamedUploadSendsItsHeaderFirstAndNoChunkBeforeAcceptedThenTheTrailerLast() throws Exception {
+        ByteString body = pdfBytes(2 * 1024 * 1024);
+        NodeAddress entryNode = entryNode("e-flow");
+        V2Uploads v2 = new V2Uploads(entryNode, body, header -> null);
+        startService(v2);
 
         AtomicBoolean downstreamReady = new AtomicBoolean(false);
         AtomicReference<ClientCall.Listener<?>> uploadListener = new AtomicReference<>();
@@ -1098,48 +1045,24 @@ class DocumentArchiveTest {
             }
         });
 
-        ArchiveBindings bindings = (acct, name) -> Optional.of(
-                new ArchiveBinding(acct, name, "ds", "intake", VersioningPolicy.VERSIONING_POLICY_RETAINED));
-        DocumentArchive archive = new DocumentArchive(throttledChannel, bindings, FIXED_CLOCK);
-        RenditionUploads uploads = new RenditionUploads(archive);
-        CompletableFuture<UploadRenditionResponse> done = new CompletableFuture<>();
-        RenditionUploads.FlowControlledUpload stream = uploads.uploadFlowControlled(new StreamObserver<>() {
-            private UploadRenditionResponse result;
-
-            @Override
-            public void onNext(UploadRenditionResponse value) {
-                result = value;
-            }
-
-            @Override
-            public void onError(Throwable t) {
-                done.completeExceptionally(t);
-            }
-
-            @Override
-            public void onCompleted() {
-                done.complete(result);
-            }
-        });
-
+        v2.answerAccepted.set(false);
+        Received received = new Received();
+        RenditionUploads.FlowControlledUpload stream = new RenditionUploads(archive(throttledChannel))
+                .uploadFlowControlled(received);
         assertThat(stream.isReady()).isTrue();
-        stream.onNext(UploadRenditionRequest.newBuilder()
-                .setHeader(UploadRenditionHeader.newBuilder()
-                        .setOperationId("op-flow-1")
-                        .setSizeBytes(chunkBytes.size())
-                        .setAddress(EntryAddress.newBuilder()
-                                .setAccountId(ACCOUNT)
-                                .setArchive(ARCHIVE)
-                                .setEntryId("e-flow"))
-                        .setRendition(RenditionDescriptor.newBuilder()
-                                .setName("original")
-                                .setMediaType("application/pdf")))
-                .build());
+        stream.onNext(header("e-flow", "op-flow-1", body.size(), "").build());
 
-        // Downstream is not ready: isReady() is false and awaitReady times out until onReady fires.
+        // The header is on the wire, and nothing more may be sent until v2 accepts it.
+        assertThat(v2.frames).hasSize(1);
+        UploadHeader sent = v2.frames.getFirst().getHeader();
+        assertThat(sent.hasInlineData()).isFalse();
+        assertThat(sent.getStreamed().getCoreInTrailer()).isTrue();
         assertThat(stream.isReady()).isFalse();
         assertThat(stream.awaitReady(TimeUnit.MILLISECONDS.toNanos(15))).isFalse();
 
+        v2.accept();
+        // Accepted, but the downstream call is not ready yet.
+        assertThat(stream.isReady()).isFalse();
         CompletableFuture<Boolean> waiter = CompletableFuture.supplyAsync(() -> {
             try {
                 return stream.awaitReady(TimeUnit.SECONDS.toNanos(5));
@@ -1148,19 +1071,277 @@ class DocumentArchiveTest {
                 throw new RuntimeException(e);
             }
         });
-
         downstreamReady.set(true);
         uploadListener.get().onReady();
-
         assertThat(waiter.get(5, TimeUnit.SECONDS)).isTrue();
-        assertThat(stream.isReady()).isTrue();
 
-        stream.onNext(UploadRenditionRequest.newBuilder().setChunk(chunkBytes).build());
+        for (ByteString chunk : chunks(body, 64 * 1024)) {
+            assertThat(stream.awaitReady(TimeUnit.SECONDS.toNanos(5))).isTrue();
+            stream.onNext(UploadRenditionRequest.newBuilder().setChunk(chunk).build());
+        }
         stream.onCompleted();
 
-        UploadRenditionResponse response = done.get(5, TimeUnit.SECONDS);
+        UploadRenditionResponse response = received.done.get(5, TimeUnit.SECONDS);
         assertThat(response.getVersion()).isEqualTo(1L);
-        assertThat(response.getSizeBytes()).isEqualTo(chunkBytes.size());
+        assertThat(response.getSizeBytes()).isEqualTo(body.size());
+        assertThat(v2.frames.getFirst().hasHeader()).isTrue();
+        assertThat(v2.frames.subList(1, v2.frames.size() - 1))
+                .allMatch(UploadDocumentRequest::hasData);
+        assertThat(v2.frames.subList(1, v2.frames.size() - 1).stream().mapToLong(f -> f.getData().size()).sum())
+                .isEqualTo(body.size());
+        UploadDocumentRequest last = v2.frames.getLast();
+        assertThat(last.hasTrailer()).isTrue();
+        // Only CORE may differ: the blob bag and ownership are the header's.
+        assertThat(last.getTrailer().getDocument().getBlobBag()).isEqualTo(sent.getSave().getDocument().getBlobBag());
+        assertThat(last.getTrailer().getDocument().getOwnership())
+                .isEqualTo(sent.getSave().getDocument().getOwnership());
+        // The finished CORE carries the classification of the bytes, which the header could not.
+        assertThat(last.getTrailer().getDocument()).isNotEqualTo(sent.getSave().getDocument());
+    }
+
+    @Test
+    void aRefusedStreamedHeaderEndsTheUploadBeforeAnyChunkIsForwarded() throws Exception {
+        ByteString body = pdfBytes(2 * 1024 * 1024);
+        V2Uploads v2 = new V2Uploads(entryNode("e-denied"), body,
+                header -> Status.PERMISSION_DENIED.withDescription("The caller may not write this document")
+                        .asRuntimeException());
+        startService(v2);
+        Received received = new Received();
+        RenditionUploads.FlowControlledUpload stream = new RenditionUploads(archive(channel))
+                .uploadFlowControlled(received);
+        stream.onNext(header("e-denied", "op-denied", body.size(), "").build());
+
+        assertThat(stream.awaitReady(TimeUnit.SECONDS.toNanos(5))).isTrue();
+        assertThatThrownBy(() -> received.done.get(5, TimeUnit.SECONDS))
+                .hasCauseInstanceOf(StatusRuntimeException.class)
+                .hasMessageContaining("PERMISSION_DENIED");
+        // A chunk sent after the refusal is dropped, never forwarded.
+        stream.onNext(UploadRenditionRequest.newBuilder().setChunk(body.substring(0, 1024)).build());
+        assertThat(v2.frames).hasSize(1);
+        assertThat(v2.frames.getFirst().hasHeader()).isTrue();
+    }
+
+    @Test
+    void aRenditionOfAtMostOneMebibyteIsOneInlineHeaderWithItsFinishedCore() throws Exception {
+        ByteString body = pdfBytes(RenditionUploads.INLINE_BODY_MAX_BYTES);
+        V2Uploads v2 = new V2Uploads(entryNode("e-inline"), body, header -> null);
+        startService(v2);
+        Received received = new Received();
+        RenditionUploads.FlowControlledUpload stream = new RenditionUploads(archive(channel))
+                .uploadFlowControlled(received);
+        stream.onNext(header("e-inline", "op-inline", body.size(), "").build());
+        assertThat(v2.frames).isEmpty();
+        for (ByteString chunk : chunks(body, 64 * 1024)) {
+            assertThat(stream.isReady()).isTrue();
+            stream.onNext(UploadRenditionRequest.newBuilder().setChunk(chunk).build());
+        }
+        stream.onCompleted();
+
+        assertThat(received.done.get(5, TimeUnit.SECONDS).getVersion()).isEqualTo(1L);
+        assertThat(v2.frames).hasSize(1);
+        UploadHeader sent = v2.frames.getFirst().getHeader();
+        assertThat(sent.getInlineData()).isEqualTo(body);
+        assertThat(sent.hasStreamed()).isFalse();
+        assertThat(v2.answers).containsExactly(UploadDocumentResponse.AnswerCase.SAVED);
+    }
+
+    @Test
+    void anInlineRenditionLongerThanTheInlineLimitIsRefusedWithoutReachingV2() throws Exception {
+        ByteString body = pdfBytes(RenditionUploads.INLINE_BODY_MAX_BYTES + 1);
+        V2Uploads v2 = new V2Uploads(entryNode("e-long"), body, header -> null);
+        startService(v2);
+        Received received = new Received();
+        RenditionUploads.FlowControlledUpload stream = new RenditionUploads(archive(channel))
+                .uploadFlowControlled(received);
+        stream.onNext(header("e-long", "op-long", 10, "").build());
+        stream.onNext(UploadRenditionRequest.newBuilder().setChunk(body).build());
+
+        assertThatThrownBy(() -> received.done.get(5, TimeUnit.SECONDS))
+                .hasCauseInstanceOf(StatusRuntimeException.class)
+                .hasMessageContaining("more bytes than its size_bytes 10");
+        assertThat(v2.frames).isEmpty();
+    }
+
+    @Test
+    void aHeaderV2ReplaysSendsNoChunkAndAnswersTheRecordedRendition() throws Exception {
+        ByteString body = pdfBytes(2 * 1024 * 1024);
+        V2Uploads v2 = new V2Uploads(entryNode("e-replay"), body, header -> null);
+        v2.replayHeaders = true;
+        startService(v2);
+        Received received = new Received();
+        RenditionUploads.FlowControlledUpload stream = new RenditionUploads(archive(channel))
+                .uploadFlowControlled(received);
+        stream.onNext(header("e-replay", "op-replay", body.size(), RenditionReads.sha256Hex(body)).build());
+
+        UploadRenditionResponse response = received.done.get(5, TimeUnit.SECONDS);
+        assertThat(response.getReplayed()).isTrue();
+        assertThat(response.getSizeBytes()).isEqualTo(body.size());
+        assertThat(v2.frames).hasSize(1);
+        assertThat(v2.answers).containsExactly(UploadDocumentResponse.AnswerCase.REPLAYED);
+    }
+
+    /** A v2 document service whose UploadDocument answers like the bidirectional handshake. */
+    private static final class V2Uploads extends DocumentServiceGrpc.DocumentServiceImplBase {
+        final List<UploadDocumentRequest> frames = new java.util.concurrent.CopyOnWriteArrayList<>();
+        final List<UploadDocumentResponse.AnswerCase> answers = new java.util.concurrent.CopyOnWriteArrayList<>();
+        final AtomicBoolean answerAccepted = new AtomicBoolean(true);
+        final AtomicBoolean committed = new AtomicBoolean(false);
+        private final AtomicReference<StreamObserver<UploadDocumentResponse>> open = new AtomicReference<>();
+        private final NodeAddress entryNode;
+        private final ByteString body;
+        private final java.util.function.Function<UploadHeader, StatusRuntimeException> refuse;
+        volatile boolean replayHeaders;
+
+        V2Uploads(NodeAddress entryNode, ByteString body,
+                java.util.function.Function<UploadHeader, StatusRuntimeException> refuse) {
+            this.entryNode = entryNode;
+            this.body = body;
+            this.refuse = refuse;
+        }
+
+        void accept() {
+            answer(open.get(), UploadDocumentResponse.newBuilder()
+                    .setAccepted(ai.protomolt.proto.repo.v2.UploadAccepted.getDefaultInstance()).build());
+        }
+
+        private void answer(StreamObserver<UploadDocumentResponse> responses, UploadDocumentResponse answer) {
+            answers.add(answer.getAnswerCase());
+            responses.onNext(answer);
+        }
+
+        private SaveDocumentResponse saved(boolean replayed) {
+            committed.set(true);
+            return SaveDocumentResponse.newBuilder().setOperationId("op").setReplayed(replayed)
+                    .setAccession(Accession.newBuilder().setAddress(entryNode).setRevision(1L)).build();
+        }
+
+        @Override
+        public void getOperationOutcome(
+                GetOperationOutcomeRequest request, StreamObserver<GetOperationOutcomeResponse> responseObserver) {
+            responseObserver.onNext(GetOperationOutcomeResponse.getDefaultInstance());
+            responseObserver.onCompleted();
+        }
+
+        @Override
+        public void listRevisions(
+                ListRevisionsRequest request, StreamObserver<ListRevisionsResponse> responseObserver) {
+            responseObserver.onNext(ListRevisionsResponse.getDefaultInstance());
+            responseObserver.onCompleted();
+        }
+
+        @Override
+        public void getDocument(GetDocumentRequest request, StreamObserver<GetDocumentResponse> responseObserver) {
+            if (!committed.get()) {
+                responseObserver.onError(Status.NOT_FOUND.asRuntimeException());
+                return;
+            }
+            responseObserver.onNext(documentWithBlob(entryNode, 1L, "original", body));
+            responseObserver.onCompleted();
+        }
+
+        @Override
+        public StreamObserver<UploadDocumentRequest> uploadDocument(
+                StreamObserver<UploadDocumentResponse> responseObserver) {
+            open.set(responseObserver);
+            return new StreamObserver<>() {
+                @Override
+                public void onNext(UploadDocumentRequest value) {
+                    frames.add(value);
+                    if (!value.hasHeader()) {
+                        return;
+                    }
+                    StatusRuntimeException refusal = refuse.apply(value.getHeader());
+                    if (refusal != null) {
+                        responseObserver.onError(refusal);
+                    } else if (value.getHeader().hasInlineData()) {
+                        answer(responseObserver, UploadDocumentResponse.newBuilder().setSaved(saved(false)).build());
+                        responseObserver.onCompleted();
+                    } else if (replayHeaders) {
+                        answer(responseObserver, UploadDocumentResponse.newBuilder().setReplayed(saved(true)).build());
+                        responseObserver.onCompleted();
+                    } else if (answerAccepted.get()) {
+                        accept();
+                    }
+                }
+
+                @Override
+                public void onError(Throwable t) {
+                }
+
+                @Override
+                public void onCompleted() {
+                    if (frames.getFirst().getHeader().hasStreamed() && !replayHeaders) {
+                        answer(responseObserver, UploadDocumentResponse.newBuilder().setSaved(saved(false)).build());
+                        responseObserver.onCompleted();
+                    }
+                }
+            };
+        }
+    }
+
+    /** The archive client's side of one upload. */
+    private static final class Received implements StreamObserver<UploadRenditionResponse> {
+        final CompletableFuture<UploadRenditionResponse> done = new CompletableFuture<>();
+        private UploadRenditionResponse result;
+
+        @Override
+        public void onNext(UploadRenditionResponse value) {
+            result = value;
+        }
+
+        @Override
+        public void onError(Throwable t) {
+            done.completeExceptionally(t);
+        }
+
+        @Override
+        public void onCompleted() {
+            done.complete(result);
+        }
+    }
+
+    private static DocumentArchive archive(Channel documents) {
+        ArchiveBindings bindings = (acct, name) -> Optional.of(
+                new ArchiveBinding(acct, name, "ds", "intake", VersioningPolicy.VERSIONING_POLICY_RETAINED));
+        return new DocumentArchive(documents, bindings, FIXED_CLOCK);
+    }
+
+    private static NodeAddress entryNode(String entryId) {
+        return ArchiveCoordinates.address(
+                EntryAddress.newBuilder().setAccountId(ACCOUNT).setArchive(ARCHIVE).setEntryId(entryId).build());
+    }
+
+    private static UploadRenditionRequest.Builder header(
+            String entryId, String operationId, long sizeBytes, String expectedSha256) {
+        return UploadRenditionRequest.newBuilder()
+                .setHeader(UploadRenditionHeader.newBuilder()
+                        .setOperationId(operationId)
+                        .setSizeBytes(sizeBytes)
+                        .setExpectedSha256(expectedSha256)
+                        .setAddress(EntryAddress.newBuilder()
+                                .setAccountId(ACCOUNT)
+                                .setArchive(ARCHIVE)
+                                .setEntryId(entryId))
+                        .setRendition(RenditionDescriptor.newBuilder()
+                                .setName("original")
+                                .setMediaType("application/pdf")));
+    }
+
+    private static ByteString pdfBytes(int size) {
+        byte[] bytes = new byte[size];
+        byte[] head = "%PDF-1.7\n".getBytes(java.nio.charset.StandardCharsets.US_ASCII);
+        System.arraycopy(head, 0, bytes, 0, head.length);
+        byte[] tail = "\n%%EOF\n".getBytes(java.nio.charset.StandardCharsets.US_ASCII);
+        System.arraycopy(tail, 0, bytes, size - tail.length, tail.length);
+        return ByteString.copyFrom(bytes);
+    }
+
+    private static List<ByteString> chunks(ByteString body, int size) {
+        List<ByteString> chunks = new ArrayList<>();
+        for (int offset = 0; offset < body.size(); offset += size) {
+            chunks.add(body.substring(offset, Math.min(body.size(), offset + size)));
+        }
+        return chunks;
     }
 
     private void startService(DocumentServiceGrpc.DocumentServiceImplBase service) throws Exception {

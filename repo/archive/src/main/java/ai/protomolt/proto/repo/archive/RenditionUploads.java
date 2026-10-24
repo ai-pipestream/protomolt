@@ -271,13 +271,13 @@ public final class RenditionUploads {
             if (pending.needsWindows()) {
                 windowCapture = new WindowCapture();
             }
-            openDownstreamCall();
             UploadHeader header = pending.header(ByteWindows.EMPTY).toBuilder()
                     .setStreamed(StreamedBody.newBuilder().setCoreInTrailer(pending.needsWindows()))
                     .build();
-            upload.onNext(UploadDocumentRequest.newBuilder().setHeader(header).build());
             // The next archive frame is requested once v2 answers accepted.
             waitingForUpload = true;
+            openDownstreamCall();
+            upload.onNext(UploadDocumentRequest.newBuilder().setHeader(header).build());
         }
 
         private void openDownstreamCall() {

@@ -676,92 +676,13 @@ class StreamingUploadAndReadIT {
         assertThat(committed.getSaved().getAccession().getRevision()).isEqualTo(1L);
         assertThat(committed.getSaved().getReplayed()).isFalse();
 
-        // Retry with the same operation_id after commit. The header names the length and
-        // digest and no trailer, so the server answers Replayed before any byte is read.
+        // Retry with the same operation_id after commit -> the header, which declares the
+        // length and digest, is answered replayed with the recorded accession.
         var replayed = sendUpload(header, List.of(ByteString.copyFrom(payload)));
         assertThat(replayed.getAnswerCase()).isEqualTo(UploadDocumentResponse.AnswerCase.REPLAYED);
         assertThat(replayed.getReplayed().getAccession()).isEqualTo(committed.getSaved().getAccession());
         assertThat(replayed.getReplayed().getReplayed()).isTrue();
         assertThat(f.catalog.current(address).orElseThrow().revision()).isEqualTo(1L);
-    }
-
-    @Test
-    void uploadDocumentAnswersAcceptedThenSavedAndReplaysBeforeAnyByte() throws Exception {
-        var address = address(account, "doc-handshake");
-        var doc = documentWithPendingBlob(account, "doc-handshake", "b1");
-        byte[] payload = "handshake-bytes".getBytes(StandardCharsets.UTF_8);
-        var header = UploadHeader.newBuilder()
-                .setStreamed(StreamedBody.getDefaultInstance())
-                .setSave(create("op-handshake", address, doc))
-                .setBlobId("b1")
-                .setDeclaredLength(payload.length)
-                .setExpectedSha256(SaveIntents.sha256Hex(payload))
-                .build();
-
-        var answers = new java.util.concurrent.CopyOnWriteArrayList<UploadDocumentResponse>();
-        var done = new CompletableFuture<Void>();
-        var req = asyncStub.uploadDocument(new StreamObserver<>() {
-            @Override public void onNext(UploadDocumentResponse response) { answers.add(response); }
-            @Override public void onError(Throwable t) { done.completeExceptionally(t); }
-            @Override public void onCompleted() { done.complete(null); }
-        });
-        req.onNext(UploadDocumentRequest.newBuilder().setHeader(header).build());
-        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(15);
-        while (answers.isEmpty()) {
-            if (done.isCompletedExceptionally()) done.get(1, TimeUnit.SECONDS);
-            if (System.nanoTime() > deadline) fail("the server sent no Accepted answer before the body");
-            Thread.sleep(10);
-        }
-        assertThat(answers).singleElement()
-                .extracting(UploadDocumentResponse::getAnswerCase)
-                .isEqualTo(UploadDocumentResponse.AnswerCase.ACCEPTED);
-        req.onNext(UploadDocumentRequest.newBuilder().setData(ByteString.copyFrom(payload)).build());
-        req.onCompleted();
-        done.get(15, TimeUnit.SECONDS);
-        assertThat(answers).hasSize(2);
-        assertThat(answers.get(1).getAnswerCase()).isEqualTo(UploadDocumentResponse.AnswerCase.SAVED);
-        assertThat(answers.get(1).getSaved().getReplayed()).isFalse();
-
-        var replayed = new java.util.concurrent.CopyOnWriteArrayList<UploadDocumentResponse>();
-        var replayDone = new CompletableFuture<Void>();
-        var retry = asyncStub.uploadDocument(new StreamObserver<>() {
-            @Override public void onNext(UploadDocumentResponse response) { replayed.add(response); }
-            @Override public void onError(Throwable t) { replayDone.completeExceptionally(t); }
-            @Override public void onCompleted() { replayDone.complete(null); }
-        });
-        retry.onNext(UploadDocumentRequest.newBuilder().setHeader(header).build());
-        replayDone.get(15, TimeUnit.SECONDS);
-        assertThat(replayed).singleElement().satisfies(answer -> {
-            assertThat(answer.getAnswerCase()).isEqualTo(UploadDocumentResponse.AnswerCase.REPLAYED);
-            assertThat(answer.getReplayed().getReplayed()).isTrue();
-            assertThat(answer.getReplayed().getAccession()).isEqualTo(answers.get(1).getSaved().getAccession());
-        });
-
-        var inlineDoc = documentWithPendingBlob(account, "doc-handshake-inline", "b1");
-        var inlineAddress = address(account, "doc-handshake-inline");
-        var inlineHeader = UploadHeader.newBuilder()
-                .setInlineData(ByteString.copyFrom(payload))
-                .setSave(create("op-handshake-inline", inlineAddress, inlineDoc))
-                .setBlobId("b1")
-                .setDeclaredLength(payload.length)
-                .setExpectedSha256(SaveIntents.sha256Hex(payload))
-                .build();
-        var inlineAnswers = new java.util.concurrent.CopyOnWriteArrayList<UploadDocumentResponse>();
-        var inlineDone = new CompletableFuture<Void>();
-        var inline = asyncStub.uploadDocument(new StreamObserver<>() {
-            @Override public void onNext(UploadDocumentResponse response) { inlineAnswers.add(response); }
-            @Override public void onError(Throwable t) { inlineDone.completeExceptionally(t); }
-            @Override public void onCompleted() { inlineDone.complete(null); }
-        });
-        inline.onNext(UploadDocumentRequest.newBuilder().setHeader(inlineHeader).build());
-        inline.onCompleted();
-        inlineDone.get(15, TimeUnit.SECONDS);
-        assertThat(inlineAnswers).singleElement().satisfies(answer -> {
-            assertThat(answer.getAnswerCase()).isEqualTo(UploadDocumentResponse.AnswerCase.SAVED);
-            assertThat(answer.hasAccepted()).isFalse();
-            assertThat(answer.getSaved().getReplayed()).isFalse();
-            assertThat(answer.getSaved().getAccession().getRevision()).isEqualTo(1L);
-        });
     }
 
     @Test
@@ -1224,12 +1145,15 @@ class StreamingUploadAndReadIT {
                             .isEqualTo(RejectionReason.REJECTION_REASON_UPLOAD_MISMATCH);
                 });
 
+        // Over UploadDocument the header alone fixes the intent of a retry that declares the
+        // length and digest, so another declared length is another intent under the same
+        // operation ID, refused in the first answer before any byte is sent.
         var badLengthMinus = header.toBuilder().setDeclaredLength(Math.max(0, payload.length - 1)).build();
         assertThat(detail(
                 () -> sendUpload(badLengthMinus, List.of(ByteString.copyFrom(payload))),
-                Status.Code.INVALID_ARGUMENT,
-                SaveRejection.class).getReason())
-                .isEqualTo(RejectionReason.REJECTION_REASON_UPLOAD_MISMATCH);
+                Status.Code.ALREADY_EXISTS,
+                OperationReuse.class).getOperationId())
+                .isEqualTo("op-replay-strict");
 
         // 2. Retry with expected_sha256 mismatch must be rejected with UPLOAD_MISMATCH.
         var badDigest = header.toBuilder().setExpectedSha256("0".repeat(64)).build();
@@ -1243,9 +1167,9 @@ class StreamingUploadAndReadIT {
                 });
         assertThat(detail(
                 () -> sendUpload(badDigest, List.of(ByteString.copyFrom(payload))),
-                Status.Code.INVALID_ARGUMENT,
-                SaveRejection.class).getReason())
-                .isEqualTo(RejectionReason.REJECTION_REASON_UPLOAD_MISMATCH);
+                Status.Code.ALREADY_EXISTS,
+                OperationReuse.class).getOperationId())
+                .isEqualTo("op-replay-strict");
 
         // 3. The original committed Accession outcome in the catalog is untouched and still replays on a valid retry.
         assertThat(f.catalog.outcome(account, "op-replay-strict").orElseThrow().outcome().hasAccession()).isTrue();
@@ -1675,6 +1599,227 @@ class StreamingUploadAndReadIT {
                     assertThat(failure.getSuppressed())
                             .anySatisfy(s -> assertThat(s.getMessage()).contains("simulated delete failure"));
                 });
+    }
+
+    @Test
+    void aStreamedHeaderIsAcceptedBeforeAnyByteIsStagedAndHalfCloseAnswersSaved() throws Exception {
+        var address = address(account, "doc-accepted");
+        byte[] payload = "accepted-before-bytes".getBytes(StandardCharsets.UTF_8);
+        f.stack.reset();
+        var upload = new Handshake();
+        upload.send(UploadDocumentRequest.newBuilder().setHeader(UploadHeader.newBuilder()
+                .setStreamed(ai.protomolt.proto.repo.v2.StreamedBody.getDefaultInstance())
+                .setSave(create("op-accepted", address, documentWithPendingBlob(account, "doc-accepted", "b1")))
+                .setBlobId("b1")
+                .setDeclaredLength(payload.length)).build());
+        assertThat(upload.answer().getAnswerCase()).isEqualTo(UploadDocumentResponse.AnswerCase.ACCEPTED);
+        assertThat(f.catalog.outcome(account, "op-accepted")).isEmpty();
+        assertThat(f.stack.puts.get()).isZero();
+
+        upload.send(UploadDocumentRequest.newBuilder().setData(ByteString.copyFrom(payload)).build());
+        upload.complete();
+        var saved = upload.answer();
+        assertThat(saved.getAnswerCase()).isEqualTo(UploadDocumentResponse.AnswerCase.SAVED);
+        assertThat(saved.getSaved().getAccession().getRevision()).isEqualTo(1L);
+        assertThat(upload.completed()).isTrue();
+        assertThat(f.stack.puts.get()).isPositive();
+    }
+
+    @Test
+    void anInlineBodyCommitsInOneRoundTripWithoutHalfClose() throws Exception {
+        var address = address(account, "doc-inline");
+        byte[] payload = "inline-body".getBytes(StandardCharsets.UTF_8);
+        var upload = new Handshake();
+        upload.send(UploadDocumentRequest.newBuilder().setHeader(UploadHeader.newBuilder()
+                .setInlineData(ByteString.copyFrom(payload))
+                .setSave(create("op-inline", address, documentWithPendingBlob(account, "doc-inline", "b1")))
+                .setBlobId("b1")
+                .setDeclaredLength(payload.length)
+                .setExpectedSha256(SaveIntents.sha256Hex(payload))).build());
+        var saved = upload.answer();
+        assertThat(saved.getAnswerCase()).isEqualTo(UploadDocumentResponse.AnswerCase.SAVED);
+        assertThat(saved.getSaved().getAccession().getRevision()).isEqualTo(1L);
+        assertThat(upload.completed()).isTrue();
+        var blob = ByteString.newOutput();
+        var frames = blockingStub.readBlob(ReadBlobRequest.newBuilder().setAddress(address).setBlobId("b1").build());
+        while (frames.hasNext()) frames.next().getData().writeTo(blob);
+        assertThat(blob.toByteString().toByteArray()).isEqualTo(payload);
+    }
+
+    @Test
+    void aRefusedHeaderIsTheFirstAnswerAndNoByteIsStaged() throws Exception {
+        var address = address(account, "doc-refused-header");
+        var credential = UUID.randomUUID();
+        f.catalog.registerCredential(ISSUER, credential, "ungranted-writer");
+        activeCaller.set(writer(account, "ungranted-writer", credential, 1L));
+        try {
+            f.stack.reset();
+            var upload = new Handshake();
+            upload.send(UploadDocumentRequest.newBuilder().setHeader(UploadHeader.newBuilder()
+                    .setStreamed(ai.protomolt.proto.repo.v2.StreamedBody.getDefaultInstance())
+                    .setSave(create("op-refused-header", address,
+                            documentWithPendingBlob(account, "doc-refused-header", "b1")))
+                    .setBlobId("b1")
+                    .setDeclaredLength(10L * 1024 * 1024)).build());
+            var failure = upload.failure();
+            assertThat(failure.getStatus().getCode()).isEqualTo(Status.Code.FAILED_PRECONDITION);
+            assertThat(upload.answers).isEmpty();
+            assertThat(f.stack.puts.get()).isZero();
+            assertThat(f.catalog.outcome(account, "op-refused-header")).isEmpty();
+        } finally {
+            activeCaller.set(processAuthority());
+        }
+    }
+
+    @Test
+    void aTrailerReplacesTheProvisionalCoreAndTheCommitKeepsTheFinishedOne() throws Exception {
+        var address = address(account, "doc-trailer");
+        byte[] payload = "classified-by-trailer".getBytes(StandardCharsets.UTF_8);
+        var provisional = documentWithPendingBlob(account, "doc-trailer", "b1");
+        var finished = provisional.toBuilder()
+                .setSearchMetadata(provisional.getSearchMetadata().toBuilder().setTitle("finished title"))
+                .build();
+        var upload = trailerUpload("op-trailer", address, provisional, payload);
+        upload.send(UploadDocumentRequest.newBuilder()
+                .setTrailer(ai.protomolt.proto.repo.v2.UploadTrailer.newBuilder().setDocument(finished)).build());
+        upload.complete();
+        var saved = upload.answer();
+        assertThat(saved.getSaved().getAccession().getRevision()).isEqualTo(1L);
+        var stored = blockingStub.getDocument(GetDocumentRequest.newBuilder().setAddress(address).build());
+        assertThat(stored.getDocument().getSearchMetadata().getTitle()).isEqualTo("finished title");
+        assertThat(stored.getManifest().getRevision()).isEqualTo(1L);
+    }
+
+    @Test
+    void aTrailerThatChangesAnotherPartOrTheOwnershipIsRefusedAndRecordsNothing() throws Exception {
+        byte[] payload = "trailer-refusals".getBytes(StandardCharsets.UTF_8);
+        var blobAddress = address(account, "doc-trailer-blobs");
+        var provisional = documentWithPendingBlob(account, "doc-trailer-blobs", "b1");
+        var otherBlobs = provisional.toBuilder().setBlobBag(BlobBag.newBuilder().setBlob(
+                provisional.getBlobBag().getBlob().toBuilder().setFilename("renamed.bin"))).build();
+        f.stack.reset();
+        var deletes = new java.util.concurrent.atomic.AtomicInteger();
+        f.stack.afterDelete = () -> deletes.incrementAndGet();
+        var upload = trailerUpload("op-trailer-blobs", blobAddress, provisional, payload);
+        upload.send(UploadDocumentRequest.newBuilder()
+                .setTrailer(ai.protomolt.proto.repo.v2.UploadTrailer.newBuilder().setDocument(otherBlobs)).build());
+        upload.complete();
+        var blobFailure = upload.failure();
+        assertThat(blobFailure.getStatus().getCode()).isEqualTo(Status.Code.INVALID_ARGUMENT);
+        assertThat(blobFailure.getStatus().getDescription()).contains("only CORE may differ");
+        assertThat(f.catalog.outcome(account, "op-trailer-blobs")).isEmpty();
+        // The streamed object was put, and deleted again when the trailer was refused.
+        assertThat(f.stack.puts.get()).isEqualTo(1);
+        assertThat(deletes.get()).isEqualTo(1);
+
+        var ownerAddress = address(account, "doc-trailer-owner");
+        var owned = documentWithPendingBlob(account, "doc-trailer-owner", "b1");
+        var otherOwner = owned.toBuilder().setOwnership(owned.getOwnership().toBuilder().setDatasourceId("ds-2")).build();
+        var ownerUpload = trailerUpload("op-trailer-owner", ownerAddress, owned, payload);
+        ownerUpload.send(UploadDocumentRequest.newBuilder()
+                .setTrailer(ai.protomolt.proto.repo.v2.UploadTrailer.newBuilder().setDocument(otherOwner)).build());
+        ownerUpload.complete();
+        var ownerFailure = ownerUpload.failure();
+        assertThat(ownerFailure.getStatus().getCode()).isEqualTo(Status.Code.INVALID_ARGUMENT);
+        assertThat(ownerFailure.getStatus().getDescription()).contains("ownership");
+        assertThat(f.catalog.outcome(account, "op-trailer-owner")).isEmpty();
+    }
+
+    @Test
+    void trailerFramingIsEnforced() throws Exception {
+        byte[] payload = "trailer-framing".getBytes(StandardCharsets.UTF_8);
+        var doc = documentWithPendingBlob(account, "doc-framing", "b1");
+
+        // A trailer the header did not announce.
+        var unannounced = new Handshake();
+        unannounced.send(UploadDocumentRequest.newBuilder().setHeader(UploadHeader.newBuilder()
+                .setStreamed(ai.protomolt.proto.repo.v2.StreamedBody.getDefaultInstance())
+                .setSave(create("op-unannounced", address(account, "doc-framing"), doc))
+                .setBlobId("b1")
+                .setDeclaredLength(payload.length)).build());
+        assertThat(unannounced.answer().getAnswerCase()).isEqualTo(UploadDocumentResponse.AnswerCase.ACCEPTED);
+        unannounced.send(UploadDocumentRequest.newBuilder().setData(ByteString.copyFrom(payload)).build());
+        unannounced.send(UploadDocumentRequest.newBuilder()
+                .setTrailer(ai.protomolt.proto.repo.v2.UploadTrailer.newBuilder().setDocument(doc)).build());
+        unannounced.complete();
+        assertThat(unannounced.failure().getStatus().getDescription()).contains("announced no UploadTrailer");
+
+        // An announced trailer that never arrives.
+        var missing = trailerUpload("op-missing-trailer", address(account, "doc-framing"), doc, payload);
+        missing.complete();
+        assertThat(missing.failure().getStatus().getDescription()).contains("without the UploadTrailer");
+
+        // Data after the trailer.
+        var late = trailerUpload("op-late-data", address(account, "doc-framing"), doc, payload);
+        late.send(UploadDocumentRequest.newBuilder()
+                .setTrailer(ai.protomolt.proto.repo.v2.UploadTrailer.newBuilder().setDocument(doc)).build());
+        late.send(UploadDocumentRequest.newBuilder().setData(ByteString.copyFrom(payload)).build());
+        late.complete();
+        assertThat(late.failure().getStatus().getDescription()).contains("may follow the trailer");
+
+        // A trailer needs a CORE PUT that is not the streamed part.
+        var noCore = new Handshake();
+        noCore.send(UploadDocumentRequest.newBuilder().setHeader(UploadHeader.newBuilder()
+                .setStreamed(ai.protomolt.proto.repo.v2.StreamedBody.newBuilder().setCoreInTrailer(true))
+                .setSave(create("op-no-core", address(account, "doc-framing"), doc).clearWrites()
+                        .addWrites(put(DocumentPart.DOCUMENT_PART_BLOBS)))
+                .setBlobId("b1")
+                .setDeclaredLength(payload.length)).build());
+        assertThat(noCore.failure().getStatus().getCode()).isEqualTo(Status.Code.INVALID_ARGUMENT);
+        assertThat(noCore.answers).isEmpty();
+        for (var operation : List.of("op-unannounced", "op-missing-trailer", "op-late-data", "op-no-core"))
+            assertThat(f.catalog.outcome(account, operation)).as(operation).isEmpty();
+    }
+
+    /** A streamed blob upload that announced a trailer, accepted, with its bytes sent. */
+    private Handshake trailerUpload(String operation, NodeAddress address, Document provisional, byte[] payload)
+            throws Exception {
+        var upload = new Handshake();
+        upload.send(UploadDocumentRequest.newBuilder().setHeader(UploadHeader.newBuilder()
+                .setStreamed(ai.protomolt.proto.repo.v2.StreamedBody.newBuilder().setCoreInTrailer(true))
+                .setSave(create(operation, address, provisional))
+                .setBlobId("b1")
+                .setDeclaredLength(payload.length)).build());
+        assertThat(upload.answer().getAnswerCase()).isEqualTo(UploadDocumentResponse.AnswerCase.ACCEPTED);
+        upload.send(UploadDocumentRequest.newBuilder().setData(ByteString.copyFrom(payload)).build());
+        return upload;
+    }
+
+    /** One UploadDocument call driven a frame at a time, its answers read in order. */
+    private final class Handshake {
+        final java.util.concurrent.LinkedBlockingQueue<UploadDocumentResponse> answers =
+                new java.util.concurrent.LinkedBlockingQueue<>();
+        private final CompletableFuture<Void> end = new CompletableFuture<>();
+        private final StreamObserver<UploadDocumentRequest> requests = asyncStub.uploadDocument(new StreamObserver<>() {
+            @Override public void onNext(UploadDocumentResponse value) { answers.add(value); }
+            @Override public void onError(Throwable t) { end.completeExceptionally(t); }
+            @Override public void onCompleted() { end.complete(null); }
+        });
+
+        void send(UploadDocumentRequest frame) { requests.onNext(frame); }
+
+        void complete() { requests.onCompleted(); }
+
+        UploadDocumentResponse answer() throws Exception {
+            var answer = answers.poll(10, TimeUnit.SECONDS);
+            if (answer == null) {
+                end.getNow(null);
+                fail("No UploadDocument answer arrived");
+            }
+            return answer;
+        }
+
+        boolean completed() throws Exception {
+            end.get(10, TimeUnit.SECONDS);
+            return true;
+        }
+
+        StatusRuntimeException failure() {
+            var thrown = catchThrowable(() -> end.get(10, TimeUnit.SECONDS));
+            assertThat(thrown).isInstanceOf(java.util.concurrent.ExecutionException.class);
+            assertThat(thrown.getCause()).isInstanceOf(StatusRuntimeException.class);
+            return (StatusRuntimeException) thrown.getCause();
+        }
     }
 
     // ------------------------------------------------------------------ helpers
