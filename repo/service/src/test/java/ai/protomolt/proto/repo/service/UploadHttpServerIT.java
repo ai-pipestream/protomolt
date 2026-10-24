@@ -578,8 +578,9 @@ class UploadHttpServerIT {
                                     .build())));
             assertThat(charlieReadNoIdDenied.getStatus().getCode()).isEqualTo(Status.Code.PERMISSION_DENIED);
 
-            // 7. Archive definitions grant public READ only, never public WRITE: a scoped caller
-            // (alice-writer) cannot overwrite the archive-def document via DocumentService.saveDocument.
+            // 7. Archive definitions are internal to the archive bindings channel (empty public ACLs):
+            // a scoped caller (alice-writer) can neither read nor overwrite the raw archive-def document
+            // via DocumentService directly.
             AuthenticatedCaller aliceAuth = scopedHttp.callers().resolve(ai.protomolt.proto.authz.RequestHeaders.of(
                     Map.of("Authorization", java.util.List.of("Bearer token-alice")))).orElseThrow();
             RepositoryCaller aliceRepoCaller = new RepositoryCaller(
@@ -594,11 +595,18 @@ class UploadHttpServerIT {
             try {
                 DocumentServiceGrpc.DocumentServiceBlockingStub docs = DocumentServiceGrpc.newBlockingStub(
                         new RenditionUploads(scopedHost.documentArchive()).channel());
-                var definition = ArchiveCallerHandoff.callWithCaller(aliceRepoCaller, aliceAuth,
+                var definition = ArchiveCallerHandoff.callWithCaller(
+                        new RepositoryCaller("test-admin", true), null,
                         () -> docs.getDocument(GetDocumentRequest.newBuilder()
                                 .setAddress(DocumentArchiveBindings.definitionAddress(ACCOUNT, archiveName)).build()));
-                assertThat(definition.getDocument().getOwnership().getSecurity().getPermissionsList())
-                        .isNotEmpty().allSatisfy(rule -> assertThat(rule.getAccess()).isEqualTo(Access.ACCESS_READ));
+                assertThat(definition.getDocument().getOwnership().getSecurity().getPermissionsList()).isEmpty();
+                StatusRuntimeException defReadDenied = catchThrowableOfType(
+                        StatusRuntimeException.class,
+                        () -> ArchiveCallerHandoff.callWithCaller(aliceRepoCaller, aliceAuth, () ->
+                                docs.getDocument(GetDocumentRequest.newBuilder()
+                                        .setAddress(DocumentArchiveBindings.definitionAddress(ACCOUNT, archiveName))
+                                        .build())));
+                assertThat(defReadDenied.getStatus().getCode()).isEqualTo(Status.Code.PERMISSION_DENIED);
                 StatusRuntimeException defOverwriteDenied = catchThrowableOfType(
                         StatusRuntimeException.class,
                         () -> ArchiveCallerHandoff.callWithCaller(aliceRepoCaller, aliceAuth, () ->
@@ -619,7 +627,7 @@ class UploadHttpServerIT {
                                         .setOwner(SaveOwner.newBuilder()
                                                 .setIntake(IntakeOrigin.newBuilder().setDatasourceId("ds-archive")))
                                         .setValidationMode(ValidationMode.VALIDATION_MODE_TYPED)
-                                        .setDrive("intake")
+                                        .setDrive(DRIVE)
                                         .build())));
                 assertThat(defOverwriteDenied.getStatus().getCode()).isEqualTo(Status.Code.PERMISSION_DENIED);
             } finally {

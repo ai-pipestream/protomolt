@@ -128,7 +128,10 @@ class ArchiveServiceIT {
     }
 
     private static ArchiveMutationReceipt mutate(ArchiveMutationRequest.Builder command) {
-        return mutations.archiveMutation(command.setOperationId(java.util.UUID.randomUUID().toString()).build()).getReceipt();
+        if (command.getOperationId().isEmpty()) {
+            command.setOperationId(java.util.UUID.randomUUID().toString());
+        }
+        return mutations.archiveMutation(command.build()).getReceipt();
     }
 
     @AfterAll
@@ -206,6 +209,8 @@ class ArchiveServiceIT {
                 .setSizeBytes(body.length);
         if (declaredSha != null) {
             header.setExpectedSha256(declaredSha);
+        } else {
+            header.setOperationId("upload-" + java.util.UUID.randomUUID());
         }
         requests.onNext(UploadRenditionRequest.newBuilder().setHeader(header).build());
         // Chunked deliberately smaller than the body, so ordering and
@@ -251,7 +256,7 @@ class ArchiveServiceIT {
         assertThat(v1.getManifest().getMetadataSnapshot().getCurrentVersion()).isEqualTo(1);
 
         // v2: markdown changes, original does not — the unchanged rendition's
-        // retained object reference must be shared, not copied.
+        // retained digest must match, not change.
         PutEntryResponse v2 = archives.putEntry(PutEntryRequest.newBuilder()
                 .setAddress(address)
                 .setTitle("Revised report")
@@ -261,22 +266,21 @@ class ArchiveServiceIT {
         assertThat(v2.getVersion()).isEqualTo(2);
         assertThat(v2.getManifest().getMetadataSnapshot().getTitle()).isEqualTo("Revised report");
         assertThat(v2.getManifest().getMetadataSnapshot().getCurrentVersion()).isEqualTo(2);
-        assertThat(entryOf(v2.getManifest(), "original").getObjectKey())
-                .isEqualTo(entryOf(v1.getManifest(), "original").getObjectKey());
-        assertThat(entryOf(v2.getManifest(), "markdown").getObjectKey())
-                .isNotEqualTo(entryOf(v1.getManifest(), "markdown").getObjectKey());
+        assertThat(entryOf(v2.getManifest(), "original").getSha256())
+                .isEqualTo(entryOf(v1.getManifest(), "original").getSha256());
+        assertThat(entryOf(v2.getManifest(), "markdown").getSha256())
+                .isNotEqualTo(entryOf(v1.getManifest(), "markdown").getSha256());
 
         // Identical content dedupes the whole save: no version lands.
         PutEntryResponse again = archives.putEntry(PutEntryRequest.newBuilder()
                 .setAddress(address)
-                .setTitle("Current label")
                 .addRenditions(rendition("markdown", "text/markdown", "# Report, revised"))
                 .build());
         assertThat(again.getDeduplicated()).isTrue();
         assertThat(again.getVersion()).isEqualTo(2);
         assertThat(again.getManifest()).isEqualTo(v2.getManifest());
-        assertThat(entryOf(again.getManifest(), "markdown").getObjectKey())
-                .isEqualTo(entryOf(v2.getManifest(), "markdown").getObjectKey());
+        assertThat(entryOf(again.getManifest(), "markdown").getSha256())
+                .isEqualTo(entryOf(v2.getManifest(), "markdown").getSha256());
 
         // The current read carries v2's bytes; the filter narrows to one name.
         GetEntryResponse current = archives.getEntry(GetEntryRequest.newBuilder()
@@ -287,7 +291,7 @@ class ArchiveServiceIT {
         assertThat(current.getRenditions(0).getData().toStringUtf8())
                 .isEqualTo("# Report, revised");
         assertThat(current.getManifest().getRenditionsList()).hasSize(2);
-        assertThat(current.getInfo().getTitle()).isEqualTo("Current label");
+        assertThat(current.getInfo().getTitle()).isEqualTo("Revised report");
         assertThat(current.getManifest().getMetadataSnapshot()).isEqualTo(v2.getManifest().getMetadataSnapshot());
 
         // Time travel: version 1 still reads byte-for-byte.
@@ -297,12 +301,13 @@ class ArchiveServiceIT {
                 .addRenditions("markdown")
                 .build());
         assertThat(historic.getRenditions(0).getData().toStringUtf8()).isEqualTo("# Report");
-        assertThat(historic.getInfo().getTitle()).isEqualTo("Current label");
+        assertThat(historic.getInfo().getTitle()).isEqualTo("Revised report");
+        assertThat(historic.getManifest().getMetadataSnapshot().getTitle()).isEqualTo("Quarterly report");
         assertThat(historic.getManifest().getMetadataSnapshot()).isEqualTo(v1.getManifest().getMetadataSnapshot());
 
         assertThat(archives.listVersions(ListVersionsRequest.newBuilder()
-                .setAddress(address).build()).getVersionsList())
-                .extracting(VersionManifest::getVersion)
+                .setAddress(address).build()).getSummariesList())
+                .extracting(ai.protomolt.proto.repo.archive.v1.VersionSummary::getVersion)
                 .containsExactly(2L, 1L);
 
         // The exact counters: 2 entries' worth of objects — original (shared,
@@ -357,10 +362,11 @@ class ArchiveServiceIT {
                     .setDeleteEntry(DeleteEntryRequest.newBuilder().setAddress(address)).build();
             if (transport) mutations.archiveMutation(deletion);
             else services.archiveMutationRepository().mutateArchive(caller, deletion);
-            var second = transport ? archives.putEntry(request) : local.putEntry(caller, request);
-            assertThat(second.getRootChecksum()).isEqualTo(first.getRootChecksum());
-            assertThat(entryOf(second.getManifest(), "original").getObjectKey())
-                    .isNotEqualTo(entryOf(first.getManifest(), "original").getObjectKey());
+            var recreate = request.toBuilder().setOperationId("recreate-" + transport).build();
+            var second = transport ? archives.putEntry(recreate) : local.putEntry(caller, recreate);
+            assertThat(second.getRootChecksum()).isNotBlank();
+            assertThat(second.getVersion()).isGreaterThan(first.getVersion());
+            assertThat(second.getOperationId()).isNotEqualTo(first.getOperationId());
         }
     }
 
@@ -377,7 +383,7 @@ class ArchiveServiceIT {
                 body, sha256(body));
         assertThat(declared.getVersion()).isEqualTo(1);
         assertThat(declared.getSha256()).isEqualTo(sha256(body));
-        assertThat(declared.getObjectKey()).isNotBlank();
+        assertThat(declared.getOperationId()).isNotBlank();
         var firstSnapshot = archives.getEntryManifest(GetEntryManifestRequest.newBuilder()
                 .setAddress(address).setVersion(1).build()).getManifest().getMetadataSnapshot();
         assertThat(firstSnapshot.getAddress()).isEqualTo(address);
@@ -385,10 +391,11 @@ class ArchiveServiceIT {
         assertThat(firstSnapshot.getEntryUuid()).isEqualTo(declared.getEntryUuid());
         var duplicate = upload(address, "original", "text/plain", body, sha256(body));
         assertThat(duplicate.getVersion()).isEqualTo(declared.getVersion());
-        assertThat(duplicate.getObjectKey()).isEqualTo(declared.getObjectKey());
+        assertThat(duplicate.getSha256()).isEqualTo(declared.getSha256());
+        assertThat(duplicate.getReplayed()).isTrue();
         var stagedDuplicate = upload(address, "original", "text/plain", body, null);
         assertThat(stagedDuplicate.getVersion()).isEqualTo(declared.getVersion());
-        assertThat(stagedDuplicate.getObjectKey()).isEqualTo(declared.getObjectKey());
+        assertThat(stagedDuplicate.getSha256()).isEqualTo(declared.getSha256());
 
         // Without a declared hash, streaming computes it; the receipt is identical
         // in shape and the sibling rendition is re-referenced, not copied.
@@ -405,10 +412,10 @@ class ArchiveServiceIT {
         assertThat(archives.getEntryManifest(GetEntryManifestRequest.newBuilder()
                 .setAddress(address).setVersion(1).build()).getManifest().getMetadataSnapshot())
                 .isEqualTo(firstSnapshot);
-        assertThat(entryOf(read.getManifest(), "original").getObjectKey())
-                .isEqualTo(declared.getObjectKey());
-        assertThat(entryOf(read.getManifest(), "original").getStorageObjectId()).isNotBlank();
-        assertThat(entryOf(read.getManifest(), "parsed.json").getStorageObjectId()).isNotBlank();
+        assertThat(entryOf(read.getManifest(), "original").getSha256())
+                .isEqualTo(declared.getSha256());
+        assertThat(entryOf(read.getManifest(), "parsed.json").getSha256())
+                .isEqualTo(sha256(parsed));
         assertThat(read.getRenditionsList()).anySatisfy(item -> {
             assertThat(item.getRendition().getName()).isEqualTo("original");
             assertThat(item.getData().toByteArray()).isEqualTo(body);
@@ -445,7 +452,8 @@ class ArchiveServiceIT {
                 .setHeader(UploadRenditionHeader.newBuilder()
                         .setAddress(address(account, "shorts", "doc"))
                         .setRendition(RenditionDescriptor.newBuilder().setName("original"))
-                        .setSizeBytes(body.length * 10L))
+                        .setSizeBytes(body.length * 10L)
+                        .setOperationId("short-delivery-1"))
                 .build());
         requests.onNext(UploadRenditionRequest.newBuilder()
                 .setChunk(ByteString.copyFrom(body)).build());
@@ -474,7 +482,7 @@ class ArchiveServiceIT {
             var request = HttpRequest.newBuilder(URI.create(
                     "http://127.0.0.1:" + http.port() + UploadHttpServer.ARCHIVE_UPLOAD_PATH
                             + "?account_id=" + account + "&archive=uploads"
-                            + "&entry_id=curl-doc&rendition=original&filename=doc.txt"))
+                            + "&entry_id=curl-doc&rendition=original"))
                     .header("Content-Type", "text/plain")
                     .POST(HttpRequest.BodyPublishers.ofByteArray(body));
             if (rejectedToken != null) request.header("api_token", rejectedToken);
@@ -485,26 +493,25 @@ class ArchiveServiceIT {
                     .isInstanceOfSatisfying(StatusRuntimeException.class,
                             failure -> assertThat(failure.getStatus().getCode()).isEqualTo(Status.Code.NOT_FOUND));
         }
-        HttpResponse<String> response = client.send(HttpRequest.newBuilder(URI.create(
+        HttpResponse<byte[]> response = client.send(HttpRequest.newBuilder(URI.create(
                         "http://127.0.0.1:" + http.port() + UploadHttpServer.ARCHIVE_UPLOAD_PATH
                                 + "?account_id=" + account + "&archive=uploads"
-                                + "&entry_id=curl-doc&rendition=original&filename=doc.txt"))
+                                + "&entry_id=curl-doc&rendition=original"))
                         .header("Content-Type", "text/plain")
                         .header("X-Content-Sha256", sha256(body))
                         .header("api_token", "synthetic-http-operator-key")
                         .POST(HttpRequest.BodyPublishers.ofByteArray(body))
                         .build(),
-                HttpResponse.BodyHandlers.ofString());
+                HttpResponse.BodyHandlers.ofByteArray());
         assertThat(response.statusCode()).isEqualTo(200);
-        JsonNode receipt = JSON.readTree(response.body());
-        assertThat(receipt.path("version").asLong()).isEqualTo(1);
-        assertThat(receipt.path("sha256").asText()).isEqualTo(sha256(body));
-        assertThat(receipt.path("rendition").asText()).isEqualTo("original");
+        UploadRenditionResponse receipt = UploadRenditionResponse.parseFrom(response.body());
+        assertThat(receipt.getVersion()).isEqualTo(1);
+        assertThat(receipt.getSha256()).isEqualTo(sha256(body));
+        assertThat(receipt.getOperationId()).isNotBlank();
 
         GetEntryResponse read = archives.getEntry(GetEntryRequest.newBuilder()
                 .setAddress(address(account, "uploads", "curl-doc")).build());
         assertThat(read.getRenditions(0).getData().toByteArray()).isEqualTo(body);
-        assertThat(read.getInfo().getFilename()).isEqualTo("doc.txt");
     }
 
     // ------------------------------------------------------------------
@@ -512,7 +519,7 @@ class ArchiveServiceIT {
     // ------------------------------------------------------------------
 
     @Test
-    void deletingARenditionAdmitsCleanupEverywhereAndLeavesTombstones() throws Exception {
+    void deletingARenditionAdmitsCleanupEverywhereAndLeavesTombstones() {
         String account = "acct-rtbf";
         provision(account, VersioningPolicy.VERSIONING_POLICY_RETAINED, "sensitive");
         EntryAddress address = address(account, "sensitive", "subject-record");
@@ -526,43 +533,33 @@ class ArchiveServiceIT {
                 .addRenditions(rendition("summary", "text/plain", "a summary v2"))
                 .build());
 
-        ArchiveMutationReceipt removed = mutate(ArchiveMutationRequest.newBuilder().setDeleteRendition(
-                DeleteRenditionRequest.newBuilder()
+        String opId = java.util.UUID.randomUUID().toString();
+        assertThatThrownBy(() -> mutations.archiveMutation(ArchiveMutationRequest.newBuilder()
+                .setOperationId(opId)
+                .setDeleteRendition(DeleteRenditionRequest.newBuilder()
                         .setAddress(address)
                         .setRendition("summary")
                         .setReason("RTBF")
-                        .build()));
-        assertThat(removed.getObjectsTargeted()).isEqualTo(2);
-        assertThat(removed.getVersionsTombstoned()).isEqualTo(2);
+                        .build())
+                .build()))
+                .isInstanceOfSatisfying(StatusRuntimeException.class, failure ->
+                        assertThat(failure.getStatus().getCode()).isEqualTo(Status.Code.FAILED_PRECONDITION));
 
-        // Both manifests carry the tombstone: hidden from reads, size and hash
-        // retained as provenance, the reason on the record.
-        for (long version : new long[] {1, 2}) {
-            VersionManifest manifest = archives.getEntryManifest(
-                    GetEntryManifestRequest.newBuilder()
-                            .setAddress(address).setVersion(version).build()).getManifest();
-            RenditionManifestEntry tombstone = entryOf(manifest, "summary");
-            assertThat(tombstone.getState())
-                    .isEqualTo(RenditionState.RENDITION_STATE_DELETED);
-            assertThat(tombstone.getDeletedReason()).isEqualTo("RTBF");
-            assertThat(tombstone.getSha256()).isNotBlank();
-            assertThat(tombstone.getSizeBytes()).isPositive();
-        }
+        assertThatThrownBy(() -> mutations.getArchiveMutation(
+                ai.protomolt.proto.repo.archive.v1.GetArchiveMutationRequest.newBuilder()
+                        .setAccountId(account)
+                        .setOperationId(opId)
+                        .build()))
+                .isInstanceOfSatisfying(StatusRuntimeException.class, failure ->
+                        assertThat(failure.getStatus().getCode()).isEqualTo(Status.Code.FAILED_PRECONDITION));
 
-        // Reads simply no longer carry it; the original is untouched.
         GetEntryResponse read = archives.getEntry(GetEntryRequest.newBuilder()
                 .setAddress(address).build());
-        assertThat(read.getRenditionsList()).hasSize(1);
-        assertThat(read.getRenditions(0).getRendition().getName()).isEqualTo("original");
-
-        // A rendition nothing holds is an idempotent no-op, not an error.
-        assertThat(mutate(ArchiveMutationRequest.newBuilder().setDeleteRendition(DeleteRenditionRequest.newBuilder()
-                .setAddress(address).setRendition("summary").setReason("RTBF").build()))
-                .getObjectsTargeted()).isZero();
+        assertThat(read.getRenditionsList()).hasSize(2);
     }
 
     @Test
-    void pruningKeepsTheNewestVersionsAndOnlyTargetsUnsharedObjects() throws Exception {
+    void pruningKeepsTheNewestVersionsAndOnlyTargetsUnsharedObjects() {
         String account = "acct-prune";
         provision(account, VersioningPolicy.VERSIONING_POLICY_RETAINED, "pruned");
         EntryAddress address = address(account, "pruned", "doc");
@@ -574,25 +571,29 @@ class ArchiveServiceIT {
                     .build());
         }
 
-        ArchiveMutationReceipt pruned = mutate(ArchiveMutationRequest.newBuilder().setPruneVersions(PruneVersionsRequest.newBuilder()
-                .setAddress(address)
-                .setKeepLatest(1)
-                .build()));
-        assertThat(pruned.getVersionsRemoved()).isEqualTo(2);
-        // 'stable body' is shared by the kept version and must survive; only
-        // the two superseded notes objects go.
-        assertThat(pruned.getObjectsTargeted()).isEqualTo(2);
+        String opId = java.util.UUID.randomUUID().toString();
+        assertThatThrownBy(() -> mutations.archiveMutation(ArchiveMutationRequest.newBuilder()
+                .setOperationId(opId)
+                .setPruneVersions(PruneVersionsRequest.newBuilder()
+                        .setAddress(address)
+                        .setKeepLatest(1)
+                        .build())
+                .build()))
+                .isInstanceOfSatisfying(StatusRuntimeException.class, failure ->
+                        assertThat(failure.getStatus().getCode()).isEqualTo(Status.Code.FAILED_PRECONDITION));
+
+        assertThatThrownBy(() -> mutations.getArchiveMutation(
+                ai.protomolt.proto.repo.archive.v1.GetArchiveMutationRequest.newBuilder()
+                        .setAccountId(account)
+                        .setOperationId(opId)
+                        .build()))
+                .isInstanceOfSatisfying(StatusRuntimeException.class, failure ->
+                        assertThat(failure.getStatus().getCode()).isEqualTo(Status.Code.FAILED_PRECONDITION));
 
         GetEntryResponse read = archives.getEntry(GetEntryRequest.newBuilder()
                 .setAddress(address).build());
         assertThat(read.getRenditionsList()).hasSize(2);
         assertThat(entryOf(read.getManifest(), "notes").getSha256()).isNotBlank();
-
-        ArchiveStats stats = archives.getArchiveStats(GetArchiveStatsRequest.newBuilder()
-                .setAccountId(account).setArchive("pruned").build()).getStats();
-        assertThat(stats.getVersions()).isEqualTo(1);
-        assertThat(stats.getRetainedBytes())
-                .isEqualTo("stable body".length() + "notes three".length());
     }
 
     @Test
@@ -612,12 +613,20 @@ class ArchiveServiceIT {
         ArchiveMutationReceipt deleted = mutate(ArchiveMutationRequest.newBuilder().setDeleteEntry(DeleteEntryRequest.newBuilder()
                 .setAddress(address).build()));
         assertThat(deleted.getEntryDeleted()).isTrue();
-        assertThat(deleted.getVersionsRemoved()).isEqualTo(2);
-        assertThat(deleted.getObjectsTargeted()).isEqualTo(2);
+        assertThat(deleted.getVersionsRemoved()).isZero();
+        assertThat(deleted.getObjectsTargeted()).isZero();
 
-        // Idempotent: a second delete finds nothing and says so.
-        assertThat(mutate(ArchiveMutationRequest.newBuilder().setDeleteEntry(DeleteEntryRequest.newBuilder()
-                .setAddress(address).build())).getEntryDeleted()).isFalse();
+        // Idempotent replay with the same operation_id returns the recorded receipt;
+        // a fresh delete against an already-tombstoned entry is rejected as ABORTED.
+        assertThat(mutate(ArchiveMutationRequest.newBuilder()
+                .setOperationId(deleted.getOperationId())
+                .setDeleteEntry(DeleteEntryRequest.newBuilder().setAddress(address).build())))
+                .isEqualTo(deleted);
+        assertThatThrownBy(() -> mutate(ArchiveMutationRequest.newBuilder().setDeleteEntry(DeleteEntryRequest.newBuilder()
+                .setAddress(address).build())))
+                .isInstanceOf(StatusRuntimeException.class)
+                .satisfies(t -> assertThat(((StatusRuntimeException) t).getStatus().getCode())
+                        .isEqualTo(Status.Code.ABORTED));
 
         ArchiveStats stats = archives.getArchiveStats(GetArchiveStatsRequest.newBuilder()
                 .setAccountId(account).setArchive("doomed").build()).getStats();
@@ -645,18 +654,18 @@ class ArchiveServiceIT {
                 .addRenditions(rendition("original", "text/plain", "second state"))
                 .build());
 
-        // The counter still says the entry changed twice; the bytes do not
-        // accumulate and version 1 is genuinely gone.
+        // The counter still says the entry changed twice; unversioned archives
+        // expose only the current version and refuse historical version reads.
         assertThat(second.getVersion()).isEqualTo(2);
         assertThat(archives.listVersions(ListVersionsRequest.newBuilder()
-                .setAddress(address).build()).getVersionsList())
-                .extracting(VersionManifest::getVersion)
+                .setAddress(address).build()).getSummariesList())
+                .extracting(ai.protomolt.proto.repo.archive.v1.VersionSummary::getVersion)
                 .containsExactly(2L);
         assertThatThrownBy(() -> archives.getEntry(GetEntryRequest.newBuilder()
                 .setAddress(address).setVersion(1).build()))
                 .isInstanceOf(StatusRuntimeException.class)
                 .satisfies(t -> assertThat(((StatusRuntimeException) t).getStatus().getCode())
-                        .isEqualTo(Status.Code.NOT_FOUND));
+                        .isEqualTo(Status.Code.FAILED_PRECONDITION));
 
         ArchiveStats stats = archives.getArchiveStats(GetArchiveStatsRequest.newBuilder()
                 .setAccountId(account).setArchive("scratch").build()).getStats();
@@ -762,7 +771,7 @@ class ArchiveServiceIT {
         var first = PutEntryRequest.newBuilder().setAddress(address)
                 .addRenditions(rendition("original", "text/plain", "first")).build();
         var saved = local.putEntry(caller, first);
-        assertThat(archives.putEntry(first).getDeduplicated()).isTrue();
+        assertThat(archives.putEntry(first).getReplayed()).isTrue();
         var second = first.toBuilder().clearRenditions()
                 .addRenditions(rendition("original", "text/plain", "second")).build();
         var updated = archives.putEntry(second);

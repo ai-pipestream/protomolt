@@ -18,25 +18,33 @@ class UploadHttpShutdownTest {
         var finish = new CountDownLatch(1);
         var released = new AtomicBoolean();
         // Fault-only archive boundary: never fabricates a successful storage result.
-        var archive = (ai.protomolt.proto.repo.spi.ArchiveRepository) java.lang.reflect.Proxy.newProxyInstance(
-                UploadHttpShutdownTest.class.getClassLoader(),
-                new Class<?>[] { ai.protomolt.proto.repo.spi.ArchiveRepository.class },
-                (proxy, method, args) -> {
-                    if (method.getName().equals("uploadStream")) {
-                        entered.countDown();
-                        while (finish.getCount() != 0) {
-                            try { finish.await(); }
-                            catch (InterruptedException ignored) { /* Deliberately uncooperative handler. */ }
-                        }
-                        throw new IllegalStateException("Injected archive failure");
-                    }
-                    throw new UnsupportedOperationException(method.getName());
-                });
+        io.grpc.Channel blockingChannel = new io.grpc.Channel() {
+            @Override
+            public <RequestT, ResponseT> io.grpc.ClientCall<RequestT, ResponseT> newCall(
+                    io.grpc.MethodDescriptor<RequestT, ResponseT> methodDescriptor,
+                    io.grpc.CallOptions callOptions) {
+                entered.countDown();
+                while (finish.getCount() != 0) {
+                    try { finish.await(); }
+                    catch (InterruptedException ignored) { /* Deliberately uncooperative handler. */ }
+                }
+                throw new IllegalStateException("Injected archive failure");
+            }
+
+            @Override
+            public String authority() {
+                return "blocking";
+            }
+        };
+        var archive = new ai.protomolt.proto.repo.archive.DocumentArchive(
+                blockingChannel,
+                (accountId, name) -> java.util.Optional.empty(),
+                java.time.Clock.systemUTC());
         var server = new UploadHttpServer(null, null, "synthetic-http-operator-key", archive,
                 RepositoryConsole.notConfigured());
         var client = HttpClient.newHttpClient();
         var request = HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + server.start(0)
-                + UploadHttpServer.ARCHIVE_UPLOAD_PATH + "?account_id=a&archive=ar&entry_id=e"))
+                + UploadHttpServer.ARCHIVE_UPLOAD_PATH + "?account_id=a&archive=ar&entry_id=e&operation_id=op-1"))
                 .header("api_token", "synthetic-http-operator-key")
                 .POST(HttpRequest.BodyPublishers.ofString("x")).build();
         var response = client.sendAsync(request, HttpResponse.BodyHandlers.ofString());

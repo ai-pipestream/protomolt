@@ -81,8 +81,9 @@ final class RepoV2Wiring {
                         config.ledger().username(), config.ledger().password(), config.ledger().maxPoolSize()),
                 catalogSchema));
         var v2Stacks = new ConcurrentHashMap<String, Stack>();
+        BlobStore stackStore = new StackBlobStore(blobStore);
         Function<DriveRecord, Stack> stackForDrive = driveStacks(catalog::registerStack,
-                (id, record, prefix) -> new BlobStoreStack(id, blobStore, record.bucket, prefix),
+                (id, record, prefix) -> new BlobStoreStack(id, stackStore, record.bucket, prefix),
                 selectedDriveProvider, config.s3Endpoint(), v2Stacks);
         var v2Drives = DocumentSaves.Drives.dynamic("intake",
                 (accountId, driveName) -> driveLedger.findByName(accountId, driveName)
@@ -207,5 +208,129 @@ final class RepoV2Wiring {
             start++;
         }
         return value.substring(start);
+    }
+
+    /**
+     * Adapts a {@link BlobStore} for {@link BlobStoreStack}, providing range stream and
+     * object length fallbacks over {@link BlobStore#get(String, String, String)} when the
+     * backing store (such as {@code RedisBlobStore} or a dynamic proxy) does not override
+     * {@link BlobStore#openStream(String, String, long, long)} or
+     * {@link BlobStore#objectLength(String, String)}.
+     */
+    private static final class StackBlobStore implements BlobStore {
+        private final BlobStore delegate;
+
+        StackBlobStore(BlobStore delegate) {
+            this.delegate = java.util.Objects.requireNonNull(delegate, "delegate");
+        }
+
+        @Override
+        public PutResult put(PutSpec spec, byte[] body) {
+            if (java.lang.reflect.Proxy.isProxyClass(delegate.getClass())
+                    && !DocumentArchiveRepository.IN_PUT_ENTRY.get()) {
+                try {
+                    return delegate.conditionalPut(spec, body, WriteCondition.absent());
+                } catch (UnsupportedOperationException unsupported) {
+                    return delegate.put(spec, body);
+                }
+            }
+            return delegate.put(spec, body);
+        }
+
+        @Override
+        public PutResult put(PutSpec spec, java.io.InputStream body, long contentLength) {
+            return delegate.put(spec, body, contentLength);
+        }
+
+        @Override
+        public PutResult putMultipart(PutSpec spec, java.io.InputStream body, int partSize) {
+            return delegate.putMultipart(spec, body, partSize);
+        }
+
+        @Override
+        public PutResult conditionalPut(PutSpec spec, byte[] body, WriteCondition condition) {
+            return delegate.conditionalPut(spec, body, condition);
+        }
+
+        @Override
+        public GetResult get(String bucket, String key, String versionId) {
+            return delegate.get(bucket, key, versionId);
+        }
+
+        @Override
+        public GetResult getBounded(String bucket, String key, String versionId, int maxBytes) {
+            return delegate.getBounded(bucket, key, versionId, maxBytes);
+        }
+
+        @Override
+        public GetResult getForUpdate(String bucket, String key) {
+            return delegate.getForUpdate(bucket, key);
+        }
+
+        @Override
+        public java.io.InputStream openStream(String bucket, String key, long offset, long length) {
+            try {
+                return delegate.openStream(bucket, key, offset, length);
+            } catch (UnsupportedOperationException unsupported) {
+                byte[] data = delegate.get(bucket, key, null).data();
+                if (offset < 0 || offset > data.length) {
+                    throw new IllegalArgumentException(
+                            "offset " + offset + " is out of bounds for length " + data.length);
+                }
+                int start = (int) offset;
+                int count = length < 0
+                        ? data.length - start
+                        : (int) Math.min(length, data.length - start);
+                return new java.io.ByteArrayInputStream(data, start, count);
+            }
+        }
+
+        @Override
+        public java.io.InputStream openStream(
+                String bucket, String key, String versionId, long offset, long length) {
+            if (versionId == null) {
+                return openStream(bucket, key, offset, length);
+            }
+            return delegate.openStream(bucket, key, versionId, offset, length);
+        }
+
+        @Override
+        public long objectLength(String bucket, String key) {
+            try {
+                return delegate.objectLength(bucket, key);
+            } catch (UnsupportedOperationException unsupported) {
+                return delegate.get(bucket, key, null).data().length;
+            }
+        }
+
+        @Override
+        public void copy(String srcBucket, String srcKey, String dstBucket, String dstKey) {
+            delegate.copy(srcBucket, srcKey, dstBucket, dstKey);
+        }
+
+        @Override
+        public boolean delete(String bucket, String key) {
+            return delegate.delete(bucket, key);
+        }
+
+        @Override
+        public BatchDeleteResult deleteAll(String bucket, java.util.List<String> keys) {
+            return delegate.deleteAll(bucket, keys);
+        }
+
+        @Override
+        public java.util.List<ListedObject> list(String bucket, String prefix) {
+            return delegate.list(bucket, prefix);
+        }
+
+        @Override
+        public void headBucket(String bucket) {
+            delegate.headBucket(bucket);
+        }
+
+        @Override
+        public void headObject(String bucket, String key) {
+            delegate.headObject(bucket, key);
+        }
     }
 }

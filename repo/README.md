@@ -74,13 +74,13 @@ unpurged reference points at them.
 | `repo/spi` | `:protomolt-repo-spi` | Caller identity and grants (`RepositoryCaller`, `DocumentAccessPolicy`, `PurgeAuthorization`), read/save controls, domain errors, and the frozen archive/drive repository interfaces |
 | `repo/admission` | `:protomolt-repo-admission` | v2 candidate admission: retained-schema fragment decoding, CEL document rules, semantic (segmentation/embedding) checks, opaque-occurrence attestation |
 | `repo/schema/registry` | `:protomolt-repo-schema-registry` | Retained schema assets the admission and historical decoding paths resolve against |
-| `repo/engine` | `:protomolt-repo-engine` | The frozen archive and drive operations over the container ledger and selected byte storage |
-| `repo/container` | `:protomolt-repo-container` | The archive/drive storage engine: part fan-out IO and the Postgres ledger (Hibernate + HikariCP + Flyway) |
-| `repo/service` | `:protomolt-repo-service` | The host: mounts the v2 `AccessionGrpcService`, archive and drive gRPC services, the streaming HTTP upload route, per-account dynamic drives and the v2 outbox relay (`RepoServices` wiring) |
+| `repo/engine` | `:protomolt-repo-engine` | Drive operations over the container ledger and selected byte storage |
+| `repo/container` | `:protomolt-repo-container` | The drive and reader-host Postgres ledger (Hibernate + HikariCP + Flyway) |
+| `repo/service` | `:protomolt-repo-service` | The host: mounts the v2 `AccessionGrpcService`, `DocumentArchiveGrpcService`, `DocumentArchiveMutationGrpcService`, and drive gRPC services, the streaming HTTP upload routes, per-account dynamic drives and the v2 outbox relay (`RepoServices` wiring) |
 | `repo/stack` | `:protomolt-repo-stack` | v2 write-once stacks: streamed puts that return a `StackRef`, reads verified against it |
 | `repo/catalog` | `:protomolt-repo-catalog` | v2 catalog over JDBC + HikariCP + Flyway: revisions, part references, outcomes, writer grants, outbox (mounted in the dedicated `repo_catalog` schema) |
 | `repo/accession` | `:protomolt-repo-accession` | v2 `ai.protomolt.proto.repo.v2.DocumentService` (`AccessionGrpcService`): all 13 RPCs — save/read/manifest/revisions/outcome, streamed upload/read + blob reads, delete/list/purge, bulk streams and the Kafka outbox relay; mounted by full-profile `RepoServices` |
-| `repo/archive` | `:protomolt-repo-archive` | The archive over v2 documents (`DocumentArchiveGrpcService`): `ArchiveService` entry reads projected from `DocumentService` reads through the view `.proto`'s projection options, `PutEntry`/`UploadRendition` translated into one v2 save each, outcome replay under deterministic UUIDv5 operation IDs; not yet mounted by `RepoServices` |
+| `repo/archive` | `:protomolt-repo-archive` | The archive over v2 documents (`DocumentArchiveGrpcService` and `DocumentArchiveMutationGrpcService`): `ArchiveService` entry reads projected from `DocumentService` reads through the view `.proto`'s projection options, `PutEntry`/`UploadRendition` translated into one v2 save each, `ArchiveMutationService` over `DeleteDocument`/`GetOperationOutcome`, and outcome replay under deterministic UUIDv5 operation IDs; mounted by `RepoServices` and `RepoBoundedArchiveMain` |
 
 ## Repository v2 (parts-based)
 
@@ -131,10 +131,11 @@ revision); there is no separate dedupe response - idempotent retries are
 the `operation_id` outcome replay described in the
 [document guide](../docs/repo/publication.md).
 
-The frozen archive subsystem keeps its own storage model on the container
-ledger (entry-local content-addressed rendition objects); drives bind
-(bucket, prefix, region, credentialsRef) for both worlds and are the only
-thing that resolves to object-storage coordinates.
+The archive subsystem (`repo/archive`) runs over v2 `DocumentService`
+revisions and raw blobs (`archive-def:<accountId>` for archive definitions and
+`archive:<accountId>` for archive entries); drives bind (bucket, prefix,
+region, credentialsRef) and are the only thing that resolves to object-storage
+coordinates.
 
 ## Delete and purge
 
@@ -393,23 +394,21 @@ wins). `Content-Length` is required; `Content-Type` describes the rendition and
 `X-Content-Sha256` optionally declares its digest. A blank operation ID requires
 the digest and derives a deterministic retry ID.
 
-The v2 path streams through `RenditionUploads` into `UploadDocument`, waiting for
+The route streams through `RenditionUploads` into `UploadDocument`, waiting for
 downstream readiness before reading another 64 KiB chunk. Early replay or refusal
 answers without draining the remaining request body and closes the HTTP connection.
 Success is binary `UploadRenditionResponse` with `Content-Type: application/protobuf`;
 errors are binary `google.rpc.Status` with the same content type and the matching
 HTTP status. This replaces the former hand-built JSON receipt, including its
-invented `deduplicated` field. The v2 receipt uses revision, size, SHA-256,
+invented `deduplicated` field. The receipt uses revision, size, SHA-256,
 candidate root checksum, operation ID and replay status; legacy physical-key and
-entry-UUID fields remain absent on v2. A legacy archive also returns the existing
-protobuf response type, populated from its upload result.
+entry-UUID fields remain absent.
 
-For v2, `filename`, `title` and `source_uri` are refused rather than silently
-ignored; set entry metadata through `PutEntry`. Legacy uploads still accept
-`filename`. Scoped uploads stamp READ and WRITE rules only for the caller's ACL
-identities. An identityless writer creates no such rules; its successful commit
-receipt does not grant subsequent read access. Archive definitions grant public
-READ within their account, never public WRITE.
+`filename`, `title` and `source_uri` are refused rather than silently
+ignored; set entry metadata through `PutEntry`. Scoped uploads stamp READ and
+WRITE rules only for the caller's ACL identities. An identityless writer creates
+no such rules; its successful commit receipt does not grant subsequent read access.
+Archive definitions grant public READ within their account, never public WRITE.
 
 ### HTTP `POST /v1/documents:upload`
 

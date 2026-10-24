@@ -2006,11 +2006,16 @@ public final class DocumentArchive {
         if (primaryUpload && uploadedWindows != null && uploadedWindows.head().length > 0) {
             String blobId = ArchiveCoordinates.blobId(
                     header.getRendition().getName(), header.getRendition().getSubKey());
-            boolean primaryUnchanged = !header.getExpectedSha256().isEmpty()
+            String knownSha = !header.getExpectedSha256().isEmpty()
+                    ? header.getExpectedSha256()
+                    : (uploadedWindows.sizeBytes() == uploadedWindows.head().length
+                            ? RenditionReads.sha256Hex(ByteString.copyFrom(uploadedWindows.head()))
+                            : "");
+            boolean primaryUnchanged = !knownSha.isEmpty()
                     && currentBlobs.stream()
                             .filter(b -> b.getBlobId().equals(blobId))
                             .anyMatch(b -> b.getSizeBytes() == header.getSizeBytes()
-                                    && b.getChecksum().equalsIgnoreCase(header.getExpectedSha256()));
+                                    && b.getChecksum().equalsIgnoreCase(knownSha));
             Classification resolved = ArchiveClassifications.classify(
                     effectiveDeclared, effectiveOrigin, uploadedWindows, filename, attribution, clock.instant());
             return ArchiveClassifications.preserveIfUnchanged(resolved, stored, primaryUnchanged);
@@ -2505,6 +2510,7 @@ public final class DocumentArchive {
                 .setOwner(SaveOwner.newBuilder()
                         .setIntake(IntakeOrigin.newBuilder().setDatasourceId(datasourceId)))
                 .setValidationMode(ValidationMode.VALIDATION_MODE_TYPED)
+                .setDrive(binding.map(ArchiveBinding::drive).orElse(""))
                 .putMetadata(MUTATION_KIND_METADATA, kind)
                 .putMetadata(MUTATION_SHA256_METADATA, commandSha256)
                 .putMetadata(MUTATION_REFUSAL_METADATA, refusalMessage)
