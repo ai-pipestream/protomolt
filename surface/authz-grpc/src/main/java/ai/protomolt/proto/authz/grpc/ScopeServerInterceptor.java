@@ -22,6 +22,7 @@ import java.lang.reflect.Field;
 import java.lang.reflect.InvocationHandler;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
+import java.lang.reflect.Modifier;
 import java.lang.reflect.Proxy;
 import java.util.Map;
 import java.util.Objects;
@@ -48,6 +49,7 @@ public final class ScopeServerInterceptor implements ServerInterceptor {
 
     private static final long MAX_DECOMPRESSED_COUNT_BYTES = 64L * 1024L;
     private static final int SCRATCH_BUFFER_BYTES = 4096;
+    private static final int MAX_CALL_UNWRAP_DEPTH = 16;
     private static final ThreadLocal<InboundFrameTracker> PENDING_COMPRESSED_TRACKER =
             new ThreadLocal<>();
     private static final DecompressorRegistry DECOMPRESSOR_REGISTRY = buildDecompressorRegistry();
@@ -268,14 +270,13 @@ public final class ScopeServerInterceptor implements ServerInterceptor {
     private static Object rawDeframerOf(ServerCall<?, ?> call) {
         try {
             Object current = call;
+            int depth = 0;
             while (current != null && !"io.grpc.internal.ServerCallImpl".equals(
                     current.getClass().getName())) {
-                Method delegateMethod = findNoArgMethod(current.getClass(), "delegate");
-                if (delegateMethod == null) {
+                if (depth++ >= MAX_CALL_UNWRAP_DEPTH) {
                     return null;
                 }
-                delegateMethod.setAccessible(true);
-                current = delegateMethod.invoke(current);
+                current = unwrapServerCall(current);
             }
             if (current == null) {
                 return null;
@@ -307,6 +308,33 @@ public final class ScopeServerInterceptor implements ServerInterceptor {
         } catch (ReflectiveOperationException e) {
             throw new IllegalStateException("Failed to access gRPC MessageDeframer", e);
         }
+    }
+
+    private static ServerCall<?, ?> unwrapServerCall(Object current)
+            throws ReflectiveOperationException {
+        Method delegateMethod = findNoArgMethod(current.getClass(), "delegate");
+        if (delegateMethod != null) {
+            delegateMethod.setAccessible(true);
+            Object next = delegateMethod.invoke(current);
+            if (next instanceof ServerCall<?, ?> nextCall && nextCall != current) {
+                return nextCall;
+            }
+        }
+        for (Class<?> cursor = current.getClass();
+                cursor != null && cursor != ServerCall.class && cursor != Object.class;
+                cursor = cursor.getSuperclass()) {
+            for (Field field : cursor.getDeclaredFields()) {
+                if (Modifier.isStatic(field.getModifiers())) {
+                    continue;
+                }
+                field.setAccessible(true);
+                Object value = field.get(current);
+                if (value instanceof ServerCall<?, ?> nextCall && nextCall != current) {
+                    return nextCall;
+                }
+            }
+        }
+        return null;
     }
 
     private static Method findNoArgMethod(Class<?> type, String name) {
@@ -384,6 +412,21 @@ public final class ScopeServerInterceptor implements ServerInterceptor {
                     .withCause(cause)));
         }
 
+        private void refuseUnsupportedCompressedFrame() {
+            Gate active = this.gate;
+            if (active == null || refused) {
+                return;
+            }
+            String description = "caller '" + active.caller().name()
+                    + "' cannot send compressed frames under '" + active.scope()
+                    + "' (" + active.budget().maxPayloadBytes()
+                    + "-byte cap) on an unsupported ServerCall transport";
+            verdicts.add(new FrameVerdict(true, description));
+            refused = true;
+            active.call().triggerEvent(new FrameCloseEvent(
+                    Status.RESOURCE_EXHAUSTED.withDescription(description)));
+        }
+
         @Override
         public Context filterContext(Context context) {
             return context.withValue(key, this);
@@ -398,8 +441,12 @@ public final class ScopeServerInterceptor implements ServerInterceptor {
             }
             if (optionalUncompressedSize >= 0) {
                 evaluateUncompressedSize(active, optionalUncompressedSize);
-            } else if (optionalWireSize >= 0 && installDeframerListener(active.call())) {
-                pendingCompressedFrame = true;
+            } else if (optionalWireSize >= 0) {
+                if (installDeframerListener(active.call())) {
+                    pendingCompressedFrame = true;
+                } else {
+                    refuseUnsupportedCompressedFrame();
+                }
             }
         }
 
@@ -503,25 +550,33 @@ public final class ScopeServerInterceptor implements ServerInterceptor {
         @Override
         public Object invoke(Object proxy, Method method, Object[] args) throws Throwable {
             if (!"messagesAvailable".equals(method.getName())
-                    || args == null
-                    || args.length != 1
-                    || args[0] == null
                     || !tracker.consumePendingCompressedFrame()) {
                 return invokeTarget(method, delegate, args);
+            }
+            if (args == null || args.length != 1 || args[0] == null) {
+                tracker.refuseUnsupportedCompressedFrame();
+                return null;
             }
             Object producer = args[0];
             Class<?> producerInterface = method.getParameterTypes()[0];
             Method nextMethod = findNoArgMethod(producerInterface, "next");
             if (nextMethod == null) {
-                return invokeTarget(method, delegate, args);
+                tracker.refuseUnsupportedCompressedFrame();
+                return null;
             }
             InputStream first = (InputStream) invokeTarget(nextMethod, producer, new Object[0]);
             if (first == null) {
-                return invokeTarget(method, delegate, args);
+                tracker.refuseUnsupportedCompressedFrame();
+                return null;
             }
             PENDING_COMPRESSED_TRACKER.set(tracker);
             try {
                 first.available();
+                if (PENDING_COMPRESSED_TRACKER.get() != null) {
+                    first.close();
+                    tracker.refuseUnsupportedCompressedFrame();
+                    return null;
+                }
                 if (tracker.isRefused()) {
                     first.close();
                     return null;

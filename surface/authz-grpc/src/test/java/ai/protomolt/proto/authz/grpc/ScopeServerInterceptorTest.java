@@ -6,13 +6,18 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import ai.protomolt.proto.actions.Caller;
 import ai.protomolt.proto.actions.Scopes;
 import ai.protomolt.proto.authz.CallerResolver;
+import io.grpc.Attributes;
 import io.grpc.CallOptions;
 import io.grpc.ClientCall;
+import io.grpc.Context;
 import io.grpc.ManagedChannel;
 import io.grpc.Metadata;
 import io.grpc.MethodDescriptor;
 import io.grpc.Server;
+import io.grpc.ServerCall;
+import io.grpc.ServerInterceptor;
 import io.grpc.ServerServiceDefinition;
+import io.grpc.ServerStreamTracer;
 import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
 import io.grpc.health.v1.HealthCheckRequest;
@@ -556,6 +561,222 @@ class ScopeServerInterceptorTest {
         } finally {
             nettyChannel.shutdownNow();
             nettyServer.shutdownNow();
+        }
+    }
+
+    @Test
+    void transparentCallWrapperMustNotDisableCompressedAdmission() throws Exception {
+        AtomicInteger parses = new AtomicInteger();
+        AtomicInteger wrappedCalls = new AtomicInteger();
+        CallerResolver resolver = credential -> "capped-credential".equals(credential)
+                ? Optional.of(Caller.scoped("capped",
+                        Set.of(Scopes.METRICS_QUERY),
+                        Map.of(Scopes.METRICS_QUERY, new Caller.Budget(2, 100))))
+                : Optional.empty();
+        ScopeServerInterceptor scopes = new ScopeServerInterceptor(
+                Map.of(HEALTH, Scopes.METRICS_QUERY), Map.of(), Set.of());
+        ServerInterceptor wrapperInterceptor = new ServerInterceptor() {
+            @Override
+            public <ReqT, RespT> ServerCall.Listener<ReqT> interceptCall(
+                    ServerCall<ReqT, RespT> call,
+                    Metadata headers,
+                    io.grpc.ServerCallHandler<ReqT, RespT> next) {
+                wrappedCalls.incrementAndGet();
+                return next.startCall(new NonForwardingServerCall<>(call), headers);
+            }
+        };
+        NettyServerBuilder builder = NettyServerBuilder.forPort(0)
+                .directExecutor()
+                .addService(countingHealthService(parses));
+        scopes.configure(builder);
+        builder.intercept(wrapperInterceptor);
+        builder.intercept(new ApiTokenServerInterceptor(OPERATOR, resolver));
+        Server nettyServer = builder.build().start();
+        ManagedChannel nettyChannel = NettyChannelBuilder
+                .forAddress("localhost", nettyServer.getPort())
+                .usePlaintext()
+                .build();
+        try {
+            CountDownLatch closed = new CountDownLatch(1);
+            AtomicReference<Status> closeStatus = new AtomicReference<>();
+            ClientCall<HealthCheckRequest, HealthCheckResponse> call =
+                    nettyChannel.newCall(
+                            HealthGrpc.getCheckMethod(),
+                            CallOptions.DEFAULT.withCompression("gzip"));
+            Metadata headers = new Metadata();
+            headers.put(Metadata.Key.of("api_token", Metadata.ASCII_STRING_MARSHALLER),
+                    "capped-credential");
+            call.start(new ClientCall.Listener<>() {
+                @Override
+                public void onClose(Status status, Metadata trailers) {
+                    closeStatus.set(status);
+                    closed.countDown();
+                }
+            }, headers);
+            call.request(1);
+            call.sendMessage(HealthCheckRequest.newBuilder()
+                    .setService("x".repeat(1024))
+                    .build());
+            assertThat(closed.await(5, TimeUnit.SECONDS)).isTrue();
+            assertThat(closeStatus.get().getCode()).isEqualTo(Status.Code.RESOURCE_EXHAUSTED);
+            assertThat(closeStatus.get().getDescription())
+                    .contains("capped").contains("1027 bytes").contains("100-byte");
+            assertThat(parses.get()).isZero();
+            assertThat(wrappedCalls.get()).isEqualTo(1);
+
+            HealthCheckRequest small = HealthCheckRequest.newBuilder().setService("a").build();
+            HealthCheckResponse response = stubOn(nettyChannel, "capped-credential")
+                    .withCompression("gzip")
+                    .check(small);
+            assertThat(response.getStatus())
+                    .isEqualTo(HealthCheckResponse.ServingStatus.SERVING);
+            assertThat(parses.get()).isEqualTo(1);
+            assertThat(wrappedCalls.get()).isEqualTo(2);
+        } finally {
+            nettyChannel.shutdownNow();
+            nettyServer.shutdownNow();
+        }
+    }
+
+    @Test
+    void syntheticServerCallWithoutDeframerFailsClosedOnCompressedFrameBeforeHalfClose()
+            throws Exception {
+        ScopeServerInterceptor scopes = new ScopeServerInterceptor(
+                Map.of(HEALTH, Scopes.METRICS_QUERY), Map.of(), Set.of());
+        Caller capped = Caller.scoped("capped",
+                Set.of(Scopes.METRICS_QUERY),
+                Map.of(Scopes.METRICS_QUERY, new Caller.Budget(2, 100)));
+        Metadata headers = new Metadata();
+        ServerStreamTracer tracer = scopes.streamTracerFactory()
+                .newServerStreamTracer(HealthGrpc.getCheckMethod().getFullMethodName(), headers);
+        Context ctx = tracer.filterContext(Context.ROOT)
+                .withValue(CallerContexts.CALLER, capped);
+
+        AtomicReference<Status> closedStatus = new AtomicReference<>();
+        AtomicReference<ServerCall.Listener<HealthCheckRequest>> listenerRef =
+                new AtomicReference<>();
+        ServerCall<HealthCheckRequest, HealthCheckResponse> syntheticCall =
+                new ServerCall<>() {
+                    @Override
+                    public void request(int numMessages) {
+                    }
+
+                    @Override
+                    public void sendHeaders(Metadata headers) {
+                    }
+
+                    @Override
+                    public void sendMessage(HealthCheckResponse message) {
+                    }
+
+                    @Override
+                    public void close(Status status, Metadata trailers) {
+                        closedStatus.set(status);
+                    }
+
+                    @Override
+                    public boolean isCancelled() {
+                        return false;
+                    }
+
+                    @Override
+                    public MethodDescriptor<HealthCheckRequest, HealthCheckResponse>
+                            getMethodDescriptor() {
+                        return HealthGrpc.getCheckMethod();
+                    }
+
+                    @Override
+                    public void triggerEvent(Object event) {
+                        ServerCall.Listener<HealthCheckRequest> listener = listenerRef.get();
+                        if (listener != null) {
+                            listener.onEvent(event);
+                        }
+                    }
+                };
+
+        ctx.call(() -> {
+            ServerCall.Listener<HealthCheckRequest> listener = scopes.interceptCall(
+                    syntheticCall,
+                    headers,
+                    (call, callHeaders) -> new ServerCall.Listener<>() { });
+            listenerRef.set(listener);
+            tracer.inboundMessageRead(0, 48L, -1L);
+            return null;
+        });
+
+        assertThat(closedStatus.get()).isNotNull();
+        assertThat(closedStatus.get().getCode()).isEqualTo(Status.Code.RESOURCE_EXHAUSTED);
+        assertThat(closedStatus.get().getDescription())
+                .contains("capped")
+                .contains("100-byte cap");
+    }
+
+    private static final class NonForwardingServerCall<ReqT, RespT>
+            extends ServerCall<ReqT, RespT> {
+        private final ServerCall<ReqT, RespT> underlying;
+
+        private NonForwardingServerCall(ServerCall<ReqT, RespT> underlying) {
+            this.underlying = underlying;
+        }
+
+        @Override
+        public void request(int numMessages) {
+            underlying.request(numMessages);
+        }
+
+        @Override
+        public void sendHeaders(Metadata headers) {
+            underlying.sendHeaders(headers);
+        }
+
+        @Override
+        public void sendMessage(RespT message) {
+            underlying.sendMessage(message);
+        }
+
+        @Override
+        public boolean isReady() {
+            return underlying.isReady();
+        }
+
+        @Override
+        public void close(Status status, Metadata trailers) {
+            underlying.close(status, trailers);
+        }
+
+        @Override
+        public boolean isCancelled() {
+            return underlying.isCancelled();
+        }
+
+        @Override
+        public void setMessageCompression(boolean enabled) {
+            underlying.setMessageCompression(enabled);
+        }
+
+        @Override
+        public void setCompression(String compressor) {
+            underlying.setCompression(compressor);
+        }
+
+        @Override
+        public Attributes getAttributes() {
+            return underlying.getAttributes();
+        }
+
+        @Override
+        public String getAuthority() {
+            return underlying.getAuthority();
+        }
+
+        @Override
+        public MethodDescriptor<ReqT, RespT> getMethodDescriptor() {
+            return underlying.getMethodDescriptor();
+        }
+
+        @Override
+        public void triggerEvent(Object event) {
+            underlying.triggerEvent(event);
         }
     }
 }
