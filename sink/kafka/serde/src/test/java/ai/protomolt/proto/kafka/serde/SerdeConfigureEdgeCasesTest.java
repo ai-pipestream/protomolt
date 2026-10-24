@@ -103,4 +103,16 @@ class SerdeConfigureEdgeCasesTest {
                     .isInstanceOf(org.apache.kafka.common.config.ConfigException.class);
         }
     }
+
+    @Test
+    void blankRegistryMustNotBypassMissingSchemaCheck() {
+        try (var deserializer = new ProtoMoltProtobufDeserializer()) {
+            assertThatThrownBy(() -> deserializer.configure(
+                    Map.of(ProtoMoltSerdeConfig.SCHEMA_REGISTRY_URL, ""), false))
+                    .isInstanceOf(org.apache.kafka.common.config.ConfigException.class);
+            assertThatThrownBy(() -> deserializer.configure(
+                    Map.of(ProtoMoltSerdeConfig.SCHEMA_REGISTRY_URL, "   "), false))
+                    .isInstanceOf(org.apache.kafka.common.config.ConfigException.class);
+        }
+    }
 }

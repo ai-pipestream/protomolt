@@ -59,7 +59,15 @@ public final class IcebergSinkTask extends SinkTask {
                     config.tableLocation(), config.partitionBy());
             catalog = openedCatalog;
         } catch (RuntimeException | Error e) {
-            closeCatalogQuietly(openedCatalog);
+            if (openedCatalog instanceof AutoCloseable closeable) {
+                try {
+                    closeable.close();
+                } catch (Exception closeEx) {
+                    e.addSuppressed(closeEx);
+                    LOG.warn("Closing the Iceberg catalog after failed start failed: {}",
+                            closeEx.getMessage());
+                }
+            }
             throw e;
         }
         LOG.info("Iceberg sink started: {} -> table {} ({} partition column(s))",

@@ -63,7 +63,7 @@ public class ProtoMoltProtobufDeserializer implements Deserializer<Message> {
     public void configure(Map<String, ?> configs, boolean isKey) {
         ProtoMoltSerdeConfig config = new ProtoMoltSerdeConfig(configs);
         String registryUrl = config.getString(ProtoMoltSerdeConfig.SCHEMA_REGISTRY_URL);
-        boolean hasRegistry = registryUrl != null;
+        boolean hasRegistry = SchemaIds.isConfigured(registryUrl);
         List<FileDescriptor> files = ProtoMoltProtobufSerializer.Descriptors
                 .loadIfPresent(config, getClass().getClassLoader());
         if (files == null) {

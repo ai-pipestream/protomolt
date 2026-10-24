@@ -76,7 +76,11 @@ final class GitCloneCache {
 
         if (!hasGitCheckout) {
             if (Files.exists(cacheDir)) {
-                deleteRecursivelyQuietly(cacheDir);
+                try {
+                    deleteRecursively(cacheDir);
+                } catch (IOException e) {
+                    throw new GatherException("Failed cleaning incomplete git cache " + cacheDir, e);
+                }
             }
             cloneRepo(repoUrl, credentials, cacheDir);
             resetTo(repoUrl, ref, cacheDir);
@@ -106,25 +110,41 @@ final class GitCloneCache {
         try (Git ignored = clone.call()) {
             // Clone succeeded; close the JGit handle via try-with-resources.
         } catch (Exception e) {
-            deleteRecursivelyQuietly(cacheDir);
+            try {
+                deleteRecursively(cacheDir);
+            } catch (IOException cleanupEx) {
+                e.addSuppressed(cleanupEx);
+            }
             throw new GatherException("Failed cloning git repo " + repoUrl, e);
         }
     }
 
-    private static void deleteRecursivelyQuietly(Path root) {
+    private static void deleteRecursively(Path root) throws IOException {
         if (!Files.exists(root)) {
             return;
         }
+        IOException primary = null;
         try (Stream<Path> paths = Files.walk(root)) {
-            paths.sorted(Comparator.reverseOrder()).forEach(path -> {
+            for (Path path : paths.sorted(Comparator.reverseOrder()).toList()) {
                 try {
                     Files.deleteIfExists(path);
-                } catch (IOException ignored) {
-                    // Best-effort cleanup of a partial cache directory.
+                } catch (IOException e) {
+                    if (primary == null) {
+                        primary = e;
+                    } else {
+                        primary.addSuppressed(e);
+                    }
                 }
-            });
-        } catch (IOException ignored) {
-            // Best-effort cleanup of a partial cache directory.
+            }
+        } catch (IOException e) {
+            if (primary == null) {
+                primary = e;
+            } else {
+                primary.addSuppressed(e);
+            }
+        }
+        if (primary != null) {
+            throw primary;
         }
     }
 
