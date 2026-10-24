@@ -331,8 +331,8 @@ Every rendition is one stored object of one revision. The mapping from
   the original file, so a request that sets it with no `original` rendition
   written or carried is `INVALID_ARGUMENT` naming `filename`.
   `UploadRenditionHeader.filename` likewise names the original file: a nonblank
-  value requires the `original` rendition, is limited to 500 code points by both
-  validation dialects, and participates in retry identity. Blank preserves a
+  value requires the `original` rendition, is limited to 500 code points by its
+  `validate.v1` rule, and participates in retry identity. Blank preserves a
   stored filename. The filename is stored on the streamed blob in the same revision
   and is available to characterization.
 - `parsed` is the PARSED part, not an opaque blob. Its bytes are the encoded
