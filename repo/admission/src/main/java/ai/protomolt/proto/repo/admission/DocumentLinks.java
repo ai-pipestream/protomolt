@@ -486,7 +486,14 @@ public final class DocumentLinks {
         }
     }
 
-    private static DocumentLink value(FieldDescriptor field, Message value) {
+    /**
+     * Copies a link through descriptor fields when its layout is canonical, preserving
+     * presence and rejecting unknown fields. Older compatible layouts use wire decoding.
+     * @param field the link field, used for schema-refusal diagnostics
+     * @param value the generated or retained dynamic link
+     * @return the canonical generated link
+     */
+    public static DocumentLink value(FieldDescriptor field, Message value) {
         if (value instanceof DocumentLink typed) return typed;
         if (canonicalLink(value.getDescriptorForType())) {
             if (hasUnknownFields(value))

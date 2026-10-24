@@ -1012,16 +1012,7 @@ public final class DocumentReads {
     private static DocumentLink parseLinkValue(Descriptors.FieldDescriptor field, Message value) {
         if (hasUnknownFields(value))
             throw new IllegalArgumentException(field.getFullName() + ": the link value carries fields this server does not know");
-        if (value instanceof DocumentLink typed) return typed;
-        final DocumentLink link;
-        try {
-            link = DocumentLink.parseFrom(value.toByteString());
-        } catch (InvalidProtocolBufferException unreadable) {
-            throw new IllegalArgumentException(field.getFullName() + ": the link value does not decode as " + DocumentLinks.LINK_TYPE, unreadable);
-        }
-        if (hasUnknownFields(link))
-            throw new IllegalArgumentException(field.getFullName() + ": the link value carries fields this server does not know");
-        return link;
+        return DocumentLinks.value(field, value);
     }
 
     /** Returns {@code true} if {@code message} or any nested sub-message carries unknown fields. */

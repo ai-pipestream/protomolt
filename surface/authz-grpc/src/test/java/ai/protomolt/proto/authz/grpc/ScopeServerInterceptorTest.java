@@ -464,7 +464,7 @@ class ScopeServerInterceptorTest {
             assertThat(closed.await(5, TimeUnit.SECONDS)).isTrue();
             assertThat(closeStatus.get().getCode()).isEqualTo(Status.Code.RESOURCE_EXHAUSTED);
             assertThat(closeStatus.get().getDescription())
-                    .contains("capped").contains("1027 bytes").contains("100-byte");
+                    .contains("capped").contains("101 bytes").contains("100-byte");
             assertThat(parses.get()).isZero();
         } finally {
             nettyChannel.shutdownNow();
@@ -548,7 +548,7 @@ class ScopeServerInterceptorTest {
             assertThat(closed.await(5, TimeUnit.SECONDS)).isTrue();
             assertThat(closeStatus.get().getCode()).isEqualTo(Status.Code.RESOURCE_EXHAUSTED);
             assertThat(closeStatus.get().getDescription())
-                    .contains("capped").contains("1027 bytes").contains("100-byte");
+                    .contains("capped").contains("101 bytes").contains("100-byte");
             assertThat(parses.get()).isZero();
 
             HealthCheckRequest small = HealthCheckRequest.newBuilder().setService("a").build();
@@ -620,7 +620,7 @@ class ScopeServerInterceptorTest {
             assertThat(closed.await(5, TimeUnit.SECONDS)).isTrue();
             assertThat(closeStatus.get().getCode()).isEqualTo(Status.Code.RESOURCE_EXHAUSTED);
             assertThat(closeStatus.get().getDescription())
-                    .contains("capped").contains("1027 bytes").contains("100-byte");
+                    .contains("capped").contains("101 bytes").contains("100-byte");
             assertThat(parses.get()).isZero();
             assertThat(wrappedCalls.get()).isEqualTo(1);
 

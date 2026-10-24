@@ -47,8 +47,6 @@ import java.util.concurrent.ConcurrentLinkedQueue;
  */
 public final class ScopeServerInterceptor implements ServerInterceptor {
 
-    private static final long MAX_DECOMPRESSED_COUNT_BYTES = 64L * 1024L;
-    private static final int SCRATCH_BUFFER_BYTES = 4096;
     private static final int MAX_CALL_UNWRAP_DEPTH = 16;
     private static final ThreadLocal<InboundFrameTracker> PENDING_COMPRESSED_TRACKER =
             new ThreadLocal<>();
@@ -522,16 +520,6 @@ public final class ScopeServerInterceptor implements ServerInterceptor {
                 return new ByteArrayInputStream(prefix);
             }
             long totalUncompressed = (long) prefix.length + 1L;
-            long countLimit = Math.max((long) cap + 1L, MAX_DECOMPRESSED_COUNT_BYTES);
-            byte[] scratch = new byte[SCRATCH_BUFFER_BYTES];
-            while (totalUncompressed < countLimit) {
-                int toRead = (int) Math.min(scratch.length, countLimit - totalUncompressed);
-                int read = decompressed.read(scratch, 0, toRead);
-                if (read < 0) {
-                    break;
-                }
-                totalUncompressed += read;
-            }
             decompressed.close();
             evaluateUncompressedSize(active, totalUncompressed);
             return InputStream.nullInputStream();
