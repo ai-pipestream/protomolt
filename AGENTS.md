@@ -120,7 +120,12 @@
 - **GitHub Actions is the build of record** (`.github/workflows/ci.yml`:
   build 25, conformance, console, integration; branch protection
   requires all of them; the forward workflow attaches them to each Forgejo
-  main commit before GitHub main moves).
+  main commit before GitHub main moves). A forward that cannot read branch
+  protection or branch rules stops. A 200 body with a check list of the wrong
+  JSON type stops the same way. Absent protection, an empty check list,
+  and an API or auth failure do not waive `build (25)`, `console`,
+  `conformance`, and `integration`. Contexts configured on protection or
+  branch rules are required as well.
 - **Forgejo runs no build CI.** Its two workflows are
   `publish-registry.yml` (snapshot publish to the instance's Maven
   registry — consumers like `knn-node` resolve `ai.pipestream.*` from it)
