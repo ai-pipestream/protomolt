@@ -14,19 +14,22 @@
   in the [source index](docs/design/protobuf-toolkit-source-index.md).
   Verify their findings against the checkout; they are not proof that fixes landed.
 - Identify the branch, worktree, starting commit and existing local changes.
-  During this reconciliation, work only in `reconcile/parts-based-repository`.
-  Leave `main` and `ai-slop-archive-by-astra` untouched. Do not resume old goals,
-  automations or repair branches as implied authorization.
+  Cut issue and feature branches from `main` and submit changes via pull requests.
+  Never push directly to `main`, and leave `ai-slop-archive-by-astra` untouched.
+  Do not resume old goals, automations or repair branches as implied authorization.
 - For each implementation slice, record the required behavior, existing classes
   reused, entry-to-storage/read call path, and acceptance assertions before edits.
   Search callers and tests before inventing a mapper, validator, schema resolver,
   codec, receipt format, persistence layer or service. If an existing component
   is insufficient, name the specific missing behavior; do not silently bypass it.
 - Use descriptor/Message/Builder APIs, the existing CEL mapper/projection tools,
-  ProtoValidator, parts layout and retained schema/receipt primitives. Internal
-  protobuf -> JSON/Struct -> protobuf is not a convenience implementation of
-  those capabilities. An intentional Struct field or external JSON boundary is
-  not a license to convert an unrelated typed message into it.
+  ProtoValidator, zero-regex format validators (`core/formats`), parts layout and
+  retained schema/receipt primitives. Internal protobuf -> JSON/Struct -> protobuf
+  is not a convenience implementation of those capabilities. An intentional Struct
+  field or external JSON boundary is not a license to convert an unrelated typed
+  message into it. Do not introduce `java.util.regex` (`Pattern`, `Matcher`,
+  `String.matches`/`replaceAll`/`split`) in production Java sources; use explicit
+  character/scanner logic or `core/formats`.
 - Stop the affected slice and explain the concrete tradeoff before changing an
   approved architecture: another public document API, new authoritative format,
   document size ceiling, weaker validation, changed part semantics, or loss of
@@ -47,8 +50,32 @@
 - Every delegated handoff or restart must carry these rules, exact branch/base,
   owned files, exclusions and exit criteria. A worker report is evidence to review,
   not approval to merge. Do not hand the user an unbounded review burden.
-- The current audit/planning authorization does not authorize implementing R1-R9.
-  Wait for a subsequent implementation instruction; this file does not grant it.
+
+## Protobuf toolkit & zero-regex quick reference
+
+Do not convert protobuf messages to JSON or `google.protobuf.Struct` to inspect,
+transform, project, diff, or validate them, and do not use `java.util.regex` in
+production code. Reuse these mature modules and keep expanding their test suites:
+
+| Capability | Module (`Directory`) | Key Classes & Entry Points |
+|---|---|---|
+| Descriptor loading, fingerprints & wire budgets | `:protomolt-descriptors` (`core/descriptors`) | `DescriptorRegistry`, `DescriptorLoader`, `ClosedDescriptorSet`, `DescriptorFingerprints`, `MessageFingerprints`, `MessageWireBudget` |
+| In-process `.proto` compilation & option preservation | `:protomolt-sources` (`core/sources`) | `ProtoSourceCompiler`, `ProtoSourceSet`, `CompiledProtos`, `LinkedOptionsRepair`, `SchemaPublisher` |
+| Schema gathering (filesystem, JAR, Git, Maven) | `:protomolt-acquire-gather*` (`acquire/gather/*`) | `ProtoGatherer`, `CompositeProtoGatherer`, `FilesystemProtoGatherer`, `JarProtoGatherer`, `GitProtoGatherer`, `MavenProtoGatherer`, `GatheringDescriptorLoader` |
+| Typed `Any` unpack, message diff & identifier checks | `:protomolt-helpers` (`core/helpers`) | `AnyHandler` (`unpack` with descriptor), `PayloadCodec`, `MessageDiff`, `BinaryProtobufIdentifierValidator` (avoid `messageToStruct`/`structToMessage`/`unpackSafe` for internal flows) |
+| Zero-regex RFC/format validation & parsing | `:protomolt-formats` (`core/formats`) | `Formats`, `Rfc3986`, `Emails`, `Hostnames`, `IpAddresses`, `HostAndPort`, `Endpoints`, `Identifiers`, `MediaTypes`, `PhoneNumbers`, `PostalMasks`, `Decimals`, `Temporals`, `TradeItemNumbers`, `Vocabularies`, `Encodings` |
+| Shared CEL compilation & evaluation | `:protomolt-cel` (`core/cel`) | `CelEnvironmentFactory`, `CelEvaluator`, `CelValidation` |
+| Field mapping (`=`, `+=`, `-`) over `MessageOrBuilder` | `:protomolt-mapper` (`transform/mapper/core`) | `ProtoFieldMapper`, `ProtoFieldMapperImpl` |
+| CEL selectors & conditional field mapping | `:protomolt-mapper-cel` (`transform/mapper/cel`) | `CelProtoMapper` |
+| Metadata extraction via CEL selectors | `:protomolt-mapper-metadata` (`transform/mapper/metadata`) | `MetadataExtractor` |
+| Descriptor-driven message-to-message projections | `:protomolt-projection` (`transform/projection`) | `MessageProjection` (compiles `(ai.protomolt.proto.projection.v1.*)` options, supports nested/repeated child projections, derives source/target `FieldMask`s) |
+| Runtime joins, unions & derived message shapes | `:protomolt-shapes` (`transform/shapes`) | `ShapeSynthesizer` |
+| Schema-declared validation (`validate.v1`, `buf.validate`, `google.api`) | `:protomolt-protobuf-validation*` (`protobuf/validation*`) | `ProtoValidator`, `ValidationResult`, `Violations`, `ProtomoltRuleSource`, `ProtovalidateRuleSource`, `GoogleTypeRuleSource` |
+| Well-known structural types & SKOS/taxonomy rules | `:protomolt-protobuf-types` (`protobuf/types`) | `concepts.proto` (`ConceptRef`, `ConceptScheme`), `ConceptSchemeRules`, `taxonomy.proto` (`Taxonomy`), `tree_path.proto` (`TreePath`), `ranges.proto`, `postal.proto`, `screening.proto`, `access_policy.proto` |
+| Sensitivity metadata, masking, quality & LLM prompts | `:protomolt-protobuf-metadata`, `-quality`, `-llm`, `-prompt` | `DescriptorMetadata`, `SensitivityMasker`, `QualityScorer`, `DescriptorLlm`, `PromptRenderer`, `InstructionRenderer`, `ResponseFormatShaper`, `ViolationFeedbackRenderer` |
+| Schema compatibility & evolution diffs | `:protomolt-compat` (`core/compat`) | `CompatibilityChecker`, `SchemaDiff`, `MessageDiff`, `ServiceDiff`, `EnumDiff`, `OneofDiff` |
+| Parts-based document splitting & reassembly | `:protomolt-repo-codec` (`repo/codec`) | `DocumentPartCodec`, `PartLayouts`, `DocumentFragmentConfinement`, `DocumentChunkSequence` |
+| Repository schema & semantic admission | `:protomolt-repo-admission` (`repo/admission`) | `DocumentSchemaAdmission`, `DocumentSemanticAdmission`, `DocumentAnyRootInventory`, `DocumentSchemaOccurrences` |
 
 ## Repository architecture and data integrity
 
