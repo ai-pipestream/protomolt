@@ -305,8 +305,9 @@ public final class ScopeServerInterceptor implements ServerInterceptor {
                 }
                 current = unwrapServerBuilder(current);
             }
-        } catch (ReflectiveOperationException ignored) {
-            // Fall back to the default decompressor registry below.
+        } catch (ReflectiveOperationException e) {
+            throw new IllegalStateException(
+                    "Failed to inspect gRPC ServerBuilder decompressorRegistry", e);
         }
         return DecompressorRegistry.getDefaultInstance();
     }
