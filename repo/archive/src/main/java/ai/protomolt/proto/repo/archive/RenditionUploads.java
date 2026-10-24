@@ -39,12 +39,30 @@ public final class RenditionUploads {
     private final DocumentServiceGrpc.DocumentServiceStub documents;
 
     /**
+     * Constructs an upload translator using {@code archive}'s own v2 document service channel.
+     *
+     * @param archive the archive the upload is translated by
+     */
+    public RenditionUploads(DocumentArchive archive) {
+        this(Objects.requireNonNull(archive, "archive"), archive.documents().getChannel());
+    }
+
+    /**
      * @param archive the archive the upload is translated by
      * @param documents the channel to the same v2 document service
      */
     public RenditionUploads(DocumentArchive archive, Channel documents) {
         this.archive = Objects.requireNonNull(archive, "archive");
         this.documents = DocumentServiceGrpc.newStub(Objects.requireNonNull(documents, "documents"));
+    }
+
+    /**
+     * Returns the channel to the v2 document service used by this translator.
+     *
+     * @return the v2 document service channel
+     */
+    public Channel channel() {
+        return documents.getChannel();
     }
 
     /** Starts one upload call; the returned observer receives the client's frames. */

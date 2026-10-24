@@ -112,6 +112,8 @@ public final class RepoServices implements AutoCloseable {
     private final ai.protomolt.proto.repo.admission.DocumentSchemaAdmission.Resolver v2Resolver;
     private final ai.protomolt.proto.repo.admission.DocumentSchemaAdmission.Limits v2Limits;
     private final ai.protomolt.proto.repo.accession.OutboxRelay v2OutboxRelay;
+    private final ai.protomolt.proto.repo.archive.DocumentArchive v2Archive;
+    private final java.util.function.BiPredicate<String, String> legacyArchiveExists;
     // One caller mapping for the document, drive and archive services; account
     // bindings are set before serving (withAccountBindings).
     private final RepoCallerBindings callerBindings = new RepoCallerBindings();
@@ -134,7 +136,14 @@ public final class RepoServices implements AutoCloseable {
     private static final String V2_CATALOG_SCHEMA = "repo_catalog";
     /** Schemas admitted beyond the repository contract, keyed by type URL; set before serving. */
     private volatile java.util.Map<String, ai.protomolt.proto.repo.admission.DocumentSchemaAdmission.Definition>
-            admittedSchemas = java.util.Map.of();
+            admittedSchemas = defaultAdmittedSchemas();
+
+    private static java.util.Map<String, ai.protomolt.proto.repo.admission.DocumentSchemaAdmission.Definition>
+            defaultAdmittedSchemas() {
+        var byTypeUrl = new java.util.HashMap<String, ai.protomolt.proto.repo.admission.DocumentSchemaAdmission.Definition>();
+        registerAdmitted(ai.protomolt.proto.repo.archive.v1.ArchiveEntryFacts.getDescriptor(), byTypeUrl);
+        return java.util.Map.copyOf(byTypeUrl);
+    }
 
     /**
      * Admits the message types of descriptors co-mounted modules contributed (the parse
@@ -150,7 +159,8 @@ public final class RepoServices implements AutoCloseable {
         if (contributed.isEmpty()) {
             return this;
         }
-        var byTypeUrl = new java.util.HashMap<String, ai.protomolt.proto.repo.admission.DocumentSchemaAdmission.Definition>();
+        var byTypeUrl = new java.util.HashMap<String, ai.protomolt.proto.repo.admission.DocumentSchemaAdmission.Definition>(
+                defaultAdmittedSchemas());
         for (var file : contributed) {
             for (var type : file.getMessageTypes()) {
                 registerAdmitted(type, byTypeUrl);
@@ -449,6 +459,42 @@ public final class RepoServices implements AutoCloseable {
                         return io.grpc.ServerInterceptors.intercept(accessionImpl, stepSaveInterceptor);
                     }
                 });
+                String internalName = InProcessServerBuilder.generateName();
+                var internalBuilder = InProcessServerBuilder.forName(internalName)
+                        .maxInboundMessageSize(CONNECT_MESSAGE_BYTES)
+                        .addService(io.grpc.ServerInterceptors.intercept(
+                                accessionImpl,
+                                ArchiveCallerHandoff.serverInterceptor(),
+                                stepSaveInterceptor));
+                try {
+                    GrpcServerLifetime.start(internalBuilder, servers::add);
+                } catch (IOException e) {
+                    throw new UncheckedIOException(e);
+                }
+                var internalChannel = io.grpc.inprocess.InProcessChannelBuilder.forName(internalName)
+                        .maxInboundMessageSize(CONNECT_MESSAGE_BYTES)
+                        .build();
+                owned.add(internalChannel::shutdownNow);
+                var interceptedChannel = io.grpc.ClientInterceptors.intercept(
+                        internalChannel, ArchiveCallerHandoff.clientInterceptor());
+                var archiveBindings = ai.protomolt.proto.repo.archive.ArchiveBindings.overDocuments(
+                        interceptedChannel,
+                        "ds-archive",
+                        (acct, drive) -> {
+                            if (driveLedger.findByName(acct, drive).isEmpty()) {
+                                return false;
+                            }
+                            driveProvisioner.ensureDrive(
+                                    acct, "intake", DriveType.DRIVE_TYPE_INTAKE);
+                            return true;
+                        });
+                this.v2Archive = new ai.protomolt.proto.repo.archive.DocumentArchive(
+                        interceptedChannel, archiveBindings, java.time.Clock.systemUTC());
+                this.legacyArchiveExists = (acct, arch) ->
+                        storage.archiveLedger().findArchive(acct, arch).isPresent();
+            } else {
+                this.v2Archive = null;
+                this.legacyArchiveExists = null;
             }
             if (managedArchive != null) configuredServices.add(new ArchiveMutationGrpcService(managedArchive.mutations));
             this.services = List.copyOf(configuredServices);
@@ -530,6 +576,18 @@ public final class RepoServices implements AutoCloseable {
         requireOpen();
         if (managedArchive != null) startLifecycle();
         return archiveOperations;
+    }
+
+    /**
+     * The v2 {@link ai.protomolt.proto.repo.archive.DocumentArchive} projection over
+     * this composition's parts-based document store.
+     *
+     * @return the document archive projection
+     */
+    public ai.protomolt.proto.repo.archive.DocumentArchive documentArchive() {
+        requireOpen();
+        requireFullProfile();
+        return v2Archive;
     }
 
     /** Identified mutations require qualified storage and running recovery. */
@@ -731,8 +789,9 @@ public final class RepoServices implements AutoCloseable {
         RepositoryNetworkAuthentication.requireOperatorToken(apiToken);
         if (managedArchive != null) startLifecycle();
         return startHttp(port, new UploadHttpServer(v2Uploads,
-                () -> new RepositoryCaller("http-upload", true), apiToken, archiveOperations,
-                console, routes));
+                () -> new RepositoryCaller("http-upload", true), apiToken,
+                v2Archive, archiveOperations, legacyArchiveExists,
+                console, routes, null, null, null));
     }
 
     /**
@@ -771,7 +830,8 @@ public final class RepoServices implements AutoCloseable {
         UploadHttpServer http;
         try {
             http = new UploadHttpServer(v2Uploads,
-                    () -> new RepositoryCaller("http-upload", true), apiToken, archiveOperations,
+                    () -> new RepositoryCaller("http-upload", true), apiToken,
+                    v2Archive, archiveOperations, legacyArchiveExists,
                     console, routes, gateway, resolved, callerBindings::bind);
         } catch (RuntimeException | Error failure) {
             try { gateway.close(); }
