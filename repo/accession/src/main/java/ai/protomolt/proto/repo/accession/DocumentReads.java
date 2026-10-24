@@ -5,6 +5,7 @@ import ai.protomolt.proto.descriptors.MessageWireBudget;
 import ai.protomolt.proto.repo.catalog.CatalogDataLoss;
 import ai.protomolt.proto.repo.catalog.CatalogException;
 import ai.protomolt.proto.repo.admission.DocumentAdmissionReservations;
+import ai.protomolt.proto.repo.admission.DocumentDescriptorCache;
 import ai.protomolt.proto.repo.admission.DocumentCandidateAdmission;
 import ai.protomolt.proto.repo.admission.DocumentConcepts;
 import ai.protomolt.proto.repo.admission.DocumentLinks;
@@ -83,6 +84,7 @@ public final class DocumentReads {
     /** Maximum fields reachable from a retained Any payload schema. */
     private static final int MAX_PAYLOAD_SCHEMA_FIELDS = 65536;
 
+    private final DocumentDescriptorCache descriptorCache = new DocumentDescriptorCache(64, 64L * 1024 * 1024);
     private final Catalog catalog;
     private final DocumentSaves.Drives drives;
     private final DocumentSchemaAdmission.Limits limits;
@@ -591,8 +593,8 @@ public final class DocumentReads {
             return loaded;
         };
         try {
-            var container = DocumentRetainedDefinitions.definition(binding.getFragmentSchema(), retained);
-            var containerType = DocumentCandidateAdmission.containerType(container);
+            var container = DocumentRetainedDefinitions.definition(binding.getFragmentSchema(), retained, descriptorCache);
+            var containerType = descriptorCache.type(container);
             var byReference = new HashMap<RepositorySchemaAssetReference, RetainedSchema>();
             var byTypeUrl = new HashMap<String, RetainedSchema>();
             for (var occurrence : recorded) {
@@ -601,9 +603,9 @@ public final class DocumentReads {
                     if (byReference.size() + 1 >= limits.maxBindings())
                         throw new AccessionException(Status.Code.RESOURCE_EXHAUSTED,
                                 "Retained schema budget exhausted: schema binding count exceeds limit", null);
-                    var definition = DocumentRetainedDefinitions.definition(occurrence.getSchema(), retained);
+                    var definition = DocumentRetainedDefinitions.definition(occurrence.getSchema(), retained, descriptorCache);
                     schema = new RetainedSchema(
-                            occurrence.getSchema(), definition, DocumentCandidateAdmission.containerType(definition));
+                            occurrence.getSchema(), definition, descriptorCache.type(definition));
                     byReference.put(occurrence.getSchema(), schema);
                 }
                 var previous = byTypeUrl.putIfAbsent(occurrence.getSchema().getTypeUrl(), schema);

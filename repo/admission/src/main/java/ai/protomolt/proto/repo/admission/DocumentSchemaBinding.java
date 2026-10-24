@@ -17,9 +17,9 @@ import java.util.List;
 import java.util.Objects;
 
 /**
- * Verified schema identity for internal admission preparation. Does not certify
- * validation-rule support, Any type URLs, candidate values, authorization or durable retention.
- */
+     * Verified schema identity for internal admission preparation. Does not certify
+     * validation-rule support, Any type URLs, candidate values, authorization or durable retention.
+     */
 final class DocumentSchemaBinding {
     private static final ProtoValidator CONDITIONS = ProtoValidator.create(List.of(new ProtomoltRuleSource()));
     private final PublicationSchemaCondition condition;
@@ -27,7 +27,7 @@ final class DocumentSchemaBinding {
     private final String artifactSha256;
     private final Descriptor type;
 
-    private DocumentSchemaBinding(PublicationSchemaCondition condition, ByteString artifact,
+    DocumentSchemaBinding(PublicationSchemaCondition condition, ByteString artifact,
             String artifactSha256, Descriptor type) {
         this.condition = condition;
         this.artifact = artifact;
@@ -53,6 +53,12 @@ final class DocumentSchemaBinding {
 
     static DocumentSchemaBinding bind(PublicationSchemaCondition condition, ByteString artifact,
             ClosedDescriptorSet.Limits limits, DocumentAdmissionReservations reservations, Runnable control) {
+        return bind(condition, artifact, limits, reservations, control, null);
+    }
+
+    static DocumentSchemaBinding bind(PublicationSchemaCondition condition, ByteString artifact,
+            ClosedDescriptorSet.Limits limits, DocumentAdmissionReservations reservations, Runnable control,
+            DocumentDescriptorCache cache) {
         Objects.requireNonNull(condition, "condition");
         Objects.requireNonNull(artifact, "artifact");
         Objects.requireNonNull(limits, "limits");
@@ -61,6 +67,13 @@ final class DocumentSchemaBinding {
         if (condition.getSerializedSize() > 4096 || !condition.getUnknownFields().asMap().isEmpty()
                 || !CONDITIONS.validate(condition).valid()) {
             throw new IllegalArgumentException("invalid publication schema condition");
+        }
+        if (cache != null) {
+            var cached = cache.find(condition, artifact, limits);
+            if (cached != null) {
+                control.run();
+                return cached;
+            }
         }
         List<FileDescriptor> files = ClosedDescriptorSet.load(artifact, limits);
         control.run();
@@ -89,7 +102,8 @@ final class DocumentSchemaBinding {
         }
         String digest = sha256(artifact, control);
         control.run();
-        return new DocumentSchemaBinding(condition, artifact, digest, type);
+        var binding = new DocumentSchemaBinding(condition, artifact, digest, type);
+        return cache == null ? binding : cache.remember(binding, limits);
     }
 
     private static Descriptor findType(List<FileDescriptor> files, String name, Runnable control) {

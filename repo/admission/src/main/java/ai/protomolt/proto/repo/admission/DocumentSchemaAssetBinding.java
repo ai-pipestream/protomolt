@@ -12,11 +12,11 @@ import java.util.List;
 import java.util.Objects;
 
 /**
- * Schema metadata bound to exact descriptor bytes. This does not authenticate
- * compiler claims, verify source retention, authorize access or admit a payload.
- * Checks apply to the parsed metadata tree, not its original wire encoding.
- * A payload consumer must match the exact metadata type URL before using this binding.
- */
+     * Schema metadata bound to exact descriptor bytes. This does not authenticate
+     * compiler claims, verify source retention, authorize access or admit a payload.
+     * Checks apply to the parsed metadata tree, not its original wire encoding.
+     * A payload consumer must match the exact metadata type URL before using this binding.
+     */
 final class DocumentSchemaAssetBinding {
     private static final int MAX_METADATA_BYTES = 512 * 1024;
     private static final ProtoValidator VALIDATOR = ProtoValidator.create(List.of(new ProtomoltRuleSource()));
@@ -39,6 +39,12 @@ final class DocumentSchemaAssetBinding {
 
     static DocumentSchemaAssetBinding bind(RepositorySchemaAsset metadata, ByteString artifact,
             ClosedDescriptorSet.Limits limits, DocumentAdmissionReservations reservations, Runnable control) {
+        return bind(metadata, artifact, limits, reservations, control, null);
+    }
+
+    static DocumentSchemaAssetBinding bind(RepositorySchemaAsset metadata, ByteString artifact,
+            ClosedDescriptorSet.Limits limits, DocumentAdmissionReservations reservations, Runnable control,
+            DocumentDescriptorCache cache) {
         Objects.requireNonNull(metadata, "metadata");
         Objects.requireNonNull(artifact, "artifact");
         Objects.requireNonNull(limits, "limits");
@@ -52,7 +58,7 @@ final class DocumentSchemaAssetBinding {
             throw new IllegalArgumentException("invalid schema asset metadata");
         }
         control.run();
-        var schema = DocumentSchemaBinding.bind(metadata.getSchema(), artifact, limits, reservations, control);
+        var schema = DocumentSchemaBinding.bind(metadata.getSchema(), artifact, limits, reservations, control, cache);
         if (!schema.artifactSha256().equals(metadata.getArtifactSha256())) {
             throw new IllegalArgumentException("schema asset exact artifact digest mismatch");
         }

@@ -8,11 +8,11 @@ import java.util.Objects;
 import java.util.Optional;
 
 /**
- * Rebuilds a definition from the artifacts a revision retained for it (requirements
- * §9, §15.14). There is no registry, latest-version lookup or compiler fallback:
- * the reference's canonical metadata, descriptor closure and optional source are
- * read from the retained store and checked against their recorded digests.
- */
+     * Rebuilds a definition from the artifacts a revision retained for it (requirements
+     * §9, §15.14). There is no registry, latest-version lookup or compiler fallback:
+     * the reference's canonical metadata, descriptor closure and optional source are
+     * read from the retained store and checked against their recorded digests.
+     */
 public final class DocumentRetainedDefinitions {
     private static final int MIB = 1024 * 1024;
 
@@ -33,6 +33,18 @@ public final class DocumentRetainedDefinitions {
      * @throws DocumentSchemaAdmission.DataLoss when an artifact is absent, corrupt or inconsistent
      */
     public static DocumentSchemaAdmission.Definition definition(RepositorySchemaAssetReference reference, Reader reader) {
+        return definition(reference, reader, null);
+    }
+
+    /**
+     * Reads and verifies every retained artifact, reusing only previously verified descriptor linkage.
+     * @param reference the retained revision association
+     * @param reader the access-scoped retained store
+     * @param cache the read coordinator's bounded descriptor cache
+     * @return the verified definition
+     */
+    public static DocumentSchemaAdmission.Definition definition(RepositorySchemaAssetReference reference, Reader reader,
+            DocumentDescriptorCache cache) {
         Objects.requireNonNull(reference, "reference");
         Objects.requireNonNull(reader, "reader");
         var read = new HashMap<String, ByteString>();
@@ -44,7 +56,7 @@ public final class DocumentRetainedDefinitions {
             return bytes;
         };
         var assets = new DocumentRetainedSchemaAssets(once, new DocumentRetainedSchemaAssets.Limits(1, 64L * MIB,
-                new ClosedDescriptorSet.Limits(MAX_DESCRIPTOR_BYTES, 256, 4096, 64)));
+                new ClosedDescriptorSet.Limits(MAX_DESCRIPTOR_BYTES, 256, 4096, 64)), null, cache);
         var bound = assets.resolve(new DocumentRetainedSchemaAssets.Reference(reference.getTypeUrl(),
                 reference.getDescriptorSha256(), reference.getMetadataCodec(), reference.getMetadataVersion(),
                 reference.getMetadataSha256(), reference.hasSourceSha256() ? Optional.of(reference.getSourceSha256())

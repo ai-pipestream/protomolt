@@ -12,10 +12,10 @@ import java.util.Optional;
 import java.util.concurrent.CancellationException;
 
 /**
- * Attempt-local retained schema reader. Not thread-safe and not a revision reader.
- * The host selects authenticated metadata/references, scopes the reader and enforces
- * access on every call. No registry, latest-version lookup or compiler fallback exists.
- */
+     * Attempt-local retained schema reader. Not thread-safe and not a revision reader.
+     * The host selects authenticated metadata/references, scopes the reader and enforces
+     * access on every call. No registry, latest-version lookup or compiler fallback exists.
+     */
 final class DocumentRetainedSchemaAssets {
     private static final int MAX_SOURCE_BYTES = 16 * 1024 * 1024;
 
@@ -62,6 +62,7 @@ final class DocumentRetainedSchemaAssets {
         long bytes;
     }
 
+    private final DocumentDescriptorCache descriptorCache;
     private final Reader reader;
     private final Limits limits;
     private final DocumentAdmissionReservations reservations;
@@ -75,6 +76,12 @@ final class DocumentRetainedSchemaAssets {
 
     /** Optional canonical scratch accounting; the reader still owns supplied artifact bytes. */
     DocumentRetainedSchemaAssets(Reader reader, Limits limits, DocumentAdmissionReservations reservations) {
+        this(reader, limits, reservations, null);
+    }
+
+    DocumentRetainedSchemaAssets(Reader reader, Limits limits, DocumentAdmissionReservations reservations,
+            DocumentDescriptorCache descriptorCache) {
+        this.descriptorCache = descriptorCache;
         this.reader = Objects.requireNonNull(reader, "reader");
         this.limits = Objects.requireNonNull(limits, "limits");
         this.reservations = reservations;
@@ -154,7 +161,7 @@ final class DocumentRetainedSchemaAssets {
         requireHash(metadata.getArtifactSha256());
         var bytes = load(key.artifactSha256(), limits.descriptorLimits().maxBytes(), true, batch, control);
         try {
-            return DocumentSchemaAssetBinding.bind(metadata, bytes, limits.descriptorLimits(), reservations, guarded(control));
+            return DocumentSchemaAssetBinding.bind(metadata, bytes, limits.descriptorLimits(), reservations, guarded(control), descriptorCache);
         } catch (ControlFailure failure) {
             throw failure.original;
         } catch (ClosedDescriptorSet.LimitExceededException failure) {

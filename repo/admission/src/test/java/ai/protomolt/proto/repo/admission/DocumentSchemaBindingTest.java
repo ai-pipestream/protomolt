@@ -164,6 +164,47 @@ class DocumentSchemaBindingTest {
                 () -> { throw cancelled; })).isSameAs(cancelled);
     }
 
+@Test
+void cacheReusesFingerprintIdentityButStillVerifiesChangedBytesAndLimits() {
+    var cache = new DocumentDescriptorCache(4, 1_000_000);
+    var set = schema();
+    var bytes = set.toByteString();
+    var condition = condition(set, "archive.Record");
+    var first = DocumentSchemaBinding.bind(condition, bytes, LIMITS, null, () -> {}, cache);
+    var second = DocumentSchemaBinding.bind(condition, ByteString.copyFrom(bytes.toByteArray()),
+            LIMITS, null, () -> {}, cache);
+    assertThat(second.type()).isSameAs(first.type());
+    var reversed = FileDescriptorSet.newBuilder().addFile(set.getFile(1)).addFile(set.getFile(0)).build();
+    var reordered = DocumentSchemaBinding.bind(condition, reversed.toByteString(), LIMITS, null, () -> {}, cache);
+    assertThat(reordered.type()).isSameAs(first.type());
+    assertThat(reordered.artifactSha256()).isNotEqualTo(first.artifactSha256());
+    var changed = set.toBuilder();
+    changed.getFileBuilder(0).getMessageTypeBuilder(0).getFieldBuilder(0).setName("changed");
+    assertThatThrownBy(() -> DocumentSchemaBinding.bind(condition, changed.build().toByteString(),
+            LIMITS, null, () -> {}, cache)).hasMessageContaining("fingerprint mismatch");
+    var small = new ClosedDescriptorSet.Limits(1, 10, 20, 10);
+    assertThatThrownBy(() -> DocumentSchemaBinding.bind(condition, bytes, small, null, () -> {}, cache))
+            .hasMessageContaining("byte limit");
+    assertThatThrownBy(() -> DocumentSchemaBinding.bind(condition, reversed.toByteString(), LIMITS, null,
+            () -> { throw new CancellationException("cancel cached read"); }, cache))
+            .isInstanceOf(CancellationException.class);
+}
+
+@Test
+void cacheEvictionAndOversizedEntriesNeverRefuseAnOtherwiseValidSchema() {
+    var set = schema();
+    var bytes = set.toByteString();
+    var cache = new DocumentDescriptorCache(1, bytes.size());
+    var first = DocumentSchemaBinding.bind(condition(set, "archive.Record"), bytes, LIMITS, null, () -> {}, cache);
+    DocumentSchemaBinding.bind(condition(set, "archive.Record.Details"), bytes, LIMITS, null, () -> {}, cache);
+    var reloaded = DocumentSchemaBinding.bind(first.condition(), bytes, LIMITS, null, () -> {}, cache);
+    assertThat(reloaded.type()).isNotSameAs(first.type());
+    var tooSmall = new DocumentDescriptorCache(1, 1);
+    var uncached = DocumentSchemaBinding.bind(first.condition(), bytes, LIMITS, null, () -> {}, tooSmall);
+    assertThat(DocumentSchemaBinding.bind(first.condition(), bytes, LIMITS, null, () -> {}, tooSmall).type())
+            .isNotSameAs(uncached.type());
+}
+
     private static PublicationSchemaCondition condition(FileDescriptorSet set, String name) {
         return PublicationSchemaCondition.newBuilder().setTypeName(name)
                 .setDescriptorFingerprint(DescriptorFingerprints.fingerprint(set)).build();
