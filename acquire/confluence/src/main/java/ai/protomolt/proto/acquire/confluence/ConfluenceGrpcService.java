@@ -33,6 +33,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.TreeMap;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.Consumer;
 
 /**
@@ -58,6 +59,13 @@ public final class ConfluenceGrpcService extends ConfluenceServiceGrpc.Confluenc
     private final long attachmentMaxBytes;
     private final ChangeSink downstream;
 
+    /**
+     * Creates the gRPC facade without a downstream sink fan-out.
+     *
+     * @param config             the crawler config
+     * @param client             the REST client
+     * @param attachmentMaxBytes the inline attachment size cap
+     */
     public ConfluenceGrpcService(ConfluenceConnectorConfig config, ConfluenceClient client,
             long attachmentMaxBytes) {
         this(config, client, attachmentMaxBytes, null);
@@ -179,6 +187,9 @@ public final class ConfluenceGrpcService extends ConfluenceServiceGrpc.Confluenc
 
     @Override
     public void sync(SyncRequest request, StreamObserver<SyncResponse> observer) {
+        // The crawler emits from virtual threads concurrently; StreamObserver
+        // is not thread-safe, so every onNext/onCompleted/onError is serialized on this lock.
+        ReentrantLock lock = new ReentrantLock();
         try {
             ConfluenceConnectorConfig effective = request.getSpaceKeysList().isEmpty()
                     ? config
@@ -188,16 +199,16 @@ public final class ConfluenceGrpcService extends ConfluenceServiceGrpc.Confluenc
                             config.schemaRegistryUrl(), config.kafkaTopic(),
                             config.kafkaSnapshotsTopic(), config.repoTarget(), config.repoDrive(),
                             config.repoAccountId(), config.repoDatasourceId());
-            // The crawler emits from virtual threads concurrently; StreamObserver
-            // is not thread-safe, so every onNext is serialized on this lock.
-            Object lock = new Object();
             AtomicReference<String> newestSnapshotCursor = new AtomicReference<>("");
             ChangeSink observerSink = new ChangeSink() {
                 @Override
                 public void emit(ConfluenceChange change) {
                     ConfluenceChange out = request.getIncludeBodies() ? change : stripBodies(change);
-                    synchronized (lock) {
+                    lock.lock();
+                    try {
                         observer.onNext(SyncResponse.newBuilder().setChange(out).build());
+                    } finally {
+                        lock.unlock();
                     }
                 }
 
@@ -205,8 +216,11 @@ public final class ConfluenceGrpcService extends ConfluenceServiceGrpc.Confluenc
                 public void snapshot(ConfluenceSnapshot snapshot) {
                     newestSnapshotCursor.accumulateAndGet(snapshot.getCursor(),
                             ConfluenceGrpcService::laterCursor);
-                    synchronized (lock) {
+                    lock.lock();
+                    try {
                         observer.onNext(SyncResponse.newBuilder().setSnapshot(snapshot).build());
+                    } finally {
+                        lock.unlock();
                     }
                 }
             };
@@ -220,12 +234,20 @@ public final class ConfluenceGrpcService extends ConfluenceServiceGrpc.Confluenc
             } else {
                 resumeCursor = crawler.crawlIncremental(request.getSinceCursor());
             }
-            synchronized (lock) {
+            lock.lock();
+            try {
                 observer.onNext(SyncResponse.newBuilder().setResumeCursor(resumeCursor).build());
                 observer.onCompleted();
+            } finally {
+                lock.unlock();
             }
         } catch (Throwable t) {
-            fail(observer, t);
+            lock.lock();
+            try {
+                fail(observer, t);
+            } finally {
+                lock.unlock();
+            }
         }
     }
 

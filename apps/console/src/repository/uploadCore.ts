@@ -284,9 +284,10 @@ function abortableSleep(ms: number, signal: AbortSignal): Promise<void> {
 }
 
 /**
- * Asks GetOperationOutcome until it answers committed or rejected, or the
- * attempts run out. Each answer is reported as it arrives; the last one is
- * returned, so "no outcome yet" and "lookup unavailable" stay what they are.
+ * Asks GetOperationOutcome until it answers committed (including an unchanged
+ * match) or rejected, or the attempts run out. Each answer is reported as it
+ * arrives; the last one is returned, so "no outcome yet" and "lookup
+ * unavailable" stay what they are.
  */
 export async function followOutcome(
   client: Client<typeof DocumentService>,

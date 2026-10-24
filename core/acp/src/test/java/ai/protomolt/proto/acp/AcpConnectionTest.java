@@ -4,7 +4,11 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
 
+import java.io.ByteArrayInputStream;
 import java.io.EOFException;
+import java.io.IOException;
+import java.io.OutputStream;
+import java.io.UncheckedIOException;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CopyOnWriteArrayList;
@@ -107,6 +111,27 @@ class AcpConnectionTest {
                     .isInstanceOf(EOFException.class);
         } finally {
             client.close();
+        }
+    }
+
+    @Test
+    void failedWriteEvictsPendingRequestAndUsesNonPinningLock() {
+        OutputStream brokenOut = new OutputStream() {
+            @Override
+            public void write(int b) throws IOException {
+                throw new IOException("broken pipe");
+            }
+
+            @Override
+            public void write(byte[] b, int off, int len) throws IOException {
+                throw new IOException("broken pipe");
+            }
+        };
+        try (AcpConnection client = AcpConnection.over(new ByteArrayInputStream(new byte[0]), brokenOut)) {
+            assertThatThrownBy(() -> client.request("initialize", null))
+                    .isInstanceOf(UncheckedIOException.class)
+                    .hasCauseInstanceOf(IOException.class);
+            assertThat(client.pendingRequestCount()).isZero();
         }
     }
 }

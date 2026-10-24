@@ -38,8 +38,37 @@ describe('lookupOutcome', () => {
     expect(answer.state).toBe('committed')
     if (answer.state !== 'committed') throw new Error('unreachable')
     expect(answer.accession.revision).toBe(7n)
+    expect(answer.unchanged).toBe(false)
     expect(answer.recordedAt).toBe('2026-10-01T00:00:00.000Z')
     expect(seen[0]).toMatchObject({ accountId: 'acct-a', operationId: 'op-1' })
+  })
+
+  it('answers committed with unchanged true when the recorded outcome matched an existing revision', async () => {
+    const client = server(() =>
+      create(GetOperationOutcomeResponseSchema, {
+        state: {
+          case: 'committed',
+          value: create(RecordedOutcomeSchema, {
+            result: {
+              case: 'unchanged',
+              value: create(AccessionSchema, {
+                address: testAddress({ docId: 'doc-1' }),
+                revision: 3n,
+                previousRevision: 3n,
+              }),
+            },
+            recordedAt: at('2026-10-01T00:00:00Z'),
+          }),
+        },
+      }),
+    )
+    const answer = await lookupOutcome(client, 'acct-a', 'op-unchanged', signal())
+    expect(answer.state).toBe('committed')
+    if (answer.state !== 'committed') throw new Error('unreachable')
+    expect(answer.unchanged).toBe(true)
+    expect(answer.accession.revision).toBe(3n)
+    expect(answer.accession.previousRevision).toBe(3n)
+    expect(answer.recordedAt).toBe('2026-10-01T00:00:00.000Z')
   })
 
   it('answers a recorded rejection as its own state, not as committed', async () => {

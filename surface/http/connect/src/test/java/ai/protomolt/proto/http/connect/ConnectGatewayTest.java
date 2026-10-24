@@ -7,6 +7,10 @@ import ai.protomolt.proto.authz.grpc.CallerContexts;
 import com.google.protobuf.Any;
 import com.google.protobuf.Int32Value;
 import com.google.protobuf.StringValue;
+import com.sun.net.httpserver.Headers;
+import com.sun.net.httpserver.HttpContext;
+import com.sun.net.httpserver.HttpExchange;
+import com.sun.net.httpserver.HttpPrincipal;
 import com.sun.net.httpserver.HttpServer;
 import io.grpc.ForwardingServerCall;
 import io.grpc.Metadata;
@@ -554,44 +558,78 @@ class ConnectGatewayTest {
 
     @Test
     void anUnauthenticatedRequestIsRefusedWithoutReadingTheBody() throws Exception {
-        BodyProbeExchange exchange = new BodyProbeExchange(
-                ConnectGateway.PATH + "/" + SERVICE + "/Say", ConnectGateway.UNARY_CONTENT_TYPE);
-        gateway.handle(exchange);
-        assertThat(exchange.status).isEqualTo(401);
-        assertThat(new String(exchange.body.toByteArray(), StandardCharsets.UTF_8))
+        BodyProbeExchange unary = new BodyProbeExchange(
+                ConnectGateway.PATH + "/" + SERVICE + "/Say", ConnectGateway.UNARY_CONTENT_TYPE,
+                StringValue.of("x").toByteArray());
+        gateway.handle(unary);
+        assertThat(unary.status).isEqualTo(401);
+        assertThat(new String(unary.body.toByteArray(), StandardCharsets.UTF_8))
                 .contains("unauthenticated");
-        assertThat(exchange.bodyReads).hasValue(0);
+        assertThat(unary.bodyReads).hasValue(0);
+
+        BodyProbeExchange stream = new BodyProbeExchange(
+                ConnectGateway.PATH + "/" + SERVICE + "/Count", ConnectGateway.STREAM_CONTENT_TYPE,
+                envelope(0, Int32Value.of(3).toByteArray()));
+        gateway.handle(stream);
+        assertThat(stream.status).isEqualTo(200);
+        assertThat(frames(stream.body.toByteArray())).singleElement().satisfies(frame -> {
+            assertThat(frame.flags()).isEqualTo(2);
+            assertThat(frame.text()).contains("\"code\":\"unauthenticated\"");
+        });
+        assertThat(stream.bodyReads).hasValue(0);
+
+        BodyProbeExchange outage = new BodyProbeExchange(
+                ConnectGateway.PATH + "/" + SERVICE + "/Count", ConnectGateway.STREAM_CONTENT_TYPE,
+                envelope(0, Int32Value.of(3).toByteArray()));
+        outage.getRequestHeaders().put("api_token", List.of(OUTAGE));
+        gateway.handle(outage);
+        assertThat(outage.status).isEqualTo(200);
+        assertThat(frames(outage.body.toByteArray())).singleElement().satisfies(frame -> {
+            assertThat(frame.flags()).isEqualTo(2);
+            assertThat(frame.text()).contains("\"code\":\"unavailable\"");
+        });
+        assertThat(outage.bodyReads).hasValue(0);
         assertThat(invocations).hasValue(0);
     }
 
     @Test
     void anAuthenticatedRequestStillReadsTheBodyAfterTheCredentialCheck() throws Exception {
-        BodyProbeExchange exchange = new BodyProbeExchange(
-                ConnectGateway.PATH + "/" + SERVICE + "/Say", ConnectGateway.UNARY_CONTENT_TYPE);
-        exchange.getRequestHeaders().put("Authorization", List.of("Bearer " + OPERATOR));
-        gateway.handle(exchange);
-        assertThat(exchange.status).isEqualTo(200);
-        assertThat(exchange.bodyReads.get()).isPositive();
+        BodyProbeExchange unary = new BodyProbeExchange(
+                ConnectGateway.PATH + "/" + SERVICE + "/Say", ConnectGateway.UNARY_CONTENT_TYPE,
+                StringValue.of("x").toByteArray());
+        unary.getRequestHeaders().put("Authorization", List.of("Bearer " + OPERATOR));
+        gateway.handle(unary);
+        assertThat(unary.status).isEqualTo(200);
+        assertThat(unary.bodyReads.get()).isPositive();
         assertThat(invocations).hasValue(1);
+
+        BodyProbeExchange stream = new BodyProbeExchange(
+                ConnectGateway.PATH + "/" + SERVICE + "/Count", ConnectGateway.STREAM_CONTENT_TYPE,
+                envelope(0, Int32Value.of(2).toByteArray()));
+        stream.getRequestHeaders().put("Authorization", List.of("Bearer " + OPERATOR));
+        gateway.handle(stream);
+        assertThat(stream.status).isEqualTo(200);
+        assertThat(stream.bodyReads.get()).isPositive();
+        assertThat(frames(stream.body.toByteArray())).hasSize(3);
+        assertThat(invocations).hasValue(2);
     }
 
     /** An exchange whose request body counts its reads, so a pre-auth read is visible. */
-    private static final class BodyProbeExchange extends com.sun.net.httpserver.HttpExchange {
+    private static final class BodyProbeExchange extends HttpExchange {
 
-        final java.util.concurrent.atomic.AtomicInteger bodyReads = new java.util.concurrent.atomic.AtomicInteger();
+        final AtomicInteger bodyReads = new AtomicInteger();
         final ByteArrayOutputStream body = new ByteArrayOutputStream();
         volatile int status = -1;
 
-        private final com.sun.net.httpserver.Headers request = new com.sun.net.httpserver.Headers();
-        private final com.sun.net.httpserver.Headers response = new com.sun.net.httpserver.Headers();
+        private final Headers request = new Headers();
+        private final Headers response = new Headers();
         private final URI uri;
-        private final java.io.InputStream requestBody;
+        private final InputStream requestBody;
 
-        private BodyProbeExchange(String path, String contentType) {
+        private BodyProbeExchange(String path, String contentType, byte[] payload) {
             this.uri = URI.create(path);
             this.request.put("Content-Type", List.of(contentType));
-            byte[] payload = StringValue.of("x").toByteArray();
-            this.requestBody = new java.io.InputStream() {
+            this.requestBody = new InputStream() {
                 private final ByteArrayInputStream bytes = new ByteArrayInputStream(payload);
 
                 @Override
@@ -608,14 +646,14 @@ class ConnectGatewayTest {
             };
         }
 
-        @Override public com.sun.net.httpserver.Headers getRequestHeaders() { return request; }
-        @Override public com.sun.net.httpserver.Headers getResponseHeaders() { return response; }
+        @Override public Headers getRequestHeaders() { return request; }
+        @Override public Headers getResponseHeaders() { return response; }
         @Override public URI getRequestURI() { return uri; }
         @Override public String getRequestMethod() { return "POST"; }
-        @Override public com.sun.net.httpserver.HttpContext getHttpContext() { return null; }
+        @Override public HttpContext getHttpContext() { return null; }
         @Override public void close() { }
-        @Override public java.io.InputStream getRequestBody() { return requestBody; }
-        @Override public java.io.OutputStream getResponseBody() { return body; }
+        @Override public InputStream getRequestBody() { return requestBody; }
+        @Override public OutputStream getResponseBody() { return body; }
         @Override public void sendResponseHeaders(int code, long length) { status = code; }
         @Override public InetSocketAddress getRemoteAddress() { return new InetSocketAddress(0); }
         @Override public int getResponseCode() { return status; }
@@ -623,7 +661,7 @@ class ConnectGatewayTest {
         @Override public String getProtocol() { return "HTTP/1.1"; }
         @Override public Object getAttribute(String name) { return null; }
         @Override public void setAttribute(String name, Object value) { }
-        @Override public void setStreams(java.io.InputStream in, java.io.OutputStream out) { }
-        @Override public com.sun.net.httpserver.HttpPrincipal getPrincipal() { return null; }
+        @Override public void setStreams(InputStream in, OutputStream out) { }
+        @Override public HttpPrincipal getPrincipal() { return null; }
     }
 }

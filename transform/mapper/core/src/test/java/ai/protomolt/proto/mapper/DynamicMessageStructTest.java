@@ -3,6 +3,7 @@ package ai.protomolt.proto.mapper;
 import ai.protomolt.proto.descriptors.DescriptorRegistry;
 import ai.protomolt.proto.sources.ProtoSourceCompiler;
 import ai.protomolt.proto.sources.ProtoSourceSet;
+import com.google.protobuf.Any;
 import com.google.protobuf.Descriptors.Descriptor;
 import com.google.protobuf.DynamicMessage;
 import com.google.protobuf.Struct;
@@ -143,5 +144,42 @@ class DynamicMessageStructTest {
         Object tags = mapper.getValue(builder.build(), "extras.tags");
         assertThat(tags).asInstanceOf(org.assertj.core.api.InstanceOfAssertFactories.LIST)
                 .containsExactly("a", "b");
+    }
+
+    @Test
+    void anyFieldsPackAndAlignAcrossRuntimeCompiledDescriptors() throws Exception {
+        var compiled = new ProtoSourceCompiler().compile(ProtoSourceSet.builder()
+                .add("probe/envelope.proto", """
+                        syntax = "proto3";
+                        package probe;
+                        import "google/protobuf/any.proto";
+                        message Envelope {
+                          google.protobuf.Any payload = 1;
+                          repeated google.protobuf.Any history = 2;
+                        }
+                        message Note {
+                          string text = 1;
+                        }
+                        """, "probe").build());
+        var file = compiled.descriptorFor("probe/envelope.proto").orElseThrow();
+        Descriptor envelope = file.findMessageTypeByName("Envelope");
+        Descriptor note = file.findMessageTypeByName("Note");
+        assertThat(envelope.findFieldByName("payload").getMessageType())
+                .isNotSameAs(Any.getDescriptor());
+
+        DescriptorRegistry registry = DescriptorRegistry.create();
+        registry.registerFile(file);
+        ProtoFieldMapperImpl mapper = new ProtoFieldMapperImpl(registry);
+
+        DynamicMessage noteMsg = DynamicMessage.newBuilder(note)
+                .setField(note.findFieldByName("text"), "packed-note")
+                .build();
+        var builder = DynamicMessage.newBuilder(envelope);
+        mapper.setValue(builder, "payload", noteMsg);
+        mapper.appendValue(builder, "history", noteMsg);
+
+        DynamicMessage built = builder.build();
+        assertThat(mapper.getValue(built, "payload.text")).isEqualTo("packed-note");
+        assertThat(built.getRepeatedFieldCount(envelope.findFieldByName("history"))).isEqualTo(1);
     }
 }

@@ -448,19 +448,14 @@ public final class WorkflowRunWorker implements AutoCloseable {
     // ---- the request-topic consumer (broker-native submission) ----
 
     private void consumeLoop() {
-        ProtoMoltProtobufDeserializer deserializer = new ProtoMoltProtobufDeserializer();
-        deserializer.configure(Map.of(
-                ProtoMoltSerdeConfig.DESCRIPTOR_SET_BASE64,
-                WorkflowRunEventFactory.descriptorSetBase64(),
-                ProtoMoltSerdeConfig.MESSAGE_TYPE,
-                WorkflowRunRequest.getDescriptor().getFullName()), false);
         Properties props = new Properties();
         props.put(ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, config.kafkaBootstrapServers());
         props.put(ConsumerConfig.GROUP_ID_CONFIG, WorkflowRunsConfig.CONSUMER_GROUP);
         props.put(ConsumerConfig.ENABLE_AUTO_COMMIT_CONFIG, "false");
         props.put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "earliest");
-        try (KafkaConsumer<String, Message> consumer =
-                new KafkaConsumer<>(props, new StringDeserializer(), deserializer)) {
+        try (ProtoMoltProtobufDeserializer deserializer = configuredDeserializer();
+                KafkaConsumer<String, Message> consumer =
+                        new KafkaConsumer<>(props, new StringDeserializer(), deserializer)) {
             consumer.subscribe(List.of(config.requestTopic()));
             while (!closed) {
                 ConsumerRecords<String, Message> records =
@@ -482,6 +477,16 @@ public final class WorkflowRunWorker implements AutoCloseable {
             // and the broker retains the unconsumed records. Fail loud.
             LOG.error("workflow-run request consumer died: {}", e.getMessage(), e);
         }
+    }
+
+    private static ProtoMoltProtobufDeserializer configuredDeserializer() {
+        ProtoMoltProtobufDeserializer deserializer = new ProtoMoltProtobufDeserializer();
+        deserializer.configure(Map.of(
+                ProtoMoltSerdeConfig.DESCRIPTOR_SET_BASE64,
+                WorkflowRunEventFactory.descriptorSetBase64(),
+                ProtoMoltSerdeConfig.MESSAGE_TYPE,
+                WorkflowRunRequest.getDescriptor().getFullName()), false);
+        return deserializer;
     }
 
     void submitRequest(Message value) {
@@ -573,6 +578,7 @@ public final class WorkflowRunWorker implements AutoCloseable {
                 thread.join(TimeUnit.SECONDS.toMillis(10));
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
+                break;
             }
         }
         threads.clear();

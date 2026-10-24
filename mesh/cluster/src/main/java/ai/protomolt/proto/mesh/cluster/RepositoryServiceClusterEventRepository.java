@@ -20,6 +20,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.locks.ReentrantLock;
 
 /**
  * Stores an encrypted cluster directory event log as one v2 repository document whose
@@ -52,10 +53,19 @@ public final class RepositoryServiceClusterEventRepository
     private final String keyReference;
     private final EncryptedRepositoryStateCodec codec;
     private final Duration timeout;
+    private final ReentrantLock lock = new ReentrantLock();
     /** The revision the next save's candidate is derived from; 0 while none is confirmed. */
     private long confirmedRevision;
 
-    /** Creates a repository using the default encrypted-state codec limits and timeout. */
+    /**
+     * Creates a repository using the default encrypted-state codec limits and timeout.
+     *
+     * @param documents document service blocking stub
+     * @param driveName repository drive name
+     * @param objectKey repository object key
+     * @param keyReference encryption key reference
+     * @param keys key resolver for encrypted state
+     */
     public RepositoryServiceClusterEventRepository(
             DocumentServiceGrpc.DocumentServiceBlockingStub documents,
             String driveName, String objectKey, String keyReference,
@@ -64,7 +74,15 @@ public final class RepositoryServiceClusterEventRepository
                 new EncryptedRepositoryStateCodec(keys));
     }
 
-    /** Creates a repository with an explicit codec for embedding and tests. */
+    /**
+     * Creates a repository with an explicit codec for embedding and tests.
+     *
+     * @param documents document service blocking stub
+     * @param driveName repository drive name
+     * @param objectKey repository object key
+     * @param keyReference encryption key reference
+     * @param codec encrypted state codec
+     */
     public RepositoryServiceClusterEventRepository(
             DocumentServiceGrpc.DocumentServiceBlockingStub documents,
             String driveName, String objectKey, String keyReference,
@@ -72,7 +90,16 @@ public final class RepositoryServiceClusterEventRepository
         this(documents, driveName, objectKey, keyReference, codec, DEFAULT_TIMEOUT);
     }
 
-    /** Creates a repository with an explicit per-call repository timeout. */
+    /**
+     * Creates a repository with an explicit per-call repository timeout.
+     *
+     * @param documents document service blocking stub
+     * @param driveName repository drive name
+     * @param objectKey repository object key
+     * @param keyReference encryption key reference
+     * @param codec encrypted state codec
+     * @param timeout per-RPC deadline
+     */
     public RepositoryServiceClusterEventRepository(
             DocumentServiceGrpc.DocumentServiceBlockingStub documents,
             String driveName, String objectKey, String keyReference,
@@ -107,86 +134,96 @@ public final class RepositoryServiceClusterEventRepository
     }
 
     @Override
-    public synchronized Optional<StoredDirectory> load(ClusterDescriptor cluster) {
-        ClusterValidation.validate(cluster);
-        var response = readCurrent();
-        if (response.isEmpty()) {
-            confirmedRevision = 0;
-            return Optional.empty();
-        }
-        var pair = response.get();
-        long revision =
-                RepositoryStateDocuments.confirmLoaded(pair.getKey(), pair.getValue(), "cluster event log");
-        EncryptedRepositoryState envelope =
-                RepositoryStateDocuments.envelopeOf(pair.getValue().getDocument(), "cluster event log");
-        byte[] plaintext = codec.decrypt(envelope, CONTENT_TYPE, storageContext());
-        ClusterEventLog eventLog;
+    public Optional<StoredDirectory> load(ClusterDescriptor cluster) {
+        lock.lock();
         try {
-            eventLog = ClusterEventLog.parseFrom(plaintext);
-        } catch (InvalidProtocolBufferException e) {
-            throw corrupt("decrypted cluster event log is not valid protobuf", e);
-        }
-        StoredDirectory directory = eventLog.hasCheckpoint()
-                ? new StoredDirectory(eventLog.getCheckpoint(), eventLog.getEventsList())
-                : StoredDirectory.of(eventLog.getEventsList());
-        try {
-            ValidationResult.validate(eventLog).throwIfInvalid();
-            if (!cluster.getClusterId().equals(eventLog.getClusterId())
-                    || !cluster.getFingerprint().equals(eventLog.getClusterFingerprint())) {
-                throw new IllegalArgumentException("cluster identity does not match");
+            ClusterValidation.validate(cluster);
+            var response = readCurrent();
+            if (response.isEmpty()) {
+                confirmedRevision = 0;
+                return Optional.empty();
             }
-            if (envelope.getRecordCount() != eventLog.getEventsCount()) {
-                throw new IllegalArgumentException("event count does not match");
+            var pair = response.get();
+            long revision =
+                    RepositoryStateDocuments.confirmLoaded(pair.getKey(), pair.getValue(), "cluster event log");
+            EncryptedRepositoryState envelope =
+                    RepositoryStateDocuments.envelopeOf(pair.getValue().getDocument(), "cluster event log");
+            byte[] plaintext = codec.decrypt(envelope, CONTENT_TYPE, storageContext());
+            ClusterEventLog eventLog;
+            try {
+                eventLog = ClusterEventLog.parseFrom(plaintext);
+            } catch (InvalidProtocolBufferException e) {
+                throw corrupt("decrypted cluster event log is not valid protobuf", e);
             }
-            // A log written before compaction existed carries no checkpoint and begins at
-            // one, which is exactly what an uncompacted StoredDirectory reports.
-            ClusterValidation.validateEventLog(directory.events(), directory.firstSeq());
-        } catch (RuntimeException e) {
-            throw corrupt("stored cluster event log failed validation", e);
+            StoredDirectory directory = eventLog.hasCheckpoint()
+                    ? new StoredDirectory(eventLog.getCheckpoint(), eventLog.getEventsList())
+                    : StoredDirectory.of(eventLog.getEventsList());
+            try {
+                ValidationResult.validate(eventLog).throwIfInvalid();
+                if (!cluster.getClusterId().equals(eventLog.getClusterId())
+                        || !cluster.getFingerprint().equals(eventLog.getClusterFingerprint())) {
+                    throw new IllegalArgumentException("cluster identity does not match");
+                }
+                if (envelope.getRecordCount() != eventLog.getEventsCount()) {
+                    throw new IllegalArgumentException("event count does not match");
+                }
+                // A log written before compaction existed carries no checkpoint and begins at
+                // one, which is exactly what an uncompacted StoredDirectory reports.
+                ClusterValidation.validateEventLog(directory.events(), directory.firstSeq());
+            } catch (RuntimeException e) {
+                throw corrupt("stored cluster event log failed validation", e);
+            }
+            confirmedRevision = revision;
+            return Optional.of(directory);
+        } finally {
+            lock.unlock();
         }
-        confirmedRevision = revision;
-        return Optional.of(directory);
     }
 
     @Override
-    public synchronized void save(ClusterDescriptor cluster, StoredDirectory directory) {
-        ClusterValidation.validate(cluster);
-        ClusterValidation.validateEventLog(directory.events(), directory.firstSeq());
-        ClusterEventLog.Builder builder = ClusterEventLog.newBuilder()
-                .setClusterId(cluster.getClusterId())
-                .setClusterFingerprint(cluster.getFingerprint())
-                .addAllEvents(directory.events());
-        if (directory.compacted()) {
-            builder.setCheckpoint(directory.checkpoint());
-        }
-        ClusterEventLog eventLog = builder.build();
-        ValidationResult.validate(eventLog).throwIfInvalid();
-        EncryptedRepositoryState envelope = codec.encrypt(eventLog.toByteArray(),
-                CONTENT_TYPE, directory.events().size(), keyReference, storageContext());
-        // Compare-and-set on the revision this candidate was derived from, never on a
-        // revision read after the fact: a fresh read could already carry another writer's
-        // events, and replacing it would silently drop them. A conflicting ABORTED means
-        // exactly that race, so it surfaces for recovery rather than being retried with
-        // this stale candidate.
-        var request = RepositoryStateDocuments.save(driveName, objectKey, envelope, confirmedRevision);
-        final SaveDocumentResponse response;
+    public void save(ClusterDescriptor cluster, StoredDirectory directory) {
+        lock.lock();
         try {
-            response = within().saveDocument(request);
-        } catch (StatusRuntimeException e) {
-            if (e.getStatus().getCode() == Status.Code.DEADLINE_EXCEEDED) {
-                // The write may still land server-side. That is safe to leave: the caller
-                // does not install the candidate, and if it did land the next save
-                // conflicts on the stale baseline and surfaces for recovery instead of
-                // overwriting it.
-                throw unreachable("accept", e);
+            ClusterValidation.validate(cluster);
+            ClusterValidation.validateEventLog(directory.events(), directory.firstSeq());
+            ClusterEventLog.Builder builder = ClusterEventLog.newBuilder()
+                    .setClusterId(cluster.getClusterId())
+                    .setClusterFingerprint(cluster.getFingerprint())
+                    .addAllEvents(directory.events());
+            if (directory.compacted()) {
+                builder.setCheckpoint(directory.checkpoint());
             }
-            if (e.getStatus().getCode() == Status.Code.ABORTED) {
-                throw conflict(e);
+            ClusterEventLog eventLog = builder.build();
+            ValidationResult.validate(eventLog).throwIfInvalid();
+            EncryptedRepositoryState envelope = codec.encrypt(eventLog.toByteArray(),
+                    CONTENT_TYPE, directory.events().size(), keyReference, storageContext());
+            // Compare-and-set on the revision this candidate was derived from, never on a
+            // revision read after the fact: a fresh read could already carry another writer's
+            // events, and replacing it would silently drop them. A conflicting ABORTED means
+            // exactly that race, so it surfaces for recovery rather than being retried with
+            // this stale candidate.
+            var request = RepositoryStateDocuments.save(driveName, objectKey, envelope, confirmedRevision);
+            final SaveDocumentResponse response;
+            try {
+                response = within().saveDocument(request);
+            } catch (StatusRuntimeException e) {
+                if (e.getStatus().getCode() == Status.Code.DEADLINE_EXCEEDED) {
+                    // The write may still land server-side. That is safe to leave: the caller
+                    // does not install the candidate, and if it did land the next save
+                    // conflicts on the stale baseline and surfaces for recovery instead of
+                    // overwriting it.
+                    throw unreachable("accept", e);
+                }
+                if (e.getStatus().getCode() == Status.Code.ABORTED) {
+                    throw conflict(e);
+                }
+                throw e;
             }
-            throw e;
+            confirmedRevision =
+                    RepositoryStateDocuments.confirmSaved(request, response, "cluster event log");
+        } finally {
+            lock.unlock();
         }
-        confirmedRevision =
-                RepositoryStateDocuments.confirmSaved(request, response, "cluster event log");
     }
 
     private static IllegalStateException conflict(StatusRuntimeException cause) {

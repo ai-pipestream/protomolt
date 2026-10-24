@@ -140,6 +140,8 @@ public final class GrpcSourceTask extends SourceTask {
                 lastToken = token;
             }
         }
+        shutdownChannel();
+        stopped = false;
         channel = channelFactory.apply(config);
         LOG.info("gRPC source started: {} {} -> topic {}{}", config.target(), config.method(),
                 config.topic(), lastToken == null ? "" : " (resuming from " + lastToken + ")");
@@ -156,6 +158,10 @@ public final class GrpcSourceTask extends SourceTask {
         if (stream == null) {
             stream = DynamicGrpcCalls.openServerStream(channel, prepared.method(),
                     subscribeRequest(), CallOptions.DEFAULT, cloneHeaders());
+            if (stopped) {
+                dropStream();
+                return List.of();
+            }
         }
         List<DynamicMessage> messages;
         try {
@@ -341,6 +347,10 @@ public final class GrpcSourceTask extends SourceTask {
         if (active != null) {
             active.cancel();
         }
+        shutdownChannel();
+    }
+
+    private void shutdownChannel() {
         if (channel != null) {
             channel.shutdown();
             try {
@@ -351,6 +361,7 @@ public final class GrpcSourceTask extends SourceTask {
                 Thread.currentThread().interrupt();
                 channel.shutdownNow();
             }
+            channel = null;
         }
     }
 

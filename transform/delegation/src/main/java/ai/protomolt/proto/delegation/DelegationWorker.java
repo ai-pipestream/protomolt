@@ -32,6 +32,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.locks.ReentrantLock;
 
 /** Connects a provider-neutral {@link WorkerRunner} to the delegation bidi stream. */
 public final class DelegationWorker implements AutoCloseable {
@@ -39,7 +40,7 @@ public final class DelegationWorker implements AutoCloseable {
     /** Maximum coordinator task messages buffered for the runner's host to drain. */
     private static final int MAX_BUFFERED_MESSAGES = 256;
 
-    private final Object lock = new Object();
+    private final ReentrantLock lock = new ReentrantLock();
     private final AgentDelegationServiceGrpc.AgentDelegationServiceStub stub;
     private final WorkerRunner runner;
     private final ExecutorService tasks = Executors.newVirtualThreadPerTaskExecutor();
@@ -74,7 +75,8 @@ public final class DelegationWorker implements AutoCloseable {
      * neither side can prove continuity.</p>
      */
     public void start() {
-        synchronized (lock) {
+        lock.lock();
+        try {
             if (closed) {
                 throw new IllegalStateException("worker is closed");
             }
@@ -86,6 +88,8 @@ public final class DelegationWorker implements AutoCloseable {
             streamFailure = null;
             admitted = false;
             admission = new CountDownLatch(1);
+        } finally {
+            lock.unlock();
         }
         send("", 0, DelegateRequest.newBuilder().setHello(runner.hello()));
     }
@@ -157,7 +161,8 @@ public final class DelegationWorker implements AutoCloseable {
 
     @Override
     public void close() {
-        synchronized (lock) {
+        lock.lock();
+        try {
             if (closed) {
                 return;
             }
@@ -166,6 +171,8 @@ public final class DelegationWorker implements AutoCloseable {
             if (requests != null) {
                 requests.onCompleted();
             }
+        } finally {
+            lock.unlock();
         }
         tasks.shutdownNow();
     }
@@ -189,8 +196,11 @@ public final class DelegationWorker implements AutoCloseable {
             case CANCELLATION -> cancel(frame.getTaskId(), frame.getCancellation().getReason());
             case REVISION_REQUESTED -> revise(frame.getTaskId(), frame.getRevisionRequested());
             case ACCEPTED -> {
-                synchronized (lock) {
+                lock.lock();
+                try {
                     active.remove(frame.getTaskId());
+                } finally {
+                    lock.unlock();
                 }
             }
             case TASK_MESSAGE -> {
@@ -207,10 +217,13 @@ public final class DelegationWorker implements AutoCloseable {
 
     private void acceptAndRun(String taskId, TaskOffer offer) {
         ActiveTask task = new ActiveTask(taskId, offer);
-        synchronized (lock) {
+        lock.lock();
+        try {
             if (active.putIfAbsent(taskId, task) != null) {
                 throw new IllegalStateException("worker already has task " + taskId);
             }
+        } finally {
+            lock.unlock();
         }
         send(taskId, offer.getAttempt(), DelegateRequest.newBuilder()
                 .setAccept(TaskAccept.newBuilder().setAttempt(offer.getAttempt())));
@@ -219,11 +232,14 @@ public final class DelegationWorker implements AutoCloseable {
 
     private void revise(String taskId, RevisionRequested revision) {
         ActiveTask task;
-        synchronized (lock) {
+        lock.lock();
+        try {
             task = active.get(taskId);
             if (task == null || task.offer.getAttempt() != revision.getAttempt()) {
                 throw new IllegalStateException("revision names no active task");
             }
+        } finally {
+            lock.unlock();
         }
         execute(task, Optional.of(revision));
     }
@@ -253,8 +269,11 @@ public final class DelegationWorker implements AutoCloseable {
                     if (message.length() > 8_192) {
                         message = message.substring(0, 8_192);
                     }
-                    synchronized (lock) {
+                    lock.lock();
+                    try {
                         active.remove(task.taskId, task);
+                    } finally {
+                        lock.unlock();
                     }
                     send(task.taskId, task.offer.getAttempt(),
                             DelegateRequest.newBuilder().setFailed(
@@ -268,12 +287,15 @@ public final class DelegationWorker implements AutoCloseable {
 
     private void cancel(String taskId, String note) {
         ActiveTask task;
-        synchronized (lock) {
+        lock.lock();
+        try {
             task = active.remove(taskId);
             if (task == null) {
                 return;
             }
             task.cancelled.set(true);
+        } finally {
+            lock.unlock();
         }
         send(taskId, task.offer.getAttempt(), DelegateRequest.newBuilder()
                 .setCancelled(CancelledNotice.newBuilder()
@@ -283,18 +305,22 @@ public final class DelegationWorker implements AutoCloseable {
     }
 
     private void stop(String taskId) {
-        synchronized (lock) {
+        lock.lock();
+        try {
             ActiveTask task = active.remove(taskId);
             if (task != null) {
                 task.cancelled.set(true);
             }
+        } finally {
+            lock.unlock();
         }
     }
 
     private void send(String taskId, int attempt, DelegateRequest.Builder payload) {
         DelegateRequest frame;
         StreamObserver<DelegateRequest> target;
-        synchronized (lock) {
+        lock.lock();
+        try {
             if (closed) {
                 return;
             }
@@ -313,6 +339,8 @@ public final class DelegationWorker implements AutoCloseable {
                     .setSentAt(nowTimestamp())
                     .build();
             target = requests;
+        } finally {
+            lock.unlock();
         }
         DelegationValidation.validate(frame);
         target.onNext(frame);
@@ -343,8 +371,11 @@ public final class DelegationWorker implements AutoCloseable {
 
         @Override
         public void onError(Throwable throwable) {
-            synchronized (lock) {
+            lock.lock();
+            try {
                 streamTerminated = true;
+            } finally {
+                lock.unlock();
             }
             streamFailure = throwable;
             admission.countDown();
@@ -352,8 +383,11 @@ public final class DelegationWorker implements AutoCloseable {
 
         @Override
         public void onCompleted() {
-            synchronized (lock) {
+            lock.lock();
+            try {
                 streamTerminated = true;
+            } finally {
+                lock.unlock();
             }
             admission.countDown();
         }

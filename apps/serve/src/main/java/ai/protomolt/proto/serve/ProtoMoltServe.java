@@ -24,7 +24,6 @@ import ai.protomolt.proto.jobs.service.events.WorkflowRunEventRelay;
 import ai.protomolt.proto.jobs.service.store.WorkflowRunDatabase;
 import ai.protomolt.proto.jobs.service.worker.WorkflowRunWorker;
 import ai.protomolt.proto.mesh.cluster.ClusterActions;
-import ai.protomolt.proto.receipt.TrustSnapshot;
 import ai.protomolt.proto.schema.registry.git.GitSchemaRegistryStore;
 import ai.protomolt.proto.registry.service.SchemaRegistryServer;
 import ai.protomolt.proto.server.ProtoToolsServerConfig;
@@ -39,7 +38,6 @@ import java.util.LinkedHashSet;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
-import java.util.function.Supplier;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -894,6 +892,7 @@ public final class ProtoMoltServe implements AutoCloseable {
     private final DelegationRuntime delegation;
     private final MeshClusterRuntime meshCluster;
     private final JdbcCallerResolver jdbcCallers;
+    private final ConfigLaneMount.TrustSource trustSource;
 
     private ProtoMoltServe(ProtoMoltGrpcServer grpc, JdkProtoRestServer http,
                            McpHttpHandler mcp, int httpPort,
@@ -901,7 +900,8 @@ public final class ProtoMoltServe implements AutoCloseable {
                            int registryPort, WorkflowRunDatabase jobsDatabase,
                            WorkflowRunWorker jobsWorker, WorkflowRunEventRelay jobsRelay,
                            DelegationRuntime delegation, MeshClusterRuntime meshCluster,
-                           JdbcCallerResolver jdbcCallers) {
+                           JdbcCallerResolver jdbcCallers,
+                           ConfigLaneMount.TrustSource trustSource) {
         this.grpc = grpc;
         this.http = http;
         this.mcp = mcp;
@@ -915,6 +915,7 @@ public final class ProtoMoltServe implements AutoCloseable {
         this.delegation = delegation;
         this.meshCluster = meshCluster;
         this.jdbcCallers = jdbcCallers;
+        this.trustSource = trustSource;
     }
 
     /** Starts every configured surface; closing stops them all. */
@@ -936,6 +937,7 @@ public final class ProtoMoltServe implements AutoCloseable {
         WorkflowRunDatabase jobsDatabase = null;
         WorkflowRunWorker jobsWorker = null;
         WorkflowRunEventRelay jobsRelay = null;
+        ConfigLaneMount.TrustSource trust = null;
         ServiceProfileRepository serviceProfiles = null;
         ArtifactRepository artifacts = null;
         RunEvidenceRepository runEvidence = null;
@@ -955,7 +957,7 @@ public final class ProtoMoltServe implements AutoCloseable {
             artifacts = workspace.artifacts();
             runEvidence = workspace.runEvidence();
 
-            Supplier<TrustSnapshot> trust = ConfigLaneMount.trustSource(options.configLane(),
+            trust = ConfigLaneMount.trustSource(options.configLane(),
                     options.apiToken());
 
             // Workflow runs: the store boots (and Flyway-migrates) before the catalog so
@@ -981,7 +983,7 @@ public final class ProtoMoltServe implements AutoCloseable {
                         outboundPolicy, artifacts, runEvidence, workflowVersions, store,
                         trust, starter == null ? null : starter.credentials());
                 return startWithJobsCatalog(options, context, catalog, store,
-                        serviceProfiles, jobs, starter, authoring, preparation);
+                        serviceProfiles, jobs, starter, authoring, preparation, trust);
             }
             // The catalog sees the store so run-workflow resolves stored workflow names.
             ActionCatalog catalog = ProtoMoltCatalog.full(context, options.gatherCache(),
@@ -989,7 +991,7 @@ public final class ProtoMoltServe implements AutoCloseable {
                     outboundPolicy, artifacts, runEvidence, workflowVersions, store,
                     trust, starter == null ? null : starter.credentials());
             return startWithJobsCatalog(options, context, catalog, store,
-                    serviceProfiles, null, starter, null, null);
+                    serviceProfiles, null, starter, null, null, trust);
         } catch (RuntimeException e) {
             if (registry != null) {
                 registry.close();
@@ -1000,6 +1002,7 @@ public final class ProtoMoltServe implements AutoCloseable {
             if (grpc != null) {
                 grpc.close();
             }
+            closeQuietly(trust);
             closeQuietly(store);
             closeQuietly(jobsWorker);
             closeQuietly(jobsRelay);
@@ -1016,7 +1019,8 @@ public final class ProtoMoltServe implements AutoCloseable {
                                                        JobsFleetMount.Prepared jobs,
                                                        CorrectionStarter starter,
                                                        WorkflowAuthoringMount.Prepared authoring,
-                                                       WorkflowPreparationMount.Prepared preparation) {
+                                                       WorkflowPreparationMount.Prepared preparation,
+                                                       ConfigLaneMount.TrustSource trust) {
         ProtoMoltGrpcServer grpc = null;
         JdkProtoRestServer http = null;
         McpHttpHandler mcpHandler = null;
@@ -1101,7 +1105,7 @@ public final class ProtoMoltServe implements AutoCloseable {
                     jobs == null ? null : jobs.database(),
                     jobs == null ? null : jobs.worker(),
                     jobs == null ? null : jobs.relay(),
-                    delegation, meshCluster, jdbcCallers);
+                    delegation, meshCluster, jdbcCallers, trust);
         } catch (RuntimeException e) {
             closeQuietly(jdbcCallers);
             closeQuietly(meshCluster);
@@ -1177,6 +1181,7 @@ public final class ProtoMoltServe implements AutoCloseable {
         http.close();
         grpc.close();
         closeQuietly(jdbcCallers);
+        closeQuietly(trustSource);
     }
 
     public static void main(String[] args) throws Exception {
