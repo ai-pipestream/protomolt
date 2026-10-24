@@ -142,7 +142,6 @@ public final class RenditionUploads {
         private long maxSpoolBytes;
         private long spooledBytes;
         private Path spoolFile;
-        private UploadSpoolBudget.Lease spoolLease;
         private OutputStream spoolOut;
         private InputStream spoolIn;
         private final byte[] spoolBuffer = new byte[SPOOL_CHUNK_BYTES];
@@ -259,7 +258,6 @@ public final class RenditionUploads {
             }
             try {
                 if (spoolOut == null) {
-                    spoolLease = archive.uploadSpoolBudget().reserve(maxSpoolBytes);
                     spoolFile = Files.createTempFile("protomolt-rendition-upload-", ".spool");
                     spoolOut = Files.newOutputStream(spoolFile);
                     while (!bufferedChunks.isEmpty()) {
@@ -629,10 +627,6 @@ public final class RenditionUploads {
                 } finally {
                     spoolFile = null;
                 }
-            }
-            if (spoolLease != null) {
-                spoolLease.close();
-                spoolLease = null;
             }
             if (first != null) {
                 throw first;
