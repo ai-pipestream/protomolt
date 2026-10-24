@@ -4,6 +4,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import ai.protomolt.proto.repo.accession.RepositoryCorpus;
+import ai.protomolt.proto.repo.archive.ArchiveCoordinates;
+import ai.protomolt.proto.repo.archive.DocumentArchiveBindings;
 import ai.protomolt.proto.repo.v1.NodeAddress;
 import java.util.ArrayList;
 import java.util.List;
@@ -50,6 +52,42 @@ class CorpusAccountGuardTest {
         var some = CorpusSeeder.addresses(CORPUS, ALPHA).subList(0, 2);
         assertThatThrownBy(() -> CorpusAccountGuard.check(CORPUS, ALPHA, some))
                 .isInstanceOf(IllegalStateException.class).hasMessageContaining("2 of the corpus's");
+    }
+
+    @Test void aCorpusDocumentIdUnderAnotherDatasourceIsForeign() {
+        var elsewhere = CORPUS.documents(ALPHA).getFirst().address().toBuilder()
+                .setGraphAddressId("someone-elses-datasource").build();
+        assertThatThrownBy(() -> CorpusAccountGuard.check(CORPUS, ALPHA, List.of(elsewhere)))
+                .isInstanceOf(CorpusAccountGuard.ForeignDocuments.class)
+                .hasMessageContaining("someone-elses-datasource");
+    }
+
+    @Test void archivePrefixesDoNotAdmitUnrelatedDefinitionsOrEntries() {
+        var script = CORPUS.archives().getFirst();
+        var unknownDefinition = DocumentArchiveBindings.definitionAddress(ALPHA, "foreign-archive");
+        var unknownEntry = ArchiveCoordinates.address(script.entries().getFirst().getAddress().toBuilder()
+                .setEntryId("foreign-entry").build());
+        for (var foreign : List.of(unknownDefinition, unknownEntry)) {
+            var existing = new ArrayList<>(CorpusSeeder.addresses(CORPUS, ALPHA));
+            existing.add(foreign);
+            assertThatThrownBy(() -> CorpusAccountGuard.check(CORPUS, ALPHA, existing))
+                    .isInstanceOf(CorpusAccountGuard.ForeignDocuments.class)
+                    .hasMessageContaining(foreign.getDocId());
+        }
+    }
+
+    @Test void missingAnArchiveDefinitionOrEntryIsAPartialLoad() {
+        var script = CORPUS.archives().getFirst();
+        var definition = DocumentArchiveBindings.definitionAddress(ALPHA, script.archive().getName());
+        var entry = ArchiveCoordinates.address(script.entries().getFirst().getAddress());
+        for (var missing : List.of(definition, entry)) {
+            var existing = new ArrayList<>(CorpusSeeder.addresses(CORPUS, ALPHA));
+            assertThat(existing.remove(missing)).isTrue();
+            assertThatThrownBy(() -> CorpusAccountGuard.check(CORPUS, ALPHA, existing))
+                    .isInstanceOf(IllegalStateException.class)
+                    .isNotInstanceOf(CorpusAccountGuard.ForeignDocuments.class)
+                    .hasMessageContaining("partial load");
+        }
     }
 
     @Test void aListingOfAnotherAccountIsAProgrammingError() {

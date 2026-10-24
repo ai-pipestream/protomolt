@@ -7,9 +7,11 @@ import ai.protomolt.proto.repo.accession.CorpusLoader;
 import ai.protomolt.proto.repo.accession.DocumentSaves;
 import ai.protomolt.proto.repo.accession.RepositoryCorpus;
 import ai.protomolt.proto.repo.accession.SyntheticBytes;
+import ai.protomolt.proto.repo.archive.v1.CreateArchiveRequest;
 import ai.protomolt.proto.repo.archive.v1.GetEntryRequest;
 import ai.protomolt.proto.repo.archive.v1.ListVersionsRequest;
 import ai.protomolt.proto.repo.archive.v1.RenditionContent;
+import ai.protomolt.proto.repo.catalog.CatalogRecords;
 import ai.protomolt.proto.repo.container.ledger.LedgerConfig;
 import ai.protomolt.proto.repo.service.RepoServiceConfig;
 import ai.protomolt.proto.repo.service.RepoServices;
@@ -29,6 +31,8 @@ import ai.protomolt.proto.repo.v2.SaveDocumentRequest;
 import ai.protomolt.proto.repo.v2.SaveOwner;
 import ai.protomolt.proto.repo.v2.WriteAction;
 import java.time.Clock;
+import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
@@ -80,19 +84,24 @@ class CorpusSeederIT {
         assertThat(first.saves()).isEqualTo(corpus.documents().stream().mapToInt(script -> (int) script.steps().stream()
                 .filter(step -> step instanceof RepositoryCorpus.Save).count()).sum());
         assertThat(first.archiveEntries()).isEqualTo(corpus.archives().stream().mapToInt(script -> script.entries().size()).sum());
+        var seededRows = new LinkedHashMap<String, List<CatalogRecords.ListedDocument>>();
         for (var account : RepositoryCorpus.ACCOUNTS) {
             for (var drive : java.util.List.of(RepositoryCorpus.INTAKE_DRIVE, RepositoryCorpus.PIPELINE_DRIVE, RepositoryCorpus.ARCHIVE_DRIVE)) {
                 assertThat(services.driveRepository().getDrive(operator, GetDriveRequest.newBuilder()
                         .setAccountId(account).setName(drive).build()).getDrive().getName()).isEqualTo(drive);
             }
-            assertThat(CorpusLoader.listAll(services.v2Composition().catalog(), account)).hasSize(corpus.documents(account).size());
+            var rows = CorpusLoader.listAll(services.v2Composition().catalog(), account);
+            assertThat(rows).extracting(CatalogRecords.ListedDocument::address)
+                    .containsExactlyInAnyOrderElementsOf(CorpusSeeder.addresses(corpus, account));
+            seededRows.put(account, rows);
         }
 
         var second = CorpusSeeder.seed(services, corpus);
         assertThat(second.written()).isFalse();
         assertThat(second.decisions().values()).containsOnly(CorpusAccountGuard.Decision.SEEDED);
-        assertThat(CorpusLoader.listAll(services.v2Composition().catalog(), RepositoryCorpus.ACCOUNTS.get(0)))
-                .hasSize(corpus.documents(RepositoryCorpus.ACCOUNTS.get(0)).size());
+        seededRows.forEach((account, rows) ->
+                assertThat(CorpusLoader.listAll(services.v2Composition().catalog(), account))
+                        .as("a repeated seed preserves every row and revision in %s", account).isEqualTo(rows));
 
         // Archives: renditions read back byte for byte; the retained entry has two versions, the replaced one has one.
         var archives = services.archiveRepository();
@@ -107,7 +116,7 @@ class CorpusSeederIT {
                 .filter(content -> content.getRendition().getName().equals("markdown")).findFirst().orElseThrow();
         assertThat(rendition(entry.getRenditionsList(), "markdown").getData()).isEqualTo(expectedMarkdown.getData());
         var versions = archives.listVersions(operator, ListVersionsRequest.newBuilder().setAddress(report).setLimit(10).build());
-        assertThat(versions.getVersionsList()).extracting(manifest -> manifest.getVersion()).containsExactlyInAnyOrder(1L, 2L);
+        assertThat(versions.getSummariesList()).extracting(summary -> summary.getVersion()).containsExactlyInAnyOrder(1L, 2L);
         var v1 = archives.getEntry(operator, GetEntryRequest.newBuilder().setAddress(report).setVersion(1).build());
         assertThat(v1.getRenditionsList()).extracting(content -> content.getRendition().getName())
                 .containsExactlyInAnyOrder("original", "markdown", "thumbnail");
@@ -120,7 +129,7 @@ class CorpusSeederIT {
         var scans = corpus.archives().get(1);
         var invoice = scans.entries().getFirst().getAddress();
         var replaced = archives.listVersions(operator, ListVersionsRequest.newBuilder().setAddress(invoice).setLimit(10).build());
-        assertThat(replaced.getVersionsList()).hasSize(1);
+        assertThat(replaced.getSummariesList()).extracting(summary -> summary.getVersion()).containsExactly(2L);
         assertThat(archives.getEntry(operator, GetEntryRequest.newBuilder().setAddress(invoice).build()).getRenditionsList())
                 .extracting(content -> content.getRendition().getName()).containsExactlyInAnyOrder("original", "ocr");
 
@@ -140,13 +149,31 @@ class CorpusSeederIT {
                 .setOwner(SaveOwner.newBuilder().setIntake(IntakeOrigin.newBuilder().setDatasourceId("ds-crawler")))
                 .addWrites(PartWrite.newBuilder().setSelector(PartSelector.newBuilder().setPart(DocumentPart.DOCUMENT_PART_CORE))
                         .setAction(WriteAction.WRITE_ACTION_PUT)).build());
+        var gammaBeforeRefusal = CorpusLoader.listAll(v2.catalog(), gamma);
         assertThatThrownBy(() -> CorpusSeeder.seed(services, corpus))
                 .isInstanceOfSatisfying(CorpusAccountGuard.ForeignDocuments.class, refused -> {
                     assertThat(refused.accountId()).isEqualTo(gamma);
                     assertThat(refused.documentIds()).containsExactly("intake:" + gamma + "/ds-crawler/not-from-the-corpus");
                 });
         assertThat(CorpusLoader.listAll(v2.catalog(), gamma)).as("the refusal wrote nothing")
-                .hasSize(corpus.documents(gamma).size() + 1);
+                .isEqualTo(gammaBeforeRefusal);
+
+        // The new archive namespaces are not a blanket exemption from foreign-data refusal.
+        var alpha = RepositoryCorpus.ACCOUNTS.getFirst();
+        archives.createArchive(operator, CreateArchiveRequest.newBuilder()
+                .setArchive(docs.archive().toBuilder().setName("foreign-archive")).build());
+        archives.putEntry(operator, docs.entries().getFirst().toBuilder()
+                .setAddress(report.toBuilder().setEntryId("foreign-entry")).build());
+        var alphaBeforeRefusal = CorpusLoader.listAll(v2.catalog(), alpha);
+        assertThatThrownBy(() -> CorpusSeeder.seed(services, corpus))
+                .isInstanceOfSatisfying(CorpusAccountGuard.ForeignDocuments.class, refused -> {
+                    assertThat(refused.accountId()).isEqualTo(alpha);
+                    assertThat(refused.documentIds()).containsExactlyInAnyOrder(
+                            "archive-def:" + alpha + "/archives/foreign-archive",
+                            "archive:" + alpha + "/" + docs.archive().getName() + "/foreign-entry");
+                });
+        assertThat(CorpusLoader.listAll(v2.catalog(), alpha)).as("foreign archive refusal wrote nothing")
+                .isEqualTo(alphaBeforeRefusal);
     }
 
     @Test void theMainRefusesOutsideTheDevProfileWithoutOpeningTheStore() {
