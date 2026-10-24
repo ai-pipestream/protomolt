@@ -330,6 +330,11 @@ Every rendition is one stored object of one revision. The mapping from
   `filename` maps to `Blob.filename`. `PutEntryRequest.filename` describes
   the original file, so a request that sets it with no `original` rendition
   written or carried is `INVALID_ARGUMENT` naming `filename`.
+  `UploadRenditionHeader.filename` likewise names the original file: a nonblank
+  value requires the `original` rendition, is limited to 500 code points by both
+  validation dialects, and participates in retry identity. Blank preserves a
+  stored filename. The filename is stored on the streamed blob in the same revision
+  and is available to characterization.
 - `parsed` is the PARSED part, not an opaque blob. Its bytes are the encoded
   PARSED fragment (a `Document` carrying `doc_id` and `parser_results` only;
   v2 fragment confinement requires and stores `doc_id`, which equals the

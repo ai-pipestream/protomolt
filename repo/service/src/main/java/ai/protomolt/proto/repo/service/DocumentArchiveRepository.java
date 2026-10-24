@@ -106,28 +106,28 @@ final class DocumentArchiveRepository implements ArchiveRepository, ArchiveMutat
     public CreateArchiveResponse createArchive(RepositoryCaller caller, CreateArchiveRequest request) {
         requireProcessAuthority(caller);
         Objects.requireNonNull(request, "request");
-        return callAsOperator(() -> archive.createArchive(request));
+        return callAsCaller(caller, () -> archive.createArchive(request));
     }
 
     @Override
     public GetArchiveResponse getArchive(RepositoryCaller caller, GetArchiveRequest request) {
         Objects.requireNonNull(request, "request");
         requireAccountAccess(caller, request.getAccountId());
-        return callAsOperator(() -> archive.getArchive(request));
+        return callAsCaller(caller, () -> archive.getArchive(request));
     }
 
     @Override
     public ListArchivesResponse listArchives(RepositoryCaller caller, ListArchivesRequest request) {
         Objects.requireNonNull(request, "request");
         requireAccountAccess(caller, request.getAccountId());
-        return callAsOperator(() -> archive.listArchives(request));
+        return callAsCaller(caller, () -> archive.listArchives(request));
     }
 
     @Override
     public GetArchiveStatsResponse stats(RepositoryCaller caller, GetArchiveStatsRequest request) {
         Objects.requireNonNull(request, "request");
         requireAccountAccess(caller, request.getAccountId());
-        return callAsOperator(() -> archive.getArchiveStats(request));
+        return callAsCaller(caller, () -> archive.getArchiveStats(request));
     }
 
     @Override
@@ -135,10 +135,10 @@ final class DocumentArchiveRepository implements ArchiveRepository, ArchiveMutat
         requireProcessAuthority(caller);
         Objects.requireNonNull(request, "request");
         if (putAdmission == null) {
-            return callAsOperator(() -> archive.putEntry(request));
+            return callAsCaller(caller, () -> archive.putEntry(request));
         }
         try (ArchivePutAdmission.Scope ignored = putAdmission.admit(request)) {
-            return callAsOperator(() -> archive.putEntry(request));
+            return callAsCaller(caller, () -> archive.putEntry(request));
         }
     }
 
@@ -146,35 +146,35 @@ final class DocumentArchiveRepository implements ArchiveRepository, ArchiveMutat
     public GetEntryResponse getEntry(RepositoryCaller caller, GetEntryRequest request) {
         Objects.requireNonNull(request, "request");
         requireAccountAccess(caller, request.getAddress().getAccountId());
-        return callAsOperator(() -> archive.getEntry(request));
+        return callAsCaller(caller, () -> archive.getEntry(request));
     }
 
     @Override
     public GetEntryManifestResponse getManifest(RepositoryCaller caller, GetEntryManifestRequest request) {
         Objects.requireNonNull(request, "request");
         requireAccountAccess(caller, request.getAddress().getAccountId());
-        return callAsOperator(() -> archive.getEntryManifest(request));
+        return callAsCaller(caller, () -> archive.getEntryManifest(request));
     }
 
     @Override
     public ListEntriesResponse listEntries(RepositoryCaller caller, ListEntriesRequest request) {
         Objects.requireNonNull(request, "request");
         requireAccountAccess(caller, request.getAccountId());
-        return callAsOperator(() -> archive.listEntries(request));
+        return callAsCaller(caller, () -> archive.listEntries(request));
     }
 
     @Override
     public ListVersionsResponse listVersions(RepositoryCaller caller, ListVersionsRequest request) {
         Objects.requireNonNull(request, "request");
         requireAccountAccess(caller, request.getAddress().getAccountId());
-        return callAsOperator(() -> archive.listVersions(request));
+        return callAsCaller(caller, () -> archive.listVersions(request));
     }
 
     @Override
     public ClassifyEntryResponse classifyEntry(RepositoryCaller caller, ClassifyEntryRequest request) {
         requireProcessAuthority(caller);
         Objects.requireNonNull(request, "request");
-        return callAsOperator(() -> archive.classifyEntry(request));
+        return callAsCaller(caller, () -> archive.classifyEntry(request));
     }
 
     @Override
@@ -186,7 +186,7 @@ final class DocumentArchiveRepository implements ArchiveRepository, ArchiveMutat
                     RepositoryException.Code.UNSUPPORTED,
                     "Bridge execution is disabled in the bounded archive profile");
         }
-        return callAsOperator(() -> archive.bridgeEntry(request));
+        return callAsCaller(caller, () -> archive.bridgeEntry(request));
     }
 
     @Override
@@ -198,7 +198,7 @@ final class DocumentArchiveRepository implements ArchiveRepository, ArchiveMutat
                     RepositoryException.Code.UNSUPPORTED,
                     "Streaming rendition reads are disabled in the bounded archive profile");
         }
-        RenditionReads.OpenedRead opened = callAsOperator(() -> reads.open(request));
+        RenditionReads.OpenedRead opened = callAsCaller(caller, () -> reads.open(request));
         RenditionReadHeader header = opened.header();
         RenditionManifestEntry entry = RenditionManifestEntry.newBuilder()
                 .setRendition(header.getRendition())
@@ -263,6 +263,9 @@ final class DocumentArchiveRepository implements ArchiveRepository, ArchiveMutat
             header.setExpectedSha256(sha256);
         } else {
             header.setOperationId("upload-" + UUID.randomUUID());
+        }
+        if (filename != null) {
+            header.setFilename(filename);
         }
         if (attribution != null) {
             header.setWrittenBy(attribution);
@@ -387,14 +390,14 @@ final class DocumentArchiveRepository implements ArchiveRepository, ArchiveMutat
     public ArchiveMutationReceipt mutateArchive(RepositoryCaller caller, ArchiveMutationRequest request) {
         requireProcessAuthority(caller);
         Objects.requireNonNull(request, "request");
-        return callAsOperator(() -> archive.archiveMutation(request).getReceipt());
+        return callAsCaller(caller, () -> archive.archiveMutation(request).getReceipt());
     }
 
     @Override
     public ArchiveMutationReceipt getArchiveMutation(RepositoryCaller caller, GetArchiveMutationRequest request) {
         requireProcessAuthority(caller);
         Objects.requireNonNull(request, "request");
-        return callAsOperator(() -> archive.getArchiveMutation(request).getReceipt());
+        return callAsCaller(caller, () -> archive.getArchiveMutation(request).getReceipt());
     }
 
     private static void requireProcessAuthority(RepositoryCaller caller) {
@@ -423,9 +426,9 @@ final class DocumentArchiveRepository implements ArchiveRepository, ArchiveMutat
         }
     }
 
-    private static <T> T callAsOperator(Supplier<T> action) {
+    private static <T> T callAsCaller(RepositoryCaller caller, Supplier<T> action) {
         try {
-            return ArchiveCallerHandoff.callWithCaller(OPERATOR_CALLER, OPERATOR_AUTH, action::get);
+            return ArchiveCallerHandoff.callWithCaller(caller, caller.processAuthority() ? OPERATOR_AUTH : null, action::get);
         } catch (StatusRuntimeException failure) {
             throw toRepositoryException(failure);
         } catch (IOException impossible) {
@@ -532,12 +535,10 @@ final class DocumentArchiveRepository implements ArchiveRepository, ArchiveMutat
                     return new ServerCall.Listener<>() {};
                 }
 
-                Context operatorContext = Context.current().withValues(
-                        CallerContexts.CALLER, OPERATOR_AUTH.caller(),
-                        CallerContexts.AUTHENTICATED_CALLER, OPERATOR_AUTH,
-                        ArchiveCallerHandoff.REPOSITORY_CALLER, OPERATOR_CALLER);
+                Context callerContext = Context.current().withValue(
+                        ArchiveCallerHandoff.REPOSITORY_CALLER, caller);
                 ServerCall.Listener<ReqT> delegate =
-                        Contexts.interceptCall(operatorContext, call, headers, next);
+                        Contexts.interceptCall(callerContext, call, headers, next);
 
                 return new ForwardingServerCallListener.SimpleForwardingServerCallListener<>(delegate) {
                     private boolean closed;
@@ -578,14 +579,14 @@ final class DocumentArchiveRepository implements ArchiveRepository, ArchiveMutat
                                 return;
                             }
                         }
-                        Context prev = operatorContext.attach();
+                        Context prev = callerContext.attach();
                         try {
                             super.onMessage(message);
                         } catch (RuntimeException | Error failure) {
                             releasePutScope();
                             throw failure;
                         } finally {
-                            operatorContext.detach(prev);
+                            callerContext.detach(prev);
                         }
                     }
 
@@ -595,11 +596,11 @@ final class DocumentArchiveRepository implements ArchiveRepository, ArchiveMutat
                             releasePutScope();
                             return;
                         }
-                        Context prev = operatorContext.attach();
+                        Context prev = callerContext.attach();
                         try {
                             super.onHalfClose();
                         } finally {
-                            operatorContext.detach(prev);
+                            callerContext.detach(prev);
                             releasePutScope();
                         }
                     }

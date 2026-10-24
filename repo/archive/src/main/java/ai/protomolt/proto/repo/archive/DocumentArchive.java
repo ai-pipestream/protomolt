@@ -1888,6 +1888,9 @@ public final class DocumentArchive {
         NodeAddress address = ArchiveCoordinates.address(header.getAddress());
         RenditionDescriptor rendition = header.getRendition();
         boolean parsed = rendition.getName().equals(ArchiveCoordinates.PARSED);
+        if (!header.getFilename().isEmpty() && !rendition.getName().equals(ArchiveCoordinates.ORIGINAL)) {
+            throw ArchiveErrors.invalid("filename", "describes only the original rendition");
+        }
         if (parsed && !rendition.getSubKey().isEmpty()) {
             throw ArchiveErrors.invalid("rendition.sub_key",
                     "the parsed rendition is the document's PARSED part and takes no sub-key");
@@ -1949,10 +1952,13 @@ public final class DocumentArchive {
                 if (!rendition.getSchemaSubject().isEmpty()) {
                     streamed.setSchemaSubject(rendition.getSchemaSubject());
                 }
+                if (!header.getFilename().isEmpty()) {
+                    streamed.setFilename(header.getFilename());
+                }
                 boolean placed = false;
                 for (Blob blob : currentBlobs) {
                     if (blob.getBlobId().equals(blobId)) {
-                        if (blob.hasFilename()) {
+                        if (header.getFilename().isEmpty() && blob.hasFilename()) {
                             streamed.setFilename(blob.getFilename());
                         }
                         blobs.addBlob(streamed);
@@ -2000,7 +2006,7 @@ public final class DocumentArchive {
         ObjectStoreOrigin effectiveOrigin = origin != null
                 ? origin
                 : stored.filter(Classification::hasOrigin).map(Classification::getOrigin).orElse(null);
-        String filename = effectiveFilename("", currentBlobs);
+        String filename = effectiveFilename(header.getFilename(), currentBlobs);
         WriteAttribution attribution = header.hasWrittenBy() ? header.getWrittenBy() : null;
 
         if (primaryUpload && uploadedWindows != null && uploadedWindows.head().length > 0) {
@@ -2011,7 +2017,7 @@ public final class DocumentArchive {
                     : (uploadedWindows.sizeBytes() == uploadedWindows.head().length
                             ? RenditionReads.sha256Hex(ByteString.copyFrom(uploadedWindows.head()))
                             : "");
-            boolean primaryUnchanged = !knownSha.isEmpty()
+            boolean primaryUnchanged = filename.equals(effectiveFilename("", currentBlobs)) && !knownSha.isEmpty()
                     && currentBlobs.stream()
                             .filter(b -> b.getBlobId().equals(blobId))
                             .anyMatch(b -> b.getSizeBytes() == header.getSizeBytes()

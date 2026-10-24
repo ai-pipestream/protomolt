@@ -54,7 +54,9 @@ final class ArchiveCallerHandoff {
 
     private static final Metadata.Key<String> CALL_KEY =
             Metadata.Key.of("protomolt-archive-call", Metadata.ASCII_STRING_MARSHALLER);
-    private static final ConcurrentMap<String, AuthenticatedCaller> HANDOFFS =
+    private record Handoff(AuthenticatedCaller authentication, RepositoryCaller repositoryCaller) {}
+    private static final Context.Key<Handoff> TRUSTED_HANDOFF = Context.key("protomolt-trusted-archive-handoff");
+    private static final ConcurrentMap<String, Handoff> HANDOFFS =
             new ConcurrentHashMap<>();
 
     private ArchiveCallerHandoff() {
@@ -90,6 +92,18 @@ final class ArchiveCallerHandoff {
         } finally {
             context.detach(previous);
         }
+    }
+
+    /** Preserves an embedding host's resolved caller over the private in-process hop. */
+    static RepositoryCaller bindCaller(AuthenticatedCaller authentication,
+            java.util.function.Function<AuthenticatedCaller, RepositoryCaller> fallback) {
+        Handoff handoff = TRUSTED_HANDOFF.get();
+        if (handoff != null && handoff.repositoryCaller() != null
+                && !handoff.repositoryCaller().processAuthority()
+                && handoff.authentication().equals(authentication)) {
+            return handoff.repositoryCaller();
+        }
+        return fallback.apply(authentication);
     }
 
     private static AuthenticatedCaller synthesizeAuthenticated(RepositoryCaller caller) {
@@ -177,7 +191,7 @@ final class ArchiveCallerHandoff {
                     public void start(Listener<RespT> responseListener, Metadata headers) {
                         if (!headers.containsKey(CALL_KEY)) {
                             handoffId = UUID.randomUUID().toString();
-                            HANDOFFS.put(handoffId, operator);
+                            HANDOFFS.put(handoffId, new Handoff(operator, null));
                             headers.put(CALL_KEY, handoffId);
                         }
                         super.start(
@@ -282,7 +296,7 @@ final class ArchiveCallerHandoff {
                     public void start(Listener<RespT> responseListener, Metadata headers) {
                         if (handedOff != null && !headers.containsKey(CALL_KEY)) {
                             handoffId = UUID.randomUUID().toString();
-                            HANDOFFS.put(handoffId, handedOff);
+                            HANDOFFS.put(handoffId, new Handoff(handedOff, repoCaller));
                             headers.put(CALL_KEY, handoffId);
                         }
                         super.start(
@@ -364,17 +378,19 @@ final class ArchiveCallerHandoff {
                 if (id == null) {
                     return next.startCall(call, headers);
                 }
-                AuthenticatedCaller caller = HANDOFFS.remove(id);
-                if (caller == null) {
+                Handoff handoff = HANDOFFS.remove(id);
+                if (handoff == null) {
                     call.close(
                             Status.UNAUTHENTICATED.withDescription("no caller was resolved for this archive call"),
                             new Metadata());
                     return new ServerCall.Listener<>() {
                     };
                 }
+                AuthenticatedCaller caller = handoff.authentication();
                 Context context = Context.current().withValues(
                         CallerContexts.CALLER, caller.caller(),
-                        CallerContexts.AUTHENTICATED_CALLER, caller);
+                        CallerContexts.AUTHENTICATED_CALLER, caller,
+                        TRUSTED_HANDOFF, handoff);
                 return Contexts.interceptCall(context, call, headers, next);
             }
         };

@@ -436,7 +436,7 @@ public final class RepoServices implements AutoCloseable {
                     config.defaultBucketBase(), config.s3Region(), selectedDriveProvider, driveGate);
             this.driveOperations = new ai.protomolt.proto.repo.engine.DriveOperations(driveLedger, driveProvisioner);
             RepoV2Wiring.Wired v2 = RepoV2Wiring.wire(config, owned, driveLedger, blobStore, selectedDriveProvider,
-                    V2_CATALOG_SCHEMA, () -> admittedSchemas, stepSave::bindCaller, readBudget,
+                    V2_CATALOG_SCHEMA, () -> admittedSchemas, auth -> ArchiveCallerHandoff.bindCaller(auth, stepSave::bindCaller), readBudget,
                     () -> conceptSchemes);
             this.catalog = v2.catalog();
             this.v2Uploads = v2.uploads();

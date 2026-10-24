@@ -9,6 +9,7 @@ import "ai/protomolt/proto/repo/archive/v1/archive.proto";
 import "ai/protomolt/proto/repo/archive/v1/entry.proto";
 import "ai/protomolt/proto/validate/v1/validate.proto";
 import "google/protobuf/timestamp.proto";
+import "buf/validate/validate.proto";
 
 option java_multiple_files = true;
 option java_package = "ai.protomolt.proto.repo.archive.v1";
@@ -264,6 +265,15 @@ message UploadRenditionHeader {
   int64 expected_version = 9 [
     (ai.protomolt.proto.validate.v1.field) = {
       int64: {gte: 0}
+    }
+  ];
+  // Original filename. Allowed only when uploading the original rendition.
+  // Blank preserves an existing filename. It participates in retry identity.
+  string filename = 10 [
+    (buf.validate.field).string.max_len = 500,
+    (ai.protomolt.proto.validate.v1.field) = {
+      string: {max_len: 500}
+      ignore_if_zero: true
     }
   ];
 }

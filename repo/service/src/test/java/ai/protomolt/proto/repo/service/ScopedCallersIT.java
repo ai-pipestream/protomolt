@@ -155,6 +155,9 @@ class ScopedCallersIT {
             operatorArchives.putEntry(PutEntryRequest.newBuilder().setAddress(entry(account))
                     .addRenditions(rendition("original", "text/plain", "body of " + account)).build());
         }
+        // Account membership alone is not an entry grant. Give Alice explicit READ
+        // access to the seeded entry so the positive archive assertions exercise ACLs.
+        setEntryReader(entry(ACCOUNT_A), ALICE_UPN);
         driveOfB = operatorDrives.getDrive(GetDriveRequest.newBuilder()
                 .setAccountId(ACCOUNT_B).setName("intake").build()).getDrive().getDriveId();
         // Account A: one document alice's ACL identity may read, one only an
@@ -214,7 +217,7 @@ class ScopedCallersIT {
         var alice = as(ALICE, DocumentServiceGrpc.newBlockingStub(channel));
         assertThat(alice.listDocuments(list(ACCOUNT_A)).getDocumentsList())
                 .extracting(DocumentSummary::getAddress).extracting(NodeAddress::getDocId)
-                .containsExactly("doc-for-alice");
+                .containsExactlyInAnyOrder("doc-for-alice", "entry-1");
         assertThat(alice.getDocument(get(ACCOUNT_A, "doc-for-alice")).getDocument().getSearchMetadata().getTitle())
                 .isEqualTo("doc-for-alice");
         assertDenied(() -> alice.listDocuments(list(ACCOUNT_B)),
@@ -298,9 +301,9 @@ class ScopedCallersIT {
         assertThat(alice.getEntry(GetEntryRequest.newBuilder().setAddress(entry(ACCOUNT_A)).build())
                 .getRenditions(0).getData().toStringUtf8()).isEqualTo("body of " + ACCOUNT_A);
         assertThat(alice.getEntryManifest(GetEntryManifestRequest.newBuilder().setAddress(entry(ACCOUNT_A)).build())
-                .getManifest().getVersion()).isEqualTo(1);
+                .getManifest().getVersion()).isEqualTo(2);
         assertThat(alice.listVersions(ListVersionsRequest.newBuilder().setAddress(entry(ACCOUNT_A)).build())
-                .getSummariesCount()).isEqualTo(1);
+                .getSummariesCount()).isEqualTo(2);
     }
 
     @Test
@@ -476,6 +479,100 @@ class ScopedCallersIT {
 
     private static GetDocumentRequest get(String account, String doc) {
         return GetDocumentRequest.newBuilder().setAddress(address(account, doc)).build();
+    }
+
+    @Test
+    void archiveReadsPreserveDocumentAcl() {
+        var target = entry(ACCOUNT_A).toBuilder().setEntryId("codex-private-archive").build();
+        var operatorArchives = as(OPERATOR, ArchiveServiceGrpc.newBlockingStub(channel));
+        operatorArchives.putEntry(PutEntryRequest.newBuilder().setAddress(target)
+                .addRenditions(rendition("original", "text/plain", "private archive bytes")).build());
+        setEntryReader(target, "dave@example.com");
+        var node = ai.protomolt.proto.repo.archive.ArchiveCoordinates.address(target);
+        assertCode(() -> as(ALICE, DocumentServiceGrpc.newBlockingStub(channel)).getDocument(
+                GetDocumentRequest.newBuilder().setAddress(node).build()), Status.Code.PERMISSION_DENIED);
+        assertCode(() -> as(ALICE, ArchiveServiceGrpc.newBlockingStub(channel)).getEntry(
+                GetEntryRequest.newBuilder().setAddress(target).build()), Status.Code.PERMISSION_DENIED);
+        var alice = as(ALICE, ArchiveServiceGrpc.newBlockingStub(channel));
+        assertCode(() -> alice.getEntryManifest(GetEntryManifestRequest.newBuilder().setAddress(target).build()),
+                Status.Code.PERMISSION_DENIED);
+        assertCode(() -> alice.listVersions(ListVersionsRequest.newBuilder().setAddress(target).build()),
+                Status.Code.PERMISSION_DENIED);
+        var renditionRead = ai.protomolt.proto.repo.archive.v1.ReadRenditionRequest.newBuilder()
+                .setAddress(target).setRendition("original").build();
+        assertCode(() -> alice.readRendition(renditionRead).hasNext(), Status.Code.PERMISSION_DENIED);
+        assertThat(alice.listEntries(ListEntriesRequest.newBuilder().setAccountId(ACCOUNT_A)
+                .setArchive("docs").build()).getEntriesList())
+                .noneMatch(info -> info.getAddress().getEntryId().equals(target.getEntryId()));
+        var repository = services.archiveRepository();
+        var spiAlice = new ai.protomolt.proto.repo.spi.RepositoryCaller("embedded-reader", false,
+                java.util.Set.of(ACCOUNT_A), java.util.Set.of(ai.protomolt.proto.repo.v1.Principal.newBuilder()
+                        .setIdentityType("user-principal-name").setIdentity(ALICE_UPN).build()));
+        assertThatThrownBy(() -> repository.getEntry(spiAlice,
+                GetEntryRequest.newBuilder().setAddress(target).build()))
+                .isInstanceOf(ai.protomolt.proto.repo.spi.RepositoryException.class)
+                .extracting(t -> ((ai.protomolt.proto.repo.spi.RepositoryException) t).code())
+                .isEqualTo(ai.protomolt.proto.repo.spi.RepositoryException.Code.PERMISSION_DENIED);
+        assertThatThrownBy(() -> repository.readRendition(spiAlice, renditionRead))
+                .isInstanceOf(ai.protomolt.proto.repo.spi.RepositoryException.class);
+        // This caller is supplied directly by the trusted SPI host, with no configured
+        // principal binding: its explicit identity must survive the internal RPC hop.
+        assertThat(repository.getEntry(spiAlice, GetEntryRequest.newBuilder()
+                .setAddress(entry(ACCOUNT_A)).build()).getRenditions(0).getData().toStringUtf8())
+                .isEqualTo("body of " + ACCOUNT_A);
+    }
+
+    @Test
+    void spiUploadPreservesSuppliedFilename() throws Exception {
+        var target = entry(ACCOUNT_A).toBuilder().setEntryId("codex-filename").build();
+        var operator = new ai.protomolt.proto.repo.spi.RepositoryCaller("operator", true);
+        var repository = services.archiveRepository();
+        var descriptor = RenditionDescriptor.newBuilder().setName("original").setMediaType("text/plain").build();
+        String sha = "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad";
+        var first = repository.uploadStream(operator, target, descriptor, 3L, sha,
+                null, "kept.txt", null, null, new java.io.ByteArrayInputStream(new byte[] {'a', 'b', 'c'}));
+        var read = repository.getEntry(operator, GetEntryRequest.newBuilder().setAddress(target).build());
+        assertThat(read.getInfo().getFilename()).isEqualTo("kept.txt");
+        var replay = repository.uploadStream(operator, target, descriptor, 3L, sha,
+                null, "kept.txt", null, null, new java.io.ByteArrayInputStream(new byte[] {'a', 'b', 'c'}));
+        assertThat(replay.version()).isEqualTo(first.version());
+        assertThat(replay.deduplicated()).isTrue();
+        var renamed = repository.uploadStream(operator, target, descriptor, 3L, sha,
+                null, "renamed.txt", null, null, new java.io.ByteArrayInputStream(new byte[] {'a', 'b', 'c'}));
+        assertThat(renamed.version()).isGreaterThan(first.version());
+        assertThat(repository.getEntry(operator, GetEntryRequest.newBuilder().setAddress(target).build())
+                .getInfo().getFilename()).isEqualTo("renamed.txt");
+        for (String invalidName : List.of("x".repeat(501))) {
+            assertThatThrownBy(() -> repository.uploadStream(operator, target, descriptor, 3L, sha,
+                    null, invalidName, null, null, new java.io.ByteArrayInputStream(new byte[] {'a', 'b', 'c'})))
+                    .isInstanceOf(ai.protomolt.proto.repo.spi.RepositoryException.class)
+                    .hasMessageContaining("filename");
+        }
+        assertThatThrownBy(() -> repository.uploadStream(operator, target,
+                descriptor.toBuilder().setName("thumbnail").build(), 3L, sha,
+                null, "thumb.png", null, null, new java.io.ByteArrayInputStream(new byte[] {'a', 'b', 'c'})))
+                .isInstanceOf(ai.protomolt.proto.repo.spi.RepositoryException.class)
+                .hasMessageContaining("original rendition");
+    }
+
+    private static void setEntryReader(EntryAddress target, String identity) {
+        var operatorDocuments = as(OPERATOR, DocumentServiceGrpc.newBlockingStub(channel));
+        var node = ai.protomolt.proto.repo.archive.ArchiveCoordinates.address(target);
+        var current = operatorDocuments.getDocument(GetDocumentRequest.newBuilder().setAddress(node)
+                .setSelection(ai.protomolt.proto.repo.v2.PartSelection.newBuilder()
+                        .addSelectors(PartSelector.newBuilder().setPart(DocumentPart.DOCUMENT_PART_CORE))).build());
+        var restricted = current.getDocument().toBuilder();
+        restricted.getOwnershipBuilder().setSecurity(DocumentSecurity.newBuilder()
+                .addPermissions(rule("user-principal-name", identity)));
+        operatorDocuments.saveDocument(SaveDocumentRequest.newBuilder().setOperationId("entry-acl-" + UUID.randomUUID())
+                .setTarget(DocumentTarget.newBuilder().setAddress(node))
+                .setExpected(ExpectedRevision.newBuilder().setRevision(current.getManifest().getRevision()))
+                .setDocument(restricted)
+                .addWrites(PartWrite.newBuilder().setSelector(PartSelector.newBuilder()
+                        .setPart(DocumentPart.DOCUMENT_PART_CORE)).setAction(WriteAction.WRITE_ACTION_PUT))
+                .setOwner(SaveOwner.newBuilder().setIntake(IntakeOrigin.newBuilder()
+                        .setDatasourceId(current.getDocument().getOwnership().getDatasourceId())))
+                .setDrive("archive-drive").build());
     }
 
     private static EntryAddress entry(String account) {

@@ -93,8 +93,17 @@ public final class RenditionReads {
                 .setWholeObject(plan.wholeObject())
                 .build();
         DocumentArchive.requireValidView(header);
-        Iterator<ByteString> chunks = plan.parsed() ? openParsedChunks(plan) : openBlobChunks(plan);
-        return new OpenedRead(header, new VerifyingChunkInputStream(plan, chunks));
+        Context.CancellableContext context = Context.current().withCancellation();
+        Context previous = context.attach();
+        try {
+            Iterator<ByteString> chunks = plan.parsed() ? openParsedChunks(plan) : openBlobChunks(plan);
+            return new OpenedRead(header, new VerifyingChunkInputStream(plan, chunks, context));
+        } catch (RuntimeException | Error failure) {
+            context.cancel(failure);
+            throw failure;
+        } finally {
+            context.detach(previous);
+        }
     }
 
     /**
@@ -298,8 +307,11 @@ public final class RenditionReads {
         private int offset;
         private long delivered;
         private boolean verified;
+        private volatile boolean closed;
+        private final Context.CancellableContext context;
 
-        VerifyingChunkInputStream(Plan plan, Iterator<ByteString> chunks) {
+        VerifyingChunkInputStream(Plan plan, Iterator<ByteString> chunks, Context.CancellableContext context) {
+            this.context = context;
             this.plan = plan;
             this.chunks = chunks;
             this.digest = plan.wholeObject() ? sha256() : null;
@@ -315,12 +327,29 @@ public final class RenditionReads {
         @Override
         public int read(byte[] b, int off, int len) throws IOException {
             Objects.checkFromIndexSize(off, len, b.length);
+            if (closed) throw new IOException("Rendition stream is closed");
+            try {
+                return readChunk(b, off, len);
+            } catch (RuntimeException | Error failure) {
+                context.cancel(failure);
+                throw failure;
+            }
+        }
+
+        @Override
+        public void close() {
+            closed = true;
+            context.cancel(null);
+        }
+
+        private int readChunk(byte[] b, int off, int len) {
             if (len == 0) {
                 return 0;
             }
             while (offset >= current.size()) {
                 if (!chunks.hasNext()) {
                     verifyComplete();
+                    context.cancel(null);
                     return -1;
                 }
                 current = chunks.next();

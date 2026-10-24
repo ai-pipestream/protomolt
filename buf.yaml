@@ -2,6 +2,8 @@
 # Lint only — codegen stays protoc / protobuf-gradle-plugin. Not a runtime dependency.
 version: v2
 modules:
+  - path: protobuf/validation-protovalidate/src/main/proto
+    name: buf.build/ai-pipestream/protobuf-validation-protovalidate
   - path: transform/workflow/authoring/src/main/proto
     name: buf.build/ai-pipestream/workflow-authoring
   - path: apps/correction/src/main/proto
@@ -118,6 +120,7 @@ lint:
     - STANDARD
     - COMMENTS
   ignore:
+    - protobuf/validation-protovalidate/src/main/proto
     # The vendored parser-fleet document model keeps the fleet's own lint
     # bar; see the module comment above. Top-level ignore ONLY: a
     # module-level lint block breaks the workspace image `buf breaking`
