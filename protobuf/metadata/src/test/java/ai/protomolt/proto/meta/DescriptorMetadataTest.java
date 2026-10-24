@@ -51,8 +51,10 @@ class DescriptorMetadataTest {
 
         assertThat(DescriptorMetadata.field(docId)).get()
                 .extracting(FieldMeta::getSensitivity).isEqualTo("public");
+        assertThat(DescriptorMetadata.field(docId)).isSameAs(DescriptorMetadata.field(docId));
         assertThat(DescriptorMetadata.message(doc)).get()
                 .extracting(MessageMeta::getOwner).isEqualTo("search-platform");
+        assertThat(DescriptorMetadata.message(doc)).isSameAs(DescriptorMetadata.message(doc));
         assertThat(DescriptorMetadata.asBag(doc)).isEqualTo(DescriptorMetadata.asBag(AnnotatedDoc.getDescriptor()));
     }
 }
