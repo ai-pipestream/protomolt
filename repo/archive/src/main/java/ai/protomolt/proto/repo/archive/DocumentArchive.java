@@ -846,15 +846,17 @@ public final class DocumentArchive {
                 ? origin
                 : stored.filter(Classification::hasOrigin).map(Classification::getOrigin).orElse(null);
         String effectiveFilename = effectiveFilename(request.getFilename(), currentBlobs);
+        Optional<String> previousPrimaryId = ArchiveClassifications.primaryBlobId(currentBlobs, Map.of());
         Optional<String> primaryId = ArchiveClassifications.primaryBlobId(currentBlobs, written);
+        boolean samePrimaryIdentity = primaryId.equals(previousPrimaryId);
         RenditionContent primaryNew = primaryId.map(written::get).orElse(null);
         WriteAttribution attribution = request.hasWrittenBy() ? request.getWrittenBy() : null;
 
-        if (primaryNew == null && declared == null && origin == null && !filenameChange && stored.isPresent()) {
+        if (samePrimaryIdentity && primaryNew == null && declared == null && origin == null && !filenameChange && stored.isPresent()) {
             return stored.get();
         }
         ByteWindows windows = null;
-        boolean primaryUnchanged = !filenameChange;
+        boolean primaryUnchanged = samePrimaryIdentity && !filenameChange;
         if (primaryNew != null && !primaryNew.getData().isEmpty()) {
             windows = ByteWindows.ofWhole(primaryNew.getData().toByteArray());
             String primaryBlobId = primaryId.get();
@@ -1849,6 +1851,7 @@ public final class DocumentArchive {
             String contentSha256,
             boolean derivedLastWriteWins,
             RenditionDescriptor rendition,
+            Optional<PartSelector> encodedPartSelector,
             boolean needsWindows,
             Function<ByteWindows, UploadHeader> headerBuilder,
             boolean checkBytes) implements UploadStart {
@@ -1975,6 +1978,7 @@ public final class DocumentArchive {
                 contentSha256,
                 derivedLastWriteWins,
                 rendition,
+                parsed ? Optional.of(ArchiveCoordinates.PARSED_PART) : Optional.empty(),
                 primaryUpload,
                 headerBuilder,
                 checkBytes);
@@ -2039,6 +2043,15 @@ public final class DocumentArchive {
         Accession accession = saved.getAccession();
         String rootChecksum = accession.getValidation().getCandidateSha256();
         if (!saved.getReplayed() && !rootChecksum.isEmpty()) {
+            if (pending.encodedPartSelector().isPresent()) {
+                PartSelector selector = pending.encodedPartSelector().get();
+                var part = accession.getManifest().getPartsList().stream()
+                        .filter(p -> p.getSelector().equals(selector))
+                        .findFirst().orElseThrow(() -> ArchiveErrors.dataLoss(
+                                "Committed upload has no streamed part in its manifest", null));
+                sentSha256 = part.getSha256();
+                sentBytes = part.getSizeBytes();
+            }
             UploadRenditionResponse response = UploadRenditionResponse.newBuilder()
                     .setVersion(accession.getRevision())
                     .setSha256(sentSha256)

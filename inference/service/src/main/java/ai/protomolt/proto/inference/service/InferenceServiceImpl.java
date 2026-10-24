@@ -19,6 +19,7 @@ import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
 import io.grpc.stub.StreamObserver;
 
+import java.util.Objects;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -43,7 +44,7 @@ public final class InferenceServiceImpl extends InferenceServiceGrpc.InferenceSe
         implements AutoCloseable {
 
     private final InferenceEngines engines;
-    private final ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor();
+    private final ExecutorService executor;
 
     /**
      * Creates the service over the given facade.
@@ -51,7 +52,8 @@ public final class InferenceServiceImpl extends InferenceServiceGrpc.InferenceSe
      * @param engines the catalog-plus-providers facade to serve
      */
     public InferenceServiceImpl(InferenceEngines engines) {
-        this.engines = engines;
+        this.engines = Objects.requireNonNull(engines, "engines");
+        this.executor = Executors.newVirtualThreadPerTaskExecutor();
     }
 
     @Override

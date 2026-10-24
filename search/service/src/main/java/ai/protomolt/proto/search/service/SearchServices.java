@@ -5,19 +5,23 @@ import ai.protomolt.proto.actions.Scopes;
 import ai.protomolt.proto.authz.CallerResolver;
 import ai.protomolt.proto.authz.grpc.ApiTokenServerInterceptor;
 import ai.protomolt.proto.authz.grpc.ScopeServerInterceptor;
+import ai.protomolt.proto.grpc.validate.UnaryRequestAdmission;
 import ai.protomolt.proto.grpc.validate.ValidatingServerInterceptor;
+import io.grpc.MethodDescriptor;
 import io.grpc.Server;
-import io.grpc.ServerInterceptor;
+import io.grpc.ServerBuilder;
 import io.grpc.inprocess.InProcessServerBuilder;
 import io.grpc.netty.shaded.io.grpc.netty.NettyServerBuilder;
 import io.grpc.protobuf.services.HealthStatusManager;
 import io.grpc.protobuf.services.ProtoReflectionServiceV1;
 import java.io.IOException;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.Executors;
-import java.util.function.Consumer;
 
 /**
  * One factory wires the service stack: the Lucene store (which resolves every
@@ -27,12 +31,25 @@ import java.util.function.Consumer;
  */
 public final class SearchServices implements AutoCloseable {
 
+    /** Default per-request wire cap (4 MiB). */
+    public static final int DEFAULT_MAX_REQUEST_BYTES = 4 * 1024 * 1024;
+
+    /** Default maximum concurrent unary calls holding pre-half-close reservations. */
+    public static final int DEFAULT_MAX_ACTIVE = 64;
+
+    private static final Set<String> OPEN_SERVICES = Set.of(
+            "grpc.health.v1.Health",
+            "grpc.reflection.v1.ServerReflection");
+
     private final SearchServiceConfig config;
     private final DocumentFetcher fetcher;
     private final LuceneSearchStore store;
     private final SearchGrpcServices.Index index;
     private final SearchGrpcServices.Search search;
-    private Server server;
+    private final Set<String> admittedMethods;
+    private final List<Server> servers = new CopyOnWriteArrayList<>();
+    private volatile UnaryRequestAdmission admission;
+    private volatile Server server;
 
     private SearchServices(SearchServiceConfig config, DocumentFetcher fetcher,
             ai.protomolt.proto.validate.ProtoValidator documentGate,
@@ -41,12 +58,40 @@ public final class SearchServices implements AutoCloseable {
         this.fetcher = fetcher;
         this.store = new LuceneSearchStore(config.indexDir(), config.subjects(),
                 config.snapshots(), config.readOnly(), config.vectorization());
-        // A read-only service has no write surface: the indexing service is
-        // not mounted, so its RPCs answer UNIMPLEMENTED.
-        this.index = config.readOnly()
-                ? null
-                : new SearchGrpcServices.Index(store, fetcher, documentGate, screening);
-        this.search = new SearchGrpcServices.Search(store);
+        try {
+            // A read-only service has no write surface: the indexing service is
+            // not mounted, so its RPCs answer UNIMPLEMENTED.
+            this.index = config.readOnly()
+                    ? null
+                    : new SearchGrpcServices.Index(store, fetcher, documentGate, screening);
+            this.search = new SearchGrpcServices.Search(store);
+            Set<String> methods = new LinkedHashSet<>();
+            for (MethodDescriptor<?, ?> method
+                    : this.search.bindService().getServiceDescriptor().getMethods()) {
+                methods.add(method.getFullMethodName());
+            }
+            if (this.index != null) {
+                for (MethodDescriptor<?, ?> method
+                        : this.index.bindService().getServiceDescriptor().getMethods()) {
+                    methods.add(method.getFullMethodName());
+                }
+            }
+            this.admittedMethods = Set.copyOf(methods);
+            this.admission = new UnaryRequestAdmission(
+                    2L * DEFAULT_MAX_REQUEST_BYTES * DEFAULT_MAX_ACTIVE,
+                    DEFAULT_MAX_REQUEST_BYTES,
+                    DEFAULT_MAX_ACTIVE,
+                    this.admittedMethods,
+                    Map.of(),
+                    OPEN_SERVICES);
+        } catch (RuntimeException | Error failure) {
+            try {
+                store.close();
+            } catch (RuntimeException | Error suppressed) {
+                failure.addSuppressed(suppressed);
+            }
+            throw failure;
+        }
     }
 
     /**
@@ -115,6 +160,33 @@ public final class SearchServices implements AutoCloseable {
     }
 
     /**
+     * Replaces the pre-half-close unary admission gate before starting a server.
+     *
+     * @param maxRequestBytes per-request wire cap in bytes
+     * @param maxActive maximum concurrent unary calls holding reservations
+     * @return this instance, for chaining
+     */
+    public SearchServices withAdmission(int maxRequestBytes, int maxActive) {
+        this.admission = new UnaryRequestAdmission(
+                2L * maxRequestBytes * maxActive,
+                maxRequestBytes,
+                maxActive,
+                this.admittedMethods,
+                Map.of(),
+                OPEN_SERVICES);
+        return this;
+    }
+
+    /**
+     * The unary request admission gate shared across started servers.
+     *
+     * @return the admission gate
+     */
+    public UnaryRequestAdmission admission() {
+        return admission;
+    }
+
+    /**
      * Starts both services on an in-process server named {@code name}.
      *
      * @param name the in-process server name
@@ -150,14 +222,17 @@ public final class SearchServices implements AutoCloseable {
         InProcessServerBuilder builder = InProcessServerBuilder.forName(name)
                 .executor(Executors.newVirtualThreadPerTaskExecutor())
                 .intercept(ValidatingServerInterceptor.create());
-        identity(builder::intercept, apiToken, resolver, budgets);
+        admission.configure(builder);
+        identity(builder, apiToken, resolver, budgets);
         if (index != null) {
             builder.addService(index);
         }
-        server = builder.addService(search)
+        Server started = builder.addService(search)
                 .build()
                 .start();
-        return server;
+        servers.add(started);
+        server = started;
+        return started;
     }
 
     /**
@@ -189,23 +264,27 @@ public final class SearchServices implements AutoCloseable {
         NettyServerBuilder builder = NettyServerBuilder.forPort(port)
                 .executor(Executors.newVirtualThreadPerTaskExecutor())
                 .intercept(ValidatingServerInterceptor.create());
-        identity(builder::intercept, apiToken, resolver, budgets);
+        admission.configure(builder);
+        identity(builder, apiToken, resolver, budgets);
         if (index != null) {
             builder.addService(index);
         }
-        server = builder.addService(search)
+        Server started = builder.addService(search)
                 .addService(health.getHealthService())
                 .addService(ProtoReflectionServiceV1.newInstance())
                 .build()
                 .start();
-        return server;
+        servers.add(started);
+        server = started;
+        return started;
     }
 
     /**
-     * Installs the credential and scope interceptors: added after the validating one so the
-     * credential check runs first on the wire, the scope table second, validation third.
+     * Installs the credential and scope interceptors: added after the validating and
+     * admission interceptors so the credential check runs first on the wire, the scope
+     * table second, pre-half-close admission third, and validation fourth.
      */
-    private void identity(Consumer<ServerInterceptor> intercept, String apiToken,
+    private void identity(ServerBuilder<?> builder, String apiToken,
                           CallerResolver resolver, ScopeBudgets budgets) {
         if (apiToken == null) {
             if (resolver != null) {
@@ -221,12 +300,10 @@ public final class SearchServices implements AutoCloseable {
             services.put(index.bindService().getServiceDescriptor().getName(),
                     Scopes.SEARCH_INDEX);
         }
-        intercept.accept(new ScopeServerInterceptor(
-                services, Map.of(),
-                Set.of("grpc.health.v1.Health",
-                        "grpc.reflection.v1.ServerReflection"),
-                budgets));
-        intercept.accept(new ApiTokenServerInterceptor(apiToken, resolver));
+        ScopeServerInterceptor scopes = new ScopeServerInterceptor(
+                services, Map.of(), OPEN_SERVICES, budgets);
+        scopes.configure(builder);
+        builder.intercept(new ApiTokenServerInterceptor(apiToken, resolver));
     }
 
     /** The bound server, once one of the start methods has run. */
@@ -246,16 +323,32 @@ public final class SearchServices implements AutoCloseable {
 
     @Override
     public void close() {
-        if (server != null) {
-            server.shutdownNow();
+        admission.close();
+        for (Server running : servers) {
+            running.shutdownNow();
         }
-        store.close();
+        servers.clear();
+        RuntimeException failure = null;
+        try {
+            store.close();
+        } catch (RuntimeException e) {
+            failure = e;
+        }
         if (fetcher instanceof AutoCloseable closeable) {
             try {
                 closeable.close();
             } catch (Exception e) {
-                throw new IllegalStateException("cannot close the document fetcher", e);
+                IllegalStateException closeFailure =
+                        new IllegalStateException("cannot close the document fetcher", e);
+                if (failure != null) {
+                    failure.addSuppressed(closeFailure);
+                } else {
+                    failure = closeFailure;
+                }
             }
+        }
+        if (failure != null) {
+            throw failure;
         }
     }
 }

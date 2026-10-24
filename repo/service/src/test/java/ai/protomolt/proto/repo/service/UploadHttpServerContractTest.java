@@ -107,11 +107,15 @@ class UploadHttpServerContractTest {
     }
 
     @Test
-    void errorResponsesAreJson() throws Exception {
-        HttpResponse<String> response = post("");
+    void errorResponsesAreProtobuf() throws Exception {
+        var response = client.send(HttpRequest.newBuilder(URI.create(url))
+                .header("api_token", "synthetic-http-operator-key")
+                .POST(HttpRequest.BodyPublishers.noBody()).build(), HttpResponse.BodyHandlers.ofByteArray());
         assertThat(response.statusCode()).isEqualTo(400);
-        assertThat(response.headers().firstValue("Content-Type")).contains("application/json");
-        assertThat(response.body()).startsWith("{\"error\":");
+        assertThat(response.headers().firstValue("Content-Type")).contains("application/protobuf");
+        var status = com.google.rpc.Status.parseFrom(response.body());
+        assertThat(status.getCode()).isEqualTo(io.grpc.Status.Code.INVALID_ARGUMENT.value());
+        assertThat(status.getMessage()).contains("account_id is required");
     }
 
     // ------------------------------------------------------------------ Content-Length

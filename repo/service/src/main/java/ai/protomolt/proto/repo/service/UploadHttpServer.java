@@ -17,8 +17,6 @@ import ai.protomolt.proto.repo.archive.v1.WriteAttribution;
 import ai.protomolt.proto.repo.spi.ArchiveRepository;
 import ai.protomolt.proto.repo.spi.RepositoryCaller;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.google.protobuf.ByteString;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpHandler;
@@ -76,7 +74,6 @@ public final class UploadHttpServer implements AutoCloseable {
     public static final String CONNECT_PATH = "/connect";
 
     private static final Logger LOG = LoggerFactory.getLogger(UploadHttpServer.class);
-    private static final ObjectMapper MAPPER = new ObjectMapper();
     private static final int STREAM_CHUNK_BYTES = 64 * 1024;
     private static final long UPLOAD_READY_TIMEOUT_NANOS = TimeUnit.SECONDS.toNanos(60);
 
@@ -523,7 +520,8 @@ public final class UploadHttpServer implements AutoCloseable {
                 case UNAVAILABLE -> 503;
                 default -> 502;
             };
-            writeError(exchange, status, e.getStatus().getDescription());
+            exchange.getResponseHeaders().set("Connection", "close");
+            writeProtobuf(exchange, status, io.grpc.protobuf.StatusProto.fromThrowable(e));
         } catch (RuntimeException | IOException e) {
             LOG.warn("archive upload failed: {}", e.getMessage());
             writeError(exchange, 502, "backing store failure: " + e.getMessage());
@@ -543,7 +541,7 @@ public final class UploadHttpServer implements AutoCloseable {
      * as the gRPC streaming door, one new entry version per upload.
      *
      * <p>When routed through the v2 {@link DocumentArchive}, the response is the binary
-     * protobuf {@link UploadRenditionResponse} ({@code Content-Type: application/proto})
+     * protobuf {@link UploadRenditionResponse} ({@code Content-Type: application/protobuf})
      * with {@code X-Operation-Id} and {@code X-Replayed} response headers.
      */
     private void archiveUpload(HttpExchange exchange, ResolvedCaller resolved) throws IOException {
@@ -587,6 +585,12 @@ public final class UploadHttpServer implements AutoCloseable {
         if (v2ArchiveUploads != null && (archiveOperations == null
                 || legacyArchiveExists == null
                 || !legacyArchiveExists.test(accountId, archive))) {
+            if (identity(exchange, query, "filename", "x-filename") != null
+                    || identity(exchange, query, "title", "x-title") != null
+                    || identity(exchange, query, "source_uri", "x-source-uri") != null) {
+                throw new HttpError(400, "filename, title and source_uri are not supported by v2 archive upload; "
+                        + "set entry metadata through PutEntry");
+            }
             writeProto(exchange, 200, uploadV2Archive(exchange, resolved, address, descriptor,
                     contentLength, declaredSha, module, operationId, expectedVersion));
             return;
@@ -597,15 +601,10 @@ public final class UploadHttpServer implements AutoCloseable {
                 resolved.caller(), address, descriptor, contentLength,
                 declaredSha == null ? "" : declaredSha,
                 null, filename, null, null, exchange.getRequestBody());
-        writeJson(exchange, 200, MAPPER.createObjectNode()
-                .put("entry_uuid", result.entryUuid())
-                .put("version", result.version())
-                .put("rendition", descriptor.getName())
-                .put("size_bytes", result.sizeBytes())
-                .put("sha256", result.sha256())
-                .put("object_key", result.objectKey())
-                .put("root_checksum", result.rootChecksum())
-                .put("deduplicated", result.deduplicated()));
+        writeProto(exchange, 200, UploadRenditionResponse.newBuilder()
+                .setEntryUuid(result.entryUuid()).setVersion(result.version())
+                .setSha256(result.sha256()).setSizeBytes(result.sizeBytes())
+                .setObjectKey(result.objectKey()).setRootChecksum(result.rootChecksum()).build());
     }
 
     private UploadRenditionResponse uploadV2Archive(HttpExchange exchange, ResolvedCaller resolved,
@@ -667,7 +666,7 @@ public final class UploadHttpServer implements AutoCloseable {
                                 .setHeader(header.build())
                                 .build());
                         byte[] buffer = new byte[STREAM_CHUNK_BYTES];
-                        while (!responseFuture.isDone()) {
+                        while (bytesRead < contentLength && !responseFuture.isDone()) {
                             if (!stream.awaitReady(UPLOAD_READY_TIMEOUT_NANOS)) {
                                 StatusRuntimeException timeout = Status.DEADLINE_EXCEEDED
                                         .withDescription("timed out waiting for archive upload stream readiness")
@@ -678,7 +677,7 @@ public final class UploadHttpServer implements AutoCloseable {
                             if (responseFuture.isDone()) {
                                 break;
                             }
-                            int read = body.read(buffer);
+                            int read = body.read(buffer, 0, (int) Math.min(buffer.length, contentLength - bytesRead));
                             if (read == -1) {
                                 break;
                             }
@@ -870,28 +869,36 @@ public final class UploadHttpServer implements AutoCloseable {
 
     private static void writeProto(HttpExchange exchange, int status, UploadRenditionResponse response)
             throws IOException {
-        byte[] bytes = response.toByteArray();
-        var headers = exchange.getResponseHeaders();
-        headers.set("Content-Type", "application/proto");
-        headers.set("X-Operation-Id", response.getOperationId());
-        headers.set("X-Replayed", Boolean.toString(response.getReplayed()));
-        exchange.sendResponseHeaders(status, bytes.length);
-        try (OutputStream out = exchange.getResponseBody()) {
-            out.write(bytes);
+        exchange.getResponseHeaders().set("X-Operation-Id", response.getOperationId());
+        exchange.getResponseHeaders().set("X-Replayed", Boolean.toString(response.getReplayed()));
+        writeProtobuf(exchange, status, response);
+    }
+
+    private static void writeProtobuf(HttpExchange exchange, int status,
+            com.google.protobuf.MessageLite response) throws IOException {
+        exchange.getResponseHeaders().set("Content-Type", "application/protobuf");
+        exchange.sendResponseHeaders(status, response.getSerializedSize());
+        try (OutputStream body = exchange.getResponseBody()) {
+            response.writeTo(body);
         }
     }
 
-    private void writeJson(HttpExchange exchange, int status, ObjectNode body) throws IOException {
-        byte[] bytes = MAPPER.writeValueAsBytes(body);
-        exchange.getResponseHeaders().set("Content-Type", "application/json");
-        exchange.sendResponseHeaders(status, bytes.length);
-        try (OutputStream out = exchange.getResponseBody()) {
-            out.write(bytes);
-        }
+    private static void writeError(HttpExchange exchange, int status, String message) throws IOException {
+        // Refuse from headers without waiting for an untrusted request body.
+        exchange.getResponseHeaders().set("Connection", "close");
+        int code = switch (status) {
+            case 400, 411 -> Status.Code.INVALID_ARGUMENT.value();
+            case 401 -> Status.Code.UNAUTHENTICATED.value();
+            case 403 -> Status.Code.PERMISSION_DENIED.value();
+            case 404 -> Status.Code.NOT_FOUND.value();
+            case 405 -> Status.Code.UNIMPLEMENTED.value();
+            case 409 -> Status.Code.FAILED_PRECONDITION.value();
+            case 429 -> Status.Code.RESOURCE_EXHAUSTED.value();
+            case 503 -> Status.Code.UNAVAILABLE.value();
+            default -> Status.Code.INTERNAL.value();
+        };
+        writeProtobuf(exchange, status, com.google.rpc.Status.newBuilder()
+                .setCode(code).setMessage(message == null ? "archive upload failed" : message).build());
     }
 
-    private void writeError(HttpExchange exchange, int status, String message) throws IOException {
-        writeJson(exchange, status,
-                MAPPER.createObjectNode().put("error", message == null ? "upload failed" : message));
-    }
 }

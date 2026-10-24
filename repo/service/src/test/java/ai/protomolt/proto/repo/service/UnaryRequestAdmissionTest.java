@@ -15,6 +15,7 @@ import java.time.Duration;
 import java.util.Set;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -31,6 +32,7 @@ class UnaryRequestAdmissionTest {
         final AtomicInteger parses = new AtomicInteger();
         final AtomicInteger calls = new AtomicInteger();
         final AtomicInteger streams = new AtomicInteger();
+        final AtomicLong inboundUncompressedBytes = new AtomicLong();
         final CountDownLatch received = new CountDownLatch(1);
         final AtomicReference<Status> transportStatus = new AtomicReference<>();
         final CountDownLatch entered = new CountDownLatch(1);
@@ -74,7 +76,10 @@ class UnaryRequestAdmissionTest {
                     .addStreamTracerFactory(new ServerStreamTracer.Factory() {
                         @Override public ServerStreamTracer newServerStreamTracer(String name, Metadata headers) {
                             return new ServerStreamTracer() {
-                                @Override public void inboundMessage(int sequence) { received.countDown(); }
+                                @Override public void inboundUncompressedSize(long bytes) {
+                                    inboundUncompressedBytes.addAndGet(bytes);
+                                    received.countDown();
+                                }
                                 @Override public void streamClosed(Status status) { transportStatus.set(status); }
                             };
                         }
@@ -192,14 +197,43 @@ class UnaryRequestAdmissionTest {
             call.start(new ClientCall.Listener<>() {}, new Metadata());
             call.request(1); call.sendMessage(VALUE);
             // Since gRPC 1.85.1, unary decoding waits for half-close. Observe the
-            // transport receiving the frame without requiring protobuf parsing.
+            // transport deframing the full uncompressed frame body without protobuf parsing:
+            // inboundUncompressedBytes measures the held frame, while budget.reservedBytes()
+            // reflects the 2 * maxRequestBytes header-time reservation covering it.
             assertThat(f.received.await(5, TimeUnit.SECONDS)).isTrue();
             assertThat(f.parses.get()).isZero();
-            assertThat(f.budget.reservedBytes()).isEqualTo(2048);
+            assertThat(f.inboundUncompressedBytes.get())
+                    .isEqualTo(VALUE.getSerializedSize())
+                    .isLessThanOrEqualTo(1024);
+            assertThat(f.budget.reservedBytes())
+                    .isEqualTo(2048)
+                    .isGreaterThanOrEqualTo(f.inboundUncompressedBytes.get());
+            assertThatThrownBy(() -> f.call(VALUE, CallOptions.DEFAULT))
+                    .isInstanceOfSatisfying(StatusRuntimeException.class,
+                            e -> assertThat(e.getStatus().getCode()).isEqualTo(Status.Code.RESOURCE_EXHAUSTED));
             call.cancel("Test cancellation before half-close", null);
             assertThat(f.admission.awaitIdle(Duration.ofSeconds(5))).isTrue();
             assertThat(f.parses.get()).isZero();
             assertThat(f.calls.get()).isZero();
+            assertThat(f.budget.reservedBytes()).isZero();
+            assertThat(f.call(VALUE, CallOptions.DEFAULT)).isEqualTo(VALUE);
+        }
+    }
+
+    @Test void oversizedFrameBeforeHalfCloseIsRejectedWithoutBufferingOrDecoding() throws Exception {
+        try (var f = new Fixture(false)) {
+            var oversized = BytesValue.newBuilder().setValue(ByteString.copyFrom(new byte[2048])).build();
+            var result = new CompletableFuture<Status>();
+            var call = f.channel.newCall(f.method, CallOptions.DEFAULT.withDeadlineAfter(5, TimeUnit.SECONDS));
+            call.start(new ClientCall.Listener<>() {
+                @Override public void onClose(Status status, Metadata trailers) { result.complete(status); }
+            }, new Metadata());
+            call.request(1); call.sendMessage(oversized);
+            assertThat(result.get(5, TimeUnit.SECONDS).getCode()).isEqualTo(Status.Code.RESOURCE_EXHAUSTED);
+            assertThat(f.inboundUncompressedBytes.get()).isZero();
+            assertThat(f.parses.get()).isZero();
+            assertThat(f.calls.get()).isZero();
+            assertThat(f.admission.awaitIdle(Duration.ofSeconds(5))).isTrue();
             assertThat(f.budget.reservedBytes()).isZero();
             assertThat(f.call(VALUE, CallOptions.DEFAULT)).isEqualTo(VALUE);
         }

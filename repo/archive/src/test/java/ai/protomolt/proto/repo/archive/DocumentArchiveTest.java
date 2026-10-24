@@ -1053,12 +1053,7 @@ class DocumentArchiveTest {
                         committed.set(true);
                         responseObserver.onNext(UploadDocumentResponse.newBuilder()
                                 .setSaved(SaveDocumentResponse.newBuilder()
-                                        .setAccession(Accession.newBuilder()
-                                                .setAddress(entryNode)
-                                                .setRevision(1L)
-                                                .setValidation(RevisionValidation.newBuilder()
-                                                        .setStatus(ValidationStatus.VALIDATION_STATUS_TYPED_VALID)
-                                                        .setCandidateSha256("c".repeat(64)))))
+                                        .setAccession(Accession.newBuilder().setAddress(entryNode).setRevision(1L)))
                                 .build());
                         responseObserver.onCompleted();
                     }
@@ -1137,8 +1132,8 @@ class DocumentArchiveTest {
                                 .setArchive(ARCHIVE)
                                 .setEntryId("e-flow"))
                         .setRendition(RenditionDescriptor.newBuilder()
-                                .setName("parsed")
-                                .setMediaType("application/x-protobuf")))
+                                .setName("original")
+                                .setMediaType("application/pdf")))
                 .build());
 
         // Downstream is not ready: isReady() is false and awaitReady times out until onReady fires.

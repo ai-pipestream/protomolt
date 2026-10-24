@@ -114,12 +114,6 @@ public final class LuceneSearchStore implements SubjectIndex, SubjectSearch, Clo
 
         Subject(ServedMapping served, EmbeddingProvider embedder,
                 IndexWriter writer, SearcherManager searchers,
-                SnapshotDeletionPolicy snapshotPolicy) {
-            this(served, embedder, writer, searchers, snapshotPolicy, null, false);
-        }
-
-        Subject(ServedMapping served, EmbeddingProvider embedder,
-                IndexWriter writer, SearcherManager searchers,
                 SnapshotDeletionPolicy snapshotPolicy,
                 Directory searcherDir, boolean placeholder) {
             this.served = served;
@@ -276,10 +270,21 @@ public final class LuceneSearchStore implements SubjectIndex, SubjectSearch, Clo
                             new KeepOnlyLastCommitDeletionPolicy());
                     config.setIndexDeletionPolicy(snapshotPolicy);
                 }
-                IndexWriter writer = new IndexWriter(FSDirectory.open(subjectDir), config);
-                subjects.put(subject.getKey(), new Subject(
-                        subject.getValue(), embedder, writer,
-                        new SearcherManager(writer, null), snapshotPolicy));
+                Directory writerDir = FSDirectory.open(subjectDir);
+                IndexWriter writer = null;
+                SearcherManager searchers = null;
+                try {
+                    writer = new IndexWriter(writerDir, config);
+                    searchers = new SearcherManager(writer, null);
+                    subjects.put(subject.getKey(), new Subject(
+                            subject.getValue(), embedder, writer,
+                            searchers, snapshotPolicy, writerDir, false));
+                } catch (IOException | RuntimeException e) {
+                    closeQuietly(searchers, e);
+                    closeQuietly(writer, e);
+                    closeQuietly(writerDir, e);
+                    throw e;
+                }
             }
         } catch (IOException e) {
             close();
@@ -334,17 +339,27 @@ public final class LuceneSearchStore implements SubjectIndex, SubjectSearch, Clo
             Path subjectDir) throws IOException {
         Files.createDirectories(subjectDir);
         Directory directory = FSDirectory.open(subjectDir);
-        if (DirectoryReader.indexExists(directory)) {
-            return new Subject(served, embedder, null,
-                    new SearcherManager(directory, null), null, directory, false);
+        try {
+            if (DirectoryReader.indexExists(directory)) {
+                return new Subject(served, embedder, null,
+                        new SearcherManager(directory, null), null, directory, false);
+            }
+        } catch (IOException | RuntimeException e) {
+            closeQuietly(directory, e);
+            throw e;
         }
         directory.close();
         Directory placeholder = new ByteBuffersDirectory();
-        // An empty commit, so the manager has something to open: a reader
-        // with no snapshot yet answers empty instead of failing to mount.
-        new IndexWriter(placeholder, new IndexWriterConfig(analyzer)).close();
-        return new Subject(served, embedder, null,
-                new SearcherManager(placeholder, null), null, placeholder, true);
+        try {
+            // An empty commit, so the manager has something to open: a reader
+            // with no snapshot yet answers empty instead of failing to mount.
+            new IndexWriter(placeholder, new IndexWriterConfig(analyzer)).close();
+            return new Subject(served, embedder, null,
+                    new SearcherManager(placeholder, null), null, placeholder, true);
+        } catch (IOException | RuntimeException e) {
+            closeQuietly(placeholder, e);
+            throw e;
+        }
     }
 
     /**
@@ -372,18 +387,27 @@ public final class LuceneSearchStore implements SubjectIndex, SubjectSearch, Clo
                 if (subject.placeholder) {
                     snapshots.restoreInto(subjectDir, subjectName, subject.served());
                     Directory directory = FSDirectory.open(subjectDir);
-                    if (!DirectoryReader.indexExists(directory)) {
-                        directory.close();
-                        continue;
+                    SearcherManager fresh;
+                    try {
+                        if (!DirectoryReader.indexExists(directory)) {
+                            directory.close();
+                            continue;
+                        }
+                        fresh = new SearcherManager(directory, null);
+                    } catch (IOException | RuntimeException e) {
+                        closeQuietly(directory, e);
+                        throw e;
                     }
-                    SearcherManager fresh = new SearcherManager(directory, null);
                     SearcherManager retired = subject.searchers;
                     Directory retiredDir = subject.searcherDir;
                     subject.searchers = fresh;
                     subject.searcherDir = directory;
                     subject.placeholder = false;
-                    retired.close();
-                    retiredDir.close();
+                    try {
+                        retired.close();
+                    } finally {
+                        retiredDir.close();
+                    }
                     advanced = true;
                 } else if (snapshots.refreshInto(subjectDir, subjectName, subject.served())) {
                     subject.searchers().maybeRefresh();
@@ -811,27 +835,48 @@ public final class LuceneSearchStore implements SubjectIndex, SubjectSearch, Clo
                 // persists.
                 LOG.warn("cannot close the searcher manager", e);
             }
-            try {
-                if (subject.searcherDir != null) {
-                    subject.searcherDir.close();
-                }
-                if (subject.writer() != null) {
+            if (subject.writer() != null) {
+                try {
                     subject.writer().close();
+                } catch (IOException e) {
+                    failure = recordCloseFailure(failure, e);
                 }
-            } catch (IOException e) {
-                // Every subject still gets its close; the first failure is
-                // reported after the loop with the rest suppressed.
-                UncheckedIOException wrapped =
-                        new UncheckedIOException("cannot close the search index", e);
-                if (failure == null) {
-                    failure = wrapped;
-                } else {
-                    failure.addSuppressed(wrapped);
+            }
+            if (subject.searcherDir != null) {
+                try {
+                    subject.searcherDir.close();
+                } catch (IOException e) {
+                    failure = recordCloseFailure(failure, e);
                 }
             }
         }
+        analyzer.close();
         if (failure != null) {
             throw failure;
         }
+    }
+
+    private static void closeQuietly(Closeable resource, Throwable primary) {
+        if (resource == null) {
+            return;
+        }
+        try {
+            resource.close();
+        } catch (IOException suppressed) {
+            primary.addSuppressed(suppressed);
+        }
+    }
+
+    private static UncheckedIOException recordCloseFailure(
+            UncheckedIOException existing, IOException e) {
+        // Every subject still gets its close; the first failure is
+        // reported after the loop with the rest suppressed.
+        UncheckedIOException wrapped =
+                new UncheckedIOException("cannot close the search index", e);
+        if (existing == null) {
+            return wrapped;
+        }
+        existing.addSuppressed(wrapped);
+        return existing;
     }
 }

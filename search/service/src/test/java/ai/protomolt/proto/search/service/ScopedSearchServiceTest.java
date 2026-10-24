@@ -16,18 +16,26 @@ import ai.protomolt.proto.search.v1.IndexDocumentRequest;
 import ai.protomolt.proto.search.v1.SearchIndexServiceGrpc;
 import ai.protomolt.proto.search.v1.SearchLane;
 import ai.protomolt.proto.search.v1.SearchRequest;
+import ai.protomolt.proto.search.v1.SearchResponse;
 import ai.protomolt.proto.search.v1.SearchServiceGrpc;
+import io.grpc.CallOptions;
+import io.grpc.ClientCall;
 import io.grpc.ManagedChannel;
 import io.grpc.Metadata;
+import io.grpc.Server;
 import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
 import io.grpc.inprocess.InProcessChannelBuilder;
 import io.grpc.inprocess.InProcessServerBuilder;
+import io.grpc.netty.shaded.io.grpc.netty.NettyChannelBuilder;
 import io.grpc.stub.MetadataUtils;
 import java.nio.file.Path;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
@@ -192,5 +200,89 @@ class ScopedSearchServiceTest {
                 openChannel.shutdownNow();
             }
         }
+    }
+
+    @Test
+    void nettyEnforcesPayloadBudgetAndUnaryAdmissionBeforeHalfClose() throws Exception {
+        CallerResolver resolver = credential -> "capped-querier".equals(credential)
+                ? Optional.of(Caller.scoped("capped",
+                        Set.of(Scopes.SEARCH_QUERY),
+                        Map.of(Scopes.SEARCH_QUERY, new Caller.Budget(0, 128))))
+                : Optional.empty();
+        try (SearchServices bounded = SearchServices.build(
+                new SearchServiceConfig(0, work.resolve("bounded-index"), Map.of(
+                        RepoDocumentMapping.SUBJECT, RepoDocumentMapping.served(policy())))
+                        .vectorizing(RepoDocumentMapping.laneVectorization()),
+                address -> Document.newBuilder().setDocId("doc-1").build())
+                .withAdmission(1024, 1)) {
+            Server netty = bounded.startNetty(0, OPERATOR, resolver);
+            ManagedChannel nettyChannel = NettyChannelBuilder
+                    .forAddress("localhost", netty.getPort())
+                    .usePlaintext()
+                    .build();
+            try {
+                // 1. An over-cap frame for a budgeted caller is refused before halfClose()
+                // and releases its UnaryRequestAdmission reservation.
+                CountDownLatch budgetClosed = new CountDownLatch(1);
+                AtomicReference<Status> budgetStatus = new AtomicReference<>();
+                ClientCall<SearchRequest, SearchResponse> overCap =
+                        nettyChannel.newCall(SearchServiceGrpc.getSearchMethod(), CallOptions.DEFAULT);
+                overCap.start(new ClientCall.Listener<>() {
+                    @Override
+                    public void onClose(Status status, Metadata trailers) {
+                        budgetStatus.set(status);
+                        budgetClosed.countDown();
+                    }
+                }, credentials("capped-querier"));
+                overCap.request(1);
+                overCap.sendMessage(query().toBuilder()
+                        .setQuery("q".repeat(256))
+                        .build());
+                assertThat(budgetClosed.await(5, TimeUnit.SECONDS)).isTrue();
+                assertThat(budgetStatus.get().getCode()).isEqualTo(Status.Code.RESOURCE_EXHAUSTED);
+                assertThat(budgetStatus.get().getDescription()).contains("128-byte");
+                awaitReservedBytes(bounded, 0);
+
+                // 2. A call held open before halfClose() reserves 2 * maxRequestBytes (2048)
+                // and blocks a second concurrent call before halfClose().
+                ClientCall<SearchRequest, SearchResponse> held =
+                        nettyChannel.newCall(SearchServiceGrpc.getSearchMethod(), CallOptions.DEFAULT);
+                held.start(new ClientCall.Listener<>() { }, credentials(OPERATOR));
+                held.request(1);
+                held.sendMessage(query());
+                awaitReservedBytes(bounded, 2048);
+
+                CountDownLatch secondClosed = new CountDownLatch(1);
+                AtomicReference<Status> secondStatus = new AtomicReference<>();
+                ClientCall<SearchRequest, SearchResponse> second =
+                        nettyChannel.newCall(SearchServiceGrpc.getSearchMethod(), CallOptions.DEFAULT);
+                second.start(new ClientCall.Listener<>() {
+                    @Override
+                    public void onClose(Status status, Metadata trailers) {
+                        secondStatus.set(status);
+                        secondClosed.countDown();
+                    }
+                }, credentials(OPERATOR));
+                second.request(1);
+                second.sendMessage(query());
+                assertThat(secondClosed.await(5, TimeUnit.SECONDS)).isTrue();
+                assertThat(secondStatus.get().getCode()).isEqualTo(Status.Code.RESOURCE_EXHAUSTED);
+
+                held.cancel("cleanup", null);
+                awaitReservedBytes(bounded, 0);
+            } finally {
+                nettyChannel.shutdownNow();
+            }
+        }
+    }
+
+    private static void awaitReservedBytes(SearchServices target, long expected)
+            throws InterruptedException {
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+        while (target.admission().reservedBytes() != expected
+                && System.nanoTime() < deadline) {
+            Thread.sleep(10);
+        }
+        assertThat(target.admission().reservedBytes()).isEqualTo(expected);
     }
 }
