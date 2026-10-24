@@ -361,7 +361,7 @@ public final class DocumentSaves {
         var prepared = precheckUpload(caller, header);
         if (header.hasStreamed() && header.getStreamed().getCoreInTrailer())
             throw malformedException("This upload surface carries no UploadTrailer");
-        return executeUpload(prepared, body, cancelled, () -> null);
+        return executeUpload(prepared, body, cancelled, () -> null, () -> !cancelled.getAsBoolean());
     }
 
     PreparedUpload precheckUpload(RepositoryCaller caller, UploadHeader header) {
@@ -561,9 +561,23 @@ public final class DocumentSaves {
                 ownership, authorized, p.recorded());
     }
 
+    /**
+     * Streams the accepted upload's body and commits it.
+     *
+     * @param p the accepted upload
+     * @param body the payload bytes
+     * @param cancelled polled while the body is read
+     * @param trailer the trailer once the body has ended, or {@code null}
+     * @param commit claims the right to commit, once, just before the commit; when it answers
+     *        {@code false} the call was refused or cancelled meanwhile, so nothing is committed and
+     *        a streamed object is deleted
+     * @return the committed or replayed upload
+     */
     UploadResult executeUpload(PreparedUpload p, java.io.InputStream body,
-            java.util.function.BooleanSupplier cancelled, java.util.function.Supplier<UploadTrailer> trailer) {
+            java.util.function.BooleanSupplier cancelled, java.util.function.Supplier<UploadTrailer> trailer,
+            java.util.function.BooleanSupplier commit) {
         Objects.requireNonNull(trailer, "trailer");
+        Objects.requireNonNull(commit, "commit");
         return guarded(() -> {
             long expectedLength = p.header().hasDeclaredLength() ? p.header().getDeclaredLength() : Stack.UNKNOWN_LENGTH;
             var tracker = new UploadStreamTracker(body, expectedLength, cancelled);
@@ -667,6 +681,12 @@ public final class DocumentSaves {
                             cleanupFailure, () -> replay(t.caller(), t.request(), intentSha, concurrent.get()));
                     return new UploadResult(UploadDocumentResponse.newBuilder().setSaved(replayed).build(),
                             uploadedRef.getSha256(), uploadedRef.getLength());
+                }
+                if (!commit.getAsBoolean()) {
+                    var withdrawn = new AccessionException(Status.Code.CANCELLED, "Upload cancelled", null);
+                    var cleanupFailure = deleteUnreferenced(t.stack(), uploadedRef);
+                    if (cleanupFailure != null) withdrawn.addSuppressed(cleanupFailure);
+                    throw withdrawn;
                 }
                 var blobRef = BlobObjectRef.newBuilder().setBlobId(t.header().getBlobId()).setRef(uploadedRef).build();
                 var saved = finishSave(t.caller(), t.request(), t.address(), intentSha, t.container(), t.documentType(), t.writes(),
@@ -776,6 +796,8 @@ public final class DocumentSaves {
                 } else {
                     storedFragments.put(streamedPart, streamedBytes);
                 }
+                if (!commit.getAsBoolean())
+                    throw new AccessionException(Status.Code.CANCELLED, "Upload cancelled", null);
                 var saved = finishSave(t.caller(), t.request(), t.address(), intentSha, t.container(), t.documentType(), t.writes(),
                         t.current(), t.base(), ownership, authorized, storedFragments, storedBlobBag, rawBlobs, List.of());
                 return new UploadResult(UploadDocumentResponse.newBuilder().setSaved(saved).build(),

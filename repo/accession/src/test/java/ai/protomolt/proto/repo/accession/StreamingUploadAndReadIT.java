@@ -1626,6 +1626,65 @@ class StreamingUploadAndReadIT {
     }
 
     @Test
+    void rejectingAnExtraInlineFrameDoesNotCommitTheUpload() throws Exception {
+        var entered = new CountDownLatch(1);
+        var release = new CountDownLatch(1);
+        var worker = new AtomicReference<Thread>();
+        var gatedStack = new ForwardingStack(f.stack) {
+            @Override public StackRef put(java.io.InputStream body, long length) throws IOException {
+                worker.set(Thread.currentThread());
+                entered.countDown();
+                try {
+                    if (!release.await(10, TimeUnit.SECONDS)) throw new IOException("gate timeout");
+                } catch (InterruptedException interrupted) {
+                    Thread.currentThread().interrupt();
+                    throw new IOException(interrupted);
+                }
+                return super.put(body, length);
+            }
+        };
+        var saves = new DocumentSaves(f.catalog,
+                new DocumentSaves.Drives("default", java.util.Map.of("default", gatedStack)),
+                resolver(), limits(), bytes -> () -> {}, java.time.Clock.systemUTC());
+        var service = new AccessionGrpcService(saves, new DocumentUploads(saves), f.reads,
+                ignored -> processAuthority());
+        var interceptor = new ServerInterceptor() {
+            @Override public <ReqT, RespT> ServerCall.Listener<ReqT> interceptCall(
+                    ServerCall<ReqT, RespT> call, Metadata headers, ServerCallHandler<ReqT, RespT> next) {
+                var caller = new Caller(processAuthority().principalName(), Set.of(), true);
+                var context = Context.current().withValue(CallerContexts.CALLER, caller)
+                        .withValue(CallerContexts.AUTHENTICATED_CALLER,
+                                new AuthenticatedCaller(caller, Optional.empty()));
+                return Contexts.interceptCall(context, call, headers, next);
+            }
+        };
+        channel.shutdownNow();
+        server.shutdownNow();
+        var name = "inline-rejection-" + UUID.randomUUID();
+        server = InProcessServerBuilder.forName(name).executor(Executors.newVirtualThreadPerTaskExecutor())
+                .addService(io.grpc.ServerInterceptors.intercept(service, interceptor)).build().start();
+        channel = InProcessChannelBuilder.forName(name).executor(Executors.newVirtualThreadPerTaskExecutor()).build();
+        asyncStub = DocumentServiceGrpc.newStub(channel);
+        var upload = new Handshake();
+        var payload = ByteString.copyFromUtf8("inline-rejected-body");
+        try {
+            upload.send(UploadDocumentRequest.newBuilder().setHeader(UploadHeader.newBuilder()
+                    .setInlineData(payload).setBlobId("b1").setDeclaredLength(payload.size())
+                    .setSave(create("op-inline-rejected", address(account, "inline-rejected"),
+                            documentWithPendingBlob(account, "inline-rejected", "b1")))).build());
+            assertThat(entered.await(10, TimeUnit.SECONDS)).isTrue();
+            upload.send(UploadDocumentRequest.newBuilder().setData(ByteString.copyFromUtf8("extra")).build());
+            assertThat(upload.failure().getStatus().getCode()).isEqualTo(Status.Code.INVALID_ARGUMENT);
+        } finally {
+            release.countDown();
+            if (worker.get() != null) worker.get().join(10_000);
+        }
+        assertThat(worker.get().isAlive()).isFalse();
+        assertThat(f.catalog.outcome(account, "op-inline-rejected"))
+                .as("an upload rejected before its body is staged must not commit").isEmpty();
+    }
+
+    @Test
     void anInlineBodyCommitsInOneRoundTripWithoutHalfClose() throws Exception {
         var address = address(account, "doc-inline");
         byte[] payload = "inline-body".getBytes(StandardCharsets.UTF_8);
