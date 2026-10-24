@@ -80,6 +80,60 @@ class BlobStoreStackTest {
         assertThat(noMultipartRetry.objects).isEmpty();
     }
 
+    @Test void markDuringReplayPreservesUnreadBufferedBytesAndSupportsRewindToNewMark() throws Exception {
+        var input = "abcdef".getBytes(StandardCharsets.US_ASCII);
+
+        // 1. mark(100) at 0 -> read "abc" -> reset() -> read "a" -> mark(100) -> read remaining "bcdef"
+        var markWithoutSecondResetStore = new StreamOnlyStore() {
+            @Override public PutResult put(PutSpec spec, InputStream body, long contentLength) {
+                try {
+                    body.mark(100);
+                    assertThat(body.readNBytes(3)).isEqualTo("abc".getBytes(StandardCharsets.US_ASCII));
+                    body.reset();
+                    var out = new java.io.ByteArrayOutputStream();
+                    out.write(body.read());
+                    body.mark(100);
+                    out.write(body.readAllBytes());
+                    objects.put(spec.key(), out.toByteArray());
+                    return new PutResult("\"etag\"", null);
+                } catch (IOException failure) {
+                    throw new java.io.UncheckedIOException(failure);
+                }
+            }
+        };
+        var stack1 = new BlobStoreStack("s1", markWithoutSecondResetStore, "bucket", "prefix", 8, () -> {});
+        var ref1 = stack1.put(new Unrewindable(input), input.length);
+        assertThat(markWithoutSecondResetStore.objects.get(ref1.getKey())).isEqualTo(input);
+        assertThat(ref1.getLength()).isEqualTo(input.length);
+        assertThat(ref1.getSha256()).isEqualTo(VerifyingInputStream.sha256Hex(input));
+
+        // 2. mark(100) at 0 -> read "abc" -> reset() -> read "a" -> mark(100) -> read "bcde" -> reset() -> read "bcdef"
+        var markWithSecondResetStore = new StreamOnlyStore() {
+            @Override public PutResult put(PutSpec spec, InputStream body, long contentLength) {
+                try {
+                    body.mark(100);
+                    assertThat(body.readNBytes(3)).isEqualTo("abc".getBytes(StandardCharsets.US_ASCII));
+                    body.reset();
+                    var out = new java.io.ByteArrayOutputStream();
+                    out.write(body.read());
+                    body.mark(100);
+                    assertThat(body.readNBytes(4)).isEqualTo("bcde".getBytes(StandardCharsets.US_ASCII));
+                    body.reset();
+                    out.write(body.readAllBytes());
+                    objects.put(spec.key(), out.toByteArray());
+                    return new PutResult("\"etag\"", null);
+                } catch (IOException failure) {
+                    throw new java.io.UncheckedIOException(failure);
+                }
+            }
+        };
+        var stack2 = new BlobStoreStack("s1", markWithSecondResetStore, "bucket", "prefix", 8, () -> {});
+        var ref2 = stack2.put(new Unrewindable(input), input.length);
+        assertThat(markWithSecondResetStore.objects.get(ref2.getKey())).isEqualTo(input);
+        assertThat(ref2.getLength()).isEqualTo(input.length);
+        assertThat(ref2.getSha256()).isEqualTo(VerifyingInputStream.sha256Hex(input));
+    }
+
     @Test void singlePartS3PutsRetryOnTransientFailureAndSurfaceUnrecoveredFailure() throws Exception {
         var body = new byte[200_000];
         for (int i = 0; i < body.length; i++) body[i] = (byte) (i * 17 + 3);
@@ -236,7 +290,7 @@ class BlobStoreStackTest {
     }
 
     /** A provider with the required puts only: no multipart override (Redis-shaped). */
-    private static final class StreamOnlyStore implements BlobStore {
+    private static class StreamOnlyStore implements BlobStore {
         final Map<String, byte[]> objects = new HashMap<>();
 
         @Override public PutResult put(PutSpec spec, byte[] body) {

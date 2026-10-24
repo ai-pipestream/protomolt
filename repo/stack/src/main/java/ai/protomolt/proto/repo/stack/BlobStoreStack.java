@@ -20,15 +20,15 @@ import java.util.UUID;
  * <p>
  * A known-length streamed put of at most one part streams through the provider's
  * single-part streaming put: the counting stream checks for excess bytes before
- * the final byte is delivered and, when the provider marks the stream at the
- * start, retains the read bytes in a replay buffer bounded by the part size so a
- * provider retry can reset the stream and recompute the digest without rewinding
- * the caller's stream. A larger or unknown-length put is a multipart upload sent
- * from one part buffer at a time: memory stays bounded by the part size and a
- * retry resends a part, never rewinding the caller's stream. A provider without
- * multipart takes a larger known-length body through its required streaming put
- * instead, digest still computed while streaming, so a Redis-backed stack
- * accepts any object its own limits allow.
+ * the final byte is delivered and, when the provider marks the stream, retains
+ * the read bytes in a replay buffer bounded by the part size so a provider
+ * retry can reset the stream and restore the digest at the mark without
+ * rewinding the caller's stream. A larger or unknown-length put is a multipart
+ * upload sent from one part buffer at a time: memory stays bounded by the part
+ * size and a retry resends a part, never rewinding the caller's stream. A
+ * provider without multipart takes a larger known-length body through its
+ * required streaming put instead, digest still computed while streaming, so a
+ * Redis-backed stack accepts any object its own limits allow.
  */
 public final class BlobStoreStack implements Stack {
     /** Part buffer for streamed puts: above S3's 5 MiB minimum part size. */
@@ -248,19 +248,21 @@ public final class BlobStoreStack implements Stack {
     /**
      * Hashes and counts the caller's body as the provider reads it. It never
      * closes, marks or resets the caller's stream. For a single-part known-length
-     * write, a provider mark at the start of the stream retains the read bytes in
-     * a bounded replay buffer so a retry can reset this stream to zero and
-     * recompute the digest; larger or unmarked writes refuse reset. With an exact
-     * length it reports the end at that length after checking the body has no more
-     * bytes, and fails a body that ends early; either failure aborts the upload
-     * before it completes.
+     * write, a provider mark snapshots the position and digest and retains read
+     * bytes in a bounded replay buffer so a retry can reset this stream to the
+     * mark without losing unread buffered bytes; larger or unmarked writes refuse
+     * reset. With an exact length it reports the end at that length after checking
+     * the body has no more bytes, and fails a body that ends early; either failure
+     * aborts the upload before it completes.
      */
     private static final class CountingInputStream extends FilterInputStream {
-        final MessageDigest digest = VerifyingInputStream.sha256();
+        MessageDigest digest = VerifyingInputStream.sha256();
         private final long expected;
         private final boolean replayable;
         long count;
-        private boolean marked;
+        private int markPos = -1;
+        private MessageDigest markedDigest;
+        private boolean markedEndVerified;
         private byte[] replay;
         private int buffered;
         private boolean endVerified;
@@ -275,20 +277,25 @@ public final class BlobStoreStack implements Stack {
         @Override public boolean markSupported() { return replayable; }
 
         @Override public void mark(int limit) {
-            if (replayable && count == 0 && limit >= 0) {
-                marked = true;
-            } else {
-                marked = false;
-                replay = null;
-                buffered = 0;
+            if (!replayable || limit < 0) {
+                markPos = -1;
+                markedDigest = null;
+                return;
+            }
+            markPos = (int) count;
+            markedDigest = cloneDigest(digest);
+            markedEndVerified = endVerified;
+            if (buffered < markPos) {
+                buffered = markPos;
             }
         }
 
         @Override public void reset() throws IOException {
             if (bodyFailure != null) throw bodyFailure;
-            if (!marked) throw fail("Stack write streams cannot be rewound");
-            count = 0;
-            digest.reset();
+            if (markPos < 0) throw fail("Stack write streams cannot be rewound");
+            count = markPos;
+            digest = cloneDigest(markedDigest);
+            endVerified = markedEndVerified;
         }
 
         @Override public long skip(long n) throws IOException { throw fail("Stack write streams cannot skip"); }
@@ -323,7 +330,7 @@ public final class BlobStoreStack implements Stack {
                 if (expected >= 0) throw fail("Stack write body ended at " + count + " of " + expected + " bytes");
                 return -1;
             }
-            if (marked) recordReplay(buffer, offset, read);
+            if (markPos >= 0) recordReplay(buffer, offset, read);
             digest.update(buffer, offset, read);
             count += read;
             if (expected >= 0 && count == expected) requireEnd();
@@ -333,13 +340,21 @@ public final class BlobStoreStack implements Stack {
         private void recordReplay(byte[] buffer, int offset, int length) {
             int target = buffered + length;
             if (replay == null) {
-                replay = new byte[(int) Math.min(expected, Math.max(length, 8192L))];
+                replay = new byte[(int) Math.min(expected, Math.max(target, 8192L))];
             } else if (target > replay.length) {
                 int next = (int) Math.min(expected, Math.max((long) replay.length * 2, target));
                 replay = Arrays.copyOf(replay, next);
             }
             System.arraycopy(buffer, offset, replay, buffered, length);
             buffered = target;
+        }
+
+        private static MessageDigest cloneDigest(MessageDigest source) {
+            try {
+                return (MessageDigest) source.clone();
+            } catch (CloneNotSupportedException impossible) {
+                throw new IllegalStateException("SHA-256 MessageDigest is not cloneable", impossible);
+            }
         }
 
         void requireEnd() throws IOException {
