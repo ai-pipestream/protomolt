@@ -117,9 +117,6 @@ public final class DocumentUploads {
 
         return new StreamObserver<>() {
             private boolean headerReceived;
-            private boolean dataReceived;
-            private boolean trailingHeaderReceived;
-            private DocumentSaves.PreparedUpload activePrepared;
 
             @Override
             public void onNext(UploadDocumentRequest request) {
@@ -140,7 +137,6 @@ public final class DocumentUploads {
                         failRuntime(failure);
                         return;
                     }
-                    activePrepared = prepared;
                     var stream = new ChunkQueueInputStream(serverObserver, cancelled);
                     streamHolder[0] = stream;
                     Thread.ofVirtual()
@@ -153,32 +149,7 @@ public final class DocumentUploads {
                 }
 
                 var stream = streamHolder[0];
-                if (request != null
-                        && request.getFrameCase() == UploadDocumentRequest.FrameCase.HEADER
-                        && dataReceived
-                        && !trailingHeaderReceived
-                        && activePrepared != null
-                        && activePrepared.header().hasBlobId()) {
-                    trailingHeaderReceived = true;
-                    try {
-                        saves.refreshUploadCore(activePrepared, request.getHeader());
-                    } catch (AccessionException failure) {
-                        if (stream != null) {
-                            stream.failProtocol(failure.getMessage());
-                        } else {
-                            fail(failure);
-                        }
-                        return;
-                    } catch (RuntimeException failure) {
-                        failRuntime(failure);
-                        return;
-                    }
-                    if (serverObserver != null && !cancelled.get() && !terminated.get()) {
-                        serverObserver.request(1);
-                    }
-                    return;
-                }
-                if (trailingHeaderReceived || request == null || request.getFrameCase() != UploadDocumentRequest.FrameCase.DATA) {
+                if (request == null || request.getFrameCase() != UploadDocumentRequest.FrameCase.DATA) {
                     if (stream != null) {
                         stream.failProtocol("Subsequent UploadDocument frames must carry data");
                     } else {
@@ -193,7 +164,6 @@ public final class DocumentUploads {
                     }
                     return;
                 }
-                dataReceived = true;
                 if (stream != null) {
                     stream.enqueue(chunk);
                 }

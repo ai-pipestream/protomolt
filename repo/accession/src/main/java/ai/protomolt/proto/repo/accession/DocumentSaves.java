@@ -57,7 +57,6 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.OptionalLong;
 import java.util.Set;
-import java.util.Collections;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Supplier;
@@ -405,9 +404,9 @@ public final class DocumentSaves {
                 if (blobId.isBlank()) throw malformedException("Uploaded blob_id must not be blank");
                 if (writes.get(BLOBS_SELECTOR) != WriteAction.WRITE_ACTION_PUT)
                     throw malformedException("Uploading a raw blob requires a BLOBS PUT write");
-                fragments = Collections.synchronizedMap(new LinkedHashMap<>(split(document, documentType, writes, null)));
+                fragments = split(document, documentType, writes, null);
                 var extracted = RawBlobs.extractForUpload(fragments.get(BLOBS_SELECTOR), blobId);
-                storedFragments = Collections.synchronizedMap(new LinkedHashMap<>(fragments));
+                storedFragments = new LinkedHashMap<>(fragments);
                 storedFragments.put(BLOBS_SELECTOR, extracted.stored());
                 storedBlobBag = extracted.bag();
                 rawBlobs = extracted.blobs();
@@ -415,8 +414,8 @@ public final class DocumentSaves {
                 streamedPart = supported(header.getEncodedPart().getSelector());
                 if (writes.get(streamedPart) != WriteAction.WRITE_ACTION_PUT)
                     throw malformedException("Streamed part " + describe(streamedPart) + " must be listed as a PUT write");
-                fragments = Collections.synchronizedMap(new LinkedHashMap<>(split(document, documentType, writes, streamedPart)));
-                storedFragments = Collections.synchronizedMap(new LinkedHashMap<>(fragments));
+                fragments = split(document, documentType, writes, streamedPart);
+                storedFragments = new LinkedHashMap<>(fragments);
                 if (!streamedPart.equals(BLOBS_SELECTOR) && fragments.containsKey(BLOBS_SELECTOR)) {
                     var extracted = RawBlobs.extract(fragments.get(BLOBS_SELECTOR));
                     storedFragments.put(BLOBS_SELECTOR, extracted.stored());
@@ -485,50 +484,6 @@ public final class DocumentSaves {
             return new PreparedUpload(caller, header, request, address, container, documentType, writes,
                     fragments, storedFragments, storedBlobBag, rawBlobs, stack, current, base, ownership, authorized, null);
         });
-    }
-
-    /**
-     * Refreshes the {@code CORE} fragment of an in-flight raw-blob upload when a
-     * trailing {@link UploadHeader} carries updated characterization metadata
-     * captured from the stream's trailing byte window before half-close.
-     */
-    void refreshUploadCore(PreparedUpload prepared, UploadHeader refreshed) {
-        Objects.requireNonNull(prepared, "prepared");
-        Objects.requireNonNull(refreshed, "refreshed");
-        var headerStructure = VALIDATOR.validate(refreshed);
-        if (!headerStructure.valid())
-            throw malformedException("Invalid upload header: " + headerStructure.violations().getFirst());
-        requireNoUnknownCommandFields(refreshed);
-        var request = refreshed.getSave();
-        var structure = VALIDATOR.validate(request);
-        if (!structure.valid())
-            throw malformedException("Invalid save request: " + structure.violations().getFirst());
-        if (!refreshed.hasBlobId()
-                || !refreshed.getBlobId().equals(prepared.header().getBlobId())
-                || refreshed.hasDeclaredLength() != prepared.header().hasDeclaredLength()
-                || (refreshed.hasDeclaredLength() && refreshed.getDeclaredLength() != prepared.header().getDeclaredLength())
-                || !refreshed.getExpectedSha256().equals(prepared.header().getExpectedSha256())
-                || !request.getOperationId().equals(prepared.request().getOperationId())
-                || !request.getTarget().equals(prepared.request().getTarget())
-                || !request.getExpected().equals(prepared.request().getExpected())
-                || !request.getWritesList().equals(prepared.request().getWritesList())
-                || !request.getOwner().equals(prepared.request().getOwner())
-                || !request.getDrive().equals(prepared.request().getDrive())
-                || prepared.writes().get(CORE_SELECTOR) != WriteAction.WRITE_ACTION_PUT) {
-            throw malformedException("Subsequent UploadDocument frames must carry data");
-        }
-        var document = normalizedDocument(request);
-        var address = resolveAddress(request, document);
-        if (!address.equals(prepared.address())) {
-            throw malformedException("Subsequent UploadDocument frames must carry data");
-        }
-        var refreshedFragments = split(document, prepared.documentType(), prepared.writes(), null);
-        var newCore = refreshedFragments.get(CORE_SELECTOR);
-        if (newCore == null) {
-            throw malformedException("Subsequent UploadDocument frames must carry data");
-        }
-        prepared.fragments().put(CORE_SELECTOR, newCore);
-        prepared.storedFragments().put(CORE_SELECTOR, newCore);
     }
 
     UploadResult executeUpload(PreparedUpload p, java.io.InputStream body, java.util.function.BooleanSupplier cancelled) {

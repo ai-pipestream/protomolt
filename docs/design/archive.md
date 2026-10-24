@@ -787,9 +787,11 @@ settle copy are retired.
   any supplied `origin` (`ObjectStoreOrigin`) is validated the same way. The
   entry's primary rendition is `original` when present, or the first present
   non-`parsed`, non-bridge-derived rendition in `(name, sub_key)` order. On
-  `PutEntry` and `UploadRendition` (captured through a bounded
-  `WindowCapture.Sink` over the upload stream, including the trailing 128 KiB
-  window), the primary rendition's byte windows are characterized with
+  `PutEntry` and `UploadRendition` (captured through `WindowCapture` over the
+  upload stream, keeping the 64 KiB leading and 128 KiB circular trailing
+  windows in fixed memory and spilling streams above 1 MiB to a bounded
+  temporary spool file before sending the single `UploadHeader` frame), the
+  primary rendition's byte windows are characterized with
   `Characterizer.identify` and resolved with `Classifications.resolve` against
   the effective `declared` and `origin` facts. When the resolved
   `Classification` (ignoring `classified_at`) and the primary rendition's bytes
@@ -798,7 +800,7 @@ settle copy are retired.
   an unchanged save produces a byte-identical `CORE` fragment and deduplicates
   under `UNCHANGED_POLICY_RECORD_OUTCOME`. `ClassifyEntry` reads the current
   document (`CORE` and `BLOBS`), streams the primary blob through `ReadBlob`
-  into `WindowCapture.Sink` when a primary rendition is present, resolves the
+  into `WindowCapture` when a primary rendition is present, resolves the
   classification state machine, and saves `CORE` with `ExpectedRevision` set to
   the read revision, `UNCHANGED_POLICY_RECORD_OUTCOME`, and a deterministic
   `operation_id` (`operation_kind = "archive.classify-entry"`).
