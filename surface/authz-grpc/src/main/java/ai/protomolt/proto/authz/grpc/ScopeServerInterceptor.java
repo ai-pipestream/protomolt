@@ -4,16 +4,21 @@ import ai.protomolt.proto.actions.Caller;
 import ai.protomolt.proto.actions.ScopeBudgets;
 import ai.protomolt.proto.actions.Scopes;
 import com.google.protobuf.MessageLite;
+import io.grpc.Context;
 import io.grpc.ForwardingServerCallListener;
 import io.grpc.Metadata;
+import io.grpc.ServerBuilder;
 import io.grpc.ServerCall;
 import io.grpc.ServerCallHandler;
 import io.grpc.ServerInterceptor;
+import io.grpc.ServerStreamTracer;
 import io.grpc.Status;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Queue;
 import java.util.Set;
+import java.util.concurrent.ConcurrentLinkedQueue;
 
 /**
  * The per-service scope table for a hand-built gRPC surface (the serving roles): every mounted
@@ -22,6 +27,12 @@ import java.util.Set;
  * service the table does not name is refused by name — a newly mounted service is never
  * silently open. Runs behind {@link ApiTokenServerInterceptor}, reading the caller it
  * resolved; a call with no resolved caller (an open server) passes with process authority.
+ *
+ * <p>When attached via {@link #configure(ServerBuilder)} (or paired with
+ * {@link #streamTracerFactory()}), positive per-scope payload caps and rate budgets are
+ * evaluated as soon as {@code MessageDeframer} reads each inbound frame, closing refused
+ * calls with {@code RESOURCE_EXHAUSTED} before {@code halfClose()} without waiting for unary
+ * message decoding.
  */
 public final class ScopeServerInterceptor implements ServerInterceptor {
 
@@ -29,6 +40,14 @@ public final class ScopeServerInterceptor implements ServerInterceptor {
     private final Map<String, String> methodScopes;
     private final Set<String> openServices;
     private final ScopeBudgets budgets;
+    private final Context.Key<InboundFrameTracker> frameTrackerKey =
+            Context.key("protomolt.authz.grpc.inbound-frame-tracker");
+    private final ServerStreamTracer.Factory tracerFactory = new ServerStreamTracer.Factory() {
+        @Override
+        public ServerStreamTracer newServerStreamTracer(String fullMethodName, Metadata headers) {
+            return new InboundFrameTracker(frameTrackerKey);
+        }
+    };
 
     /**
      * An interceptor spending on its own ledger, for a surface that is the node's only
@@ -77,6 +96,29 @@ public final class ScopeServerInterceptor implements ServerInterceptor {
         }
     }
 
+    /**
+     * Stream tracer factory that observes inbound frame sizes in {@code MessageDeframer} before
+     * {@code halfClose()} triggers unary message decoding.
+     *
+     * @return the stream tracer factory for this interceptor
+     */
+    public ServerStreamTracer.Factory streamTracerFactory() {
+        return tracerFactory;
+    }
+
+    /**
+     * Attaches both {@link #streamTracerFactory()} and this interceptor to {@code builder} so
+     * positive per-scope payload caps and rate budgets are enforced on frame arrival before
+     * {@code halfClose()}.
+     *
+     * @param builder the server builder to configure
+     */
+    public void configure(ServerBuilder<?> builder) {
+        Objects.requireNonNull(builder, "builder");
+        builder.addStreamTracerFactory(tracerFactory)
+                .intercept(this);
+    }
+
     @Override
     public <ReqT, RespT> ServerCall.Listener<ReqT> interceptCall(
             ServerCall<ReqT, RespT> call, Metadata headers, ServerCallHandler<ReqT, RespT> next) {
@@ -122,13 +164,44 @@ public final class ScopeServerInterceptor implements ServerInterceptor {
             }
             return next.startCall(call, headers);
         }
+        InboundFrameTracker tracker = frameTrackerKey.get();
+        if (tracker != null) {
+            tracker.arm(call, caller, budgetScope, budget, budgets);
+        }
         ServerCall.Listener<ReqT> delegate = next.startCall(call, headers);
         return new ForwardingServerCallListener.SimpleForwardingServerCallListener<>(
                 delegate) {
             private boolean refused;
 
             @Override
+            public void onEvent(Object event) {
+                if (event instanceof FrameRefusalEvent refusalEvent) {
+                    if (!refused) {
+                        refused = true;
+                        call.close(Status.RESOURCE_EXHAUSTED
+                                .withDescription(refusalEvent.description()), new Metadata());
+                    }
+                    return;
+                }
+                super.onEvent(event);
+            }
+
+            @Override
             public void onMessage(ReqT message) {
+                if (refused) {
+                    return;
+                }
+                FrameVerdict verdict = tracker != null ? tracker.pollVerdict() : null;
+                if (verdict != null && verdict.evaluated()) {
+                    if (verdict.refusal() != null) {
+                        refused = true;
+                        call.close(Status.RESOURCE_EXHAUSTED
+                                .withDescription(verdict.refusal()), new Metadata());
+                        return;
+                    }
+                    super.onMessage(message);
+                    return;
+                }
                 long size = message instanceof MessageLite proto
                         ? proto.getSerializedSize() : -1;
                 Optional<String> refusal = budgets.refuse(caller, budgetScope, size);
@@ -147,13 +220,69 @@ public final class ScopeServerInterceptor implements ServerInterceptor {
                     super.onHalfClose();
                 }
             }
-
-            @Override
-            public void onCancel() {
-                if (!refused) {
-                    super.onCancel();
-                }
-            }
         };
+    }
+
+    private record FrameRefusalEvent(String description) {
+    }
+
+    private record FrameVerdict(boolean evaluated, String refusal) {
+    }
+
+    private record Gate(ServerCall<?, ?> call, Caller caller, String scope,
+            Caller.Budget budget, ScopeBudgets budgets) {
+    }
+
+    private static final class InboundFrameTracker extends ServerStreamTracer {
+        private final Context.Key<InboundFrameTracker> key;
+        private final Queue<FrameVerdict> verdicts = new ConcurrentLinkedQueue<>();
+        private volatile Gate gate;
+        private volatile boolean refused;
+
+        private InboundFrameTracker(Context.Key<InboundFrameTracker> key) {
+            this.key = key;
+        }
+
+        private void arm(ServerCall<?, ?> call, Caller caller, String scope,
+                Caller.Budget budget, ScopeBudgets budgets) {
+            this.gate = new Gate(call, caller, scope, budget, budgets);
+        }
+
+        private FrameVerdict pollVerdict() {
+            return verdicts.poll();
+        }
+
+        @Override
+        public Context filterContext(Context context) {
+            return context.withValue(key, this);
+        }
+
+        @Override
+        public void inboundMessageRead(int seqNo, long optionalWireSize,
+                long optionalUncompressedSize) {
+            Gate active = this.gate;
+            if (active == null || refused) {
+                return;
+            }
+            if (optionalUncompressedSize >= 0) {
+                Optional<String> refusal = active.budgets().refuse(
+                        active.caller(), active.scope(), optionalUncompressedSize);
+                verdicts.add(new FrameVerdict(true, refusal.orElse(null)));
+                if (refusal.isPresent()) {
+                    refused = true;
+                    active.call().triggerEvent(new FrameRefusalEvent(refusal.get()));
+                }
+            } else if (optionalWireSize > active.budget().maxPayloadBytes()) {
+                Optional<String> refusal = active.budgets().refuse(
+                        active.caller(), active.scope(), optionalWireSize);
+                verdicts.add(new FrameVerdict(true, refusal.orElse(null)));
+                if (refusal.isPresent()) {
+                    refused = true;
+                    active.call().triggerEvent(new FrameRefusalEvent(refusal.get()));
+                }
+            } else {
+                verdicts.add(new FrameVerdict(false, null));
+            }
+        }
     }
 }

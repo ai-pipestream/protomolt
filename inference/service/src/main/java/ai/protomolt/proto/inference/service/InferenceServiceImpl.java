@@ -19,6 +19,7 @@ import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
 import io.grpc.stub.StreamObserver;
 
+import java.util.Objects;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
@@ -41,7 +42,7 @@ public final class InferenceServiceImpl extends InferenceServiceGrpc.InferenceSe
         implements AutoCloseable {
 
     private final InferenceEngines engines;
-    private final ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor();
+    private final ExecutorService executor;
 
     /**
      * Creates the service over the given facade.
@@ -49,7 +50,8 @@ public final class InferenceServiceImpl extends InferenceServiceGrpc.InferenceSe
      * @param engines the catalog-plus-providers facade to serve
      */
     public InferenceServiceImpl(InferenceEngines engines) {
-        this.engines = engines;
+        this.engines = Objects.requireNonNull(engines, "engines");
+        this.executor = Executors.newVirtualThreadPerTaskExecutor();
     }
 
     @Override
@@ -75,31 +77,45 @@ public final class InferenceServiceImpl extends InferenceServiceGrpc.InferenceSe
             return;
         }
         executor.submit(() -> {
+            final boolean[] terminated = {false};
             try {
                 engines.generateStream(request, new ChunkObserver() {
                     @Override
                     public void onNext(GenerateStreamResponse chunk) {
                         synchronized (observer) {
-                            observer.onNext(chunk);
+                            if (!terminated[0]) {
+                                observer.onNext(chunk);
+                            }
                         }
                     }
 
                     @Override
                     public void onComplete() {
                         synchronized (observer) {
-                            observer.onCompleted();
+                            if (!terminated[0]) {
+                                terminated[0] = true;
+                                observer.onCompleted();
+                            }
                         }
                     }
 
                     @Override
                     public void onError(InferenceException error) {
                         synchronized (observer) {
-                            observer.onError(status(error));
+                            if (!terminated[0]) {
+                                terminated[0] = true;
+                                observer.onError(status(error));
+                            }
                         }
                     }
                 });
             } catch (RuntimeException e) {
-                observer.onError(status(e));
+                synchronized (observer) {
+                    if (!terminated[0]) {
+                        terminated[0] = true;
+                        observer.onError(status(e));
+                    }
+                }
             }
         });
     }

@@ -11,23 +11,31 @@ import ai.protomolt.proto.metric.MemberRole;
 import ai.protomolt.proto.metric.MetricBackend;
 import ai.protomolt.proto.metric.MetricServiceGrpc;
 import ai.protomolt.proto.metric.QueryMetricsRequest;
+import ai.protomolt.proto.metric.QueryMetricsResponse;
 import ai.protomolt.proto.metric.RebuildRollupRequest;
 import ai.protomolt.proto.metric.TimeGrain;
 import ai.protomolt.proto.metric.spi.MetricMapping;
 import ai.protomolt.proto.metric.spi.MetricMapping.FieldKind;
 import ai.protomolt.proto.metric.spi.MetricMapping.MetricMember;
+import io.grpc.CallOptions;
+import io.grpc.ClientCall;
 import io.grpc.ManagedChannel;
 import io.grpc.Metadata;
+import io.grpc.Server;
 import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
 import io.grpc.inprocess.InProcessChannelBuilder;
 import io.grpc.inprocess.InProcessServerBuilder;
+import io.grpc.netty.shaded.io.grpc.netty.NettyChannelBuilder;
 import io.grpc.stub.MetadataUtils;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
@@ -147,5 +155,94 @@ class ScopedMetricServiceTest {
                 .isInstanceOfSatisfying(StatusRuntimeException.class, e ->
                         assertThat(e.getStatus().getCode())
                                 .isEqualTo(Status.Code.UNAUTHENTICATED));
+    }
+
+    @Test
+    void nettyEnforcesPayloadBudgetAndUnaryAdmissionBeforeHalfClose() throws Exception {
+        CallerResolver resolver = credential -> "capped-analyst".equals(credential)
+                ? Optional.of(Caller.scoped("capped",
+                        Set.of(Scopes.METRICS_QUERY),
+                        Map.of(Scopes.METRICS_QUERY, new Caller.Budget(0, 128))))
+                : Optional.empty();
+        try (MetricServices bounded = MetricServices.build(service.subjects())
+                .withAdmission(1024, 1)) {
+            Server netty = bounded.startNetty(0, OPERATOR, resolver);
+            ManagedChannel nettyChannel = NettyChannelBuilder
+                    .forAddress("localhost", netty.getPort())
+                    .usePlaintext()
+                    .build();
+            try {
+                // 1. An over-cap frame for a budgeted caller is refused before halfClose()
+                // and releases its UnaryRequestAdmission reservation.
+                CountDownLatch budgetClosed = new CountDownLatch(1);
+                AtomicReference<Status> budgetStatus = new AtomicReference<>();
+                ClientCall<QueryMetricsRequest, QueryMetricsResponse> overCap =
+                        nettyChannel.newCall(MetricServiceGrpc.getQueryMetricsMethod(),
+                                CallOptions.DEFAULT);
+                overCap.start(new ClientCall.Listener<>() {
+                    @Override
+                    public void onClose(Status status, Metadata trailers) {
+                        budgetStatus.set(status);
+                        budgetClosed.countDown();
+                    }
+                }, credentials("capped-analyst"));
+                overCap.request(1);
+                overCap.sendMessage(query().toBuilder()
+                        .setMappingSubject("o".repeat(256))
+                        .build());
+                assertThat(budgetClosed.await(5, TimeUnit.SECONDS)).isTrue();
+                assertThat(budgetStatus.get().getCode()).isEqualTo(Status.Code.RESOURCE_EXHAUSTED);
+                assertThat(budgetStatus.get().getDescription()).contains("128-byte");
+                awaitReservedBytes(bounded, 0);
+
+                // 2. A call held open before halfClose() reserves 2 * maxRequestBytes (2048)
+                // and blocks a second concurrent call before halfClose().
+                ClientCall<QueryMetricsRequest, QueryMetricsResponse> held =
+                        nettyChannel.newCall(MetricServiceGrpc.getQueryMetricsMethod(),
+                                CallOptions.DEFAULT);
+                held.start(new ClientCall.Listener<>() { }, credentials(OPERATOR));
+                held.request(1);
+                held.sendMessage(query());
+                awaitReservedBytes(bounded, 2048);
+
+                CountDownLatch secondClosed = new CountDownLatch(1);
+                AtomicReference<Status> secondStatus = new AtomicReference<>();
+                ClientCall<QueryMetricsRequest, QueryMetricsResponse> second =
+                        nettyChannel.newCall(MetricServiceGrpc.getQueryMetricsMethod(),
+                                CallOptions.DEFAULT);
+                second.start(new ClientCall.Listener<>() {
+                    @Override
+                    public void onClose(Status status, Metadata trailers) {
+                        secondStatus.set(status);
+                        secondClosed.countDown();
+                    }
+                }, credentials(OPERATOR));
+                second.request(1);
+                second.sendMessage(query());
+                assertThat(secondClosed.await(5, TimeUnit.SECONDS)).isTrue();
+                assertThat(secondStatus.get().getCode()).isEqualTo(Status.Code.RESOURCE_EXHAUSTED);
+
+                held.cancel("cleanup", null);
+                awaitReservedBytes(bounded, 0);
+            } finally {
+                nettyChannel.shutdownNow();
+            }
+        }
+    }
+
+    private static Metadata credentials(String credential) {
+        Metadata headers = new Metadata();
+        headers.put(Metadata.Key.of("api_token", Metadata.ASCII_STRING_MARSHALLER), credential);
+        return headers;
+    }
+
+    private static void awaitReservedBytes(MetricServices target, long expected)
+            throws InterruptedException {
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+        while (target.admission().reservedBytes() != expected
+                && System.nanoTime() < deadline) {
+            Thread.sleep(10);
+        }
+        assertThat(target.admission().reservedBytes()).isEqualTo(expected);
     }
 }

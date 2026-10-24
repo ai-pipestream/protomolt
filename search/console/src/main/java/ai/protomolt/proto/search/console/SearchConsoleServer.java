@@ -28,6 +28,7 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.util.Locale;
 import java.util.Objects;
 import java.util.Optional;
@@ -66,10 +67,14 @@ public final class SearchConsoleServer implements AutoCloseable {
     /** The session cookie: {@value}. */
     public static final String COOKIE = "__Host-protomolt_search_session";
 
+    /** Maximum request body size accepted by {@code /search} and {@code /actions/*}: {@value}. */
+    public static final int MAX_REQUEST_BYTES = 1024 * 1024;
+
     private static final Logger LOG = LoggerFactory.getLogger(SearchConsoleServer.class);
     private static final Metadata.Key<String> API_TOKEN_HEADER =
             Metadata.Key.of("api_token", Metadata.ASCII_STRING_MARSHALLER);
     private static final int MAX_CREDENTIAL_BYTES = 4 * 1024;
+    private static final Duration PROXY_TIMEOUT = Duration.ofSeconds(30);
 
     private final HttpServer http;
     private final ManagedChannel channel;
@@ -77,7 +82,9 @@ public final class SearchConsoleServer implements AutoCloseable {
     private final Supplier<String> actionsBaseUrl;
     private final ConsoleSessions sessions;
     private final ScopeBudgets budgets;
-    private final HttpClient actionsClient = HttpClient.newHttpClient();
+    private final HttpClient actionsClient = HttpClient.newBuilder()
+            .connectTimeout(PROXY_TIMEOUT)
+            .build();
 
     /** Creates the open console (no login), for trusted-network nodes. */
     public SearchConsoleServer(int port, String serviceTarget, Supplier<String> actionsBaseUrl)
@@ -135,7 +142,12 @@ public final class SearchConsoleServer implements AutoCloseable {
                 : NettyChannelBuilder.forTarget(serviceTarget).usePlaintext().build();
         this.service = SearchServiceGrpc.newBlockingStub(channel);
         this.actionsBaseUrl = actionsBaseUrl == null ? () -> "" : actionsBaseUrl;
-        this.http = HttpServer.create(new InetSocketAddress(port), 0);
+        try {
+            this.http = HttpServer.create(new InetSocketAddress(port), 0);
+        } catch (IOException | RuntimeException e) {
+            channel.shutdownNow();
+            throw e;
+        }
         http.setExecutor(Executors.newVirtualThreadPerTaskExecutor());
         http.createContext("/", this::servePage);
         http.createContext("/session", this::serveSession);
@@ -234,7 +246,7 @@ public final class SearchConsoleServer implements AutoCloseable {
      * additionally demand {@code search-query}, because the co-mounted service's in-process
      * lane sits inside the process trust boundary and cannot refuse for the console.
      */
-    private Caller sessionCaller(HttpExchange exchange, boolean requireSearchQuery)
+    private Caller authenticate(HttpExchange exchange, boolean requireSearchQuery)
             throws IOException {
         Caller caller = sessions.caller(exchange).orElse(null);
         if (caller == null) {
@@ -248,32 +260,49 @@ public final class SearchConsoleServer implements AutoCloseable {
                             + Scopes.SEARCH_QUERY + "', which the search console requires"));
             return null;
         }
-        if (requireSearchQuery) {
-            // The in-process search bridge cannot budget for the console either,
-            // so the principal's search-query budget spends here.
-            Optional<String> refusal = budgets.refuse(caller, Scopes.SEARCH_QUERY, -1);
-            if (refusal.isPresent()) {
-                respond(exchange, 429, "application/json; charset=utf-8",
-                        errorJson(refusal.get()));
-                return null;
-            }
-        }
         return caller;
+    }
+
+    private boolean checkSearchBudget(HttpExchange exchange, Caller caller, long payloadBytes)
+            throws IOException {
+        // The in-process search bridge cannot budget for the console either,
+        // so the principal's search-query budget spends here.
+        Optional<String> refusal = budgets.refuse(caller, Scopes.SEARCH_QUERY, payloadBytes);
+        if (refusal.isPresent()) {
+            respond(exchange, 429, "application/json; charset=utf-8",
+                    errorJson(refusal.get()));
+            return false;
+        }
+        return true;
+    }
+
+    private static byte[] readBoundedBody(
+            HttpExchange exchange, int maxBytes, String tooLargeMessage) throws IOException {
+        byte[] body = exchange.getRequestBody().readNBytes(maxBytes + 1);
+        if (body.length > maxBytes) {
+            respond(exchange, 413, "application/json; charset=utf-8",
+                    errorJson(tooLargeMessage));
+            return null;
+        }
+        return body;
     }
 
     /** The stub for this exchange: the session's own credential rides guarded channels. */
     private SearchServiceGrpc.SearchServiceBlockingStub serviceFor(HttpExchange exchange) {
+        SearchServiceGrpc.SearchServiceBlockingStub stub =
+                service.withDeadlineAfter(PROXY_TIMEOUT.toMillis(), TimeUnit.MILLISECONDS);
         Optional<String> credential = sessions.credential(exchange);
         if (credential.isEmpty()) {
-            return service;
+            return stub;
         }
         Metadata identity = new Metadata();
         identity.put(API_TOKEN_HEADER, credential.get());
-        return service.withInterceptors(MetadataUtils.newAttachHeadersInterceptor(identity));
+        return stub.withInterceptors(MetadataUtils.newAttachHeadersInterceptor(identity));
     }
 
     private void serveSubjects(HttpExchange exchange) throws IOException {
-        if (sessionCaller(exchange, true) == null) {
+        Caller caller = authenticate(exchange, true);
+        if (caller == null || !checkSearchBudget(exchange, caller, 0)) {
             return;
         }
         try {
@@ -290,11 +319,16 @@ public final class SearchConsoleServer implements AutoCloseable {
             respond(exchange, 405, "text/plain; charset=utf-8", "POST only");
             return;
         }
-        if (sessionCaller(exchange, true) == null) {
+        Caller caller = authenticate(exchange, true);
+        if (caller == null) {
             return;
         }
-        String body = new String(
-                exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
+        byte[] rawBody = readBoundedBody(
+                exchange, MAX_REQUEST_BYTES, "the search request is too large");
+        if (rawBody == null || !checkSearchBudget(exchange, caller, rawBody.length)) {
+            return;
+        }
+        String body = new String(rawBody, StandardCharsets.UTF_8);
         SearchRequest.Builder request = SearchRequest.newBuilder();
         try {
             JsonFormat.parser().merge(body, request);
@@ -313,7 +347,7 @@ public final class SearchConsoleServer implements AutoCloseable {
     }
 
     private void serveActions(HttpExchange exchange) throws IOException {
-        if (sessionCaller(exchange, false) == null) {
+        if (authenticate(exchange, false) == null) {
             return;
         }
         String base;
@@ -330,7 +364,9 @@ public final class SearchConsoleServer implements AutoCloseable {
         String path = exchange.getRequestURI().getPath();
         try {
             if ("/actions".equals(path) && "GET".equals(exchange.getRequestMethod())) {
-                forward(exchange, HttpRequest.newBuilder(URI.create(base)).GET());
+                forward(exchange, HttpRequest.newBuilder(URI.create(base))
+                        .timeout(PROXY_TIMEOUT)
+                        .GET());
                 return;
             }
             String name = path.startsWith("/actions/") ? path.substring("/actions/".length()) : "";
@@ -339,10 +375,15 @@ public final class SearchConsoleServer implements AutoCloseable {
                 respond(exchange, 404, "text/plain; charset=utf-8", "not found");
                 return;
             }
+            byte[] rawBody = readBoundedBody(
+                    exchange, MAX_REQUEST_BYTES, "the action request is too large");
+            if (rawBody == null) {
+                return;
+            }
             forward(exchange, HttpRequest.newBuilder(URI.create(base + "/" + name))
+                    .timeout(PROXY_TIMEOUT)
                     .header("Content-Type", "application/json")
-                    .POST(HttpRequest.BodyPublishers.ofByteArray(
-                            exchange.getRequestBody().readAllBytes())));
+                    .POST(HttpRequest.BodyPublishers.ofByteArray(rawBody)));
         } catch (IOException | InterruptedException e) {
             if (e instanceof InterruptedException) {
                 Thread.currentThread().interrupt();
@@ -391,6 +432,8 @@ public final class SearchConsoleServer implements AutoCloseable {
             case FAILED_PRECONDITION -> 409;
             case UNAUTHENTICATED -> 401;
             case PERMISSION_DENIED -> 403;
+            case RESOURCE_EXHAUSTED -> 429;
+            case DEADLINE_EXCEEDED -> 504;
             case UNAVAILABLE -> 503;
             default -> 502;
         };

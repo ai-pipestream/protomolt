@@ -241,4 +241,65 @@ class InferenceServiceImplTest {
                         DescribeModelRequest.newBuilder().setModel("judge").build())
                 .getEntry().getProvider()).isEqualTo("stub");
     }
+
+    @Test
+    void rejectsNullEnginesAndDeduplicatesTerminalStreamSignals() throws Exception {
+        assertThatThrownBy(() -> new InferenceServiceImpl(null))
+                .isInstanceOf(NullPointerException.class);
+
+        InferenceEngines noisyEngines = new InferenceEngines(new InferenceCatalog(),
+                List.of(new InferenceProvider() {
+                    @Override
+                    public String id() {
+                        return "noisy";
+                    }
+
+                    @Override
+                    public GenerateResponse generate(ModelEntry model, GenerateRequest request) {
+                        throw new UnsupportedOperationException();
+                    }
+
+                    @Override
+                    public void generateStream(ModelEntry model, GenerateStreamRequest request,
+                                               ChunkObserver observer) {
+                        observer.onError(new InferenceException("stream failed first"));
+                        throw new InferenceException("stream threw after onError");
+                    }
+                }));
+        noisyEngines.register(ModelEntry.newBuilder()
+                .setId("judge").setProvider("noisy").setEndpoint("noisy://local").build());
+
+        AtomicReference<Throwable> received = new AtomicReference<>();
+        CountDownLatch latch = new CountDownLatch(1);
+        try (InferenceServiceImpl service = new InferenceServiceImpl(noisyEngines)) {
+            service.generateStream(
+                    GenerateStreamRequest.newBuilder()
+                            .setModel("judge")
+                            .addMessages(ChatTurn.newBuilder()
+                                    .setRole(Role.ROLE_USER)
+                                    .setContent("go"))
+                            .build(),
+                    new StreamObserver<>() {
+                        @Override
+                        public void onNext(GenerateStreamResponse value) {
+                        }
+
+                        @Override
+                        public void onError(Throwable t) {
+                            if (!received.compareAndSet(null, t)) {
+                                throw new AssertionError("duplicate onError: " + t);
+                            }
+                            latch.countDown();
+                        }
+
+                        @Override
+                        public void onCompleted() {
+                            throw new AssertionError("unexpected onCompleted");
+                        }
+                    });
+            assertThat(latch.await(5, TimeUnit.SECONDS)).isTrue();
+            assertThat(Status.fromThrowable(received.get()).getDescription())
+                    .contains("stream failed first");
+        }
+    }
 }

@@ -60,6 +60,9 @@ class SearchConsoleServerTest {
     static final CallerResolver RESOLVER = credential -> switch (credential) {
         case "querier-credential" -> Optional.of(
                 Caller.scoped("querier", Set.of(Scopes.SEARCH_QUERY)));
+        case "capped-querier-credential" -> Optional.of(
+                Caller.scoped("capped-querier", Set.of(Scopes.SEARCH_QUERY),
+                        java.util.Map.of(Scopes.SEARCH_QUERY, new Caller.Budget(1, 64))));
         case "rebuilder-credential" -> Optional.of(
                 Caller.scoped("rebuilder", Set.of(Scopes.METRICS_REBUILD)));
         default -> Optional.empty();
@@ -445,5 +448,38 @@ class SearchConsoleServerTest {
         assertThat(client.send(signOut, HttpResponse.BodyHandlers.ofString())
                 .statusCode()).isEqualTo(204);
         assertThat(getWithCookie("/subjects", cookie).statusCode()).isEqualTo(401);
+    }
+
+    @Test
+    void oversizeSearchAndActionBodiesAreRefusedWith413() throws Exception {
+        String oversize = "x".repeat(SearchConsoleServer.MAX_REQUEST_BYTES + 1);
+        HttpResponse<String> searchTooLarge = post(console, "/search", oversize);
+        assertThat(searchTooLarge.statusCode()).isEqualTo(413);
+        assertThat(json.readTree(searchTooLarge.body()).get("error").asText())
+                .contains("search request is too large");
+
+        HttpResponse<String> actionTooLarge = post(console, "/actions/echo-input", oversize);
+        assertThat(actionTooLarge.statusCode()).isEqualTo(413);
+        assertThat(json.readTree(actionTooLarge.body()).get("error").asText())
+                .contains("action request is too large");
+    }
+
+    @Test
+    void searchPayloadBudgetIsEnforcedOnRequestBytesWithoutSpendingRateAllowance()
+            throws Exception {
+        String cookie = signIn("capped-querier-credential");
+        HttpResponse<String> overBudget = postWithCookie("/search",
+                "{\"mappingSubject\":\"repo-document\",\"query\":\"" + "q".repeat(80) + "\",\"k\":1}",
+                cookie);
+        assertThat(overBudget.statusCode()).isEqualTo(429);
+        assertThat(json.readTree(overBudget.body()).get("error").asText())
+                .contains("capped-querier")
+                .contains("64-byte budget");
+
+        // The oversize payload did not consume the 1-per-minute rate allowance.
+        HttpResponse<String> withinBudget = postWithCookie("/search",
+                "{\"mappingSubject\":\"repo-document\",\"query\":\"x\",\"k\":1}",
+                cookie);
+        assertThat(withinBudget.statusCode()).isEqualTo(200);
     }
 }

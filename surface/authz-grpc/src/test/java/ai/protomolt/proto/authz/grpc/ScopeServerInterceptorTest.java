@@ -6,21 +6,34 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import ai.protomolt.proto.actions.Caller;
 import ai.protomolt.proto.actions.Scopes;
 import ai.protomolt.proto.authz.CallerResolver;
+import io.grpc.CallOptions;
+import io.grpc.ClientCall;
 import io.grpc.ManagedChannel;
 import io.grpc.Metadata;
+import io.grpc.MethodDescriptor;
 import io.grpc.Server;
+import io.grpc.ServerServiceDefinition;
 import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
 import io.grpc.health.v1.HealthCheckRequest;
+import io.grpc.health.v1.HealthCheckResponse;
 import io.grpc.health.v1.HealthGrpc;
 import io.grpc.inprocess.InProcessChannelBuilder;
 import io.grpc.inprocess.InProcessServerBuilder;
+import io.grpc.netty.shaded.io.grpc.netty.NettyChannelBuilder;
+import io.grpc.netty.shaded.io.grpc.netty.NettyServerBuilder;
 import io.grpc.protobuf.services.HealthStatusManager;
 import io.grpc.protobuf.services.ProtoReflectionServiceV1;
 import io.grpc.stub.MetadataUtils;
+import io.grpc.stub.ServerCalls;
+import java.io.InputStream;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
@@ -235,6 +248,98 @@ class ScopeServerInterceptorTest {
         } finally {
             budgetedChannel.shutdownNow();
             budgeted.shutdownNow();
+        }
+    }
+
+    @Test
+    void payloadCapRefusesOverCapFrameBeforeHalfCloseWithoutDecoding() throws Exception {
+        AtomicInteger parses = new AtomicInteger();
+        MethodDescriptor<HealthCheckRequest, HealthCheckResponse> baseMethod =
+                HealthGrpc.getCheckMethod();
+        MethodDescriptor.Marshaller<HealthCheckRequest> baseMarshaller =
+                baseMethod.getRequestMarshaller();
+        MethodDescriptor<HealthCheckRequest, HealthCheckResponse> countingMethod =
+                baseMethod.toBuilder(
+                        new MethodDescriptor.Marshaller<HealthCheckRequest>() {
+                            @Override
+                            public InputStream stream(HealthCheckRequest value) {
+                                return baseMarshaller.stream(value);
+                            }
+
+                            @Override
+                            public HealthCheckRequest parse(InputStream stream) {
+                                parses.incrementAndGet();
+                                return baseMarshaller.parse(stream);
+                            }
+                        },
+                        baseMethod.getResponseMarshaller()).build();
+        ServerServiceDefinition countingService = ServerServiceDefinition.builder(HEALTH)
+                .addMethod(countingMethod, ServerCalls.asyncUnaryCall((request, observer) -> {
+                    observer.onNext(HealthCheckResponse.newBuilder()
+                            .setStatus(HealthCheckResponse.ServingStatus.SERVING)
+                            .build());
+                    observer.onCompleted();
+                }))
+                .build();
+        CallerResolver resolver = credential -> "capped-credential".equals(credential)
+                ? Optional.of(Caller.scoped("capped",
+                        Set.of(Scopes.METRICS_QUERY),
+                        Map.of(Scopes.METRICS_QUERY, new Caller.Budget(2, 4))))
+                : Optional.empty();
+        ScopeServerInterceptor scopes = new ScopeServerInterceptor(
+                Map.of(HEALTH, Scopes.METRICS_QUERY), Map.of(), Set.of());
+        NettyServerBuilder builder = NettyServerBuilder.forPort(0)
+                .addService(countingService);
+        scopes.configure(builder);
+        builder.intercept(new ApiTokenServerInterceptor(OPERATOR, resolver));
+        Server nettyServer = builder.build().start();
+        ManagedChannel nettyChannel = NettyChannelBuilder
+                .forAddress("localhost", nettyServer.getPort())
+                .usePlaintext()
+                .build();
+        try {
+            CountDownLatch closed = new CountDownLatch(1);
+            AtomicReference<Status> closeStatus = new AtomicReference<>();
+            ClientCall<HealthCheckRequest, HealthCheckResponse> call =
+                    nettyChannel.newCall(HealthGrpc.getCheckMethod(), CallOptions.DEFAULT);
+            Metadata headers = new Metadata();
+            headers.put(Metadata.Key.of("api_token", Metadata.ASCII_STRING_MARSHALLER),
+                    "capped-credential");
+            call.start(new ClientCall.Listener<>() {
+                @Override
+                public void onClose(Status status, Metadata trailers) {
+                    closeStatus.set(status);
+                    closed.countDown();
+                }
+            }, headers);
+            call.request(1);
+            call.sendMessage(HealthCheckRequest.newBuilder()
+                    .setService("a-service-name-past-the-cap").build());
+            // Do NOT call halfClose(): gRPC 1.85.1 parks the unary frame until halfClose,
+            // so the stream tracer + triggerEvent path must refuse the frame immediately.
+            assertThat(closed.await(5, TimeUnit.SECONDS)).isTrue();
+            assertThat(closeStatus.get().getCode()).isEqualTo(Status.Code.RESOURCE_EXHAUSTED);
+            assertThat(closeStatus.get().getDescription())
+                    .contains("capped").contains("4-byte");
+            assertThat(parses.get()).isZero();
+
+            // A small frame within the 4-byte cap succeeds and spends only 1 of the 2-per-minute
+            // rate slots (the stream tracer evaluation does not double-spend in onMessage).
+            HealthGrpc.HealthBlockingStub capped = stubOn(nettyChannel, "capped-credential");
+            assertThat(capped.check(HealthCheckRequest.getDefaultInstance())
+                    .getStatus().getNumber()).isEqualTo(1);
+            assertThat(parses.get()).isEqualTo(1);
+            assertThat(capped.check(HealthCheckRequest.getDefaultInstance())
+                    .getStatus().getNumber()).isEqualTo(1);
+            assertThat(parses.get()).isEqualTo(2);
+            assertThatThrownBy(() ->
+                    capped.check(HealthCheckRequest.getDefaultInstance()))
+                    .isInstanceOfSatisfying(StatusRuntimeException.class, e ->
+                            assertThat(e.getStatus().getCode())
+                                    .isEqualTo(Status.Code.RESOURCE_EXHAUSTED));
+        } finally {
+            nettyChannel.shutdownNow();
+            nettyServer.shutdownNow();
         }
     }
 

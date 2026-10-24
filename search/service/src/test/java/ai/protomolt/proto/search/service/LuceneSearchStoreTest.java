@@ -170,6 +170,28 @@ class LuceneSearchStoreTest {
     }
 
     @Test
+    void aLockedSecondSubjectFailsMountAndReleasesTheFirstAndLockedDirectories()
+            throws Exception {
+        Map<String, ServedMapping> subjects = new LinkedHashMap<>();
+        subjects.put("sound", RepoDocumentMapping.served());
+        subjects.put("locked", RepoDocumentMapping.served());
+
+        try (var lockedDir = org.apache.lucene.store.FSDirectory.open(work.resolve("locked"));
+                var heldLock = new org.apache.lucene.index.IndexWriter(
+                        lockedDir,
+                        new org.apache.lucene.index.IndexWriterConfig(
+                                new org.apache.lucene.analysis.standard.StandardAnalyzer()))) {
+            assertThatThrownBy(() -> new LuceneSearchStore(work, subjects))
+                    .isInstanceOf(java.io.UncheckedIOException.class)
+                    .hasMessageContaining("cannot open the search index");
+        }
+
+        try (LuceneSearchStore store = new LuceneSearchStore(work, subjects)) {
+            assertThat(store.subjectNames()).containsExactlyInAnyOrder("sound", "locked");
+        }
+    }
+
+    @Test
     void deletingADocumentRemovesItsWholeBlockAndLeavesOthers() {
         try (LuceneSearchStore store = new LuceneSearchStore(work, Map.of(
                 RepoDocumentMapping.SUBJECT,
