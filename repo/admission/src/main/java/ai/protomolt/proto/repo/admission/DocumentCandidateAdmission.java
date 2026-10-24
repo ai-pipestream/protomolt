@@ -456,10 +456,8 @@ public final class DocumentCandidateAdmission {
                         found = invalid.occurrences();
                         decodedRemaining -= invalid.decodedBytes();
                         var failure = invalid.failure();
-                        var path = fragment.part() == DocumentPart.DOCUMENT_PART_PARSED
-                                ? failurePath(type, root.access(), failure, definitions.schemas)
-                                : failure.fieldPath();
-                        violations.add(new Violation(fragment.part(), path, failure.ruleId(),
+                        violations.add(new Violation(fragment.part(),
+                                failurePath(type, root.access(), failure, definitions.schemas), failure.ruleId(),
                                 "payload rule failed at " + failure.rulePath()));
                     }
                     for (var occurrence : found) {

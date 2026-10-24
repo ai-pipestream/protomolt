@@ -357,6 +357,13 @@ failures and revision conflicts record nothing — with one recorded
 exception: `OPAQUE_NOT_ALLOWED` maps to `PERMISSION_DENIED` and **is**
 recorded, whereas `WRITE_DENIED` is unrecorded.
 
+A field violation's `field_path` is rooted at the part's container message
+in every part, the way link and concept-tag paths are: a payload rule that
+fails inside CORE's typed `structured_data` reports
+`structured_data.<field>`, and one inside a parser's output reports
+`parser_results["<parser>"].document.shape.<field>`. Crossing a nested `Any`
+adds no segment of its own.
+
 Errors are gRPC statuses carrying the `errors.proto` detail messages
 (`SaveRejection`, `RevisionConflict`, `OperationReuse`, `ItemError`, field
 violations) in the status details; on bulk streams the same refusal is one
