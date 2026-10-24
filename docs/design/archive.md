@@ -913,15 +913,20 @@ relay" item under Events above: there is one relay and one event type.
 - **`GetArchiveMutation` -> `GetOperationOutcome`.** `GetArchiveMutation` reads
   the account's recorded outcome for `operation_id` from `DocumentService`: a
   committed tombstone accession under `archive:<account_id>` projects to the
-  same completed `ArchiveMutationReceipt`, a recorded rejection is rethrown
-  with its `SaveRejection` status, and an unknown or non-mutation operation ID
-  returns `NOT_FOUND`.
+  same completed `ArchiveMutationReceipt`, a recorded archive mutation rejection
+  (tagged with `archive.mutation_kind`) is rethrown with its recorded refusal
+  status, and an unknown or non-mutation operation ID (including a committed or
+  rejected `PutEntry` or `UploadRendition`) returns `NOT_FOUND`.
 - **`DeleteRendition` and `PruneVersions` refused by name with
   `FAILED_PRECONDITION`.** Under v2 keep-forever retention, neither destructive
   byte removal across versions (`DeleteRendition`) nor version pruning
   (`PruneVersions`) has a v2 counterpart until per-blob purge or §13 retention
-  lands. After request and `operation_id` validation, both are refused by name
-  with gRPC status `FAILED_PRECONDITION`:
+  lands. After request and `operation_id` validation, both record a refusal
+  outcome under `(account_id, operation_id)` (retaining `archive.mutation_kind`,
+  `archive.mutation_sha256`, and `archive.mutation_refusal` so retries and
+  `GetArchiveMutation` replay the refusal and conflicting `operation_id` reuse
+  fails with `ALREADY_EXISTS`) and refuse by name with gRPC status
+  `FAILED_PRECONDITION`:
   - `DeleteRendition`: `"DeleteRendition is not supported by the archive over v2 documents under keep-forever retention; destructive byte removal across versions requires per-blob purge or section 13 retention"`
   - `PruneVersions`: `"PruneVersions is not supported by the archive over v2 documents under keep-forever retention; removing retained versions requires section 13 retention"`
 

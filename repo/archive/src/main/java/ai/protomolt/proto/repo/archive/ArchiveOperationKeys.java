@@ -4,7 +4,9 @@ import ai.protomolt.proto.descriptors.MessageFingerprints;
 import ai.protomolt.proto.repo.archive.v1.ArchiveMutationRequest;
 import ai.protomolt.proto.repo.archive.v1.ArchiveOperationKey;
 import ai.protomolt.proto.repo.archive.v1.DeleteEntryRequest;
+import ai.protomolt.proto.repo.archive.v1.DeleteRenditionRequest;
 import ai.protomolt.proto.repo.archive.v1.EntryAddress;
+import ai.protomolt.proto.repo.archive.v1.PruneVersionsRequest;
 import ai.protomolt.proto.repo.archive.v1.PutEntryRequest;
 import ai.protomolt.proto.repo.archive.v1.RenditionContent;
 import ai.protomolt.proto.repo.archive.v1.UploadRenditionHeader;
@@ -42,6 +44,12 @@ public final class ArchiveOperationKeys {
 
     /** The {@code operation_kind} of a {@code DeleteEntry}. */
     public static final String DELETE_ENTRY = "archive.delete-entry";
+
+    /** The {@code operation_kind} of a {@code DeleteRendition}. */
+    public static final String DELETE_RENDITION = "archive.delete-rendition";
+
+    /** The {@code operation_kind} of a {@code PruneVersions}. */
+    public static final String PRUNE_VERSIONS = "archive.prune-versions";
 
     private static final int METADATA_FIELD = PutEntryRequest.METADATA_FIELD_NUMBER;
 
@@ -176,6 +184,28 @@ public final class ArchiveOperationKeys {
                 .build());
     }
 
+    /**
+     * The command digest of a {@code DeleteRendition} mutation request.
+     *
+     * @param request the delete-rendition request
+     * @return the 64-character lowercase hex SHA-256 digest
+     */
+    public static String deleteRenditionCommandSha256(DeleteRenditionRequest request) {
+        return mutationCommandSha256(
+                ArchiveMutationRequest.newBuilder().setDeleteRendition(request).build());
+    }
+
+    /**
+     * The command digest of a {@code PruneVersions} mutation request.
+     *
+     * @param request the prune-versions request
+     * @return the 64-character lowercase hex SHA-256 digest
+     */
+    public static String pruneVersionsCommandSha256(PruneVersionsRequest request) {
+        return mutationCommandSha256(
+                ArchiveMutationRequest.newBuilder().setPruneVersions(request).build());
+    }
+
     /** The operation ID of a {@code PutEntry}: the supplied one, or the derived one. */
     public static String operationId(PutEntryRequest request, String contentSha256) {
         if (!request.getOperationId().isEmpty()) {
@@ -200,6 +230,44 @@ public final class ArchiveOperationKeys {
         }
         return derive(deleteEntryKey(
                 request, expectedVersion, deleteEntryContentSha256(request))).toString();
+    }
+
+    /**
+     * The operation ID of a {@code DeleteRendition}: the supplied one, or the
+     * derived UUIDv5 when {@code operationId} is blank.
+     *
+     * @param operationId the caller-supplied operation ID, or empty to derive one
+     * @param request the delete-rendition request
+     * @return the resolved operation ID string
+     */
+    public static String operationId(String operationId, DeleteRenditionRequest request) {
+        if (operationId != null && !operationId.isEmpty()) {
+            return operationId;
+        }
+        return derive(key(
+                DELETE_RENDITION,
+                request.getAddress(),
+                0L,
+                deleteRenditionCommandSha256(request))).toString();
+    }
+
+    /**
+     * The operation ID of a {@code PruneVersions}: the supplied one, or the
+     * derived UUIDv5 when {@code operationId} is blank.
+     *
+     * @param operationId the caller-supplied operation ID, or empty to derive one
+     * @param request the prune-versions request
+     * @return the resolved operation ID string
+     */
+    public static String operationId(String operationId, PruneVersionsRequest request) {
+        if (operationId != null && !operationId.isEmpty()) {
+            return operationId;
+        }
+        return derive(key(
+                PRUNE_VERSIONS,
+                request.getAddress(),
+                0L,
+                pruneVersionsCommandSha256(request))).toString();
     }
 
     /**

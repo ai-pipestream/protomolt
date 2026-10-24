@@ -1598,4 +1598,141 @@ class DocumentArchiveIT {
         assertThat(deleted.getEntryDeleted()).isTrue();
         assertThat(revisions(address)).isEqualTo(3);
     }
+
+    @Test
+    void codexDeleteMustRefuseRejectedUploadOperationIdReuse() {
+        EntryAddress address = entry(RETAINED);
+        archive.putEntry(firstPut(address).build());
+        String rejectedUploadId = UUID.randomUUID().toString();
+        ByteString bytes = randomBytes(1_024, 91L);
+        UploadRenditionHeader mismatched = UploadRenditionHeader.newBuilder()
+                .setAddress(address)
+                .setRendition(RenditionDescriptor.newBuilder()
+                        .setName("original")
+                        .setMediaType("application/pdf"))
+                .setSizeBytes(bytes.size())
+                .setExpectedSha256("0".repeat(64))
+                .setOperationId(rejectedUploadId)
+                .build();
+        StatusRuntimeException uploadFailure = catchThrowableOfType(
+                StatusRuntimeException.class, () -> upload(mismatched, bytes, 512));
+        assertThat(uploadFailure.getStatus().getCode()).isEqualTo(Status.Code.INVALID_ARGUMENT);
+        assertThat(documents.getOperationOutcome(GetOperationOutcomeRequest.newBuilder()
+                        .setAccountId(ACCOUNT)
+                        .setOperationId(rejectedUploadId)
+                        .build())
+                .getCommitted()
+                .hasRejection()).isTrue();
+
+        // Reusing the rejected upload's operation_id for DeleteEntry must be ALREADY_EXISTS, not INVALID_ARGUMENT.
+        ArchiveMutationRequest deleteWithUploadId = ArchiveMutationRequest.newBuilder()
+                .setOperationId(rejectedUploadId)
+                .setDeleteEntry(DeleteEntryRequest.newBuilder().setAddress(address))
+                .build();
+        assertThat(code(() -> mutations.archiveMutation(deleteWithUploadId)))
+                .isEqualTo(Status.Code.ALREADY_EXISTS);
+        assertThat(description(() -> mutations.archiveMutation(deleteWithUploadId)))
+                .contains("operation_id");
+    }
+
+    @Test
+    void codexMutationLookupMustNotTreatRejectedUploadAsMutation() {
+        EntryAddress address = entry(RETAINED);
+        String rejectedUploadId = UUID.randomUUID().toString();
+        ByteString bytes = randomBytes(1_024, 92L);
+        UploadRenditionHeader mismatched = UploadRenditionHeader.newBuilder()
+                .setAddress(address)
+                .setRendition(RenditionDescriptor.newBuilder()
+                        .setName("original")
+                        .setMediaType("application/pdf"))
+                .setSizeBytes(bytes.size())
+                .setExpectedSha256("0".repeat(64))
+                .setOperationId(rejectedUploadId)
+                .build();
+        StatusRuntimeException uploadFailure = catchThrowableOfType(
+                StatusRuntimeException.class, () -> upload(mismatched, bytes, 512));
+        assertThat(uploadFailure.getStatus().getCode()).isEqualTo(Status.Code.INVALID_ARGUMENT);
+
+        // GetArchiveMutation with a rejected upload's UUID must return NOT_FOUND, not INVALID_ARGUMENT.
+        assertThat(code(() -> mutations.getArchiveMutation(GetArchiveMutationRequest.newBuilder()
+                .setAccountId(ACCOUNT)
+                .setOperationId(rejectedUploadId)
+                .build()))).isEqualTo(Status.Code.NOT_FOUND);
+    }
+
+    @Test
+    void codexRefusedMutationMustRemainQueryable() {
+        EntryAddress address = entry(RETAINED);
+        archive.putEntry(firstPut(address).build());
+
+        String deleteRenditionId = UUID.randomUUID().toString();
+        ArchiveMutationRequest deleteRenditionReq = ArchiveMutationRequest.newBuilder()
+                .setOperationId(deleteRenditionId)
+                .setDeleteRendition(DeleteRenditionRequest.newBuilder()
+                        .setAddress(address)
+                        .setRendition("original")
+                        .setReason("RTBF erasure"))
+                .build();
+        assertThat(code(() -> mutations.archiveMutation(deleteRenditionReq)))
+                .isEqualTo(Status.Code.FAILED_PRECONDITION);
+        assertThat(description(() -> mutations.archiveMutation(deleteRenditionReq)))
+                .contains("DeleteRendition");
+
+        // GetArchiveMutation on the refused DeleteRendition operation_id replays FAILED_PRECONDITION
+        // both through the active service and through a fresh stateless DocumentArchive over PostgreSQL.
+        GetArchiveMutationRequest lookupRendition = GetArchiveMutationRequest.newBuilder()
+                .setAccountId(ACCOUNT)
+                .setOperationId(deleteRenditionId)
+                .build();
+        assertThat(code(() -> mutations.getArchiveMutation(lookupRendition)))
+                .isEqualTo(Status.Code.FAILED_PRECONDITION);
+        assertThat(description(() -> mutations.getArchiveMutation(lookupRendition)))
+                .contains("DeleteRendition");
+        DocumentArchive freshArchive = new DocumentArchive(
+                documentsChannel,
+                (acct, name) -> Optional.of(new ArchiveBinding(
+                        acct, name, DATASOURCE, "", VersioningPolicy.VERSIONING_POLICY_RETAINED)),
+                Clock.systemUTC());
+        assertThat(code(() -> freshArchive.getArchiveMutation(lookupRendition)))
+                .isEqualTo(Status.Code.FAILED_PRECONDITION);
+        assertThat(description(() -> freshArchive.getArchiveMutation(lookupRendition)))
+                .contains("DeleteRendition");
+
+        // Re-submitting the identical DeleteRendition replays FAILED_PRECONDITION, while reusing the
+        // operation_id for a different command fails with ALREADY_EXISTS.
+        assertThat(code(() -> mutations.archiveMutation(deleteRenditionReq)))
+                .isEqualTo(Status.Code.FAILED_PRECONDITION);
+        assertThat(code(() -> mutations.archiveMutation(ArchiveMutationRequest.newBuilder()
+                .setOperationId(deleteRenditionId)
+                .setDeleteEntry(DeleteEntryRequest.newBuilder().setAddress(address))
+                .build()))).isEqualTo(Status.Code.ALREADY_EXISTS);
+        assertThat(code(() -> archive.putEntry(
+                firstPut(address).setOperationId(deleteRenditionId).build())))
+                .isEqualTo(Status.Code.ALREADY_EXISTS);
+
+        // PruneVersions refusal is likewise retained and queryable via GetArchiveMutation.
+        String pruneVersionsId = UUID.randomUUID().toString();
+        ArchiveMutationRequest pruneVersionsReq = ArchiveMutationRequest.newBuilder()
+                .setOperationId(pruneVersionsId)
+                .setPruneVersions(PruneVersionsRequest.newBuilder()
+                        .setAddress(address)
+                        .setKeepLatest(1))
+                .build();
+        assertThat(code(() -> mutations.archiveMutation(pruneVersionsReq)))
+                .isEqualTo(Status.Code.FAILED_PRECONDITION);
+        GetArchiveMutationRequest lookupPrune = GetArchiveMutationRequest.newBuilder()
+                .setAccountId(ACCOUNT)
+                .setOperationId(pruneVersionsId)
+                .build();
+        assertThat(code(() -> mutations.getArchiveMutation(lookupPrune)))
+                .isEqualTo(Status.Code.FAILED_PRECONDITION);
+        assertThat(description(() -> mutations.getArchiveMutation(lookupPrune)))
+                .contains("PruneVersions");
+        assertThat(code(() -> mutations.archiveMutation(ArchiveMutationRequest.newBuilder()
+                .setOperationId(pruneVersionsId)
+                .setPruneVersions(PruneVersionsRequest.newBuilder()
+                        .setAddress(address)
+                        .setKeepLatest(2))
+                .build()))).isEqualTo(Status.Code.ALREADY_EXISTS);
+    }
 }

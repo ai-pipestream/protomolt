@@ -84,6 +84,7 @@ import ai.protomolt.proto.repo.v2.SaveDocumentRequest;
 import ai.protomolt.proto.repo.v2.SaveDocumentResponse;
 import ai.protomolt.proto.repo.v2.SaveOwner;
 import ai.protomolt.proto.repo.v2.SaveRejection;
+import ai.protomolt.proto.repo.v2.SourceRevision;
 import ai.protomolt.proto.repo.v2.StreamedPart;
 import ai.protomolt.proto.repo.v2.UnchangedPolicy;
 import ai.protomolt.proto.repo.v2.UploadHeader;
@@ -116,6 +117,7 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.TreeMap;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutionException;
 import java.util.stream.Collectors;
 
@@ -145,6 +147,15 @@ public final class DocumentArchive {
     /** The request metadata key a translated save records the archive content digest under. */
     public static final String CONTENT_SHA256_METADATA = "archive.content_sha256";
 
+    /** The request metadata key a recorded archive mutation refusal sets for its kind. */
+    public static final String MUTATION_KIND_METADATA = "archive.mutation_kind";
+
+    /** The request metadata key a recorded archive mutation sets for its canonical command SHA-256. */
+    public static final String MUTATION_SHA256_METADATA = "archive.mutation_sha256";
+
+    /** The request metadata key a recorded archive mutation refusal sets for its refusal message. */
+    public static final String MUTATION_REFUSAL_METADATA = "archive.mutation_refusal";
+
     /**
      * Default maximum total rendition bytes a single unary {@link #getEntry(GetEntryRequest)}
      * response will assemble in memory (32 MiB). Callers needing larger renditions must
@@ -155,6 +166,13 @@ public final class DocumentArchive {
     static final int DEFAULT_PAGE_SIZE = 100;
     private static final int STATS_SCAN_PAGE_SIZE = 500;
     private static final String DEFAULT_DATASOURCE_ID = "ds-archive";
+    private static final String MUTATION_GRAPH_PREFIX = "archive-mutation:";
+    private static final String DELETE_RENDITION_REFUSAL =
+            "DeleteRendition is not supported by the archive over v2 documents under keep-forever retention;"
+                    + " destructive byte removal across versions requires per-blob purge or section 13 retention";
+    private static final String PRUNE_VERSIONS_REFUSAL =
+            "PruneVersions is not supported by the archive over v2 documents under keep-forever retention;"
+                    + " removing retained versions requires section 13 retention";
 
     private static final ProtoValidator VALIDATOR = ProtoValidator.create();
     private static final PartSelection CORE_AND_BLOBS = PartSelection.newBuilder()
@@ -162,12 +180,19 @@ public final class DocumentArchive {
     private static final PartSelection BLOBS_ONLY = PartSelection.newBuilder()
             .addSelectors(ArchiveCoordinates.BLOBS).build();
 
+    private record MutationKey(String accountId, String operationId) {
+    }
+
+    private record RefusedMutation(String kind, String commandSha256, String refusalMessage) {
+    }
+
     private final DocumentServiceGrpc.DocumentServiceBlockingStub documents;
     private final DocumentServiceGrpc.DocumentServiceFutureStub futureDocuments;
     private final ArchiveBindings bindings;
     private final ArchiveViews views;
     private final Clock clock;
     private final long maxUnaryGetBytes;
+    private final Map<MutationKey, RefusedMutation> refusedMutations = new ConcurrentHashMap<>();
 
     /**
      * Constructs a {@link DocumentArchive} with {@link #DEFAULT_MAX_UNARY_GET_BYTES}.
@@ -946,6 +971,10 @@ public final class DocumentArchive {
      */
     Optional<Recorded> recordedOutcome(NodeAddress address, String operationId, String contentSha256,
             boolean derivedLastWriteWins) {
+        if (refusedMutations.containsKey(new MutationKey(address.getAccountId(), operationId))) {
+            throw ArchiveErrors.alreadyExists("operation_id", operationId
+                    + " is recorded for a request with other content");
+        }
         GetOperationOutcomeResponse outcome = documents.getOperationOutcome(GetOperationOutcomeRequest.newBuilder()
                 .setAccountId(address.getAccountId())
                 .setOperationId(operationId)
@@ -1542,7 +1571,8 @@ public final class DocumentArchive {
     }
 
     /**
-     * {@code DeleteRendition}: validates the request and refuses by name with
+     * {@code DeleteRendition}: validates the request, records the refusal outcome
+     * under {@code (account_id, operation_id)}, and refuses by name with
      * {@code FAILED_PRECONDITION} under v2 keep-forever retention.
      *
      * @param operationId the caller-supplied operation UUID, or empty
@@ -1556,13 +1586,16 @@ public final class DocumentArchive {
         if (request.getReason().isBlank()) {
             throw ArchiveErrors.invalid("reason", "must not be blank");
         }
-        if (operationId != null && !operationId.isEmpty()) {
-            requireOperationIdUnused(
-                    request.getAddress().getAccountId(), parseOperationId(operationId));
-        }
-        throw ArchiveErrors.failedPrecondition(
-                "DeleteRendition is not supported by the archive over v2 documents under keep-forever retention;"
-                        + " destructive byte removal across versions requires per-blob purge or section 13 retention");
+        String resolvedId = operationId != null && !operationId.isEmpty()
+                ? parseOperationId(operationId)
+                : ArchiveOperationKeys.operationId("", request);
+        String commandSha256 = ArchiveOperationKeys.deleteRenditionCommandSha256(request);
+        throw refuseUnsupportedMutation(
+                request.getAddress(),
+                resolvedId,
+                ArchiveMutationKind.ARCHIVE_MUTATION_KIND_DELETE_RENDITION.name(),
+                commandSha256,
+                DELETE_RENDITION_REFUSAL);
     }
 
     /**
@@ -1578,7 +1611,8 @@ public final class DocumentArchive {
     }
 
     /**
-     * {@code PruneVersions}: validates the request and refuses by name with
+     * {@code PruneVersions}: validates the request, records the refusal outcome
+     * under {@code (account_id, operation_id)}, and refuses by name with
      * {@code FAILED_PRECONDITION} under v2 keep-forever retention.
      *
      * @param operationId the caller-supplied operation UUID, or empty
@@ -1589,13 +1623,16 @@ public final class DocumentArchive {
     public ArchiveMutationResponse pruneVersions(
             String operationId, PruneVersionsRequest request) {
         requireValid(request);
-        if (operationId != null && !operationId.isEmpty()) {
-            requireOperationIdUnused(
-                    request.getAddress().getAccountId(), parseOperationId(operationId));
-        }
-        throw ArchiveErrors.failedPrecondition(
-                "PruneVersions is not supported by the archive over v2 documents under keep-forever retention;"
-                        + " removing retained versions requires section 13 retention");
+        String resolvedId = operationId != null && !operationId.isEmpty()
+                ? parseOperationId(operationId)
+                : ArchiveOperationKeys.operationId("", request);
+        String commandSha256 = ArchiveOperationKeys.pruneVersionsCommandSha256(request);
+        throw refuseUnsupportedMutation(
+                request.getAddress(),
+                resolvedId,
+                ArchiveMutationKind.ARCHIVE_MUTATION_KIND_PRUNE_VERSIONS.name(),
+                commandSha256,
+                PRUNE_VERSIONS_REFUSAL);
     }
 
     /**
@@ -1606,7 +1643,7 @@ public final class DocumentArchive {
      * @return the recorded archive mutation receipt
      * @throws StatusRuntimeException {@code NOT_FOUND} when the operation ID is absent or
      *         does not name an archive mutation, or the recorded rejection status when
-     *         the operation was rejected
+     *         the archive mutation was rejected
      */
     public GetArchiveMutationResponse getArchiveMutation(GetArchiveMutationRequest request) {
         requireValid(request);
@@ -1617,11 +1654,19 @@ public final class DocumentArchive {
                         .setOperationId(operationId)
                         .build());
         if (!outcome.hasCommitted()) {
+            RefusedMutation local =
+                    refusedMutations.get(new MutationKey(request.getAccountId(), operationId));
+            if (local != null) {
+                throw ArchiveErrors.failedPrecondition(local.refusalMessage());
+            }
             throw ArchiveErrors.notFound("Archive mutation " + operationId + " does not exist");
         }
         RecordedOutcome recorded = outcome.getCommitted();
         if (recorded.hasRejection()) {
-            throw recordedRejection(recorded.getRejection());
+            if (recorded.getRequestMetadataMap().containsKey(MUTATION_KIND_METADATA)) {
+                throw mutationRejection(recorded);
+            }
+            throw ArchiveErrors.notFound("Archive mutation " + operationId + " does not exist");
         }
         if (!recorded.hasAccession() || !recorded.getAccession().getTombstone()) {
             throw ArchiveErrors.notFound("Archive mutation " + operationId + " does not exist");
@@ -1646,6 +1691,10 @@ public final class DocumentArchive {
             String operationId,
             long expectedVersion,
             boolean derivedLastWriteWins) {
+        if (refusedMutations.containsKey(new MutationKey(address.getAccountId(), operationId))) {
+            throw ArchiveErrors.alreadyExists(
+                    "operation_id", operationId + " is recorded for a non-delete operation");
+        }
         GetOperationOutcomeResponse outcome = documents.getOperationOutcome(
                 GetOperationOutcomeRequest.newBuilder()
                         .setAccountId(address.getAccountId())
@@ -1656,7 +1705,14 @@ public final class DocumentArchive {
         }
         RecordedOutcome recorded = outcome.getCommitted();
         if (recorded.hasRejection()) {
-            throw recordedRejection(recorded.getRejection());
+            String recordedSha256 =
+                    recorded.getRequestMetadataOrDefault(MUTATION_SHA256_METADATA, "");
+            String commandSha256 = ArchiveOperationKeys.deleteEntryCommandSha256(entryAddress);
+            if (!recordedSha256.isEmpty() && recordedSha256.equals(commandSha256)) {
+                throw mutationRejection(recorded);
+            }
+            throw ArchiveErrors.alreadyExists(
+                    "operation_id", operationId + " is recorded for a non-delete operation");
         }
         if (!recorded.hasAccession() || !recorded.getAccession().getTombstone()) {
             throw ArchiveErrors.alreadyExists(
@@ -1728,16 +1784,124 @@ public final class DocumentArchive {
         }
     }
 
-    private void requireOperationIdUnused(String accountId, String operationId) {
+    private StatusRuntimeException refuseUnsupportedMutation(
+            EntryAddress entryAddress,
+            String operationId,
+            String kind,
+            String commandSha256,
+            String refusalMessage) {
+        MutationKey key = new MutationKey(entryAddress.getAccountId(), operationId);
+        RefusedMutation local = refusedMutations.get(key);
+        if (local != null) {
+            if (local.commandSha256().equals(commandSha256)) {
+                return ArchiveErrors.failedPrecondition(local.refusalMessage());
+            }
+            return ArchiveErrors.alreadyExists(
+                    "operation_id", operationId + " is already recorded for another operation");
+        }
         GetOperationOutcomeResponse outcome = documents.getOperationOutcome(
                 GetOperationOutcomeRequest.newBuilder()
-                        .setAccountId(accountId)
+                        .setAccountId(entryAddress.getAccountId())
                         .setOperationId(operationId)
                         .build());
         if (outcome.hasCommitted()) {
-            throw ArchiveErrors.alreadyExists(
+            RecordedOutcome recorded = outcome.getCommitted();
+            String recordedSha256 =
+                    recorded.getRequestMetadataOrDefault(MUTATION_SHA256_METADATA, "");
+            if (recorded.hasRejection()
+                    && !recordedSha256.isEmpty()
+                    && recordedSha256.equals(commandSha256)) {
+                return mutationRejection(recorded);
+            }
+            return ArchiveErrors.alreadyExists(
                     "operation_id", operationId + " is already recorded for another operation");
         }
+        RefusedMutation racedLocal = refusedMutations.putIfAbsent(
+                key, new RefusedMutation(kind, commandSha256, refusalMessage));
+        if (racedLocal != null && !racedLocal.commandSha256().equals(commandSha256)) {
+            return ArchiveErrors.alreadyExists(
+                    "operation_id", operationId + " is already recorded for another operation");
+        }
+        recordRefusedMutationInDocuments(
+                entryAddress, operationId, kind, commandSha256, refusalMessage);
+        return ArchiveErrors.failedPrecondition(refusalMessage);
+    }
+
+    private void recordRefusedMutationInDocuments(
+            EntryAddress entryAddress,
+            String operationId,
+            String kind,
+            String commandSha256,
+            String refusalMessage) {
+        Optional<ArchiveBinding> binding =
+                bindings.find(entryAddress.getAccountId(), entryAddress.getArchive());
+        String datasourceId =
+                binding.map(ArchiveBinding::datasourceId).orElse(DEFAULT_DATASOURCE_ID);
+        String drive = binding.map(ArchiveBinding::drive).orElse("");
+        NodeAddress syntheticAddress = NodeAddress.newBuilder()
+                .setAccountId(entryAddress.getAccountId())
+                .setGraphId(MUTATION_GRAPH_PREFIX + entryAddress.getAccountId())
+                .setGraphAddressId(entryAddress.getArchive())
+                .setDocId(operationId)
+                .build();
+        SaveDocumentRequest request = SaveDocumentRequest.newBuilder()
+                .setOperationId(operationId)
+                .setTarget(DocumentTarget.newBuilder().setAddress(syntheticAddress))
+                .setExpected(ExpectedRevision.newBuilder().setNone(true))
+                .setDocument(Document.newBuilder()
+                        .setDocId(operationId)
+                        .setOwnership(OwnershipContext.newBuilder()
+                                .setAccountId(entryAddress.getAccountId())
+                                .setDatasourceId(datasourceId))
+                        .setSearchMetadata(SearchMetadata.newBuilder()
+                                .setTitle(kind)
+                                .setCreationDate(now())))
+                .addWrites(put(ArchiveCoordinates.CORE))
+                .addDerivedFrom(SourceRevision.newBuilder()
+                        .setAddress(syntheticAddress)
+                        .setRevision(1L))
+                .setOwner(SaveOwner.newBuilder()
+                        .setIntake(IntakeOrigin.newBuilder().setDatasourceId(datasourceId)))
+                .setValidationMode(ValidationMode.VALIDATION_MODE_TYPED)
+                .setDrive(drive)
+                .putMetadata(MUTATION_KIND_METADATA, kind)
+                .putMetadata(MUTATION_SHA256_METADATA, commandSha256)
+                .putMetadata(MUTATION_REFUSAL_METADATA, refusalMessage)
+                .build();
+        try {
+            documents.saveDocument(request);
+        } catch (StatusRuntimeException failure) {
+            Status.Code code = failure.getStatus().getCode();
+            if (code == Status.Code.FAILED_PRECONDITION || code == Status.Code.UNIMPLEMENTED) {
+                return;
+            }
+            if (code == Status.Code.ALREADY_EXISTS) {
+                GetOperationOutcomeResponse raced = documents.getOperationOutcome(
+                        GetOperationOutcomeRequest.newBuilder()
+                                .setAccountId(entryAddress.getAccountId())
+                                .setOperationId(operationId)
+                                .build());
+                if (raced.hasCommitted()
+                        && raced.getCommitted().hasRejection()
+                        && raced.getCommitted()
+                                .getRequestMetadataOrDefault(MUTATION_SHA256_METADATA, "")
+                                .equals(commandSha256)) {
+                    return;
+                }
+                throw ArchiveErrors.alreadyExists(
+                        "operation_id",
+                        operationId + " is already recorded for another operation");
+            }
+            throw failure;
+        }
+    }
+
+    private static StatusRuntimeException mutationRejection(RecordedOutcome recorded) {
+        String refusal = recorded.getRequestMetadataOrDefault(MUTATION_REFUSAL_METADATA, "");
+        if (!refusal.isEmpty()) {
+            return ArchiveErrors.failedPrecondition(refusal);
+        }
+        return recordedRejection(recorded.getRejection());
     }
 
     private ArchiveMutationReceipt deleteReceipt(
