@@ -294,6 +294,12 @@ public final class DocumentSaves {
         return () -> catalog;
     }
 
+    private static ConceptSchemeCatalog snapshotConcepts(ConceptSchemeCatalog live) {
+        ConceptSchemeCatalog pinned = Objects.requireNonNull(live.snapshot(), "live.snapshot()");
+        Map<String, Optional<ConceptSchemeCatalog.Mounted>> memoizedSchemes = new HashMap<>();
+        return schemeId -> memoizedSchemes.computeIfAbsent(schemeId, pinned::scheme);
+    }
+
     /** Seam for tests that need another container identity as the only registered version. */
     DocumentSaves(Catalog catalog, Drives drives, DocumentSchemaAdmission.Resolver resolver,
             DocumentSchemaAdmission.Limits limits, DocumentAdmissionReservations reservations, Clock clock,
@@ -967,12 +973,8 @@ public final class DocumentSaves {
                 attested.add(new DocumentCandidateAdmission.AttestedOpaque(
                         fragment(resolved.attestation().getOccurrence().getPart(), ByteString.empty()).part(),
                         resolved.attestation().getOccurrence().getStepsList(), resolved.attestation().getTypeUrl()));
-            ConceptSchemeCatalog backing =
-                    Objects.requireNonNull(conceptSchemes.get(), "conceptSchemes.get()");
-            Map<String, Optional<ConceptSchemeCatalog.Mounted>> memoizedSchemes =
-                    new HashMap<>();
             saveConceptSnapshot.set(
-                    schemeId -> memoizedSchemes.computeIfAbsent(schemeId, backing::scheme));
+                    snapshotConcepts(Objects.requireNonNull(conceptSchemes.get(), "conceptSchemes.get()")));
             try (var result = DocumentCandidateAdmission.check(
                     new DocumentCandidateAdmission.Request(address.getDocId(), admitted, container, attested),
                     resolver, limits, reservations, clock.instant(), () -> {}, contentValidator)) {

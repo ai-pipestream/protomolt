@@ -501,6 +501,62 @@ class DocumentConceptsIT {
         }
     }
 
+    @Test void oneSaveMustNotMixDifferentSchemeSnapshotsAcrossSchemes() throws Exception {
+        var source = new Source();
+        source.put("subject", "s1", scheme(concept("physics")));
+        source.put("region", "r1", scheme(concept("emea")));
+        try (var f = new AccessionFixture(); var config = DistributedConfig.over(source)) {
+            var mounts = ConceptSchemeMounts.follow(config, List.of("subject", "region"));
+            assertThat(config.refresh().refused()).isEmpty();
+            var subjectLookedUp = new java.util.concurrent.atomic.AtomicBoolean();
+            var refreshingCatalog = new ai.protomolt.proto.validate.spi.ConceptSchemeCatalog() {
+                @Override
+                public Optional<Mounted> scheme(String schemeId) {
+                    return mounts.scheme(schemeId);
+                }
+
+                @Override
+                public ai.protomolt.proto.validate.spi.ConceptSchemeCatalog snapshot() {
+                    var pinned = mounts.snapshot();
+                    return schemeId -> {
+                        var mounted = pinned.scheme(schemeId);
+                        if ("subject".equals(schemeId) && subjectLookedUp.compareAndSet(false, true)) {
+                            // Right after "subject" is checked against s1={physics}, refresh
+                            // both schemes to s2={astrophysics} and r2={amer}. Because the
+                            // multi-scheme snapshot was already pinned before the first scheme
+                            // lookup, the subsequent lookup of "region" must still see r1={emea}.
+                            source.put("subject", "s2", DocumentConceptsIT.scheme(concept("astrophysics")));
+                            source.put("region", "r2", DocumentConceptsIT.scheme(concept("amer")));
+                            assertThat(config.refresh().refused()).isEmpty();
+                        }
+                        return mounted;
+                    };
+                }
+            };
+            var saves = new DocumentSaves(
+                    f.catalog,
+                    f.drives,
+                    resolver(),
+                    limits(),
+                    bytes -> () -> {},
+                    Clock.systemUTC(),
+                    DocumentSchemas.compiled(),
+                    false,
+                    () -> refreshingCatalog);
+            var crossSchemePayload = paper(p -> p
+                    .setField(PAPER.findFieldByName("subject"), ref("subject", "physics"))
+                    .addRepeatedField(PAPER.findFieldByName("sections"), section(ref("region", "amer"))));
+            DocumentDeletesIT.assertCode(
+                    Status.Code.INVALID_ARGUMENT,
+                    () -> saves.save(
+                            processAuthority(),
+                            save("cross-scheme-snap", address(ACCOUNT, "cross-scheme"),
+                                    document("cross-scheme", crossSchemePayload))));
+            assertThat(subjectLookedUp.get()).isTrue();
+            assertThat(f.catalog.concepts(address(ACCOUNT, "cross-scheme"))).isEmpty();
+        }
+    }
+
     // ------------------------------------------------------------------ fixtures
 
     /** A config source over a map, one subject per scheme. */
