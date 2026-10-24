@@ -62,10 +62,14 @@ public final class WorkflowRunDatabase implements AutoCloseable {
                     .locations(config.migrationLocation())
                     .load()
                     .migrate();
-        } catch (RuntimeException e) {
+        } catch (Throwable t) {
             // Don't leak the pool if migration fails.
-            this.dataSource.close();
-            throw e;
+            try {
+                this.dataSource.close();
+            } catch (Throwable suppressed) {
+                t.addSuppressed(suppressed);
+            }
+            throw t;
         }
     }
 
@@ -85,10 +89,10 @@ public final class WorkflowRunDatabase implements AutoCloseable {
                 c.commit();
                 return result;
             } catch (RuntimeException e) {
-                rollbackQuietly(c);
+                rollbackQuietly(c, e);
                 throw e;
             } catch (Exception e) {
-                rollbackQuietly(c);
+                rollbackQuietly(c, e);
                 throw WorkflowRunStoreException.wrap("transactional work failed", e);
             }
         } catch (SQLException e) {
@@ -108,7 +112,19 @@ public final class WorkflowRunDatabase implements AutoCloseable {
     public <T> T readOnly(Function<Connection, T> work) {
         try (Connection c = dataSource.getConnection()) {
             c.setReadOnly(true);
-            return work.apply(c);
+            final T result;
+            try {
+                result = work.apply(c);
+            } catch (Throwable t) {
+                try {
+                    c.setReadOnly(false);
+                } catch (Throwable suppressed) {
+                    t.addSuppressed(suppressed);
+                }
+                throw t;
+            }
+            c.setReadOnly(false);
+            return result;
         } catch (SQLException e) {
             throw WorkflowRunStoreException.wrap("read-only work failed", e);
         }
@@ -129,12 +145,11 @@ public final class WorkflowRunDatabase implements AutoCloseable {
         dataSource.close();
     }
 
-    private static void rollbackQuietly(Connection c) {
+    private static void rollbackQuietly(Connection c, Throwable primary) {
         try {
             c.rollback();
         } catch (SQLException rollbackFailure) {
-            // The original failure is the one that matters; a rollback
-            // failure on top of it must not mask it.
+            primary.addSuppressed(rollbackFailure);
         }
     }
 }

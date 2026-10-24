@@ -889,19 +889,35 @@ per-rendition change is the difference between the manifests of `version` and
 `previous_version`, both named in the event. This retires the "generalize the
 relay" item under Events above: there is one relay and one event type.
 
+**Archive definitions (`CreateArchive`, `GetArchive`, `ListArchives`).**
+`DocumentArchiveBindings` records each archive definition as a CORE-only v2
+document in the reserved `archive-def:<account_id>` graph
+(`graph_address_id = "archives"`, `doc_id = <archive_name>`) with
+`ExpectedRevision.none` so duplicate names fail atomically with
+`ALREADY_EXISTS`. The archive's `archive.drive_name`, `archive.datasource_id`,
+`archive.description`, `archive.versioning`, and user `meta.<key>` entries live
+in `search_metadata.metadata` so `ListArchives` projects directly from
+`ListDocuments` lookup rows and `find(account, archive)` binds entry writes to
+the archive's `drive_name`.
+
+**`GetArchiveStats` and `ListEntriesResponse.total_count`.**
+`DocumentArchive.getArchiveStats` computes exact per-archive and per-rendition
+counters over the `archive:<account_id>` graph documents and revision manifests
+(counting only the current revision when the archive policy is
+`VERSIONING_POLICY_NONE`), and `ListEntriesResponse.total_count` reports
+`ListDocumentsResponse.total_matching` before pagination.
+
 ### Not settled here
 
 Each needs its own follow-up issue under #535 before the ledger retires:
 
-- **Archive definitions.** Where `CreateArchive` records an archive (name,
-  drive, datasource, versioning policy) once the ledger is gone.
 - **`ArchiveMutationService`.** `DeleteEntry` maps to `DeleteDocument` (a
   tombstone). `DeleteRendition` (RTBF bytes removal across versions) and
   `PruneVersions` have no v2 counterpart under keep-forever; they need either
   per-blob purge or §13 retention, and until then are refused by name.
-- **`GetArchiveStats`.** The exact counters become catalog queries over
-  `archive:` documents or an outbox-fed projection; which one is measured, not
-  assumed.
+- **Host cutover (#632).** Switching `RepoServices` from `JdbcArchiveStore` to
+  `DocumentArchiveGrpcService` once `ArchiveMutationService` and the HTTP upload
+  route cut over.
 - **Classification and bridging** (`ClassifyEntry`, `BridgeEntry`, content
   profiles) run over renditions read through this section and write their
   derived renditions through it.

@@ -74,9 +74,22 @@ public final class KafkaChangeSink implements ChangeSink, AutoCloseable {
      * @return the ready sink
      */
     public static KafkaChangeSink create(ConfluenceConnectorConfig config) {
-        return new KafkaChangeSink(
-                newProducer(config.kafkaBootstrapServers(), config.schemaRegistryUrl()),
-                config.kafkaTopic(), config.kafkaSnapshotsTopic());
+        String topic = config.kafkaTopic();
+        String snapshotsTopic = config.kafkaSnapshotsTopic();
+        if (topic == null || topic.isBlank()) {
+            throw new IllegalArgumentException("topic cannot be null or blank");
+        }
+        if (snapshotsTopic == null || snapshotsTopic.isBlank()) {
+            throw new IllegalArgumentException("snapshotsTopic cannot be null or blank");
+        }
+        KafkaProducer<String, Message> producer = newProducer(
+                config.kafkaBootstrapServers(), config.schemaRegistryUrl());
+        try {
+            return new KafkaChangeSink(producer, topic, snapshotsTopic);
+        } catch (RuntimeException e) {
+            producer.close();
+            throw e;
+        }
     }
 
     /**

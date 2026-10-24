@@ -41,6 +41,17 @@ public interface ConceptSchemeCatalog {
     }
 
     /**
+     * Captures an immutable point-in-time snapshot of all currently mounted
+     * concept schemes so a single save evaluates membership and expansion
+     * against one consistent multi-scheme view.
+     *
+     * @return a point-in-time catalog snapshot
+     */
+    default ConceptSchemeCatalog snapshot() {
+        return this;
+    }
+
+    /**
      * A catalog for re-reading content that was admitted earlier. The schema half of the
      * rule still holds (a value's scheme must be one the field binds), but membership is
      * mount configuration that was decided when the content was admitted, so it is not

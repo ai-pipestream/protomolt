@@ -110,6 +110,21 @@ class RerankedSemanticSearchTest {
     }
 
     @Test
+    void nonPositiveKFailsBeforeCallingEngine() {
+        RerankedSemanticSearch search = search(scoringBy(text -> 0.5));
+
+        assertThatThrownBy(() -> search.search("books", "embedding", "sentence",
+                "a young dog", 0, 3))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("k must be > 0");
+        assertThatThrownBy(() -> search.search("books", "embedding", "sentence",
+                "a young dog", -2, 3))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("k must be > 0");
+        assertThat(fake.requests).isEmpty();
+    }
+
+    @Test
     void aHitWithoutTheTextFieldFailsNamingTheId() {
         fake.respondWithHits(
                 hit("a", 0.9, "the dog sat on the mat"),

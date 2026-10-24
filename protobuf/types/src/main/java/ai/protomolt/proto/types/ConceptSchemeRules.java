@@ -139,18 +139,57 @@ public final class ConceptSchemeRules {
     }
 
     /**
-     * SKOS round-trip IRIs stay inert: only http, https, and urn schemes
-     * (case-insensitive) are kept, so a scheme with side effects in a renderer
-     * (javascript, data, vbscript, file) never rides along.
+     * SKOS round-trip IRIs stay inert: only http and https IRIs with a non-empty
+     * authority host and urn IRIs (schemes case-insensitive) are kept, so a scheme
+     * with side effects in a renderer (javascript, data, vbscript, file) or an
+     * authority-less http(s) reference never rides along.
      */
     private static void requireIriScheme(String iri, String path, List<Violation> violations) {
-        int colon = iri.indexOf(':');
-        String scheme = colon < 0 ? "" : iri.substring(0, colon);
-        if (!("http".equalsIgnoreCase(scheme) || "https".equalsIgnoreCase(scheme)
-                || "urn".equalsIgnoreCase(scheme))) {
+        if (!isInertIri(iri)) {
             violations.add(new Violation(path, "concept_scheme.iri_scheme",
-                    "IRI \"" + iri + "\" must use the http, https, or urn scheme"));
+                    "IRI \"" + iri + "\" must use the http or https scheme with an authority,"
+                            + " or the urn scheme"));
         }
+    }
+
+    private static boolean isInertIri(String iri) {
+        int colon = iri.indexOf(':');
+        if (colon < 0) {
+            return false;
+        }
+        String scheme = languageKey(iri.substring(0, colon));
+        String rest = iri.substring(colon + 1);
+        if ("http".equals(scheme) || "https".equals(scheme)) {
+            return hasAuthorityHost(rest);
+        }
+        if ("urn".equals(scheme)) {
+            return !rest.isEmpty() && !rest.startsWith("/");
+        }
+        return false;
+    }
+
+    private static boolean hasAuthorityHost(String rest) {
+        if (!rest.startsWith("//")) {
+            return false;
+        }
+        String afterSlashes = rest.substring(2);
+        int end = afterSlashes.length();
+        for (int i = 0; i < end; i++) {
+            char c = afterSlashes.charAt(i);
+            if (c == '/' || c == '?' || c == '#') {
+                end = i;
+                break;
+            }
+        }
+        String authority = afterSlashes.substring(0, end);
+        int at = authority.indexOf('@');
+        String hostPort = at < 0 ? authority : authority.substring(at + 1);
+        if (hostPort.startsWith("[")) {
+            return hostPort.indexOf(']') > 1;
+        }
+        int portColon = hostPort.indexOf(':');
+        String host = portColon < 0 ? hostPort : hostPort.substring(0, portColon);
+        return !host.isEmpty();
     }
 
     /** SKOS S13: at most one label of this kind per language. */

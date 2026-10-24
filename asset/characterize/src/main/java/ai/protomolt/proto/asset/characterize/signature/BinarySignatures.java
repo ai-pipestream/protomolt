@@ -12,6 +12,7 @@ import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.locks.ReentrantLock;
 import java.util.zip.GZIPInputStream;
 
 /**
@@ -34,6 +35,7 @@ import java.util.zip.GZIPInputStream;
 public final class BinarySignatures {
 
     private static final String BUNDLED = "binary-signatures.xml.gz";
+    private static final ReentrantLock LOAD_LOCK = new ReentrantLock();
 
     private static volatile BinarySignatures bundled;
 
@@ -58,7 +60,11 @@ public final class BinarySignatures {
             outranks = List.copyOf(outranks);
         }
 
-        /** The format's name with the version, when it has one. */
+        /**
+         * The format's name with the version, when it has one.
+         *
+         * @return the human-readable format label
+         */
         public String label() {
             return version.isBlank() ? name : name + " " + version;
         }
@@ -85,12 +91,15 @@ public final class BinarySignatures {
     public static BinarySignatures bundled() {
         BinarySignatures loaded = bundled;
         if (loaded == null) {
-            synchronized (BinarySignatures.class) {
+            LOAD_LOCK.lock();
+            try {
                 loaded = bundled;
                 if (loaded == null) {
                     loaded = loadBundled();
                     bundled = loaded;
                 }
+            } finally {
+                LOAD_LOCK.unlock();
             }
         }
         return loaded;
@@ -102,7 +111,9 @@ public final class BinarySignatures {
                 throw new IllegalStateException("the bundled signature set is not on the "
                         + "classpath");
             }
-            return load(new GZIPInputStream(in));
+            try (GZIPInputStream gzip = new GZIPInputStream(in)) {
+                return load(gzip);
+            }
         } catch (IOException unreadable) {
             throw new UncheckedIOException("the bundled signature set could not be read",
                     unreadable);
@@ -168,17 +179,29 @@ public final class BinarySignatures {
         return values;
     }
 
-    /** The compiled signatures, by their published identifier. */
+    /**
+     * The compiled signatures, by their published identifier.
+     *
+     * @return map of signature ID to compiled byte sequences
+     */
     public Map<String, List<SignatureSequence>> signatures() {
         return signatures;
     }
 
-    /** The published formats that a signature can identify. */
+    /**
+     * The published formats that a signature can identify.
+     *
+     * @return the list of published formats
+     */
     public List<Format> formats() {
         return formats;
     }
 
-    /** Formats by the set's own numeric identifier, for priority lookups. */
+    /**
+     * Formats by the set's own numeric identifier, for priority lookups.
+     *
+     * @return map of format ID to format metadata
+     */
     public Map<String, Format> byId() {
         Map<String, Format> index = new HashMap<>();
         for (Format format : formats) {
@@ -187,12 +210,20 @@ public final class BinarySignatures {
         return index;
     }
 
-    /** The published version of this set, for provenance. */
+    /**
+     * The published version of this set, for provenance.
+     *
+     * @return the published version string
+     */
     public String version() {
         return version;
     }
 
-    /** The definitions left out because a pattern in them would not compile. */
+    /**
+     * The definitions left out because a pattern in them would not compile.
+     *
+     * @return the skipped signature descriptions
+     */
     public List<String> skipped() {
         return skipped;
     }

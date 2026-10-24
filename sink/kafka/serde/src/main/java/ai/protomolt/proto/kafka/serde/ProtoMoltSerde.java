@@ -20,13 +20,21 @@ public class ProtoMoltSerde implements Serde<Message> {
     @Override
     public void configure(Map<String, ?> configs, boolean isKey) {
         serializer.configure(configs, isKey);
-        deserializer.configure(configs, isKey);
+        try {
+            deserializer.configure(configs, isKey);
+        } catch (RuntimeException | Error e) {
+            serializer.close();
+            throw e;
+        }
     }
 
     @Override
     public void close() {
-        serializer.close();
-        deserializer.close();
+        try {
+            serializer.close();
+        } finally {
+            deserializer.close();
+        }
     }
 
     @Override

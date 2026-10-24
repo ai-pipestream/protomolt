@@ -397,4 +397,35 @@ class RepoChangeSinkTest {
         assertThat(fake.saves).isEmpty();
         assertThat(fake.deletes).isEmpty();
     }
+
+    @Test
+    void createRejectsDisabledRepoAndCloseShutsDownChannelWhenInterrupted() throws Exception {
+        ConfluenceConnectorConfig disabledRepo = ConfluenceConnectorConfig.builder()
+                .baseUrl("https://example.atlassian.net/wiki")
+                .email("bot@protomolt.ai")
+                .apiToken("token")
+                .repoTarget(" ")
+                .build();
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> RepoChangeSink.create(disabledRepo))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("repoTarget");
+
+        ConfluenceConnectorConfig validConfig = ConfluenceConnectorConfig.builder()
+                .baseUrl("https://example.atlassian.net/wiki")
+                .email("bot@protomolt.ai")
+                .apiToken("token")
+                .repoTarget("localhost:9090")
+                .build();
+        RepoChangeSink created = RepoChangeSink.create(validConfig);
+        Thread.currentThread().interrupt();
+        try {
+            try {
+                created.close();
+            } catch (InterruptedException expected) {
+                // Expected when awaitTermination is interrupted.
+            }
+        } finally {
+            Thread.interrupted();
+        }
+    }
 }

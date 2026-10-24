@@ -110,7 +110,7 @@ public final class GrparseParserAdapter extends ParserPluginServiceGrpc.ParserPl
      * @param options adapter configuration
      */
     public GrparseParserAdapter(String target, GrparseAdapterOptions options) {
-        this(openChannel(target), options, true);
+        this(openChannel(target, options), options, true);
     }
 
     private GrparseParserAdapter(
@@ -173,9 +173,12 @@ public final class GrparseParserAdapter extends ParserPluginServiceGrpc.ParserPl
         }
     }
 
-    private static ManagedChannel openChannel(String target) {
+    private static ManagedChannel openChannel(String target, GrparseAdapterOptions options) {
         if (target == null || target.isBlank()) {
             throw new IllegalArgumentException("target must not be blank");
+        }
+        if (options == null) {
+            throw new IllegalArgumentException("options must not be null");
         }
         if (target.startsWith(INPROCESS_TARGET_PREFIX)) {
             return InProcessChannelBuilder.forName(

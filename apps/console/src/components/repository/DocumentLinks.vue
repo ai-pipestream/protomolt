@@ -209,6 +209,7 @@ async function loadLinks() {
   if (props.tombstone) return
   try {
     const answer = await clients.documents.listLinks(listLinksRequest(props.address, props.revision), { signal })
+    if (signal.aborted) return
     if (answer.revision !== props.revision) {
       throw new Error(`ListLinks answered for revision ${answer.revision}; revision ${props.revision} was asked for.`)
     }
@@ -228,6 +229,7 @@ async function resolve(row: LinkRow, first: boolean) {
       resolveLinkRequest(props.address, props.revision, row, earlier?.nextToken ?? ''),
       { signal },
     )
+    if (signal.aborted) return
     resolving.value = {
       key: row.key,
       rows: [...(earlier?.rows ?? []), ...page.documents.map(documentRow)],
@@ -253,6 +255,7 @@ async function loadBacklinks(first: boolean) {
   }
   try {
     const page = await clients.documents.listBacklinks(listBacklinksRequest(props.address, first ? '' : backlinksNext.value), { signal })
+    if (signal.aborted) return
     const more = page.backlinks.map(backlinkRow)
     backlinks.value = first ? more : [...backlinks.value, ...more]
     backlinksNext.value = page.nextPageToken

@@ -52,9 +52,24 @@ public final class IcebergSinkTask extends SinkTask {
         config = new IcebergSinkConfig(props);
         List<FileDescriptor> files = ConnectDescriptors.linkedFiles(config.descriptorSetBase64());
         descriptor = ConnectDescriptors.messageType(files, config.messageType());
-        catalog = catalogFactory.apply(config);
-        table = IcebergSink.ensureTable(catalog, config.table(), descriptor,
-                config.tableLocation(), config.partitionBy());
+        closeCatalog();
+        Catalog openedCatalog = catalogFactory.apply(config);
+        try {
+            table = IcebergSink.ensureTable(openedCatalog, config.table(), descriptor,
+                    config.tableLocation(), config.partitionBy());
+            catalog = openedCatalog;
+        } catch (RuntimeException | Error e) {
+            if (openedCatalog instanceof AutoCloseable closeable) {
+                try {
+                    closeable.close();
+                } catch (Exception closeEx) {
+                    e.addSuppressed(closeEx);
+                    LOG.warn("Closing the Iceberg catalog after failed start failed: {}",
+                            closeEx.getMessage());
+                }
+            }
+            throw e;
+        }
         LOG.info("Iceberg sink started: {} -> table {} ({} partition column(s))",
                 descriptor.getFullName(), config.table(), config.partitionBy().size());
     }
@@ -116,7 +131,17 @@ public final class IcebergSinkTask extends SinkTask {
 
     @Override
     public void stop() {
-        if (catalog instanceof AutoCloseable closeable) {
+        closeCatalog();
+    }
+
+    private void closeCatalog() {
+        Catalog active = catalog;
+        catalog = null;
+        closeCatalogQuietly(active);
+    }
+
+    private static void closeCatalogQuietly(Catalog toClose) {
+        if (toClose instanceof AutoCloseable closeable) {
             try {
                 closeable.close();
             } catch (Exception e) {

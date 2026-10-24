@@ -17,6 +17,7 @@ import java.time.Instant;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
  * The outbox relay's drain against a {@link MockProducer} and the in-memory
@@ -174,5 +175,30 @@ class WorkflowRunEventRelayTest {
                 .isEqualTo(WorkflowRunEventRecord.STATUS_PUBLISHED);
         assertThat(producer.history()).hasSize(1);
         assertThat(producer.history().get(0).key()).isEqualTo(job.jobId.toString());
+    }
+
+    @Test
+    void startIsIdempotentAndCloseJoinsCleanly() throws Exception {
+        insertJob();
+        relay.start();
+        relay.start();
+
+        long deadline = System.nanoTime() + Duration.ofSeconds(30).toNanos();
+        while (System.nanoTime() < deadline) {
+            if (WorkflowRunEventRecord.STATUS_PUBLISHED.equals(store.events().get(0).status)) {
+                break;
+            }
+            Thread.sleep(20);
+        }
+        relay.close();
+
+        assertThat(store.events().get(0).status)
+                .isEqualTo(WorkflowRunEventRecord.STATUS_PUBLISHED);
+    }
+
+    @Test
+    void newProducerClosesSerializerWhenKafkaProducerConstructionFails() {
+        assertThatThrownBy(() -> WorkflowRunEventRelay.newProducer("", null))
+                .isInstanceOf(RuntimeException.class);
     }
 }

@@ -4,8 +4,15 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import ai.protomolt.proto.actions.Caller.Budget;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import org.junit.jupiter.api.Test;
 
@@ -107,5 +114,50 @@ class ScopeBudgetsTest {
                 Map.of(Scopes.SCHEMA_READ, new Budget(1, 0))))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("never budgeted");
+    }
+
+    @Test
+    void concurrentAdmissionsAndExpiryPruningNeverOrphanWindowsOrBypassLimit() throws Exception {
+        int limit = 50;
+        int workers = 16;
+        int attemptsPerWorker = 20;
+        AtomicLong now = new AtomicLong(100_000L);
+        ScopeBudgets budgets = new ScopeBudgets(now::get);
+
+        // Seed expired windows so concurrent pruneExpired calls actively remove entries.
+        for (int i = 0; i < 32; i++) {
+            Caller stale = Caller.scoped("stale-" + i, Set.of(Scopes.SCHEMA_READ),
+                    Map.of(Scopes.SCHEMA_READ, new Budget(10, 0)));
+            assertThat(budgets.refuse(stale, Scopes.SCHEMA_READ, -1)).isEmpty();
+        }
+        now.addAndGet(60_000L);
+
+        Caller target = Caller.scoped("contended", Set.of(Scopes.SCHEMA_READ),
+                Map.of(Scopes.SCHEMA_READ, new Budget(limit, 0)));
+        CountDownLatch ready = new CountDownLatch(workers);
+        CountDownLatch start = new CountDownLatch(1);
+        AtomicInteger admitted = new AtomicInteger();
+
+        try (ExecutorService pool = Executors.newVirtualThreadPerTaskExecutor()) {
+            List<Future<?>> futures = new ArrayList<>();
+            for (int w = 0; w < workers; w++) {
+                futures.add(pool.submit(() -> {
+                    ready.countDown();
+                    start.await();
+                    for (int i = 0; i < attemptsPerWorker; i++) {
+                        if (budgets.refuse(target, Scopes.SCHEMA_READ, -1).isEmpty()) {
+                            admitted.incrementAndGet();
+                        }
+                    }
+                    return null;
+                }));
+            }
+            ready.await();
+            start.countDown();
+            for (Future<?> future : futures) {
+                future.get();
+            }
+        }
+        assertThat(admitted.get()).isEqualTo(limit);
     }
 }

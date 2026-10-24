@@ -21,6 +21,8 @@ import io.grpc.stub.StreamObserver;
 
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.locks.ReentrantLock;
 
 /**
  * The generic {@code InferenceService} gRPC surface wrapped around the SPI
@@ -75,31 +77,55 @@ public final class InferenceServiceImpl extends InferenceServiceGrpc.InferenceSe
             return;
         }
         executor.submit(() -> {
+            ReentrantLock observerLock = new ReentrantLock();
+            AtomicBoolean terminated = new AtomicBoolean();
             try {
                 engines.generateStream(request, new ChunkObserver() {
                     @Override
                     public void onNext(GenerateStreamResponse chunk) {
-                        synchronized (observer) {
-                            observer.onNext(chunk);
+                        observerLock.lock();
+                        try {
+                            if (!terminated.get()) {
+                                observer.onNext(chunk);
+                            }
+                        } finally {
+                            observerLock.unlock();
                         }
                     }
 
                     @Override
                     public void onComplete() {
-                        synchronized (observer) {
-                            observer.onCompleted();
+                        observerLock.lock();
+                        try {
+                            if (terminated.compareAndSet(false, true)) {
+                                observer.onCompleted();
+                            }
+                        } finally {
+                            observerLock.unlock();
                         }
                     }
 
                     @Override
                     public void onError(InferenceException error) {
-                        synchronized (observer) {
-                            observer.onError(status(error));
+                        observerLock.lock();
+                        try {
+                            if (terminated.compareAndSet(false, true)) {
+                                observer.onError(status(error));
+                            }
+                        } finally {
+                            observerLock.unlock();
                         }
                     }
                 });
             } catch (RuntimeException e) {
-                observer.onError(status(e));
+                observerLock.lock();
+                try {
+                    if (terminated.compareAndSet(false, true)) {
+                        observer.onError(status(e));
+                    }
+                } finally {
+                    observerLock.unlock();
+                }
             }
         });
     }

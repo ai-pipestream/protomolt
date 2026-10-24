@@ -34,12 +34,13 @@ import java.time.Clock;
 import java.util.function.Supplier;
 
 /**
- * {@code ArchiveService} over v2 documents: the entry reads and writes of
- * {@link DocumentArchive}, {@link RenditionReads} and {@link RenditionUploads}.
+ * {@code ArchiveService} over v2 documents: the archive-definition, stats, and
+ * entry reads and writes of {@link DocumentArchive}, {@link RenditionReads}
+ * and {@link RenditionUploads}.
  *
- * <p>The archive-definition, stats, classification and bridging calls are not
- * yet stored as v2 documents; each is {@code UNIMPLEMENTED} naming its open
- * follow-up under #535. Hosts keep serving those from the ledger until then.</p>
+ * <p>The classification and bridging calls are not yet stored as v2 documents;
+ * each is {@code UNIMPLEMENTED} naming its open follow-up under #535. Hosts
+ * keep serving those from the ledger until then.</p>
  */
 public final class DocumentArchiveGrpcService extends ArchiveServiceGrpc.ArchiveServiceImplBase {
 
@@ -48,12 +49,29 @@ public final class DocumentArchiveGrpcService extends ArchiveServiceGrpc.Archive
     private final RenditionUploads uploads;
 
     /**
+     * Constructs a {@link DocumentArchiveGrpcService} with
+     * {@link DocumentArchive#DEFAULT_MAX_UNARY_GET_BYTES}.
+     *
      * @param documents the channel to the v2 document service the archive is stored through
      * @param bindings the archive definitions
      * @param clock stamps {@code created_at} on an entry's creating save
      */
     public DocumentArchiveGrpcService(Channel documents, ArchiveBindings bindings, Clock clock) {
-        this.archive = new DocumentArchive(documents, bindings, clock);
+        this(documents, bindings, clock, DocumentArchive.DEFAULT_MAX_UNARY_GET_BYTES);
+    }
+
+    /**
+     * Constructs a {@link DocumentArchiveGrpcService} with an explicit unary {@code GetEntry}
+     * byte limit.
+     *
+     * @param documents the channel to the v2 document service the archive is stored through
+     * @param bindings the archive definitions
+     * @param clock stamps {@code created_at} on an entry's creating save
+     * @param maxUnaryGetBytes maximum total rendition bytes assembled in one unary {@code GetEntry}
+     */
+    public DocumentArchiveGrpcService(
+            Channel documents, ArchiveBindings bindings, Clock clock, long maxUnaryGetBytes) {
+        this.archive = new DocumentArchive(documents, bindings, clock, maxUnaryGetBytes);
         this.reads = new RenditionReads(archive);
         this.uploads = new RenditionUploads(archive, documents);
     }
@@ -95,22 +113,22 @@ public final class DocumentArchiveGrpcService extends ArchiveServiceGrpc.Archive
 
     @Override
     public void createArchive(CreateArchiveRequest request, StreamObserver<CreateArchiveResponse> responses) {
-        responses.onError(open("CreateArchive", "where archive definitions are recorded once the ledger retires"));
+        unary(() -> archive.createArchive(request), responses);
     }
 
     @Override
     public void getArchive(GetArchiveRequest request, StreamObserver<GetArchiveResponse> responses) {
-        responses.onError(open("GetArchive", "where archive definitions are recorded once the ledger retires"));
+        unary(() -> archive.getArchive(request), responses);
     }
 
     @Override
     public void listArchives(ListArchivesRequest request, StreamObserver<ListArchivesResponse> responses) {
-        responses.onError(open("ListArchives", "where archive definitions are recorded once the ledger retires"));
+        unary(() -> archive.listArchives(request), responses);
     }
 
     @Override
     public void getArchiveStats(GetArchiveStatsRequest request, StreamObserver<GetArchiveStatsResponse> responses) {
-        responses.onError(open("GetArchiveStats", "how the archive's exact counters are kept over v2 documents"));
+        unary(() -> archive.getArchiveStats(request), responses);
     }
 
     @Override

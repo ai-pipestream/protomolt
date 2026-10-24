@@ -274,8 +274,9 @@ public final class DocumentCandidateAdmission {
             // Fragments decode with the container version, not the compiled Document: a field
             // that version does not know is SCHEMA_MISSING, never dropped (decision 35).
             var type = container.schema().type();
-            // One set of link-schema checks for the whole candidate: each type is checked once.
+            // One set of link-schema and concept-schema checks for the whole candidate: each type is checked once.
             var linkSchemas = new DocumentLinks.SchemaChecks(active);
+            var conceptSchemas = new DocumentConcepts.SchemaChecks(active);
             requireLinks(linkSchemas, type, "container");
             var links = new ArrayList<DocumentLinks.Link>();
             var concepts = new ArrayList<DocumentConcepts.Tag>();
@@ -302,7 +303,7 @@ public final class DocumentCandidateAdmission {
                         throw new InvalidProtocolBufferException("Fragment was not completely consumed");
                     requireNoUnknownFields(parsed, fragment.part(), "", 0, active);
                     // Links are CORE content (requirements §17); a link value in any other part is refused.
-                    var found = DocumentLinks.extract(parsed, "");
+                    var found = DocumentLinks.extract(parsed, "", linkSchemas);
                     if (!found.isEmpty() && fragment.part() != DocumentPart.DOCUMENT_PART_CORE)
                         throw new ContentRefused(fragment.part() + " fragment holds link " + found.getFirst().fieldPath()
                                 + "; links belong in CORE", null);
@@ -310,7 +311,7 @@ public final class DocumentCandidateAdmission {
                     // Concept tags share the CORE-rooted occurrence identity of links. A tag in another
                     // part is checked the same way and stored with that part, but only CORE's are
                     // catalogued: mapping carries an interpretation into CORE to make it filterable.
-                    var tags = DocumentConcepts.extract(parsed, "");
+                    var tags = DocumentConcepts.extract(parsed, "", conceptSchemas);
                     if (fragment.part() == DocumentPart.DOCUMENT_PART_CORE) concepts.addAll(tags);
                     switch (fragment.part()) {
                         case DOCUMENT_PART_CHUNKS -> DocumentFragmentConfinement.requireConfinedSegmentation(parsed,
@@ -413,10 +414,11 @@ public final class DocumentCandidateAdmission {
                     }
                     List<DocumentSchemaOccurrences.Occurrence> found;
                     if (assessment instanceof DocumentPayloadAssessment.Accepted accepted) {
-                        found = accepted.checked().payload().occurrences();
-                        var decoded = accepted.checked().payload().decoded();
+                        var payload = accepted.checked().payload();
+                        found = payload.occurrences();
+                        var decoded = payload.decoded();
                         requireLinks(linkSchemas, decoded.getDescriptorForType(), envelope.getTypeUrl());
-                        var nestedPayloads = nestedPayloads(found, definitions, active);
+                        var nestedPayloads = nestedPayloads(payload, definitions, active);
                         final List<DocumentLinks.Link> rootLinks;
                         try {
                             rootLinks = DocumentLinks.extract(decoded, rootPath(type, root.access()),
@@ -431,13 +433,13 @@ public final class DocumentCandidateAdmission {
                         final List<DocumentConcepts.Tag> rootTags;
                         try {
                             rootTags = DocumentConcepts.extract(decoded, rootPath(type, root.access()),
-                                    rootOccurrence(found), nestedPayloads, active);
+                                    rootOccurrence(found), nestedPayloads, conceptSchemas);
                         } catch (DocumentConcepts.TagRefused refused) {
                             throw new ContentRefused("concept tags of " + envelope.getTypeUrl() + ": " + refused.getMessage(), refused);
                         }
                         if (fragment.part() == DocumentPart.DOCUMENT_PART_CORE) concepts.addAll(rootTags);
-                        decodedRemaining -= accepted.checked().payload().decodedBytes();
-                        for (var terminal : accepted.checked().payload().opaqueTerminals()) {
+                        decodedRemaining -= payload.decodedBytes();
+                        for (var terminal : payload.opaqueTerminals()) {
                             var steps = new ArrayList<>(locator.getAccessList());
                             steps.addAll(DocumentSchemaOccurrenceProjection.projectSteps(terminal.prefix(),
                                     definitions.schemas, active));
@@ -497,36 +499,37 @@ public final class DocumentCandidateAdmission {
     }
 
     /**
-     * Decodes the nested Any values of one root for the link and tag walks, each with the
-     * exact schema admission resolved for that occurrence. An Any is found by its occurrence
-     * path, never by its bytes: identical bytes elsewhere, typed or opaque, lend it
-     * nothing. An attested opaque occurrence has no resolved schema at its path, so it
-     * is not decoded and its links and tags are not read.
+     * Supplies the already-decoded nested Any values of one root for the link and tag walks,
+     * each decoded by {@link DocumentPayloadCheck} with the exact schema admission resolved
+     * for that occurrence. An Any is found by its occurrence path, never by its bytes:
+     * identical bytes elsewhere, typed or opaque, lend it nothing. An attested opaque
+     * occurrence has no resolved schema at its path, so it is not decoded and its links and
+     * tags are not read.
      */
-    private static DocumentLinks.Unpacker nestedPayloads(List<DocumentSchemaOccurrences.Occurrence> occurrences,
+    private static DocumentLinks.Unpacker nestedPayloads(DocumentPayloadCheck payload,
             DocumentSchemaDefinitions definitions, Runnable control) {
-        record Resolved(DocumentSchemaOccurrences.Boundary boundary, Descriptor type) {}
+        record Resolved(DocumentSchemaOccurrences.Boundary boundary, DynamicMessage decoded) {}
         var resolved = new HashMap<List<DocumentSchemaOccurrences.Step>, Resolved>();
-        for (var occurrence : occurrences) {
+        var decodedByPath = payload.decodedOccurrences();
+        for (var occurrence : payload.occurrences()) {
             var path = occurrence.path();
             if (!(path.getLast() instanceof DocumentSchemaOccurrences.Boundary boundary))
                 throw new IllegalStateException("occurrence path does not end at an Any boundary");
             var schema = definitions.schemas.get(new DocumentPayloadCheck.SchemaKey(boundary.typeUrl(), boundary.artifactSha256()));
             if (schema == null) throw new IllegalStateException("occurrence schema was not selected");
-            resolved.put(List.copyOf(path.subList(0, path.size() - 1)), new Resolved(boundary, schema.type()));
+            var decoded = decodedByPath.get(path);
+            if (decoded == null) throw new IllegalStateException("occurrence payload was not decoded");
+            resolved.put(List.copyOf(path.subList(0, path.size() - 1)), new Resolved(boundary, decoded));
         }
         return (at, typeUrl, value) -> {
+            control.run();
             var found = resolved.get(at);
             if (found == null) return Optional.empty();
             var boundary = found.boundary();
             if (!boundary.typeUrl().equals(typeUrl) || boundary.valueSizeBytes() != value.size()
                     || !boundary.valueSha256().equals(DocumentSchemaOccurrences.sha256(value, control)))
                 throw new IllegalStateException("An admitted Any occurrence does not match the value at its path");
-            try {
-                return Optional.of(new DocumentLinks.Entered(DynamicMessage.parseFrom(found.type(), value), boundary));
-            } catch (InvalidProtocolBufferException impossible) {
-                throw new IllegalStateException("An admitted Any value failed to decode", impossible);
-            }
+            return Optional.of(new DocumentLinks.Entered(found.decoded(), boundary));
         };
     }
 

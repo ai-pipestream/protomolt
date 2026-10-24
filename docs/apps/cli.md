@@ -10,7 +10,7 @@ not configured remain discoverable and answer `unavailable`. The standalone
 
 ```shell
 ./gradlew :protomolt-cli:installDist
-cli/build/install/protomolt-cli/bin/protomolt-cli list
+apps/cli/build/install/protomolt-cli/bin/protomolt-cli list
 ```
 
 The entry point is `ai.protomolt.proto.cli.ProtoMoltCli`, so the module can

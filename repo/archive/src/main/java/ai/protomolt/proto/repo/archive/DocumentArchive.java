@@ -1,11 +1,21 @@
 package ai.protomolt.proto.repo.archive;
 
+import ai.protomolt.proto.repo.archive.v1.Archive;
 import ai.protomolt.proto.repo.archive.v1.ArchiveEntryFacts;
+import ai.protomolt.proto.repo.archive.v1.ArchiveStats;
+import ai.protomolt.proto.repo.archive.v1.CreateArchiveRequest;
+import ai.protomolt.proto.repo.archive.v1.CreateArchiveResponse;
 import ai.protomolt.proto.repo.archive.v1.EntryAddress;
+import ai.protomolt.proto.repo.archive.v1.GetArchiveRequest;
+import ai.protomolt.proto.repo.archive.v1.GetArchiveResponse;
+import ai.protomolt.proto.repo.archive.v1.GetArchiveStatsRequest;
+import ai.protomolt.proto.repo.archive.v1.GetArchiveStatsResponse;
 import ai.protomolt.proto.repo.archive.v1.GetEntryManifestRequest;
 import ai.protomolt.proto.repo.archive.v1.GetEntryManifestResponse;
 import ai.protomolt.proto.repo.archive.v1.GetEntryRequest;
 import ai.protomolt.proto.repo.archive.v1.GetEntryResponse;
+import ai.protomolt.proto.repo.archive.v1.ListArchivesRequest;
+import ai.protomolt.proto.repo.archive.v1.ListArchivesResponse;
 import ai.protomolt.proto.repo.archive.v1.ListEntriesRequest;
 import ai.protomolt.proto.repo.archive.v1.ListEntriesResponse;
 import ai.protomolt.proto.repo.archive.v1.ListVersionsRequest;
@@ -17,6 +27,7 @@ import ai.protomolt.proto.repo.archive.v1.RenditionContent;
 import ai.protomolt.proto.repo.archive.v1.RenditionDescriptor;
 import ai.protomolt.proto.repo.archive.v1.RenditionManifestEntry;
 import ai.protomolt.proto.repo.archive.v1.RenditionState;
+import ai.protomolt.proto.repo.archive.v1.RenditionStats;
 import ai.protomolt.proto.repo.archive.v1.UploadRenditionHeader;
 import ai.protomolt.proto.repo.archive.v1.UploadRenditionResponse;
 import ai.protomolt.proto.repo.archive.v1.VersionManifest;
@@ -68,6 +79,7 @@ import ai.protomolt.proto.repo.v2.ValidationMode;
 import ai.protomolt.proto.repo.v2.WriteAction;
 import ai.protomolt.proto.validate.ProtoValidator;
 import ai.protomolt.proto.validate.ValidationResult;
+import com.google.common.util.concurrent.ListenableFuture;
 import com.google.protobuf.Any;
 import com.google.protobuf.ByteString;
 import com.google.protobuf.InvalidProtocolBufferException;
@@ -75,6 +87,7 @@ import com.google.protobuf.Message;
 import com.google.protobuf.Timestamp;
 import com.google.rpc.Code;
 import io.grpc.Channel;
+import io.grpc.Context;
 import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
 import io.grpc.protobuf.StatusProto;
@@ -89,6 +102,8 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
+import java.util.TreeMap;
+import java.util.concurrent.ExecutionException;
 import java.util.stream.Collectors;
 
 /**
@@ -109,35 +124,73 @@ import java.util.stream.Collectors;
  * fragment's shape, {@code filename} needing an original).</p>
  *
  * <p>Not served here, each a follow-up under #535: {@code ListEntries}
- * classification filters and {@code total_count} (no v2 counterpart until the
- * archive's counters are decided), and content profiles and classifications (the
- * asset layer's output).</p>
+ * classification filters, and content profiles and classifications (the asset
+ * layer's output).</p>
  */
 public final class DocumentArchive {
 
     /** The request metadata key a translated save records the archive content digest under. */
     public static final String CONTENT_SHA256_METADATA = "archive.content_sha256";
 
+    /**
+     * Default maximum total rendition bytes a single unary {@link #getEntry(GetEntryRequest)}
+     * response will assemble in memory (32 MiB). Callers needing larger renditions must
+     * stream them with {@code ReadRendition}.
+     */
+    public static final long DEFAULT_MAX_UNARY_GET_BYTES = 32L * 1024 * 1024;
+
     static final int DEFAULT_PAGE_SIZE = 100;
+    private static final int STATS_SCAN_PAGE_SIZE = 500;
+    private static final String DEFAULT_DATASOURCE_ID = "ds-archive";
 
     private static final ProtoValidator VALIDATOR = ProtoValidator.create();
     private static final PartSelection CORE_AND_BLOBS = PartSelection.newBuilder()
             .addSelectors(ArchiveCoordinates.CORE).addSelectors(ArchiveCoordinates.BLOBS).build();
+    private static final PartSelection BLOBS_ONLY = PartSelection.newBuilder()
+            .addSelectors(ArchiveCoordinates.BLOBS).build();
 
     private final DocumentServiceGrpc.DocumentServiceBlockingStub documents;
+    private final DocumentServiceGrpc.DocumentServiceFutureStub futureDocuments;
     private final ArchiveBindings bindings;
     private final ArchiveViews views;
     private final Clock clock;
+    private final long maxUnaryGetBytes;
 
     /**
+     * Constructs a {@link DocumentArchive} with {@link #DEFAULT_MAX_UNARY_GET_BYTES}.
+     *
      * @param documents the v2 document service the archive is stored through
      * @param bindings the archive definitions
      * @param clock stamps {@code created_at} on an entry's creating save
      */
     public DocumentArchive(Channel documents, ArchiveBindings bindings, Clock clock) {
-        this.documents = DocumentServiceGrpc.newBlockingStub(Objects.requireNonNull(documents, "documents"));
-        this.bindings = Objects.requireNonNull(bindings, "bindings");
+        this(documents, bindings, clock, DEFAULT_MAX_UNARY_GET_BYTES);
+    }
+
+    /**
+     * Constructs a {@link DocumentArchive} with an explicit unary {@code GetEntry} byte limit.
+     *
+     * @param documents the v2 document service the archive is stored through
+     * @param bindings the archive definitions
+     * @param clock stamps {@code created_at} on an entry's creating save
+     * @param maxUnaryGetBytes maximum total rendition bytes assembled in one unary {@code GetEntry}
+     */
+    public DocumentArchive(
+            Channel documents, ArchiveBindings bindings, Clock clock, long maxUnaryGetBytes) {
+        Objects.requireNonNull(documents, "documents");
+        Objects.requireNonNull(bindings, "bindings");
+        if (maxUnaryGetBytes <= 0) {
+            throw new IllegalArgumentException(
+                    "maxUnaryGetBytes must be positive: " + maxUnaryGetBytes);
+        }
+        this.documents = DocumentServiceGrpc.newBlockingStub(documents);
+        this.futureDocuments = DocumentServiceGrpc.newFutureStub(documents);
+        this.bindings = bindings instanceof DocumentArchiveBindings
+                ? bindings
+                : ArchiveBindings.overDocuments(
+                        documents, DEFAULT_DATASOURCE_ID, "", (acct, drive) -> true, bindings);
         this.clock = Objects.requireNonNull(clock, "clock");
+        this.maxUnaryGetBytes = maxUnaryGetBytes;
         this.views = new ArchiveViews();
     }
 
@@ -147,6 +200,185 @@ public final class DocumentArchive {
 
     ArchiveViews views() {
         return views;
+    }
+
+    // --------------------------------------------------- archive definitions
+
+    /**
+     * {@code CreateArchive}: stores a new archive definition in v2 documents with
+     * {@code ExpectedRevision.none} so duplicate archive names in the same account
+     * fail with {@code ALREADY_EXISTS}.
+     */
+    public CreateArchiveResponse createArchive(CreateArchiveRequest request) {
+        requireValid(request);
+        Archive archive = request.getArchive();
+        if (archive.getVersioning() != VersioningPolicy.VERSIONING_POLICY_NONE
+                && archive.getVersioning() != VersioningPolicy.VERSIONING_POLICY_RETAINED) {
+            throw ArchiveErrors.invalid(
+                    "archive.versioning", "must be NONE or RETAINED; nothing is assumed");
+        }
+        Archive created = bindings.create(archive, now());
+        requireValidView(created);
+        return CreateArchiveResponse.newBuilder().setArchive(created).build();
+    }
+
+    /** {@code GetArchive}: fetches one archive definition by account and archive name. */
+    public GetArchiveResponse getArchive(GetArchiveRequest request) {
+        requireValid(request);
+        Archive archive = bindings.get(request.getAccountId(), request.getArchive())
+                .orElseThrow(() -> ArchiveErrors.notFound(
+                        "Account " + request.getAccountId() + " has no archive " + request.getArchive()));
+        requireValidView(archive);
+        return GetArchiveResponse.newBuilder().setArchive(archive).build();
+    }
+
+    /** {@code ListArchives}: lists an account's archive definitions with pagination. */
+    public ListArchivesResponse listArchives(ListArchivesRequest request) {
+        requireValid(request);
+        ArchiveBindings.Page page = bindings.list(
+                request.getAccountId(), pageSize(request.getLimit()), request.getContinuationToken());
+        ListArchivesResponse.Builder response = ListArchivesResponse.newBuilder()
+                .setNextContinuationToken(page.nextContinuationToken());
+        for (Archive archive : page.archives()) {
+            requireValidView(archive);
+            response.addArchives(archive);
+        }
+        return response.build();
+    }
+
+    /**
+     * {@code GetArchiveStats}: computes exact entry, version, current-byte,
+     * retained-byte and per-rendition counters over the archive's live v2 documents.
+     */
+    public GetArchiveStatsResponse getArchiveStats(GetArchiveStatsRequest request) {
+        requireValid(request);
+        ArchiveBinding binding = binding(request.getAccountId(), request.getArchive());
+        boolean currentOnly = binding.versioning() == VersioningPolicy.VERSIONING_POLICY_NONE;
+        long totalEntries = 0L;
+        long totalVersions = 0L;
+        long currentBytes = 0L;
+        long retainedBytes = 0L;
+        Map<String, long[]> renditionTotals = new TreeMap<>();
+
+        String pageToken = "";
+        do {
+            ListDocumentsResponse page = documents.listDocuments(ListDocumentsRequest.newBuilder()
+                    .setAccountId(binding.accountId())
+                    .setGraphId(ArchiveCoordinates.graphId(binding.accountId()))
+                    .setGraphAddressId(binding.archive())
+                    .setPageSize(STATS_SCAN_PAGE_SIZE)
+                    .setPageToken(pageToken)
+                    .build());
+            List<DocumentSummary> rows = page.getDocumentsList();
+            List<GetDocumentResponse> currentDocs = fetchCurrentDocuments(rows);
+            for (int i = 0; i < rows.size(); i++) {
+                DocumentSummary row = rows.get(i);
+                GetDocumentResponse currentDoc = currentDocs.get(i);
+                VersionManifest currentManifest = views.manifest(currentDoc);
+                totalEntries++;
+                currentBytes += currentManifest.getTotalBytes();
+                if (currentOnly || row.getRevision() <= 1L) {
+                    totalVersions++;
+                    retainedBytes += currentManifest.getTotalBytes();
+                    for (RenditionManifestEntry entry : currentManifest.getRenditionsList()) {
+                        if (entry.getState() == RenditionState.RENDITION_STATE_PRESENT) {
+                            accumulateRendition(renditionTotals, entry);
+                        }
+                    }
+                } else {
+                    EntryVersionAccounting accounting =
+                            accountRetainedEntry(row.getAddress(), row.getRevision(), currentManifest);
+                    totalVersions += accounting.versions();
+                    retainedBytes += accounting.retainedBytes();
+                    for (RenditionManifestEntry entry : accounting.uniqueObjects()) {
+                        accumulateRendition(renditionTotals, entry);
+                    }
+                }
+            }
+            pageToken = page.getNextPageToken();
+        } while (!pageToken.isEmpty());
+
+        ArchiveStats.Builder stats = ArchiveStats.newBuilder()
+                .setAccountId(binding.accountId())
+                .setArchive(binding.archive())
+                .setEntries(totalEntries)
+                .setVersions(totalVersions)
+                .setRetainedBytes(retainedBytes)
+                .setCurrentBytes(currentBytes);
+        for (Map.Entry<String, long[]> entry : renditionTotals.entrySet()) {
+            long[] counts = entry.getValue();
+            if (counts[0] == 0L && counts[1] == 0L) {
+                continue;
+            }
+            stats.addRenditions(RenditionStats.newBuilder()
+                    .setRenditionName(entry.getKey())
+                    .setObjectCount(counts[0])
+                    .setTotalBytes(counts[1]));
+        }
+        return GetArchiveStatsResponse.newBuilder().setStats(stats).build();
+    }
+
+    private static void accumulateRendition(
+            Map<String, long[]> renditionTotals, RenditionManifestEntry entry) {
+        long[] counts = renditionTotals.computeIfAbsent(
+                entry.getRendition().getName(), ignored -> new long[2]);
+        counts[0] += 1L;
+        counts[1] += entry.getSizeBytes();
+    }
+
+    private record EntryVersionAccounting(
+            long versions, long retainedBytes, List<RenditionManifestEntry> uniqueObjects) {
+    }
+
+    private EntryVersionAccounting accountRetainedEntry(
+            NodeAddress address, long currentRevision, VersionManifest currentManifest) {
+        Map<String, RenditionManifestEntry> unique = new LinkedHashMap<>();
+        indexPresentRenditions(unique, currentManifest);
+        long versions = 0L;
+        String pageToken = "";
+        do {
+            ListRevisionsResponse revisions = documents.listRevisions(ListRevisionsRequest.newBuilder()
+                    .setAddress(address)
+                    .setPageSize(STATS_SCAN_PAGE_SIZE)
+                    .setPageToken(pageToken)
+                    .build());
+            List<ListenableFuture<GetDocumentResponse>> historicalReads = new ArrayList<>();
+            for (RevisionSummary rev : revisions.getRevisionsList()) {
+                if (rev.getTombstone()) {
+                    continue;
+                }
+                versions++;
+                if (rev.getRevision() != currentRevision) {
+                    historicalReads.add(futureDocuments.getDocument(GetDocumentRequest.newBuilder()
+                            .setAddress(address)
+                            .setRevision(revision(rev.getRevision()))
+                            .setSelection(BLOBS_ONLY)
+                            .build()));
+                }
+            }
+            for (GetDocumentResponse historical : awaitAll(historicalReads)) {
+                indexPresentRenditions(unique, views.manifest(historical));
+            }
+            pageToken = revisions.getNextPageToken();
+        } while (!pageToken.isEmpty());
+        long retainedBytes = 0L;
+        for (RenditionManifestEntry entry : unique.values()) {
+            retainedBytes += entry.getSizeBytes();
+        }
+        return new EntryVersionAccounting(
+                Math.max(1L, versions), retainedBytes, List.copyOf(unique.values()));
+    }
+
+    private static void indexPresentRenditions(
+            Map<String, RenditionManifestEntry> unique, VersionManifest manifest) {
+        for (RenditionManifestEntry entry : manifest.getRenditionsList()) {
+            if (entry.getState() == RenditionState.RENDITION_STATE_PRESENT) {
+                String key = entry.getRendition().getName()
+                        + '\0' + entry.getRendition().getSubKey()
+                        + '\0' + entry.getSha256();
+                unique.putIfAbsent(key, entry);
+            }
+        }
     }
 
     // ----------------------------------------------------------------- reads
@@ -167,7 +399,8 @@ public final class DocumentArchive {
     /**
      * {@code GetEntry}: the version's manifest, the entry's current metadata and
      * the bytes of the selected PRESENT renditions (every one when the request
-     * names none). Bytes are attached, never projected.
+     * names none). Bytes are attached, never projected, and bounded across the
+     * whole response by {@code maxUnaryGetBytes}.
      */
     public GetEntryResponse getEntry(GetEntryRequest request) {
         requireValid(request);
@@ -180,16 +413,43 @@ public final class DocumentArchive {
         GetEntryResponse.Builder response = GetEntryResponse.newBuilder()
                 .setInfo(views.entryInfo(current))
                 .setManifest(manifest);
+        long cumulativeBytes = 0L;
         for (RenditionManifestEntry row : manifest.getRenditionsList()) {
             if (row.getState() != RenditionState.RENDITION_STATE_PRESENT
                     || (!wanted.isEmpty() && !wanted.contains(row.getRendition().getName()))) {
                 continue;
             }
+            long rowSize = row.getSizeBytes();
+            if (rowSize > maxUnaryGetBytes || cumulativeBytes > maxUnaryGetBytes - rowSize) {
+                throw unaryByteLimitExceeded(
+                        request.getAddress().getEntryId(),
+                        manifest.getVersion(),
+                        row.getRendition(),
+                        cumulativeBytes + rowSize);
+            }
+            ByteString data = readWhole(
+                    address,
+                    manifest.getVersion(),
+                    row,
+                    maxUnaryGetBytes - cumulativeBytes,
+                    request.getAddress().getEntryId());
+            cumulativeBytes += data.size();
             response.addRenditions(RenditionContent.newBuilder()
                     .setRendition(row.getRendition())
-                    .setData(readWhole(address, manifest.getVersion(), row)));
+                    .setData(data));
         }
         return response.build();
+    }
+
+    private StatusRuntimeException unaryByteLimitExceeded(
+            String entryId, long version, RenditionDescriptor rendition, long requestedBytes) {
+        String name = ArchiveCoordinates.blobId(rendition.getName(), rendition.getSubKey());
+        return Status.RESOURCE_EXHAUSTED
+                .withDescription("GetEntry for entry " + entryId + " at version " + version
+                        + " exceeds the unary response limit of " + maxUnaryGetBytes
+                        + " bytes at rendition " + name + " (" + requestedBytes
+                        + " bytes); stream large renditions with ReadRendition")
+                .asRuntimeException();
     }
 
     /**
@@ -202,11 +462,9 @@ public final class DocumentArchive {
         NodeAddress address = ArchiveCoordinates.address(request.getAddress());
         GetDocumentResponse served;
         if (request.getVersion() == 0) {
-            served = read(address, current(), PartSelection.newBuilder()
-                    .addSelectors(ArchiveCoordinates.BLOBS).build());
+            served = read(address, current(), BLOBS_ONLY);
         } else {
-            GetDocumentResponse current = read(address, current(), PartSelection.newBuilder()
-                    .addSelectors(ArchiveCoordinates.BLOBS).build());
+            GetDocumentResponse current = read(address, current(), BLOBS_ONLY);
             served = served(binding, address, current, request.getVersion());
         }
         VersionManifest manifest = views.manifest(served);
@@ -261,10 +519,10 @@ public final class DocumentArchive {
 
     /**
      * {@code ListEntries}: the archive's live documents, each projected through its
-     * {@code DocumentLookup}. With {@code include_manifests} each row's current
-     * manifest is read by {@code GetEntryManifest}. {@code total_count} is not
-     * filled: v2 listings carry no count, and how the archive's counters are kept
-     * is a follow-up under #535.
+     * {@code DocumentLookup}, with {@code total_count} populated for the archive.
+     * With {@code include_manifests}, each row's current revision is fetched
+     * concurrently at its known revision and projected through {@link ArchiveViews#manifest}
+     * without repeating the archive-binding lookup or {@code EntryInfo} projection.
      *
      * @throws StatusRuntimeException {@code UNIMPLEMENTED} naming
      *         {@code classification_state} when a classification filter is asked
@@ -284,17 +542,85 @@ public final class DocumentArchive {
                 .setPageSize(pageSize(request.getLimit()))
                 .setPageToken(request.getContinuationToken())
                 .build());
+        long totalCount = request.getContinuationToken().isEmpty() && page.getNextPageToken().isEmpty()
+                ? page.getDocumentsCount()
+                : countLiveEntries(binding);
         ListEntriesResponse.Builder response = ListEntriesResponse.newBuilder()
-                .setNextContinuationToken(page.getNextPageToken());
-        for (DocumentSummary row : page.getDocumentsList()) {
-            var info = views.entryInfo(row);
-            response.addEntries(info);
-            if (request.getIncludeManifests()) {
-                response.addManifests(getEntryManifest(GetEntryManifestRequest.newBuilder()
-                        .setAddress(info.getAddress()).build()).getManifest());
+                .setNextContinuationToken(page.getNextPageToken())
+                .setTotalCount(totalCount);
+        List<DocumentSummary> rows = page.getDocumentsList();
+        for (DocumentSummary row : rows) {
+            response.addEntries(views.entryInfo(row));
+        }
+        if (request.getIncludeManifests() && !rows.isEmpty()) {
+            for (GetDocumentResponse doc : fetchCurrentDocuments(rows)) {
+                response.addManifests(views.manifest(doc));
             }
         }
         return response.build();
+    }
+
+    private long countLiveEntries(ArchiveBinding binding) {
+        long count = 0L;
+        String pageToken = "";
+        do {
+            ListDocumentsResponse page = documents.listDocuments(ListDocumentsRequest.newBuilder()
+                    .setAccountId(binding.accountId())
+                    .setGraphId(ArchiveCoordinates.graphId(binding.accountId()))
+                    .setGraphAddressId(binding.archive())
+                    .setPageSize(STATS_SCAN_PAGE_SIZE)
+                    .setPageToken(pageToken)
+                    .build());
+            count += page.getDocumentsCount();
+            pageToken = page.getNextPageToken();
+        } while (!pageToken.isEmpty());
+        return count;
+    }
+
+    private List<GetDocumentResponse> fetchCurrentDocuments(List<DocumentSummary> rows) {
+        if (rows.isEmpty()) {
+            return List.of();
+        }
+        List<ListenableFuture<GetDocumentResponse>> futures = new ArrayList<>(rows.size());
+        for (DocumentSummary row : rows) {
+            futures.add(futureDocuments.getDocument(GetDocumentRequest.newBuilder()
+                    .setAddress(row.getAddress())
+                    .setRevision(revision(row.getRevision()))
+                    .setSelection(CORE_AND_BLOBS)
+                    .build()));
+        }
+        return awaitAll(futures);
+    }
+
+    private static List<GetDocumentResponse> awaitAll(
+            List<ListenableFuture<GetDocumentResponse>> futures) {
+        List<GetDocumentResponse> results = new ArrayList<>(futures.size());
+        for (int i = 0; i < futures.size(); i++) {
+            try {
+                results.add(futures.get(i).get());
+            } catch (InterruptedException interrupted) {
+                for (int j = i; j < futures.size(); j++) {
+                    futures.get(j).cancel(true);
+                }
+                Thread.currentThread().interrupt();
+                throw Status.CANCELLED
+                        .withDescription("Interrupted while reading archive entry manifests")
+                        .withCause(interrupted)
+                        .asRuntimeException();
+            } catch (ExecutionException failure) {
+                for (int j = i + 1; j < futures.size(); j++) {
+                    futures.get(j).cancel(true);
+                }
+                if (failure.getCause() instanceof StatusRuntimeException status) {
+                    throw status;
+                }
+                if (failure.getCause() instanceof RuntimeException runtime) {
+                    throw runtime;
+                }
+                throw Status.INTERNAL.withCause(failure.getCause()).asRuntimeException();
+            }
+        }
+        return results;
     }
 
     // ---------------------------------------------------------------- writes
@@ -799,28 +1125,58 @@ public final class DocumentArchive {
     /**
      * The whole bytes of one PRESENT rendition: a raw blob through
      * {@code ReadBlob}, PARSED through the part frames of {@code ReadDocument}.
-     * Each is checked against the manifest row's length and SHA-256.
+     * Each is checked against the remaining unary byte budget while streaming and
+     * against the manifest row's length and SHA-256 on completion.
      */
-    private ByteString readWhole(NodeAddress address, long version, RenditionManifestEntry row) {
+    private ByteString readWhole(
+            NodeAddress address,
+            long version,
+            RenditionManifestEntry row,
+            long remainingByteBudget,
+            String entryId) {
         List<ByteString> chunks = new ArrayList<>();
-        if (row.getRendition().getName().equals(ArchiveCoordinates.PARSED)) {
-            Iterator<ReadDocumentResponse> frames = documents.readDocument(ReadDocumentRequest.newBuilder()
-                    .setAddress(address).setRevision(revision(version))
-                    .setSelection(PartSelection.newBuilder().addSelectors(ArchiveCoordinates.PARSED_PART))
-                    .build());
-            frames.forEachRemaining(frame -> {
-                if (frame.hasPartData()) {
-                    chunks.add(frame.getPartData().getData());
-                }
-            });
-        } else {
-            Iterator<ReadBlobResponse> frames = documents.readBlob(ReadBlobRequest.newBuilder()
-                    .setAddress(address).setRevision(revision(version))
-                    .setBlobId(ArchiveCoordinates.blobId(row.getRendition().getName(), row.getRendition().getSubKey()))
-                    .build());
-            frames.forEachRemaining(frame -> {
-                if (frame.hasData()) {
-                    chunks.add(frame.getData());
+        try (Context.CancellableContext callContext = Context.current().withCancellation()) {
+            callContext.run(() -> {
+                long[] readBytes = {0L};
+                if (row.getRendition().getName().equals(ArchiveCoordinates.PARSED)) {
+                    Iterator<ReadDocumentResponse> frames = documents.readDocument(ReadDocumentRequest.newBuilder()
+                            .setAddress(address).setRevision(revision(version))
+                            .setSelection(PartSelection.newBuilder().addSelectors(ArchiveCoordinates.PARSED_PART))
+                            .build());
+                    frames.forEachRemaining(frame -> {
+                        if (frame.hasPartData()) {
+                            ByteString chunk = frame.getPartData().getData();
+                            if (chunk.size() > remainingByteBudget - readBytes[0]) {
+                                throw unaryByteLimitExceeded(
+                                        entryId,
+                                        version,
+                                        row.getRendition(),
+                                        (maxUnaryGetBytes - remainingByteBudget) + readBytes[0] + chunk.size());
+                            }
+                            readBytes[0] += chunk.size();
+                            chunks.add(chunk);
+                        }
+                    });
+                } else {
+                    Iterator<ReadBlobResponse> frames = documents.readBlob(ReadBlobRequest.newBuilder()
+                            .setAddress(address).setRevision(revision(version))
+                            .setBlobId(ArchiveCoordinates.blobId(
+                                    row.getRendition().getName(), row.getRendition().getSubKey()))
+                            .build());
+                    frames.forEachRemaining(frame -> {
+                        if (frame.hasData()) {
+                            ByteString chunk = frame.getData();
+                            if (chunk.size() > remainingByteBudget - readBytes[0]) {
+                                throw unaryByteLimitExceeded(
+                                        entryId,
+                                        version,
+                                        row.getRendition(),
+                                        (maxUnaryGetBytes - remainingByteBudget) + readBytes[0] + chunk.size());
+                            }
+                            readBytes[0] += chunk.size();
+                            chunks.add(chunk);
+                        }
+                    });
                 }
             });
         }

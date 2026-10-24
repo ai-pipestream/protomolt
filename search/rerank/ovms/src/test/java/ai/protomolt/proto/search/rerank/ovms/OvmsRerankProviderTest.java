@@ -278,6 +278,31 @@ class OvmsRerankProviderTest {
         assertThat(provider.score("bamboo", List.of("wired"))).containsExactly(5.0);
     }
 
+    @Test
+    void concurrentFirstUseResolvesConfigurationWithoutFalseFailure() throws Exception {
+        OvmsRerankProvider provider = new OvmsRerankProvider(Map.of(
+                OvmsRerankProvider.URL_ENVIRONMENT_VARIABLE, baseUrl,
+                OvmsRerankProvider.MODEL_ENVIRONMENT_VARIABLE, MODEL));
+        int threads = 8;
+        java.util.concurrent.CyclicBarrier barrier = new java.util.concurrent.CyclicBarrier(threads);
+        List<Throwable> failures = new CopyOnWriteArrayList<>();
+        List<Thread> workers = new ArrayList<>(threads);
+        for (int i = 0; i < threads; i++) {
+            workers.add(Thread.ofVirtual().start(() -> {
+                try {
+                    barrier.await();
+                    assertThat(provider.score("bamboo", List.of("wired"))).containsExactly(5.0);
+                } catch (Throwable t) {
+                    failures.add(t);
+                }
+            }));
+        }
+        for (Thread worker : workers) {
+            worker.join();
+        }
+        assertThat(failures).isEmpty();
+    }
+
     /**
      * Fake OVMS rerank endpoint: records requests, and by default scores each document by its
      * length and answers with results sorted by descending score (out of index order for the

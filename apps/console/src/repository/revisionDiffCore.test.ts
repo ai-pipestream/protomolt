@@ -11,7 +11,7 @@ import {
   type FileDescriptorProto,
 } from '@bufbuild/protobuf/wkt'
 import { createHash } from 'node:crypto'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { file_ai_protomolt_proto_types_v1_concepts } from '@/gen/ai/protomolt/proto/types/v1/concepts_pb'
 import { DocumentSchema, SearchMetadataSchema } from '@/gen/ai/protomolt/proto/repo/v1/document_pb'
 import { RepositorySchemaAssetReferenceSchema } from '@/gen/ai/protomolt/proto/repo/v1/schema_asset_reference_pb'
@@ -35,6 +35,7 @@ import { FieldRulesSchema, field as fieldRules, file_ai_protomolt_proto_validate
 import { linkRow } from './linksCore'
 import { AnySchemas, flatten, linkLines, partDiff, readSide, searchMetadataLines, sectionDiff } from './revisionDiffCore'
 import { descriptorSetOf, routerClients, testAddress } from './repositoryTestKit'
+import { Sha256 } from './sha256'
 import { ResolvedLinkSchema, StaticLinkStateSchema } from '@/gen/ai/protomolt/proto/repo/v2/document_service_pb'
 
 const part = (value: DocumentPart) => create(PartSelectorSchema, { selector: { case: 'part', value } })
@@ -318,6 +319,31 @@ describe('flatten', () => {
       }
       const alteredSchemas = await loadSchemas(altered, [root.set, tagged.set])
       expect(flatten(root.desc, create(root.desc, { first: inner } as never), alteredSchemas.schemas, part(DocumentPart.CORE)).concepts).toEqual([])
+    }
+  })
+
+  it('reuses precomputed Any boundary digests without re-hashing ancestor steps', async () => {
+    const tagged = taggedSchema()
+    const root = anyContainer()
+    const leaf = anyPack(tagged.desc, create(tagged.desc, { subject: { schemeId: 'topics', conceptId: 'wind' }, title: 'Leaf' } as never))
+    const middle = anyPack(root.desc, create(root.desc, { first: leaf } as never))
+    const outer = anyPack(root.desc, create(root.desc, { first: middle } as never))
+    const validation = create(RevisionValidationSchema, {
+      resolvedOccurrences: [
+        resolved(outer, root.set, [fieldStep(1)]),
+        resolved(middle, root.set, [fieldStep(1), boundaryStep(outer, root.set), fieldStep(1)]),
+        resolved(leaf, tagged.set, [fieldStep(1), boundaryStep(outer, root.set), fieldStep(1), boundaryStep(middle, root.set), fieldStep(1)]),
+      ],
+    })
+    const { schemas } = await loadSchemas(validation, [root.set, tagged.set])
+    const spy = vi.spyOn(Sha256.prototype, 'update')
+    try {
+      const flat = flatten(root.desc, create(root.desc, { first: outer } as never), schemas, part(DocumentPart.CORE))
+      expect(flat.concepts).toEqual(['first.first.first.subject = topics/wind'])
+      expect(flat.lines).toContain('first.first.first.title = "Leaf"')
+      expect(spy).toHaveBeenCalledTimes(3)
+    } finally {
+      spy.mockRestore()
     }
   })
 

@@ -50,10 +50,19 @@ public final class KafkaSource implements StreamSource<KafkaSourcePlan> {
         config.put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "latest");
         config.putAll(plan.overrides());
         KafkaConsumer<byte[], byte[]> consumer = new KafkaConsumer<>(config);
-        consumer.subscribe(List.of(plan.topic()));
-        KafkaHandle handle = new KafkaHandle(consumer, plan, listener);
-        handle.thread.start();
-        return handle;
+        try {
+            consumer.subscribe(List.of(plan.topic()));
+            KafkaHandle handle = new KafkaHandle(consumer, plan, listener);
+            handle.thread.start();
+            return handle;
+        } catch (RuntimeException | Error e) {
+            try {
+                consumer.close();
+            } catch (RuntimeException suppressed) {
+                e.addSuppressed(suppressed);
+            }
+            throw e;
+        }
     }
 
     private static final class KafkaHandle implements Handle {
