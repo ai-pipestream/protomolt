@@ -128,9 +128,10 @@ evidence during admission) against a dedicated save-side byte budget of
 `DOCUMENT_PLATFORM_READ_BUDGET_BYTES` until the commit finishes; on
 `UploadDocument`, a streamed encoded part reserves per received 64 KiB
 chunk while a streamed raw blob flows straight to the stack. Exhaustion
-fails fast before any drive registration or stack write with
-`RESOURCE_EXHAUSTED` (`Save buffer budget exhausted`), leaving the
-`operation_id` unrecorded. Because the save-side budget is a separate pool
+fails fast before any stack write (and on unary `SaveDocument`, before any
+drive registration) with `RESOURCE_EXHAUSTED` (`Save buffer budget
+exhausted`), leaving the `operation_id` unrecorded. Because the save-side
+budget is a separate pool
 of `DOCUMENT_PLATFORM_READ_BUDGET_BYTES` alongside the read-side
 `ReadByteBudget` (`Read buffer budget exhausted`), concurrent read and save
 paths can hold up to `2 * DOCUMENT_PLATFORM_READ_BUDGET_BYTES` in combined

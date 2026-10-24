@@ -634,6 +634,12 @@ public final class RepoServices implements AutoCloseable {
         return driveOperations;
     }
 
+    /** Host read byte budget shared by verified v2 document reads and streamed rendition reads. */
+    ReadByteBudget readBudget() {
+        requireOpen();
+        return readBudget;
+    }
+
     /**
      * The wired gRPC services for hosts that register them on their own builder.
      * Qualified managed storage also mounts ArchiveMutationService. Starts managed

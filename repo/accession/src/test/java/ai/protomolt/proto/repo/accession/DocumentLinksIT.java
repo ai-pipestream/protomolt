@@ -418,6 +418,42 @@ class DocumentLinksIT {
                     .containsExactly(tuple("structured_data.related", "link-dynamic-filter-required"));
             assertThat(recorded(f, "kept")).isEqualTo(RejectionReason.REJECTION_REASON_LINK_TARGET_NOT_FOUND);
             assertThat(f.catalog.current(address(ACCOUNT, "kept"))).isEmpty();
+
+            // Static failure in an earlier field (cites, field 2) than the dynamic link (related, field 5):
+            // the scan continues past the first static failure to collect later dynamic violations.
+            var afterStatic = SemanticPartsIT.rejected(() -> saves.save(processAuthority(), save("kept-after",
+                    address(ACCOUNT, "kept-after"), document("kept-after", citation(c -> {
+                        c.setField(CITATION.findFieldByName("cites"),
+                                link(fixed(address(ACCOUNT, "nope"), null)));
+                        c.addRepeatedField(CITATION.findFieldByName("sections"),
+                                section(fixed(address(ACCOUNT, "also-nope"), null)));
+                        c.setField(CITATION.findFieldByName("related"),
+                                link(DocumentLink.newBuilder().setDynamicTarget(empty).build()));
+                    }), "reader"))),
+                    Status.Code.FAILED_PRECONDITION, RejectionReason.REJECTION_REASON_LINK_TARGET_NOT_FOUND);
+            assertThat(afterStatic.getMessage()).isEqualTo("The target of link structured_data.cites is not found");
+            assertThat(afterStatic.getViolationsList()).extracting(FieldViolation::getFieldPath, FieldViolation::getRuleId)
+                    .containsExactly(tuple("structured_data.related", "link-dynamic-filter-required"));
+            assertThat(recorded(f, "kept-after")).isEqualTo(RejectionReason.REJECTION_REASON_LINK_TARGET_NOT_FOUND);
+            assertThat(f.catalog.current(address(ACCOUNT, "kept-after"))).isEmpty();
+
+            // LINK_TARGET_TYPE refusal in an earlier field (typed, field 4) than the dynamic link (related, field 5).
+            var untyped = address(ACCOUNT, "untyped");
+            saves.save(processAuthority(), save("untyped", untyped, document("untyped", null, "reader")));
+            var afterType = SemanticPartsIT.rejected(() -> saves.save(processAuthority(), save("kept-type",
+                    address(ACCOUNT, "kept-type"), document("kept-type", citation(c -> {
+                        c.setField(CITATION.findFieldByName("typed"),
+                                link(fixed(untyped, null)));
+                        c.setField(CITATION.findFieldByName("related"),
+                                link(DocumentLink.newBuilder().setDynamicTarget(empty).build()));
+                    }), "reader"))),
+                    Status.Code.FAILED_PRECONDITION, RejectionReason.REJECTION_REASON_LINK_TARGET_TYPE);
+            assertThat(afterType.getMessage()).isEqualTo(
+                    "The target of link structured_data.typed holds no structured_data, which the link does not allow");
+            assertThat(afterType.getViolationsList()).extracting(FieldViolation::getFieldPath, FieldViolation::getRuleId)
+                    .containsExactly(tuple("structured_data.related", "link-dynamic-filter-required"));
+            assertThat(recorded(f, "kept-type")).isEqualTo(RejectionReason.REJECTION_REASON_LINK_TARGET_TYPE);
+            assertThat(f.catalog.current(address(ACCOUNT, "kept-type"))).isEmpty();
         }
     }
 
