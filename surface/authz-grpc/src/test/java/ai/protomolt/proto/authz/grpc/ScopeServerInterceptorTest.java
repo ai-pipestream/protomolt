@@ -813,6 +813,10 @@ class ScopeServerInterceptorTest {
     @Test
     void configurePreservesCustomDecompressorsAndEnforcesPayloadCapBeforeHalfClose()
             throws Exception {
+        checkCustomCodec(false);
+    }
+
+    private void checkCustomCodec(boolean opaqueBuilder) throws Exception {
         Codec customCodec = new Codec() {
             private final Codec delegate = new Codec.Gzip();
 
@@ -852,8 +856,19 @@ class ScopeServerInterceptorTest {
         assertThat(ScopeServerInterceptor.decompressorRegistryOf(builder))
                 .as("decompressorRegistryOf(builder) must read the custom DecompressorRegistry set on builder")
                 .isSameAs(customRegistry);
-        scopes.configure(builder);
-        builder.intercept(new ApiTokenServerInterceptor(OPERATOR, resolver));
+        io.grpc.ServerBuilder<?> configured = builder;
+        if (opaqueBuilder) {
+            configured = new OpaqueRegistryBuilder(builder);
+            var opaque = configured;
+            assertThatThrownBy(() -> scopes.configure(opaque))
+                    .isInstanceOf(IllegalStateException.class)
+                    .hasMessageContaining("configure(ServerBuilder, DecompressorRegistry)");
+            assertThat(ScopeServerInterceptor.decompressorRegistryOf(builder)).isSameAs(customRegistry);
+            scopes.configure(configured, customRegistry);
+        } else {
+            scopes.configure(configured);
+        }
+        configured.intercept(new ApiTokenServerInterceptor(OPERATOR, resolver));
         Server nettyServer = builder.build().start();
         ManagedChannel nettyChannel = NettyChannelBuilder
                 .forAddress("localhost", nettyServer.getPort())
@@ -1028,4 +1043,26 @@ class ScopeServerInterceptorTest {
             underlying.triggerEvent(event);
         }
     }
+    @Test
+    void opaqueBuilderUsesExplicitRegistryWithoutLosingItsCustomCodec() throws Exception {
+        checkCustomCodec(true);
+    }
+
+    private static final class OpaqueRegistryBuilder extends io.grpc.ServerBuilder<OpaqueRegistryBuilder> {
+        private final java.util.function.Supplier<io.grpc.ServerBuilder<?>> hidden;
+        OpaqueRegistryBuilder(io.grpc.ServerBuilder<?> builder) { hidden = () -> builder; }
+        @Override public OpaqueRegistryBuilder directExecutor() { hidden.get().directExecutor(); return this; }
+        @Override public OpaqueRegistryBuilder executor(java.util.concurrent.Executor e) { hidden.get().executor(e); return this; }
+        @Override public OpaqueRegistryBuilder addService(io.grpc.ServerServiceDefinition s) { hidden.get().addService(s); return this; }
+        @Override public OpaqueRegistryBuilder addService(io.grpc.BindableService s) { hidden.get().addService(s); return this; }
+        @Override public OpaqueRegistryBuilder fallbackHandlerRegistry(io.grpc.HandlerRegistry h) { hidden.get().fallbackHandlerRegistry(h); return this; }
+        @Override public OpaqueRegistryBuilder useTransportSecurity(java.io.File c, java.io.File k) { hidden.get().useTransportSecurity(c,k); return this; }
+        @Override public OpaqueRegistryBuilder decompressorRegistry(DecompressorRegistry d) { hidden.get().decompressorRegistry(d); return this; }
+        @Override public OpaqueRegistryBuilder compressorRegistry(CompressorRegistry c) { hidden.get().compressorRegistry(c); return this; }
+        @Override public OpaqueRegistryBuilder intercept(ServerInterceptor i) { hidden.get().intercept(i); return this; }
+        @Override public OpaqueRegistryBuilder addStreamTracerFactory(io.grpc.ServerStreamTracer.Factory f) { hidden.get().addStreamTracerFactory(f); return this; }
+        @Override public Server build() { return hidden.get().build(); }
+    }
+
+
 }
