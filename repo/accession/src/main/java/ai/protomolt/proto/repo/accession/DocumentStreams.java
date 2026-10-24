@@ -28,6 +28,7 @@ import java.io.InputStream;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
+import java.util.concurrent.locks.ReentrantLock;
 
 /**
  * Server-streaming read handlers for {@code ReadDocument} and {@code ReadBlob}
@@ -278,6 +279,7 @@ public final class DocumentStreams {
         private final DocumentManifest manifest;
         private final List<StoredPartEntry> selectedParts;
         private final Object stateLock = new Object();
+        private final ReentrantLock pumpLock = new ReentrantLock();
 
         private volatile boolean cancelled;
         private volatile InputStream activeStream;
@@ -346,7 +348,16 @@ public final class DocumentStreams {
             }
         }
 
-        synchronized void pump() {
+        void pump() {
+            pumpLock.lock();
+            try {
+                pumpLocked();
+            } finally {
+                pumpLock.unlock();
+            }
+        }
+
+        private void pumpLocked() {
             synchronized (stateLock) {
                 if (pumping || cancelled || completed) return;
                 pumping = true;
@@ -684,6 +695,7 @@ public final class DocumentStreams {
         private final BlobHeader header;
         private final InputStream stream;
         private final byte[] buffer = new byte[CHUNK_SIZE];
+        private final ReentrantLock pumpLock = new ReentrantLock();
 
         private volatile boolean cancelled;
         private boolean completed;
@@ -711,7 +723,16 @@ public final class DocumentStreams {
             else closeOnFailure(stream, failure);
         }
 
-        synchronized void pump() {
+        void pump() {
+            pumpLock.lock();
+            try {
+                pumpLocked();
+            } finally {
+                pumpLock.unlock();
+            }
+        }
+
+        private void pumpLocked() {
             if (pumping || cancelled || completed) return;
             pumping = true;
             try {

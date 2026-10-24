@@ -11,6 +11,7 @@ import com.sun.net.httpserver.HttpServer;
 import io.grpc.ManagedChannel;
 import io.grpc.inprocess.InProcessChannelBuilder;
 import io.grpc.netty.shaded.io.grpc.netty.NettyChannelBuilder;
+import io.grpc.stub.ClientCallStreamObserver;
 import io.grpc.stub.StreamObserver;
 import java.io.IOException;
 import java.io.InputStream;
@@ -58,14 +59,19 @@ public final class ParsePlaygroundServer implements AutoCloseable {
         if (parserTarget == null || parserTarget.isBlank()) {
             throw new IllegalArgumentException("parserTarget must not be blank");
         }
-        this.parserChannel = openChannel(parserTarget);
         this.printer =
                 JsonFormat.printer().usingTypeRegistry(typeRegistry).omittingInsignificantWhitespace();
-        this.http = HttpServer.create(new InetSocketAddress(port), 0);
-        http.setExecutor(Executors.newVirtualThreadPerTaskExecutor());
-        http.createContext("/", this::servePage);
-        http.createContext("/parse", this::serveParse);
-        http.start();
+        this.parserChannel = openChannel(parserTarget);
+        try {
+            this.http = HttpServer.create(new InetSocketAddress(port), 0);
+            http.setExecutor(Executors.newVirtualThreadPerTaskExecutor());
+            http.createContext("/", this::servePage);
+            http.createContext("/parse", this::serveParse);
+            http.start();
+        } catch (IOException | RuntimeException | Error failure) {
+            parserChannel.shutdownNow();
+            throw failure;
+        }
     }
 
     /** The bound HTTP port. */
@@ -124,6 +130,7 @@ public final class ParsePlaygroundServer implements AutoCloseable {
     private void streamParse(byte[] payload, String filename, String contentType, OutputStream out)
             throws IOException {
         CountDownLatch done = new CountDownLatch(1);
+        boolean[] disconnected = new boolean[1];
         StreamObserver<ParseRequest> requests =
                 ParserPluginServiceGrpc.newStub(parserChannel)
                         .parse(new StreamObserver<>() {
@@ -136,6 +143,7 @@ public final class ParsePlaygroundServer implements AutoCloseable {
                                 } catch (IOException e) {
                                     // The browser went away; the parse stream
                                     // ends with the exchange.
+                                    disconnected[0] = true;
                                     done.countDown();
                                 }
                             }
@@ -143,8 +151,9 @@ public final class ParsePlaygroundServer implements AutoCloseable {
                             @Override
                             public void onError(Throwable t) {
                                 try {
+                                    String msg = t.getMessage() == null ? "parse failed" : t.getMessage();
                                     out.write(("{\"error\":\""
-                                            + t.getMessage().replace('"', '\'')
+                                            + msg.replace('"', '\'')
                                             + "\"}\n").getBytes(StandardCharsets.UTF_8));
                                     out.flush();
                                 } catch (IOException ignored) {
@@ -175,9 +184,18 @@ public final class ParsePlaygroundServer implements AutoCloseable {
         }
         requests.onCompleted();
         try {
-            done.await(5, TimeUnit.MINUTES);
+            if (!done.await(5, TimeUnit.MINUTES) || disconnected[0]) {
+                cancelStream(requests, "playground stream terminated early", null);
+            }
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
+            cancelStream(requests, "playground stream interrupted", e);
+        }
+    }
+
+    private static void cancelStream(StreamObserver<ParseRequest> requests, String reason, Throwable cause) {
+        if (requests instanceof ClientCallStreamObserver<?> callObserver) {
+            callObserver.cancel(reason, cause);
         }
     }
 

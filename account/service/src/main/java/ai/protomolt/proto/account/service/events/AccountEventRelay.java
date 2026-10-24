@@ -65,20 +65,23 @@ public final class AccountEventRelay {
         List<AccountEventRecord> batch = outbox.claimBatch(batchSize);
         int published = 0;
         for (AccountEventRecord record : batch) {
+            boolean sent = false;
             try {
                 AccountEvent event = AccountEvent.parseFrom(record.payload);
                 producer.send(new ProducerRecord<>(topic, record.kafkaKey, event)).get();
+                sent = true;
                 if (outbox.markPublished(record.eventId, Instant.now())) {
                     published++;
                 }
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
-                outbox.markFailed(record, e.getMessage());
                 return published;
             } catch (Exception e) {
                 LOG.warn("Event relay failed for event_id={} type={} (attempt {}): {}",
                         record.eventId, record.eventType, record.attempts + 1, e.getMessage());
-                outbox.markFailed(record, e.getMessage());
+                if (!sent) {
+                    outbox.markFailed(record, e.getMessage());
+                }
             }
         }
         return published;

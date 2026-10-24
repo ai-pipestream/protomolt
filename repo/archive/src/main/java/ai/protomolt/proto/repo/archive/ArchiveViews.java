@@ -15,9 +15,11 @@ import ai.protomolt.proto.repo.v2.GetDocumentResponse;
 import ai.protomolt.proto.repo.v2.PartManifestEntry;
 import ai.protomolt.proto.repo.v2.RevisionSummary;
 import com.google.protobuf.Descriptors.Descriptor;
-import com.google.protobuf.InvalidProtocolBufferException;
+import com.google.protobuf.Descriptors.FieldDescriptor;
+import com.google.protobuf.DynamicMessage;
 import com.google.protobuf.Message;
-import com.google.protobuf.Parser;
+import java.util.List;
+import java.util.Map;
 
 /**
  * The archive view of v2 reads: one projection per view message, compiled from
@@ -72,7 +74,7 @@ public final class ArchiveViews {
                     + " stores its BLOBS part in the singular blob_bag.blob arm; it was not written by the"
                     + " archive and is not an archive entry");
         }
-        VersionManifest.Builder manifest = project(manifests, read, VersionManifest.parser()).toBuilder();
+        VersionManifest.Builder manifest = project(manifests, read, VersionManifest.newBuilder());
         long total = 0;
         for (RenditionManifestEntry row : manifest.getRenditionsList()) {
             if (row.getState() == RenditionState.RENDITION_STATE_PRESENT) {
@@ -89,7 +91,7 @@ public final class ArchiveViews {
 
     /** The entry metadata of a document read: the revision's CORE and its "original" blob's filename. */
     public EntryInfo entryInfo(GetDocumentResponse read) {
-        EntryInfo info = project(entries, read, EntryInfo.parser()).toBuilder()
+        EntryInfo info = project(entries, read, EntryInfo.newBuilder())
                 .putAllMetadata(read.getDocument().getSearchMetadata().getMetadataMap())
                 .build();
         return validated(info);
@@ -97,7 +99,7 @@ public final class ArchiveViews {
 
     /** The entry metadata of a listing row, through its {@code DocumentLookup}. Listing rows carry no filename. */
     public EntryInfo entryInfo(DocumentSummary row) {
-        EntryInfo info = project(entries, row, EntryInfo.parser()).toBuilder()
+        EntryInfo info = project(entries, row, EntryInfo.newBuilder())
                 .putAllMetadata(row.getLookup().getMetadataMap())
                 .build();
         return validated(info);
@@ -105,16 +107,42 @@ public final class ArchiveViews {
 
     /** One {@code ListVersions} row from one revision's history summary. */
     public VersionSummary summary(RevisionSummary revision) {
-        return validated(project(summaries, revision, VersionSummary.parser()));
+        return validated(project(summaries, revision, VersionSummary.newBuilder()).build());
     }
 
-    private static <T extends Message> T project(MessageProjection projection, Message source, Parser<T> parser) {
+    private static <B extends Message.Builder> B project(MessageProjection projection, Message source, B builder) {
         try {
-            return parser.parseFrom(projection.project(source).toByteString());
-        } catch (ProjectionException | InvalidProtocolBufferException e) {
+            copyFields(projection.project(source), builder);
+            return builder;
+        } catch (RuntimeException e) {
             throw ArchiveErrors.dataLoss("Cannot project " + source.getDescriptorForType().getFullName()
                     + " into " + projection.targetType().getFullName() + ": " + e.getMessage(), e);
         }
+    }
+
+    private static void copyFields(Message projected, Message.Builder builder) {
+        for (Map.Entry<FieldDescriptor, Object> entry : projected.getAllFields().entrySet()) {
+            FieldDescriptor field = entry.getKey();
+            Object value = entry.getValue();
+            if (field.getJavaType() != FieldDescriptor.JavaType.MESSAGE) {
+                builder.setField(field, value);
+            } else if (field.isRepeated()) {
+                for (Object element : (List<?>) value) {
+                    builder.addRepeatedField(field, toFieldValue(builder, field, (Message) element));
+                }
+            } else {
+                builder.setField(field, toFieldValue(builder, field, (Message) value));
+            }
+        }
+    }
+
+    private static Message toFieldValue(Message.Builder parent, FieldDescriptor field, Message value) {
+        if (!(value instanceof DynamicMessage)) {
+            return value;
+        }
+        Message.Builder child = parent.newBuilderForField(field);
+        copyFields(value, child);
+        return child.build();
     }
 
     private static <T extends Message> T validated(T view) {

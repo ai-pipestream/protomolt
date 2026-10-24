@@ -8,15 +8,21 @@ import ai.protomolt.proto.asset.v1.ClassificationState;
 import ai.protomolt.proto.asset.v1.ObjectStoreOrigin;
 import ai.protomolt.proto.repo.accession.V2RepositoryFixture;
 import ai.protomolt.proto.repo.admission.BuiltinDocumentSchema;
+import ai.protomolt.proto.repo.archive.v1.Archive;
 import ai.protomolt.proto.repo.archive.v1.ArchiveEntryFacts;
 import ai.protomolt.proto.repo.archive.v1.ArchiveServiceGrpc;
+import ai.protomolt.proto.repo.archive.v1.ArchiveStats;
+import ai.protomolt.proto.repo.archive.v1.CreateArchiveRequest;
 import ai.protomolt.proto.repo.archive.v1.EntryAddress;
 import ai.protomolt.proto.repo.archive.v1.EntryInfo;
+import ai.protomolt.proto.repo.archive.v1.GetArchiveRequest;
 import ai.protomolt.proto.repo.archive.v1.GetArchiveStatsRequest;
 import ai.protomolt.proto.repo.archive.v1.GetEntryManifestRequest;
 import ai.protomolt.proto.repo.archive.v1.GetEntryManifestResponse;
 import ai.protomolt.proto.repo.archive.v1.GetEntryRequest;
 import ai.protomolt.proto.repo.archive.v1.GetEntryResponse;
+import ai.protomolt.proto.repo.archive.v1.ListArchivesRequest;
+import ai.protomolt.proto.repo.archive.v1.ListArchivesResponse;
 import ai.protomolt.proto.repo.archive.v1.ListEntriesRequest;
 import ai.protomolt.proto.repo.archive.v1.ListEntriesResponse;
 import ai.protomolt.proto.repo.archive.v1.ListVersionsRequest;
@@ -29,6 +35,7 @@ import ai.protomolt.proto.repo.archive.v1.RenditionDescriptor;
 import ai.protomolt.proto.repo.archive.v1.RenditionManifestEntry;
 import ai.protomolt.proto.repo.archive.v1.RenditionReadHeader;
 import ai.protomolt.proto.repo.archive.v1.RenditionState;
+import ai.protomolt.proto.repo.archive.v1.RenditionStats;
 import ai.protomolt.proto.repo.archive.v1.UploadRenditionHeader;
 import ai.protomolt.proto.repo.archive.v1.UploadRenditionRequest;
 import ai.protomolt.proto.repo.archive.v1.UploadRenditionResponse;
@@ -873,7 +880,7 @@ class DocumentArchiveIT {
                 .setArchive(RETAINED).setClassificationState(ClassificationState.CLASSIFICATION_STATE_IDENTIFIED)
                 .build()))).isEqualTo(Status.Code.UNIMPLEMENTED);
         assertThat(code(() -> archive.getArchiveStats(GetArchiveStatsRequest.newBuilder()
-                .setAccountId(ACCOUNT).setArchive(RETAINED).build()))).isEqualTo(Status.Code.UNIMPLEMENTED);
+                .setAccountId(ACCOUNT).setArchive("no-such-archive").build()))).isEqualTo(Status.Code.NOT_FOUND);
         assertThat(revisions(address)).isZero();
     }
 
@@ -1153,5 +1160,239 @@ class DocumentArchiveIT {
         assertThat(code(() -> archive.putEntry(partial))).isEqualTo(Status.Code.INVALID_ARGUMENT);
         assertThat(description(() -> archive.putEntry(partial))).contains("origin.object_key");
         assertThat(revisions(address)).isEqualTo(2);
+    }
+
+    @Test
+    void unaryGetEntryEnforcesMaxByteBudgetAcrossSelectedRenditions() {
+        EntryAddress address = entry(RETAINED);
+        archive.putEntry(firstPut(address).build());
+        long smallBudget = PDF.size() + PAGE.size();
+        DocumentArchive bounded = new DocumentArchive(
+                documentsChannel,
+                (account, name) -> Optional.of(new ArchiveBinding(
+                        account, name, DATASOURCE, "", VersioningPolicy.VERSIONING_POLICY_RETAINED)),
+                Clock.systemUTC(),
+                smallBudget);
+
+        // Selecting renditions within the budget succeeds.
+        GetEntryResponse withinBudget = bounded.getEntry(GetEntryRequest.newBuilder()
+                .setAddress(address)
+                .addRenditions("original")
+                .addRenditions("page")
+                .build());
+        assertThat(withinBudget.getRenditionsList())
+                .extracting(RenditionContent::getData)
+                .containsExactly(PDF, PAGE);
+
+        // Fetching all renditions (PDF + MARKDOWN + PAGE > smallBudget) fails with RESOURCE_EXHAUSTED.
+        StatusRuntimeException cumulativeExceeded = catchThrowableOfType(
+                StatusRuntimeException.class,
+                () -> bounded.getEntry(GetEntryRequest.newBuilder().setAddress(address).build()));
+        assertThat(cumulativeExceeded.getStatus().getCode()).isEqualTo(Status.Code.RESOURCE_EXHAUSTED);
+        assertThat(cumulativeExceeded.getStatus().getDescription()).contains("ReadRendition");
+
+        // A single rendition larger than the budget is rejected before streaming.
+        DocumentArchive tiny = new DocumentArchive(
+                documentsChannel,
+                (account, name) -> Optional.of(new ArchiveBinding(
+                        account, name, DATASOURCE, "", VersioningPolicy.VERSIONING_POLICY_RETAINED)),
+                Clock.systemUTC(),
+                PDF.size() - 1);
+        StatusRuntimeException singleExceeded = catchThrowableOfType(
+                StatusRuntimeException.class,
+                () -> tiny.getEntry(GetEntryRequest.newBuilder()
+                        .setAddress(address)
+                        .addRenditions("original")
+                        .build()));
+        assertThat(singleExceeded.getStatus().getCode()).isEqualTo(Status.Code.RESOURCE_EXHAUSTED);
+        assertThat(singleExceeded.getStatus().getDescription()).contains("ReadRendition");
+    }
+
+    @Test
+    void createGetAndListArchivesStoreAndProjectDefinitionsOverV2Documents() {
+        String account = "acct-defs-" + UUID.randomUUID();
+        ArchiveBindings v2Bindings = ArchiveBindings.overDocuments(
+                documentsChannel,
+                DATASOURCE,
+                (acct, drive) -> "intake".equals(drive) || "pipeline".equals(drive));
+        DocumentArchive defsArchive = new DocumentArchive(documentsChannel, v2Bindings, Clock.systemUTC());
+
+        // Missing policy is refused with INVALID_ARGUMENT.
+        assertThat(code(() -> defsArchive.createArchive(CreateArchiveRequest.newBuilder()
+                .setArchive(Archive.newBuilder()
+                        .setAccountId(account)
+                        .setName("no-policy")
+                        .setDriveName("intake"))
+                .build()))).isEqualTo(Status.Code.INVALID_ARGUMENT);
+
+        // Unprovisioned drive is refused with FAILED_PRECONDITION.
+        assertThat(code(() -> defsArchive.createArchive(CreateArchiveRequest.newBuilder()
+                .setArchive(Archive.newBuilder()
+                        .setAccountId(account)
+                        .setName("bad-drive")
+                        .setDriveName("unknown-drive")
+                        .setVersioning(VersioningPolicy.VERSIONING_POLICY_RETAINED))
+                .build()))).isEqualTo(Status.Code.FAILED_PRECONDITION);
+
+        Archive alpha = defsArchive.createArchive(CreateArchiveRequest.newBuilder()
+                .setArchive(Archive.newBuilder()
+                        .setAccountId(account)
+                        .setName("alpha")
+                        .setDriveName("intake")
+                        .setVersioning(VersioningPolicy.VERSIONING_POLICY_RETAINED)
+                        .setDescription("Alpha archive")
+                        .putMetadata("team", "core"))
+                .build()).getArchive();
+        assertThat(alpha.getAccountId()).isEqualTo(account);
+        assertThat(alpha.getName()).isEqualTo("alpha");
+        assertThat(alpha.getDriveName()).isEqualTo("intake");
+        assertThat(alpha.getVersioning()).isEqualTo(VersioningPolicy.VERSIONING_POLICY_RETAINED);
+        assertThat(alpha.getDescription()).isEqualTo("Alpha archive");
+        assertThat(alpha.getMetadataMap()).containsEntry("team", "core");
+        assertThat(alpha.hasCreatedAt()).isTrue();
+
+        // Duplicate archive name in the same account is refused with ALREADY_EXISTS.
+        assertThat(code(() -> defsArchive.createArchive(CreateArchiveRequest.newBuilder()
+                .setArchive(Archive.newBuilder()
+                        .setAccountId(account)
+                        .setName("alpha")
+                        .setDriveName("intake")
+                        .setVersioning(VersioningPolicy.VERSIONING_POLICY_RETAINED))
+                .build()))).isEqualTo(Status.Code.ALREADY_EXISTS);
+
+        Archive beta = defsArchive.createArchive(CreateArchiveRequest.newBuilder()
+                .setArchive(Archive.newBuilder()
+                        .setAccountId(account)
+                        .setName("beta")
+                        .setDriveName("pipeline")
+                        .setVersioning(VersioningPolicy.VERSIONING_POLICY_NONE))
+                .build()).getArchive();
+
+        assertThat(defsArchive.getArchive(GetArchiveRequest.newBuilder()
+                .setAccountId(account).setArchive("alpha").build()).getArchive()).isEqualTo(alpha);
+        assertThat(defsArchive.getArchive(GetArchiveRequest.newBuilder()
+                .setAccountId(account).setArchive("beta").build()).getArchive()).isEqualTo(beta);
+        assertThat(code(() -> defsArchive.getArchive(GetArchiveRequest.newBuilder()
+                .setAccountId(account).setArchive("missing").build()))).isEqualTo(Status.Code.NOT_FOUND);
+
+        ListArchivesResponse page1 = defsArchive.listArchives(ListArchivesRequest.newBuilder()
+                .setAccountId(account).setLimit(1).build());
+        assertThat(page1.getArchivesList()).containsExactly(alpha);
+        assertThat(page1.getNextContinuationToken()).isNotEmpty();
+
+        ListArchivesResponse page2 = defsArchive.listArchives(ListArchivesRequest.newBuilder()
+                .setAccountId(account).setLimit(1)
+                .setContinuationToken(page1.getNextContinuationToken()).build());
+        assertThat(page2.getArchivesList()).containsExactly(beta);
+        assertThat(page2.getNextContinuationToken()).isEmpty();
+
+        // Entries can be written and read in the created archive.
+        EntryAddress entryAddr = EntryAddress.newBuilder()
+                .setAccountId(account).setArchive("alpha").setEntryId("doc-1").build();
+        defsArchive.putEntry(firstPut(entryAddr).build());
+        assertThat(defsArchive.getEntry(GetEntryRequest.newBuilder().setAddress(entryAddr).build())
+                .getInfo().getTitle()).isEqualTo("Quarterly report");
+    }
+
+    @Test
+    void archiveStatsAndListEntriesTotalCountTrackRetainedAndUnversionedEntries() {
+        String account = "acct-stats-" + UUID.randomUUID();
+        archive.createArchive(CreateArchiveRequest.newBuilder()
+                .setArchive(Archive.newBuilder()
+                        .setAccountId(account)
+                        .setName("retained-docs")
+                        .setDriveName("intake")
+                        .setVersioning(VersioningPolicy.VERSIONING_POLICY_RETAINED))
+                .build());
+        archive.createArchive(CreateArchiveRequest.newBuilder()
+                .setArchive(Archive.newBuilder()
+                        .setAccountId(account)
+                        .setName("scratch-docs")
+                        .setDriveName("intake")
+                        .setVersioning(VersioningPolicy.VERSIONING_POLICY_NONE))
+                .build());
+
+        // Empty archive stats.
+        ArchiveStats emptyStats = archive.getArchiveStats(GetArchiveStatsRequest.newBuilder()
+                .setAccountId(account).setArchive("retained-docs").build()).getStats();
+        assertThat(emptyStats.getEntries()).isZero();
+        assertThat(emptyStats.getVersions()).isZero();
+        assertThat(emptyStats.getCurrentBytes()).isZero();
+        assertThat(emptyStats.getRetainedBytes()).isZero();
+
+        // Write entry 1 with v1 (original + markdown) and v2 (original carried forward, markdown revised).
+        EntryAddress e1 = EntryAddress.newBuilder()
+                .setAccountId(account).setArchive("retained-docs").setEntryId("e1").build();
+        ByteString mdV1 = ByteString.copyFromUtf8("# Report v1");
+        ByteString mdV2 = ByteString.copyFromUtf8("# Report v2 revised");
+        archive.putEntry(PutEntryRequest.newBuilder()
+                .setAddress(e1)
+                .setTitle("Entry 1")
+                .addRenditions(rendition("original", "", "application/pdf", PDF))
+                .addRenditions(rendition("markdown", "", "text/markdown", mdV1))
+                .build());
+        archive.putEntry(PutEntryRequest.newBuilder()
+                .setAddress(e1)
+                .setTitle("Entry 1 v2")
+                .addRenditions(rendition("markdown", "", "text/markdown", mdV2))
+                .build());
+
+        // Write entry 2 with 1 version.
+        EntryAddress e2 = EntryAddress.newBuilder()
+                .setAccountId(account).setArchive("retained-docs").setEntryId("e2").build();
+        archive.putEntry(PutEntryRequest.newBuilder()
+                .setAddress(e2)
+                .setTitle("Entry 2")
+                .addRenditions(rendition("original", "", "application/pdf", PAGE))
+                .build());
+
+        // Check paginated ListEntries total_count and include_manifests.
+        ListEntriesResponse listedPage1 = archive.listEntries(ListEntriesRequest.newBuilder()
+                .setAccountId(account)
+                .setArchive("retained-docs")
+                .setLimit(1)
+                .setIncludeManifests(true)
+                .build());
+        assertThat(listedPage1.getEntriesList()).hasSize(1);
+        assertThat(listedPage1.getManifestsList()).hasSize(1);
+        assertThat(listedPage1.getTotalCount()).isEqualTo(2);
+
+        ArchiveStats retainedStats = archive.getArchiveStats(GetArchiveStatsRequest.newBuilder()
+                .setAccountId(account).setArchive("retained-docs").build()).getStats();
+        assertThat(retainedStats.getEntries()).isEqualTo(2);
+        assertThat(retainedStats.getVersions()).isEqualTo(3);
+        long expectedCurrent = PDF.size() + mdV2.size() + PAGE.size();
+        long expectedRetained = PDF.size() + mdV1.size() + mdV2.size() + PAGE.size();
+        assertThat(retainedStats.getCurrentBytes()).isEqualTo(expectedCurrent);
+        assertThat(retainedStats.getRetainedBytes()).isEqualTo(expectedRetained);
+        assertThat(retainedStats.getRenditionsList()).containsExactly(
+                RenditionStats.newBuilder()
+                        .setRenditionName("markdown")
+                        .setObjectCount(2)
+                        .setTotalBytes(mdV1.size() + mdV2.size())
+                        .build(),
+                RenditionStats.newBuilder()
+                        .setRenditionName("original")
+                        .setObjectCount(2)
+                        .setTotalBytes(PDF.size() + PAGE.size())
+                        .build());
+
+        // Under VERSIONING_POLICY_NONE, only the current version is counted.
+        EntryAddress s1 = EntryAddress.newBuilder()
+                .setAccountId(account).setArchive("scratch-docs").setEntryId("s1").build();
+        archive.putEntry(PutEntryRequest.newBuilder()
+                .setAddress(s1)
+                .addRenditions(rendition("original", "", "text/plain", mdV1))
+                .build());
+        archive.putEntry(PutEntryRequest.newBuilder()
+                .setAddress(s1)
+                .addRenditions(rendition("original", "", "text/plain", mdV2))
+                .build());
+        ArchiveStats scratchStats = archive.getArchiveStats(GetArchiveStatsRequest.newBuilder()
+                .setAccountId(account).setArchive("scratch-docs").build()).getStats();
+        assertThat(scratchStats.getEntries()).isEqualTo(1);
+        assertThat(scratchStats.getVersions()).isEqualTo(1);
+        assertThat(scratchStats.getCurrentBytes()).isEqualTo(mdV2.size());
+        assertThat(scratchStats.getRetainedBytes()).isEqualTo(mdV2.size());
     }
 }
