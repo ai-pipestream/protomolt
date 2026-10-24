@@ -613,7 +613,17 @@ public final class DocumentReads {
             if (bytes.size() > limits.maxFragmentBytes())
                 throw new AccessionException(Status.Code.RESOURCE_EXHAUSTED,
                         "Retained schema budget exhausted: candidate fragments exceed byte limit", null);
-            new MessageWireBudget(limits.maxWireValues(), limits.maxWireDepth(), () -> {}).check(bytes, containerType);
+            var attestedOpaque = new HashMap<List<RepositorySchemaOccurrenceStep>, OpaqueOccurrence>();
+            var expectedOpaque = new HashSet<DocumentCandidateAdmission.OpaqueFound>();
+            for (var occurrence : recordedOpaque) {
+                var steps = List.copyOf(occurrence.getOccurrence().getStepsList());
+                attestedOpaque.put(steps, occurrence);
+                expectedOpaque.add(new DocumentCandidateAdmission.OpaqueFound(
+                        ai.protomolt.proto.repo.v1.DocumentPart.DOCUMENT_PART_CORE,
+                        steps, occurrence.getTypeUrl(), occurrence.getSha256(), occurrence.getLength()));
+            }
+            var state = new CoreLinkWalkState(byTypeUrl, attestedOpaque, limits);
+            state.wireBudget.check(bytes, containerType);
             var input = bytes.newCodedInput();
             input.setRecursionLimit(limits.maxWireDepth());
             var parsed = DynamicMessage.getDefaultInstance(containerType).getParserForType().parseFrom(input);
@@ -626,16 +636,6 @@ public final class DocumentReads {
                     parsed, ai.protomolt.proto.repo.v1.DocumentPart.DOCUMENT_PART_CORE, stored.getAddress().getDocId());
             DocumentLinks.requireLinkSchema(containerType);
             var links = new ArrayList<>(DocumentLinks.extract(parsed, ""));
-            var attestedOpaque = new HashMap<List<RepositorySchemaOccurrenceStep>, OpaqueOccurrence>();
-            var expectedOpaque = new HashSet<DocumentCandidateAdmission.OpaqueFound>();
-            for (var occurrence : recordedOpaque) {
-                var steps = List.copyOf(occurrence.getOccurrence().getStepsList());
-                attestedOpaque.put(steps, occurrence);
-                expectedOpaque.add(new DocumentCandidateAdmission.OpaqueFound(
-                        ai.protomolt.proto.repo.v1.DocumentPart.DOCUMENT_PART_CORE,
-                        steps, occurrence.getTypeUrl(), occurrence.getSha256(), occurrence.getLength()));
-            }
-            var state = new CoreLinkWalkState(byTypeUrl, attestedOpaque, limits.maxDecodedBytes());
             var structuredField = containerType.findFieldByNumber(Document.STRUCTURED_DATA_FIELD_NUMBER);
             if (structuredField != null && parsed.hasField(structuredField)) {
                 var at = new ArrayList<RepositorySchemaOccurrenceStep>();
@@ -678,6 +678,7 @@ public final class DocumentReads {
     private static final class CoreLinkWalkState {
         private final Map<String, RetainedSchema> byTypeUrl;
         private final Map<List<RepositorySchemaOccurrenceStep>, OpaqueOccurrence> attestedOpaque;
+        private final MessageWireBudget wireBudget;
         private final Set<ResolvedOccurrence> foundResolved = new HashSet<>();
         private final Set<DocumentCandidateAdmission.OpaqueFound> foundOpaque = new HashSet<>();
         private final Set<Descriptors.Descriptor> preparedSchemas = Collections.newSetFromMap(new IdentityHashMap<>());
@@ -691,10 +692,11 @@ public final class DocumentReads {
         CoreLinkWalkState(
                 Map<String, RetainedSchema> byTypeUrl,
                 Map<List<RepositorySchemaOccurrenceStep>, OpaqueOccurrence> attestedOpaque,
-                long decodedRemaining) {
+                DocumentSchemaAdmission.Limits limits) {
             this.byTypeUrl = byTypeUrl;
             this.attestedOpaque = attestedOpaque;
-            this.decodedRemaining = decodedRemaining;
+            this.wireBudget = new MessageWireBudget(limits.maxWireValues(), limits.maxWireDepth(), () -> {});
+            this.decodedRemaining = limits.maxDecodedBytes();
         }
 
         /** Checks and memoizes whether {@code type} declares any {@link DocumentLink} fields. */
@@ -800,7 +802,7 @@ public final class DocumentReads {
             throw new IllegalArgumentException("accepted type URL does not identify the bound schema");
         state.decodedRemaining -= value.size();
         state.prepareSchema(schema.type());
-        new MessageWireBudget(limits.maxWireValues(), limits.maxWireDepth(), () -> {}).check(value, schema.type());
+        state.wireBudget.check(value, schema.type());
         var input = value.newCodedInput();
         input.setRecursionLimit(limits.maxWireDepth() - depth);
         var decoded = DynamicMessage.parseFrom(schema.type(), input);

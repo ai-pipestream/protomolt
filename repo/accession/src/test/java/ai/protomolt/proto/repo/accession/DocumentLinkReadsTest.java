@@ -427,6 +427,47 @@ class DocumentLinkReadsTest {
                 ListLinksRequest.newBuilder().setAddress(linkUnderMapAddress).build()));
     }
 
+    @Test
+    void nestedAnyPayloadsMustShareWireValueBudget() {
+        var harness = new Harness();
+        var target = address("target-1");
+        harness.putTarget(target, "cat-1", false);
+
+        var childCitation = citation(c -> c.setField(
+                CITATION.findFieldByName("cites"), link(staticTarget(target, null))));
+        var rootCitation = citation(c -> {
+            for (int i = 0; i < 20; i++) {
+                c.addRepeatedField(CITATION.findFieldByName("extras"), packCitation(childCitation));
+            }
+        });
+        var src = address("wire-budget");
+        var stored = harness.storeAdmitted(src, 1L, document("wire-budget", rootCitation), List.of());
+
+        var tightWireLimits = new DocumentSchemaAdmission.Limits(
+                LIMITS.maxFragments(), LIMITS.maxFragmentBytes(), LIMITS.maxRoots(),
+                LIMITS.maxEvidenceBytes(), LIMITS.maxBindings(), LIMITS.maxRetainedBytes(),
+                LIMITS.maxDecodedBytes(), 100L, LIMITS.maxWireDepth(), LIMITS.maxParserEntries());
+        var drives = new DocumentSaves.Drives(DRIVE, Map.of(DRIVE, harness.stack));
+        var tightReads = new DocumentReads(harness.catalog, drives, tightWireLimits, RESERVATIONS, Clock.systemUTC());
+        var tightLinkReads = new DocumentLinkReads(tightReads, new DocumentLists(harness.catalog));
+
+        var coreBytes = harness.stack.objects.get(stored.getParts(0).getRef().getKey());
+        assertThatThrownBy(() -> tightReads.decodeRetained(stored, DocumentSaves.CORE_SELECTOR, coreBytes))
+                .isInstanceOfSatisfying(AccessionException.class,
+                        e -> assertThat(e.code()).isEqualTo(Status.Code.RESOURCE_EXHAUSTED));
+        assertThatThrownBy(() -> tightLinkReads.listLinks(READER, ListLinksRequest.newBuilder().setAddress(src).build()))
+                .isInstanceOfSatisfying(AccessionException.class,
+                        e -> assertThat(e.code()).isEqualTo(Status.Code.RESOURCE_EXHAUSTED));
+        assertThatThrownBy(() -> tightLinkReads.resolveLink(READER, ResolveLinkRequest.newBuilder()
+                .setAddress(src)
+                .setFieldPath("structured_data.extras[0].cites")
+                .setOrdinal(0)
+                .setPageSize(10)
+                .build()))
+                .isInstanceOfSatisfying(AccessionException.class,
+                        e -> assertThat(e.code()).isEqualTo(Status.Code.RESOURCE_EXHAUSTED));
+    }
+
     private static void assertDataLoss(Runnable action) {
         assertThatThrownBy(action::run)
                 .isInstanceOfSatisfying(AccessionException.class,
