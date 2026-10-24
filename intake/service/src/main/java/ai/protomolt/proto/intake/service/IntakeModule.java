@@ -5,7 +5,9 @@ import ai.protomolt.proto.composer.ServiceModule;
 import ai.protomolt.proto.composer.ServiceMount;
 import ai.protomolt.proto.intake.service.identity.ApiKeyIdentityResolver;
 import io.grpc.Server;
+import java.util.Map;
 import java.util.Set;
+import java.util.function.Function;
 
 /**
  * The authenticated intake service as a mountable role. The repo target comes
@@ -34,6 +36,7 @@ public final class IntakeModule implements ServiceModule {
     }
 
     private final Config config;
+    private final Function<Map<String, String>, ApiKeyIdentityResolver> resolverFactory;
     private IntakeServices services;
     private Server inProcess;
     private Server netty;
@@ -45,10 +48,19 @@ public final class IntakeModule implements ServiceModule {
      * @param config the module configuration
      */
     public IntakeModule(Config config) {
+        this(config, IntakeServiceMain::selectResolver);
+    }
+
+    IntakeModule(Config config,
+            Function<Map<String, String>, ApiKeyIdentityResolver> resolverFactory) {
         if (config == null) {
             throw new IllegalArgumentException("config must not be null");
         }
+        if (resolverFactory == null) {
+            throw new IllegalArgumentException("resolverFactory must not be null");
+        }
         this.config = config;
+        this.resolverFactory = resolverFactory;
     }
 
     @Override
@@ -65,7 +77,7 @@ public final class IntakeModule implements ServiceModule {
     public ServiceMount wire(NodeContext context) throws Exception {
         boolean ownsResolver = config.resolver() == null;
         ApiKeyIdentityResolver resolver = ownsResolver
-                ? IntakeServiceMain.selectResolver(context.environment())
+                ? resolverFactory.apply(context.environment())
                 : config.resolver();
         // The node's channel to repo: in-process when co-mounted, otherwise opened by the
         // node's remote opener, which presents the node's credential to a guarded repo.
@@ -80,17 +92,22 @@ public final class IntakeModule implements ServiceModule {
             String inProcessName = ROLE + "-" + context.nodeId();
             inProcess = services.startInProcess(inProcessName);
             context.channels().publishInProcess(ROLE, inProcessName);
-        } catch (Exception e) {
+        } catch (Throwable t) {
             if (services != null) {
-                services.close();
+                try {
+                    services.close();
+                } catch (Throwable suppressed) {
+                    t.addSuppressed(suppressed);
+                }
             }
             if (ownsResolver && resolver instanceof AutoCloseable closeable) {
                 try {
                     closeable.close();
-                } catch (Exception ignored) {
+                } catch (Throwable suppressed) {
+                    t.addSuppressed(suppressed);
                 }
             }
-            throw e;
+            throw t;
         }
         return new ServiceMount() {
             @Override
@@ -102,26 +119,20 @@ public final class IntakeModule implements ServiceModule {
             }
 
             @Override
-            public void close() {
-                try {
-                    if (http != null) {
-                        http.close();
-                    }
-                } finally {
-                    try {
-                        inProcess.shutdownNow();
-                    } finally {
-                        try {
-                            services.close();
-                        } finally {
-                            if (ownsResolver && resolver instanceof AutoCloseable closeable) {
-                                try {
-                                    closeable.close();
-                                } catch (Exception ignored) {
-                                }
+            public void close() throws Exception {
+                AutoCloseable resolverGuard =
+                        (ownsResolver && resolver instanceof AutoCloseable closeable)
+                                ? closeable
+                                : () -> {};
+                try (resolverGuard;
+                        AutoCloseable servicesGuard = services::close;
+                        AutoCloseable inProcessGuard = () -> inProcess.shutdownNow();
+                        AutoCloseable httpGuard = () -> {
+                            if (http != null) {
+                                http.close();
                             }
-                        }
-                    }
+                        }) {
+                    // Closes in reverse declaration order: http -> inProcess -> services -> resolver.
                 }
             }
         };

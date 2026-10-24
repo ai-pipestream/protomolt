@@ -190,7 +190,11 @@ public final class WorkflowRunEventRelay implements AutoCloseable {
         try {
             return new KafkaProducer<>(props, new StringSerializer(), valueSerializer);
         } catch (RuntimeException e) {
-            valueSerializer.close();
+            try {
+                valueSerializer.close();
+            } catch (RuntimeException suppressed) {
+                e.addSuppressed(suppressed);
+            }
             throw e;
         }
     }

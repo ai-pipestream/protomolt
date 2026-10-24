@@ -119,13 +119,19 @@ public final class RegistryModule implements ServiceModule {
 
             @Override
             public void close() {
-                try {
-                    if (server != null) {
+                if (server != null) {
+                    try {
                         server.close();
+                    } catch (Throwable t) {
+                        try {
+                            store.close();
+                        } catch (Throwable suppressed) {
+                            t.addSuppressed(suppressed);
+                        }
+                        throw t;
                     }
-                } finally {
-                    store.close();
                 }
+                store.close();
             }
         };
     }
