@@ -10,11 +10,19 @@ import ai.protomolt.proto.repo.accession.V2RepositoryFixture;
 import ai.protomolt.proto.repo.admission.BuiltinDocumentSchema;
 import ai.protomolt.proto.repo.archive.v1.Archive;
 import ai.protomolt.proto.repo.archive.v1.ArchiveEntryFacts;
+import ai.protomolt.proto.repo.archive.v1.ArchiveMutationKind;
+import ai.protomolt.proto.repo.archive.v1.ArchiveMutationReceipt;
+import ai.protomolt.proto.repo.archive.v1.ArchiveMutationRequest;
+import ai.protomolt.proto.repo.archive.v1.ArchiveMutationServiceGrpc;
+import ai.protomolt.proto.repo.archive.v1.ArchiveMutationState;
 import ai.protomolt.proto.repo.archive.v1.ArchiveServiceGrpc;
 import ai.protomolt.proto.repo.archive.v1.ArchiveStats;
 import ai.protomolt.proto.repo.archive.v1.CreateArchiveRequest;
+import ai.protomolt.proto.repo.archive.v1.DeleteEntryRequest;
+import ai.protomolt.proto.repo.archive.v1.DeleteRenditionRequest;
 import ai.protomolt.proto.repo.archive.v1.EntryAddress;
 import ai.protomolt.proto.repo.archive.v1.EntryInfo;
+import ai.protomolt.proto.repo.archive.v1.GetArchiveMutationRequest;
 import ai.protomolt.proto.repo.archive.v1.GetArchiveRequest;
 import ai.protomolt.proto.repo.archive.v1.GetArchiveStatsRequest;
 import ai.protomolt.proto.repo.archive.v1.GetEntryManifestRequest;
@@ -26,6 +34,7 @@ import ai.protomolt.proto.repo.archive.v1.ListArchivesResponse;
 import ai.protomolt.proto.repo.archive.v1.ListEntriesRequest;
 import ai.protomolt.proto.repo.archive.v1.ListEntriesResponse;
 import ai.protomolt.proto.repo.archive.v1.ListVersionsRequest;
+import ai.protomolt.proto.repo.archive.v1.PruneVersionsRequest;
 import ai.protomolt.proto.repo.archive.v1.PutEntryRequest;
 import ai.protomolt.proto.repo.archive.v1.PutEntryResponse;
 import ai.protomolt.proto.repo.archive.v1.ReadRenditionRequest;
@@ -119,6 +128,8 @@ class DocumentArchiveIT {
     static ManagedChannel archiveChannel;
     static ArchiveServiceGrpc.ArchiveServiceBlockingStub archive;
     static ArchiveServiceGrpc.ArchiveServiceStub asyncArchive;
+    static ArchiveMutationServiceGrpc.ArchiveMutationServiceBlockingStub mutations;
+    static DocumentArchive archiveEngine;
     static DocumentServiceGrpc.DocumentServiceBlockingStub documents;
     static final Gate GATE = new Gate();
     static ManagedChannel gatedDocumentsChannel;
@@ -126,6 +137,7 @@ class DocumentArchiveIT {
     static ManagedChannel gatedArchiveChannel;
     static ArchiveServiceGrpc.ArchiveServiceBlockingStub gatedArchive;
     static ArchiveServiceGrpc.ArchiveServiceStub gatedAsyncArchive;
+    static ArchiveMutationServiceGrpc.ArchiveMutationServiceBlockingStub gatedMutations;
 
     @BeforeAll
     static void boot() throws Exception {
@@ -144,21 +156,30 @@ class DocumentArchiveIT {
                     VersioningPolicy.VERSIONING_POLICY_NONE));
             default -> Optional.empty();
         };
+        DocumentArchiveGrpcService archiveGrpcService =
+                new DocumentArchiveGrpcService(documentsChannel, bindings, Clock.systemUTC());
+        archiveEngine = archiveGrpcService.archive();
         archiveServer = InProcessServerBuilder.forName("archive-v2-it-archive")
-                .addService(new DocumentArchiveGrpcService(documentsChannel, bindings, Clock.systemUTC()))
+                .addService(archiveGrpcService)
+                .addService(new DocumentArchiveMutationGrpcService(archiveEngine))
                 .build().start();
         archiveChannel = InProcessChannelBuilder.forName("archive-v2-it-archive").build();
         archive = ArchiveServiceGrpc.newBlockingStub(archiveChannel);
         asyncArchive = ArchiveServiceGrpc.newStub(archiveChannel);
+        mutations = ArchiveMutationServiceGrpc.newBlockingStub(archiveChannel);
 
         // A second archive whose v2 calls pass the gate, for races arranged step by step.
         gatedDocumentsChannel = InProcessChannelBuilder.forName("archive-v2-it").intercept(GATE).build();
+        DocumentArchiveGrpcService gatedGrpcService =
+                new DocumentArchiveGrpcService(gatedDocumentsChannel, bindings, Clock.systemUTC());
         gatedArchiveServer = InProcessServerBuilder.forName("archive-v2-it-gated")
-                .addService(new DocumentArchiveGrpcService(gatedDocumentsChannel, bindings, Clock.systemUTC()))
+                .addService(gatedGrpcService)
+                .addService(new DocumentArchiveMutationGrpcService(gatedGrpcService.archive()))
                 .build().start();
         gatedArchiveChannel = InProcessChannelBuilder.forName("archive-v2-it-gated").build();
         gatedArchive = ArchiveServiceGrpc.newBlockingStub(gatedArchiveChannel);
         gatedAsyncArchive = ArchiveServiceGrpc.newStub(gatedArchiveChannel);
+        gatedMutations = ArchiveMutationServiceGrpc.newBlockingStub(gatedArchiveChannel);
     }
 
     @AfterAll
@@ -1394,5 +1415,187 @@ class DocumentArchiveIT {
         assertThat(scratchStats.getVersions()).isEqualTo(1);
         assertThat(scratchStats.getCurrentBytes()).isEqualTo(mdV2.size());
         assertThat(scratchStats.getRetainedBytes()).isEqualTo(mdV2.size());
+    }
+
+    @Test
+    void deleteEntryCommitsTombstoneHidesEntryFromGetAndListReplaysByOperationIdAndServesGetArchiveMutation() {
+        String account = "acct-mut-" + UUID.randomUUID();
+        archive.createArchive(CreateArchiveRequest.newBuilder()
+                .setArchive(Archive.newBuilder()
+                        .setAccountId(account)
+                        .setName("mut-docs")
+                        .setDriveName("intake")
+                        .setVersioning(VersioningPolicy.VERSIONING_POLICY_RETAINED))
+                .build());
+        EntryAddress target = EntryAddress.newBuilder()
+                .setAccountId(account)
+                .setArchive("mut-docs")
+                .setEntryId("doc-to-delete")
+                .build();
+        EntryAddress survivor = EntryAddress.newBuilder()
+                .setAccountId(account)
+                .setArchive("mut-docs")
+                .setEntryId("doc-survivor")
+                .build();
+
+        PutEntryResponse savedTarget = archive.putEntry(firstPut(target).build());
+        archive.putEntry(firstPut(survivor).build());
+        assertThat(savedTarget.getVersion()).isEqualTo(1L);
+        assertThat(archive.listEntries(ListEntriesRequest.newBuilder()
+                        .setAccountId(account)
+                        .setArchive("mut-docs")
+                        .build())
+                .getEntriesList())
+                .extracting(EntryInfo::getAddress)
+                .containsExactly(survivor, target);
+
+        String deleteOpId = UUID.randomUUID().toString();
+        ArchiveMutationRequest deleteReq = ArchiveMutationRequest.newBuilder()
+                .setOperationId(deleteOpId)
+                .setDeleteEntry(DeleteEntryRequest.newBuilder().setAddress(target))
+                .build();
+        ArchiveMutationReceipt receipt = mutations.archiveMutation(deleteReq).getReceipt();
+        assertThat(receipt.getOperationId()).isEqualTo(deleteOpId);
+        assertThat(receipt.getAddress()).isEqualTo(target);
+        assertThat(receipt.getKind()).isEqualTo(ArchiveMutationKind.ARCHIVE_MUTATION_KIND_DELETE_ENTRY);
+        assertThat(receipt.getState()).isEqualTo(ArchiveMutationState.ARCHIVE_MUTATION_STATE_COMPLETED);
+        assertThat(receipt.getEntryDeleted()).isTrue();
+        assertThat(receipt.getVersionsRemoved()).isZero();
+        assertThat(receipt.getVersionsTombstoned()).isZero();
+        assertThat(receipt.getObjectsTargeted()).isZero();
+        assertThat(receipt.getObjectsPending()).isZero();
+        assertThat(receipt.getObjectsConfirmedAbsent()).isZero();
+        assertThat(receipt.getStatusRevision()).isEqualTo(1L);
+        assertThat(receipt.hasObservedAt()).isTrue();
+        assertThat(receipt.getCommandSha256())
+                .isEqualTo(ArchiveOperationKeys.mutationCommandSha256(deleteReq));
+
+        // Tombstone revision is committed at revision 2.
+        List<VersionSummary> versions = archive.listVersions(
+                ListVersionsRequest.newBuilder().setAddress(target).build()).getSummariesList();
+        assertThat(versions).extracting(VersionSummary::getVersion).containsExactly(2L, 1L);
+        assertThat(versions.getFirst().getDeleted()).isTrue();
+
+        // Deleted entry is no longer returned by GetEntry, GetEntryManifest, or ListEntries.
+        assertThat(code(() -> archive.getEntry(
+                GetEntryRequest.newBuilder().setAddress(target).build())))
+                .isEqualTo(Status.Code.NOT_FOUND);
+        assertThat(code(() -> archive.getEntryManifest(
+                GetEntryManifestRequest.newBuilder().setAddress(target).build())))
+                .isEqualTo(Status.Code.NOT_FOUND);
+        ListEntriesResponse listedAfterDelete = archive.listEntries(ListEntriesRequest.newBuilder()
+                .setAccountId(account)
+                .setArchive("mut-docs")
+                .build());
+        assertThat(listedAfterDelete.getTotalCount()).isEqualTo(1L);
+        assertThat(listedAfterDelete.getEntriesList())
+                .extracting(EntryInfo::getAddress)
+                .containsExactly(survivor);
+
+        // Idempotent replay with the same operation_id returns the same receipt without creating a new revision.
+        ArchiveMutationReceipt replay = mutations.archiveMutation(deleteReq).getReceipt();
+        assertThat(replay).isEqualTo(receipt);
+        assertThat(archive.listVersions(
+                        ListVersionsRequest.newBuilder().setAddress(target).build())
+                .getSummariesCount()).isEqualTo(2);
+
+        // GetArchiveMutation returns the recorded receipt.
+        ArchiveMutationReceipt observed = mutations.getArchiveMutation(
+                GetArchiveMutationRequest.newBuilder()
+                        .setAccountId(account)
+                        .setOperationId(deleteOpId)
+                        .build()).getReceipt();
+        assertThat(observed).isEqualTo(receipt);
+
+        // A second delete with a new operation_id against the already-tombstoned entry is ABORTED.
+        ArchiveMutationRequest secondDelete = ArchiveMutationRequest.newBuilder()
+                .setOperationId(UUID.randomUUID().toString())
+                .setDeleteEntry(DeleteEntryRequest.newBuilder().setAddress(target))
+                .build();
+        assertThat(code(() -> mutations.archiveMutation(secondDelete)))
+                .isEqualTo(Status.Code.ABORTED);
+
+        // Deleting a non-existent entry returns NOT_FOUND.
+        EntryAddress missingEntry = EntryAddress.newBuilder()
+                .setAccountId(account)
+                .setArchive("mut-docs")
+                .setEntryId("never-existed")
+                .build();
+        assertThat(code(() -> mutations.archiveMutation(ArchiveMutationRequest.newBuilder()
+                .setOperationId(UUID.randomUUID().toString())
+                .setDeleteEntry(DeleteEntryRequest.newBuilder().setAddress(missingEntry))
+                .build()))).isEqualTo(Status.Code.NOT_FOUND);
+
+        // GetArchiveMutation for an unknown operation_id or a save operation_id returns NOT_FOUND.
+        assertThat(code(() -> mutations.getArchiveMutation(GetArchiveMutationRequest.newBuilder()
+                .setAccountId(account)
+                .setOperationId(UUID.randomUUID().toString())
+                .build()))).isEqualTo(Status.Code.NOT_FOUND);
+        assertThat(code(() -> mutations.getArchiveMutation(GetArchiveMutationRequest.newBuilder()
+                .setAccountId(account)
+                .setOperationId(savedTarget.getOperationId())
+                .build()))).isEqualTo(Status.Code.NOT_FOUND);
+
+        // Reusing a delete operation_id for a different entry or reusing a save operation_id for delete is ALREADY_EXISTS.
+        assertThat(code(() -> mutations.archiveMutation(ArchiveMutationRequest.newBuilder()
+                .setOperationId(deleteOpId)
+                .setDeleteEntry(DeleteEntryRequest.newBuilder().setAddress(survivor))
+                .build()))).isEqualTo(Status.Code.ALREADY_EXISTS);
+        assertThat(code(() -> mutations.archiveMutation(ArchiveMutationRequest.newBuilder()
+                .setOperationId(savedTarget.getOperationId())
+                .setDeleteEntry(DeleteEntryRequest.newBuilder().setAddress(survivor))
+                .build()))).isEqualTo(Status.Code.ALREADY_EXISTS);
+    }
+
+    @Test
+    void deleteEntryChecksExpectedVersionAndRefusesDeleteRenditionAndPruneVersionsByName() {
+        EntryAddress address = entry(RETAINED);
+        archive.putEntry(firstPut(address).build());
+        archive.putEntry(PutEntryRequest.newBuilder().setAddress(address).setTitle("v2").build());
+
+        // Stale expectedVersion (1 when current is 2) is ABORTED and leaves the entry live at v2.
+        assertThat(code(() -> archiveEngine.deleteEntry(
+                UUID.randomUUID().toString(),
+                DeleteEntryRequest.newBuilder().setAddress(address).build(),
+                1L,
+                "stale version check"))).isEqualTo(Status.Code.ABORTED);
+        assertThat(archive.getEntryManifest(GetEntryManifestRequest.newBuilder()
+                        .setAddress(address).build())
+                .getManifest()
+                .getVersion()).isEqualTo(2L);
+
+        // DeleteRendition and PruneVersions are refused by name with FAILED_PRECONDITION over gRPC.
+        ArchiveMutationRequest deleteRenditionReq = ArchiveMutationRequest.newBuilder()
+                .setOperationId(UUID.randomUUID().toString())
+                .setDeleteRendition(DeleteRenditionRequest.newBuilder()
+                        .setAddress(address)
+                        .setRendition("original")
+                        .setReason("RTBF erasure"))
+                .build();
+        assertThat(code(() -> mutations.archiveMutation(deleteRenditionReq)))
+                .isEqualTo(Status.Code.FAILED_PRECONDITION);
+        assertThat(description(() -> mutations.archiveMutation(deleteRenditionReq)))
+                .contains("DeleteRendition");
+
+        ArchiveMutationRequest pruneVersionsReq = ArchiveMutationRequest.newBuilder()
+                .setOperationId(UUID.randomUUID().toString())
+                .setPruneVersions(PruneVersionsRequest.newBuilder()
+                        .setAddress(address)
+                        .setKeepLatest(1))
+                .build();
+        assertThat(code(() -> mutations.archiveMutation(pruneVersionsReq)))
+                .isEqualTo(Status.Code.FAILED_PRECONDITION);
+        assertThat(description(() -> mutations.archiveMutation(pruneVersionsReq)))
+                .contains("PruneVersions");
+
+        // Matching expectedVersion = 2 succeeds and commits tombstone at v3.
+        String validDeleteId = UUID.randomUUID().toString();
+        ArchiveMutationReceipt deleted = archiveEngine.deleteEntry(
+                validDeleteId,
+                DeleteEntryRequest.newBuilder().setAddress(address).build(),
+                2L,
+                "exact version delete").getReceipt();
+        assertThat(deleted.getEntryDeleted()).isTrue();
+        assertThat(revisions(address)).isEqualTo(3);
     }
 }

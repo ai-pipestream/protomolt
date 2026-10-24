@@ -1,7 +1,9 @@
 package ai.protomolt.proto.repo.archive;
 
 import ai.protomolt.proto.descriptors.MessageFingerprints;
+import ai.protomolt.proto.repo.archive.v1.ArchiveMutationRequest;
 import ai.protomolt.proto.repo.archive.v1.ArchiveOperationKey;
+import ai.protomolt.proto.repo.archive.v1.DeleteEntryRequest;
 import ai.protomolt.proto.repo.archive.v1.EntryAddress;
 import ai.protomolt.proto.repo.archive.v1.PutEntryRequest;
 import ai.protomolt.proto.repo.archive.v1.RenditionContent;
@@ -38,6 +40,9 @@ public final class ArchiveOperationKeys {
     /** The {@code operation_kind} of an {@code UploadRendition}. */
     public static final String UPLOAD_RENDITION = "archive.upload-rendition";
 
+    /** The {@code operation_kind} of a {@code DeleteEntry}. */
+    public static final String DELETE_ENTRY = "archive.delete-entry";
+
     private static final int METADATA_FIELD = PutEntryRequest.METADATA_FIELD_NUMBER;
 
     private ArchiveOperationKeys() {
@@ -66,6 +71,19 @@ public final class ArchiveOperationKeys {
     /** The key of an {@code UploadRendition}: the header's requested {@code expected_version}, 0 for last write wins. */
     public static ArchiveOperationKey uploadKey(UploadRenditionHeader header, String contentSha256) {
         return key(UPLOAD_RENDITION, header.getAddress(), header.getExpectedVersion(), contentSha256);
+    }
+
+    /**
+     * The key of a {@code DeleteEntry} with the given expected version and content digest.
+     *
+     * @param request the delete-entry request
+     * @param expectedVersion the caller's requested expected version, or 0 for last write wins
+     * @param contentSha256 the lowercase hex SHA-256 of the request
+     * @return the deterministic {@link ArchiveOperationKey}
+     */
+    public static ArchiveOperationKey deleteEntryKey(
+            DeleteEntryRequest request, long expectedVersion, String contentSha256) {
+        return key(DELETE_ENTRY, request.getAddress(), expectedVersion, contentSha256);
     }
 
     private static ArchiveOperationKey key(
@@ -120,12 +138,68 @@ public final class ArchiveOperationKeys {
                 header.toBuilder().clearOperationId().clearExpectedVersion().build())));
     }
 
+    /**
+     * The content digest of a {@code DeleteEntry}: lowercase hex SHA-256 of the
+     * request's deterministic protobuf encoding.
+     *
+     * @param request the delete-entry request
+     * @return the 64-character lowercase hex SHA-256 digest
+     */
+    public static String deleteEntryContentSha256(DeleteEntryRequest request) {
+        return HexFormat.of().formatHex(
+                digest("SHA-256").digest(MessageFingerprints.deterministicBytes(request)));
+    }
+
+    /**
+     * The command digest recorded in an {@code ArchiveMutationReceipt}: lowercase
+     * hex SHA-256 of the deterministic protobuf encoding of {@code request} with
+     * {@code operation_id} cleared.
+     *
+     * @param request the archive mutation request
+     * @return the 64-character lowercase hex SHA-256 digest
+     */
+    public static String mutationCommandSha256(ArchiveMutationRequest request) {
+        return HexFormat.of().formatHex(digest("SHA-256").digest(MessageFingerprints.deterministicBytes(
+                request.toBuilder().clearOperationId().build())));
+    }
+
+    /**
+     * The command digest recorded in an {@code ArchiveMutationReceipt} for a
+     * {@code DeleteEntry} of {@code address}.
+     *
+     * @param address the target entry address
+     * @return the 64-character lowercase hex SHA-256 digest
+     */
+    public static String deleteEntryCommandSha256(EntryAddress address) {
+        return mutationCommandSha256(ArchiveMutationRequest.newBuilder()
+                .setDeleteEntry(DeleteEntryRequest.newBuilder().setAddress(address))
+                .build());
+    }
+
     /** The operation ID of a {@code PutEntry}: the supplied one, or the derived one. */
     public static String operationId(PutEntryRequest request, String contentSha256) {
         if (!request.getOperationId().isEmpty()) {
             return request.getOperationId();
         }
         return derive(putEntryKey(request, contentSha256)).toString();
+    }
+
+    /**
+     * The operation ID of a {@code DeleteEntry}: the supplied one, or the
+     * derived UUIDv5 when {@code operationId} is blank.
+     *
+     * @param operationId the caller-supplied operation ID, or empty to derive one
+     * @param request the delete-entry request
+     * @param expectedVersion the caller's requested expected version, or 0 for last write wins
+     * @return the resolved operation ID string
+     */
+    public static String operationId(
+            String operationId, DeleteEntryRequest request, long expectedVersion) {
+        if (operationId != null && !operationId.isEmpty()) {
+            return operationId;
+        }
+        return derive(deleteEntryKey(
+                request, expectedVersion, deleteEntryContentSha256(request))).toString();
     }
 
     /**

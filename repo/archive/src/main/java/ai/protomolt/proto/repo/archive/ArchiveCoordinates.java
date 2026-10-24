@@ -4,6 +4,7 @@ import ai.protomolt.proto.repo.archive.v1.EntryAddress;
 import ai.protomolt.proto.repo.v1.NodeAddress;
 import ai.protomolt.proto.repo.v2.DocumentPart;
 import ai.protomolt.proto.repo.v2.PartSelector;
+import java.util.Optional;
 
 /**
  * Archive coordinates onto v2 call numbers and rendition names onto blob IDs.
@@ -44,6 +45,26 @@ public final class ArchiveCoordinates {
                 .setGraphAddressId(entry.getArchive())
                 .setDocId(entry.getEntryId())
                 .build();
+    }
+
+    /**
+     * The archive entry address of a v2 document address under {@code archive:<account_id>}.
+     *
+     * @param address the v2 node address
+     * @return the archive {@link EntryAddress}, or empty when {@code address} is not in the archive graph
+     */
+    public static Optional<EntryAddress> entryAddress(NodeAddress address) {
+        if (address.getAccountId().isEmpty()
+                || !address.getGraphId().equals(graphId(address.getAccountId()))
+                || address.getGraphAddressId().isEmpty()
+                || address.getDocId().isEmpty()) {
+            return Optional.empty();
+        }
+        return Optional.of(EntryAddress.newBuilder()
+                .setAccountId(address.getAccountId())
+                .setArchive(address.getGraphAddressId())
+                .setEntryId(address.getDocId())
+                .build());
     }
 
     /**

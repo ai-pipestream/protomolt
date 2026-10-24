@@ -76,6 +76,15 @@ public final class DocumentArchiveGrpcService extends ArchiveServiceGrpc.Archive
         this.uploads = new RenditionUploads(archive, documents);
     }
 
+    /**
+     * Returns the underlying {@link DocumentArchive} engine backing this gRPC service.
+     *
+     * @return the {@link DocumentArchive} instance
+     */
+    public DocumentArchive archive() {
+        return archive;
+    }
+
     @Override
     public void putEntry(PutEntryRequest request, StreamObserver<PutEntryResponse> responses) {
         unary(() -> archive.putEntry(request), responses);
