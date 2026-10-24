@@ -68,7 +68,13 @@ class LinkRelationsTest {
             "vbscript:msgbox",
             "mailto:a@example.com",
             "http:rel/parent",                   // http without an authority
+            "https:rel/parent",                  // https without an authority
             "http:///rel/parent",                // empty authority
+            "http://@",                          // userinfo delimiter with empty host
+            "http://@/x",                        // empty host after @
+            "http://user@/x",                    // userinfo with empty host
+            "http://:80/x",                      // port with empty host
+            "http://user@:80/x",                 // userinfo and port with empty host
             "https://?q",                        // authority starts at the query
             "https://#f",
     })
@@ -145,6 +151,17 @@ class LinkRelationsTest {
                 .contains("https://purl.org/dc/terms/isPartOf");
         assertThat(Formats.inverseLinkRelation("http://purl.org/dc/terms/isVersionOf"))
                 .contains("http://purl.org/dc/terms/hasVersion");
+        // RFC 3986 scheme and host are case-insensitive; path and term stay case-sensitive.
+        assertThat(Formats.inverseLinkRelation("HTTP://purl.org/dc/terms/isPartOf"))
+                .contains("http://purl.org/dc/terms/hasPart");
+        assertThat(Formats.inverseLinkRelation("https://PURL.ORG/dc/terms/isPartOf"))
+                .contains("https://purl.org/dc/terms/hasPart");
+        assertThat(Formats.inverseLinkRelation("Http://Purl.Org/dc/terms/hasPart"))
+                .contains("http://purl.org/dc/terms/isPartOf");
+        assertThat(Formats.inverseLinkRelation("http://purl.org/DC/TERMS/isPartOf"))
+                .isEmpty();
+        assertThat(Formats.inverseLinkRelation("http://purl.org/dc/terms/IsPartOf"))
+                .isEmpty();
         // A different namespace spelling of the same term stays unknown.
         assertThat(Formats.inverseLinkRelation("http://purl.org/dc/elements/1.1/isPartOf"))
                 .isEmpty();
