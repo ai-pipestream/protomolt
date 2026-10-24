@@ -269,9 +269,10 @@ until then.
 
 ### Concept tags
 
-A concept tag is a value of a `ConceptRef` field in CORE, including the typed
-`structured_data` payload, whose field rules bind it to concept schemes
-(`concept_schemes`, well-known types "Concept schemes (SKOS)"). A save decides
+A concept tag is a value of a `ConceptRef` field in any part, including the
+typed `structured_data` payload in CORE and parser outputs in PARSED, whose
+field rules bind it to concept schemes (`concept_schemes`, well-known types
+"Concept schemes (SKOS)"); only CORE's are catalogued. A save decides
 each tag's membership against the concept schemes the host mounts
 (`DocumentSaves` takes the host's `ConceptSchemeCatalog`; the served
 repository gets them from `RepoServices.withConceptSchemes` and mounts none
@@ -292,7 +293,12 @@ A tag in another part, such as a parser's output in PARSED, is checked the
 same way (membership against the mounts, the canonical `ConceptRef`) and stored
 with that part, but it is not catalogued, so a concept filter does not match
 it. PARSED is the parser's claim-check output; the mapping step carries an
-interpretation worth filtering on into CORE.
+interpretation worth filtering on into CORE. During a rolling upgrade over a
+shared store, a host built before `#656` that reads a PARSED part containing a
+bound `ConceptRef` saved by a newer host refuses it in
+`DocumentReads.decodeRetained` (`ContentRefused`, surfacing as `DATA_LOSS`), so
+readers should be upgraded before writers emit bound `ConceptRef` tags in
+PARSED.
 
 Tags project into `catalog_document_concepts` under the same
 `(field_path, ordinal)` identity as links: current revision only, replaced by

@@ -311,6 +311,11 @@ public final class DocumentCandidateAdmission {
                     // Concept tags share the CORE-rooted occurrence identity of links. A tag in another
                     // part is checked the same way and stored with that part, but only CORE's are
                     // catalogued: mapping carries an interpretation into CORE to make it filterable.
+                    // Built-in PARSED, BLOBS, CHUNKS and EMBEDDINGS container types declare no bound
+                    // ConceptRef directly (parser tags arrive through the typed Any root walk below),
+                    // while a registered Document container version that binds a ConceptRef on a
+                    // non-CORE fragment is still validated here and by the view validator without
+                    // being catalogued.
                     var tags = DocumentConcepts.extract(parsed, "", conceptSchemas);
                     if (fragment.part() == DocumentPart.DOCUMENT_PART_CORE) concepts.addAll(tags);
                     switch (fragment.part()) {
@@ -451,7 +456,10 @@ public final class DocumentCandidateAdmission {
                         found = invalid.occurrences();
                         decodedRemaining -= invalid.decodedBytes();
                         var failure = invalid.failure();
-                        violations.add(new Violation(fragment.part(), failure.fieldPath(), failure.ruleId(),
+                        var path = fragment.part() == DocumentPart.DOCUMENT_PART_PARSED
+                                ? failurePath(type, root.access(), failure, definitions.schemas)
+                                : failure.fieldPath();
+                        violations.add(new Violation(fragment.part(), path, failure.ruleId(),
                                 "payload rule failed at " + failure.rulePath()));
                     }
                     for (var occurrence : found) {
@@ -561,6 +569,46 @@ public final class DocumentCandidateAdmission {
             }
         }
         if (path.isEmpty()) throw new IllegalStateException("Any root access is empty");
+        return path.toString();
+    }
+
+    /**
+     * The container-rooted field path of a payload rule failure under an Any root:
+     * the root access path, any intermediate nested Any occurrence steps (entering
+     * each Any boundary without a segment of its own), and the violating field path.
+     */
+    private static String failurePath(Descriptor container,
+            List<DocumentSchemaOccurrences.Step> access,
+            DocumentPayloadAssessment.Failure failure,
+            Map<DocumentPayloadCheck.SchemaKey, DocumentSchemaBinding> schemas) {
+        var path = new StringBuilder(rootPath(container, access));
+        Descriptor current = null;
+        FieldDescriptor field = null;
+        for (var step : failure.occurrence()) {
+            switch (step) {
+                case DocumentSchemaOccurrences.Boundary boundary -> {
+                    var schema = schemas.get(new DocumentPayloadCheck.SchemaKey(
+                            boundary.typeUrl(), boundary.artifactSha256()));
+                    current = schema == null ? null : schema.type();
+                    field = null;
+                }
+                case DocumentSchemaOccurrences.Field named -> {
+                    field = current == null ? null : current.findFieldByNumber(named.number());
+                    if (field == null) throw new IllegalStateException("Any occurrence names an undeclared field " + named.number());
+                    path.append('.').append(field.getName());
+                    current = field.getJavaType() == FieldDescriptor.JavaType.MESSAGE
+                            && !field.isMapField() ? field.getMessageType() : null;
+                }
+                case DocumentSchemaOccurrences.Index index -> path.append('[').append(index.index()).append(']');
+                case DocumentSchemaOccurrences.MapKey key -> {
+                    path.append(DocumentLinks.subscript(key.value()));
+                    var value = field == null ? null : field.getMessageType().findFieldByName("value");
+                    current = value != null && value.getJavaType() == FieldDescriptor.JavaType.MESSAGE
+                            ? value.getMessageType() : null;
+                }
+            }
+        }
+        if (!failure.fieldPath().isEmpty()) path.append('.').append(failure.fieldPath());
         return path.toString();
     }
 
