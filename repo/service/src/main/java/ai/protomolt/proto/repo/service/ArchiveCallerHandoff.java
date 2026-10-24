@@ -9,12 +9,15 @@ import ai.protomolt.proto.repo.spi.RepositoryCaller;
 import ai.protomolt.proto.repo.v1.Access;
 import ai.protomolt.proto.repo.v1.AccessRule;
 import ai.protomolt.proto.repo.v1.DocumentSecurity;
+import ai.protomolt.proto.repo.v1.Principal;
 import ai.protomolt.proto.repo.v2.SaveDocumentRequest;
 import ai.protomolt.proto.repo.v2.UploadDocumentRequest;
+import ai.protomolt.proto.repo.v2.UploadDocumentResponse;
 import io.grpc.CallOptions;
 import io.grpc.Channel;
 import io.grpc.ClientCall;
 import io.grpc.ClientInterceptor;
+import io.grpc.ClientInterceptors;
 import io.grpc.Context;
 import io.grpc.Contexts;
 import io.grpc.ForwardingClientCall;
@@ -26,11 +29,13 @@ import io.grpc.ServerCallHandler;
 import io.grpc.ServerInterceptor;
 import io.grpc.Status;
 import java.io.IOException;
+import java.util.Comparator;
 import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * Propagates the authenticated caller resolved on an in-process archive entry door
@@ -45,6 +50,8 @@ final class ArchiveCallerHandoff {
 
     static final Context.Key<RepositoryCaller> REPOSITORY_CALLER =
             Context.key("protomolt-archive-repository-caller");
+    private static final Context.Key<AtomicBoolean> UPLOAD_COMMITTED =
+            Context.key("protomolt-archive-upload-committed");
 
     private static final Metadata.Key<String> CALL_KEY =
             Metadata.Key.of("protomolt-archive-call", Metadata.ASCII_STRING_MARSHALLER);
@@ -78,7 +85,8 @@ final class ArchiveCallerHandoff {
         Context context = Context.current().withValues(
                 CallerContexts.CALLER, effective.caller(),
                 CallerContexts.AUTHENTICATED_CALLER, effective,
-                REPOSITORY_CALLER, caller);
+                REPOSITORY_CALLER, caller,
+                UPLOAD_COMMITTED, new AtomicBoolean(false));
         Context previous = context.attach();
         try {
             return action.run();
@@ -97,6 +105,39 @@ final class ArchiveCallerHandoff {
                         scoped,
                          java.util.Optional.of(new CredentialBinding(b.issuer(), b.credentialId(), b.generation()))))
                 .orElseGet(() -> AuthenticatedCaller.unbound(scoped));
+    }
+
+    private static final class HandoffChannel extends Channel {
+        private final Channel delegate;
+
+        private HandoffChannel(Channel delegate) {
+            this.delegate = Objects.requireNonNull(delegate, "delegate");
+        }
+
+        @Override
+        public <RequestT, ResponseT> ClientCall<RequestT, ResponseT> newCall(
+                MethodDescriptor<RequestT, ResponseT> methodDescriptor, CallOptions callOptions) {
+            return delegate.newCall(methodDescriptor, callOptions);
+        }
+
+        @Override
+        public String authority() {
+            return delegate.authority();
+        }
+    }
+
+    /**
+     * Wraps {@code channel} with {@link #clientInterceptor()} if it is not already wrapped.
+     *
+     * @param channel the target gRPC channel
+     * @return the caller-forwarding channel
+     */
+    static Channel interceptChannel(Channel channel) {
+        Objects.requireNonNull(channel, "channel");
+        if (channel instanceof HandoffChannel) {
+            return channel;
+        }
+        return new HandoffChannel(ClientInterceptors.intercept(channel, clientInterceptor()));
     }
 
     /**
@@ -121,7 +162,9 @@ final class ArchiveCallerHandoff {
                     }
                 }
                 RepositoryCaller repoCaller = REPOSITORY_CALLER.get();
-                AuthenticatedCaller handedOff = auth;
+                AtomicBoolean uploadCommitted = UPLOAD_COMMITTED.get();
+                AuthenticatedCaller handedOff =
+                        uploadCommitted != null && uploadCommitted.get() ? null : auth;
                 return new ForwardingClientCall.SimpleForwardingClientCall<>(
                         next.newCall(method, callOptions)) {
                     private String handoffId;
@@ -136,6 +179,15 @@ final class ArchiveCallerHandoff {
                         super.start(
                                 new ForwardingClientCallListener.SimpleForwardingClientCallListener<>(
                                         responseListener) {
+                                    @Override
+                                    public void onMessage(RespT message) {
+                                        if (message instanceof UploadDocumentResponse
+                                                && uploadCommitted != null) {
+                                            uploadCommitted.set(true);
+                                        }
+                                        super.onMessage(message);
+                                    }
+
                                     @Override
                                     public void onClose(Status status, Metadata trailers) {
                                         if (handoffId != null) {
@@ -153,6 +205,7 @@ final class ArchiveCallerHandoff {
                         if (message instanceof SaveDocumentRequest saveReq
                                 && saveReq.getTarget().getAddress().getGraphId()
                                         .startsWith(DocumentArchiveBindings.DEFINITION_GRAPH_PREFIX)
+                                && saveReq.getExpected().getNone()
                                 && !saveReq.getDocument().getOwnership().hasSecurity()) {
                             SaveDocumentRequest updated = withDefinitionSecurity(saveReq);
                             super.sendMessage((ReqT) updated);
@@ -221,40 +274,34 @@ final class ArchiveCallerHandoff {
                         .setIdentityType(PUBLIC_IDENTITY)
                         .setIdentity(PUBLIC_IDENTITY)
                         .setAccess(Access.ACCESS_READ))
-                .addPermissions(AccessRule.newBuilder()
-                        .setIdentityType(PUBLIC_IDENTITY)
-                        .setIdentity(PUBLIC_IDENTITY)
-                        .setAccess(Access.ACCESS_WRITE))
                 .build();
         var document = request.getDocument().toBuilder();
         document.getOwnershipBuilder().setSecurity(security);
         return request.toBuilder().setDocument(document).build();
     }
 
+    /**
+     * Stamps READ and WRITE access rules for each ACL identity presented by a scoped
+     * caller, matching {@code UploadHttpHandler.uploadSecurity}. A scoped caller that
+     * presents no ACL identities writes no rules.
+     */
     private static UploadDocumentRequest withUploaderSecurity(
             UploadDocumentRequest request, RepositoryCaller caller) {
-        var security = DocumentSecurity.newBuilder();
         if (caller.identities().isEmpty()) {
-            security.addPermissions(AccessRule.newBuilder()
-                    .setIdentityType(PUBLIC_IDENTITY)
-                    .setIdentity(PUBLIC_IDENTITY)
-                    .setAccess(Access.ACCESS_READ));
-            security.addPermissions(AccessRule.newBuilder()
-                    .setIdentityType(PUBLIC_IDENTITY)
-                    .setIdentity(PUBLIC_IDENTITY)
-                    .setAccess(Access.ACCESS_WRITE));
-        } else {
-            for (var identity : caller.identities()) {
-                security.addPermissions(AccessRule.newBuilder()
-                        .setIdentityType(identity.getIdentityType())
-                        .setIdentity(identity.getIdentity())
-                        .setAccess(Access.ACCESS_READ));
-                security.addPermissions(AccessRule.newBuilder()
-                        .setIdentityType(identity.getIdentityType())
-                        .setIdentity(identity.getIdentity())
-                        .setAccess(Access.ACCESS_WRITE));
-            }
+            return request;
         }
+        var security = DocumentSecurity.newBuilder();
+        caller.identities().stream()
+                .sorted(Comparator.comparing(Principal::getIdentityType).thenComparing(Principal::getIdentity))
+                .forEach(identity -> {
+                    for (Access access : new Access[] {Access.ACCESS_READ, Access.ACCESS_WRITE}) {
+                        security.addPermissions(AccessRule.newBuilder()
+                                .setIdentityType(identity.getIdentityType())
+                                .setIdentity(identity.getIdentity())
+                                .setDisplayName(caller.principalName())
+                                .setAccess(access));
+                    }
+                });
         var header = request.getHeader().toBuilder();
         header.getSaveBuilder().getDocumentBuilder().getOwnershipBuilder().setSecurity(security);
         return request.toBuilder().setHeader(header).build();

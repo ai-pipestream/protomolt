@@ -456,27 +456,31 @@ public final class RepoServices implements AutoCloseable {
                 var stepSaveInterceptor = stepSave.interceptor();
                 configuredServices.add(new BindableService() {
                     @Override public io.grpc.ServerServiceDefinition bindService() {
-                        return io.grpc.ServerInterceptors.intercept(accessionImpl, stepSaveInterceptor);
+                        return io.grpc.ServerInterceptors.intercept(
+                                accessionImpl,
+                                stepSaveInterceptor,
+                                ArchiveCallerHandoff.serverInterceptor());
                     }
                 });
                 String internalName = InProcessServerBuilder.generateName();
                 var internalBuilder = InProcessServerBuilder.forName(internalName)
+                        .directExecutor()
                         .maxInboundMessageSize(CONNECT_MESSAGE_BYTES)
                         .addService(io.grpc.ServerInterceptors.intercept(
                                 accessionImpl,
-                                ArchiveCallerHandoff.serverInterceptor(),
-                                stepSaveInterceptor));
+                                stepSaveInterceptor,
+                                ArchiveCallerHandoff.serverInterceptor()));
                 try {
                     GrpcServerLifetime.start(internalBuilder, servers::add);
                 } catch (IOException e) {
                     throw new UncheckedIOException(e);
                 }
                 var internalChannel = io.grpc.inprocess.InProcessChannelBuilder.forName(internalName)
+                        .directExecutor()
                         .maxInboundMessageSize(CONNECT_MESSAGE_BYTES)
                         .build();
                 owned.add(internalChannel::shutdownNow);
-                var interceptedChannel = io.grpc.ClientInterceptors.intercept(
-                        internalChannel, ArchiveCallerHandoff.clientInterceptor());
+                var interceptedChannel = ArchiveCallerHandoff.interceptChannel(internalChannel);
                 var archiveBindings = ai.protomolt.proto.repo.archive.ArchiveBindings.overDocuments(
                         interceptedChannel,
                         "ds-archive",

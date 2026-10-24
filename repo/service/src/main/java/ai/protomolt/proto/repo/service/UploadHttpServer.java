@@ -23,7 +23,6 @@ import com.google.protobuf.ByteString;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpHandler;
 import com.sun.net.httpserver.HttpServer;
-import io.grpc.ClientInterceptors;
 import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
 import io.grpc.stub.StreamObserver;
@@ -48,6 +47,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 import java.util.function.BiPredicate;
 import java.util.function.Function;
 import java.util.function.Supplier;
@@ -78,6 +78,7 @@ public final class UploadHttpServer implements AutoCloseable {
     private static final Logger LOG = LoggerFactory.getLogger(UploadHttpServer.class);
     private static final ObjectMapper MAPPER = new ObjectMapper();
     private static final int STREAM_CHUNK_BYTES = 64 * 1024;
+    private static final long UPLOAD_READY_TIMEOUT_NANOS = TimeUnit.SECONDS.toNanos(60);
 
     /** The parts-based document route. */
     private final HttpHandler documentUploads;
@@ -303,8 +304,7 @@ public final class UploadHttpServer implements AutoCloseable {
             RenditionUploads baseUploads = new RenditionUploads(v2Archive);
             this.v2ArchiveUploads = new RenditionUploads(
                     v2Archive,
-                    ClientInterceptors.intercept(baseUploads.channel(),
-                            ArchiveCallerHandoff.clientInterceptor()));
+                    ArchiveCallerHandoff.interceptChannel(baseUploads.channel()));
         }
         this.legacyArchiveExists = legacyArchiveExists;
         this.console = Objects.requireNonNull(console, "console");
@@ -499,7 +499,7 @@ public final class UploadHttpServer implements AutoCloseable {
             if (!"POST".equalsIgnoreCase(exchange.getRequestMethod())) {
                 throw new HttpError(405, "method not allowed: " + exchange.getRequestMethod());
             }
-            writeJson(exchange, 200, archiveUpload(exchange, resolved));
+            archiveUpload(exchange, resolved);
         } catch (HttpError e) {
             writeError(exchange, e.status, e.getMessage());
         } catch (ai.protomolt.proto.repo.spi.RepositoryException e) {
@@ -534,14 +534,19 @@ public final class UploadHttpServer implements AutoCloseable {
 
     /**
      * The archive's zero-dependency door: the body is one rendition's bytes,
-     * identity rides query parameters or headers (query wins) — account_id,
-     * archive, entry_id, rendition (default {@code original}), sub_key, filename,
-     * title, source_uri, schema_subject, module, operation_id, expected_version,
-     * Content-Type, optional X-Content-Sha256 — streamed through the same
-     * verified, content-addressed landing as the gRPC streaming door, one
-     * new entry version per upload.
+     * identity rides query parameters or headers (query wins) — {@code account_id},
+     * {@code archive}, {@code entry_id}, {@code rendition} (default {@code original}),
+     * {@code sub_key}, {@code schema_subject}, {@code module}, {@code operation_id},
+     * {@code expected_version}, {@code Content-Type}, optional {@code X-Content-Sha256}
+     * ({@code expected_sha256}), and (on the legacy {@link ArchiveRepository} path only)
+     * {@code filename} — streamed through the same verified, content-addressed landing
+     * as the gRPC streaming door, one new entry version per upload.
+     *
+     * <p>When routed through the v2 {@link DocumentArchive}, the response is the binary
+     * protobuf {@link UploadRenditionResponse} ({@code Content-Type: application/proto})
+     * with {@code X-Operation-Id} and {@code X-Replayed} response headers.
      */
-    private ObjectNode archiveUpload(HttpExchange exchange, ResolvedCaller resolved) throws IOException {
+    private void archiveUpload(HttpExchange exchange, ResolvedCaller resolved) throws IOException {
         Map<String, String> query = parseQuery(exchange.getRequestURI().getRawQuery());
         String accountId = required(identity(exchange, query, "account_id", "x-account-id"),
                 "account_id");
@@ -550,9 +555,6 @@ public final class UploadHttpServer implements AutoCloseable {
                 "entry_id");
         String rendition = identity(exchange, query, "rendition", "x-rendition");
         String subKey = identity(exchange, query, "sub_key", "x-sub-key");
-        String filename = identity(exchange, query, "filename", "x-filename");
-        String title = identity(exchange, query, "title", "x-title");
-        String sourceUri = identity(exchange, query, "source_uri", "x-source-uri");
         String schemaSubject = identity(exchange, query, "schema_subject", "x-schema-subject");
         String module = identity(exchange, query, "module", "x-module");
         String operationId = identity(exchange, query, "operation_id", "x-operation-id");
@@ -585,15 +587,17 @@ public final class UploadHttpServer implements AutoCloseable {
         if (v2ArchiveUploads != null && (archiveOperations == null
                 || legacyArchiveExists == null
                 || !legacyArchiveExists.test(accountId, archive))) {
-            return uploadV2Archive(exchange, resolved, address, descriptor, contentLength,
-                    declaredSha, module, operationId, expectedVersion);
+            writeProto(exchange, 200, uploadV2Archive(exchange, resolved, address, descriptor,
+                    contentLength, declaredSha, module, operationId, expectedVersion));
+            return;
         }
 
+        String filename = identity(exchange, query, "filename", "x-filename");
         ArchiveRepository.UploadResult result = archiveOperations.uploadStream(
                 resolved.caller(), address, descriptor, contentLength,
                 declaredSha == null ? "" : declaredSha,
                 null, filename, null, null, exchange.getRequestBody());
-        return MAPPER.createObjectNode()
+        writeJson(exchange, 200, MAPPER.createObjectNode()
                 .put("entry_uuid", result.entryUuid())
                 .put("version", result.version())
                 .put("rendition", descriptor.getName())
@@ -601,10 +605,10 @@ public final class UploadHttpServer implements AutoCloseable {
                 .put("sha256", result.sha256())
                 .put("object_key", result.objectKey())
                 .put("root_checksum", result.rootChecksum())
-                .put("deduplicated", result.deduplicated());
+                .put("deduplicated", result.deduplicated()));
     }
 
-    private ObjectNode uploadV2Archive(HttpExchange exchange, ResolvedCaller resolved,
+    private UploadRenditionResponse uploadV2Archive(HttpExchange exchange, ResolvedCaller resolved,
             EntryAddress address, RenditionDescriptor descriptor, long contentLength,
             String declaredSha, String module, String operationId, long expectedVersion) throws IOException {
         WriteAttribution.Builder attribution = WriteAttribution.newBuilder()
@@ -654,37 +658,87 @@ public final class UploadHttpServer implements AutoCloseable {
 
         UploadRenditionResponse result = ArchiveCallerHandoff.callWithCaller(
                 resolved.caller(), resolved.authenticated(), () -> {
-                    StreamObserver<UploadRenditionRequest> stream =
-                            v2ArchiveUploads.upload(responseObserver);
-                    try (InputStream body = exchange.getRequestBody()) {
+                    RenditionUploads.FlowControlledUpload stream =
+                            v2ArchiveUploads.uploadFlowControlled(responseObserver);
+                    InputStream body = exchange.getRequestBody();
+                    long bytesRead = 0L;
+                    try {
                         stream.onNext(UploadRenditionRequest.newBuilder()
                                 .setHeader(header.build())
                                 .build());
                         byte[] buffer = new byte[STREAM_CHUNK_BYTES];
-                        int read;
-                        while (!responseFuture.isDone() && (read = body.read(buffer)) != -1) {
+                        while (!responseFuture.isDone()) {
+                            if (!stream.awaitReady(UPLOAD_READY_TIMEOUT_NANOS)) {
+                                StatusRuntimeException timeout = Status.DEADLINE_EXCEEDED
+                                        .withDescription("timed out waiting for archive upload stream readiness")
+                                        .asRuntimeException();
+                                stream.onError(timeout);
+                                throw timeout;
+                            }
+                            if (responseFuture.isDone()) {
+                                break;
+                            }
+                            int read = body.read(buffer);
+                            if (read == -1) {
+                                break;
+                            }
                             if (read > 0) {
+                                bytesRead += read;
                                 stream.onNext(UploadRenditionRequest.newBuilder()
                                         .setChunk(ByteString.copyFrom(buffer, 0, read))
                                         .build());
                             }
                         }
                         if (!responseFuture.isDone()) {
-                            stream.onCompleted();
-                        } else {
-                            // Drain any remaining HTTP request bytes when the server completed early
-                            // (for example on an immediate idempotent replay or preflight error).
-                            while (body.read(buffer) != -1) {
-                                // discard
+                            if (bytesRead < contentLength) {
+                                exchange.getResponseHeaders().set("Connection", "close");
+                                StatusRuntimeException truncated = Status.INVALID_ARGUMENT
+                                        .withDescription("truncated HTTP upload stream: expected "
+                                                + contentLength + " bytes, got " + bytesRead)
+                                        .asRuntimeException();
+                                stream.onError(truncated);
+                                throw new HttpError(400, truncated.getStatus().getDescription());
                             }
+                            stream.onCompleted();
+                            body.close();
+                        } else if (bytesRead < contentLength) {
+                            // The call terminated early (for example on an immediate idempotent replay
+                            // or header-time refusal). Mark Connection: close instead of draining the
+                            // remaining request body so large refused or replayed bodies are not read.
+                            exchange.getResponseHeaders().set("Connection", "close");
+                        } else {
+                            body.close();
                         }
+                    } catch (InterruptedException interrupted) {
+                        Thread.currentThread().interrupt();
+                        exchange.getResponseHeaders().set("Connection", "close");
+                        StatusRuntimeException cancelled = Status.CANCELLED
+                                .withDescription("archive upload interrupted")
+                                .withCause(interrupted)
+                                .asRuntimeException();
+                        stream.onError(cancelled);
+                        throw cancelled;
                     } catch (IOException ioFailure) {
+                        exchange.getResponseHeaders().set("Connection", "close");
+                        if (bytesRead < contentLength) {
+                            StatusRuntimeException truncated = Status.INVALID_ARGUMENT
+                                    .withDescription("truncated HTTP upload stream after "
+                                            + bytesRead + " of " + contentLength + " bytes: "
+                                            + ioFailure.getMessage())
+                                    .withCause(ioFailure)
+                                    .asRuntimeException();
+                            stream.onError(truncated);
+                            throw new HttpError(400, truncated.getStatus().getDescription());
+                        }
                         stream.onError(Status.INTERNAL
                                 .withDescription("failed to read HTTP upload stream: " + ioFailure.getMessage())
                                 .withCause(ioFailure)
                                 .asRuntimeException());
                         throw ioFailure;
                     } catch (RuntimeException failure) {
+                        if (bytesRead < contentLength) {
+                            exchange.getResponseHeaders().set("Connection", "close");
+                        }
                         stream.onError(failure);
                         throw failure;
                     }
@@ -717,17 +771,7 @@ public final class UploadHttpServer implements AutoCloseable {
                     }
                 });
 
-        return MAPPER.createObjectNode()
-                .put("entry_uuid", result.getEntryUuid())
-                .put("version", result.getVersion())
-                .put("rendition", descriptor.getName())
-                .put("size_bytes", result.getSizeBytes())
-                .put("sha256", result.getSha256())
-                .put("object_key", result.getObjectKey())
-                .put("root_checksum", result.getRootChecksum())
-                .put("deduplicated", false)
-                .put("operation_id", result.getOperationId())
-                .put("replayed", result.getReplayed());
+        return result;
     }
 
     private static long parseExpectedVersion(String raw) {
@@ -822,6 +866,19 @@ public final class UploadHttpServer implements AutoCloseable {
             from = amp + 1;
         }
         return out;
+    }
+
+    private static void writeProto(HttpExchange exchange, int status, UploadRenditionResponse response)
+            throws IOException {
+        byte[] bytes = response.toByteArray();
+        var headers = exchange.getResponseHeaders();
+        headers.set("Content-Type", "application/proto");
+        headers.set("X-Operation-Id", response.getOperationId());
+        headers.set("X-Replayed", Boolean.toString(response.getReplayed()));
+        exchange.sendResponseHeaders(status, bytes.length);
+        try (OutputStream out = exchange.getResponseBody()) {
+            out.write(bytes);
+        }
     }
 
     private void writeJson(HttpExchange exchange, int status, ObjectNode body) throws IOException {

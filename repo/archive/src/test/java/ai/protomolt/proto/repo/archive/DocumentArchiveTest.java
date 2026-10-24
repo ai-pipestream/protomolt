@@ -17,6 +17,9 @@ import ai.protomolt.proto.repo.archive.v1.ListEntriesResponse;
 import ai.protomolt.proto.repo.archive.v1.PutEntryRequest;
 import ai.protomolt.proto.repo.archive.v1.RenditionContent;
 import ai.protomolt.proto.repo.archive.v1.RenditionDescriptor;
+import ai.protomolt.proto.repo.archive.v1.UploadRenditionHeader;
+import ai.protomolt.proto.repo.archive.v1.UploadRenditionRequest;
+import ai.protomolt.proto.repo.archive.v1.UploadRenditionResponse;
 import ai.protomolt.proto.repo.archive.v1.VersioningPolicy;
 import ai.protomolt.proto.repo.v1.Blob;
 import ai.protomolt.proto.repo.v1.BlobBag;
@@ -40,6 +43,8 @@ import ai.protomolt.proto.repo.v2.GetOperationOutcomeResponse;
 import ai.protomolt.proto.repo.v2.IntakeOrigin;
 import ai.protomolt.proto.repo.v2.ListDocumentsRequest;
 import ai.protomolt.proto.repo.v2.ListDocumentsResponse;
+import ai.protomolt.proto.repo.v2.ListRevisionsRequest;
+import ai.protomolt.proto.repo.v2.ListRevisionsResponse;
 import ai.protomolt.proto.repo.v2.PartManifestEntry;
 import ai.protomolt.proto.repo.v2.PartState;
 import ai.protomolt.proto.repo.v2.ReadBlobRequest;
@@ -48,10 +53,20 @@ import ai.protomolt.proto.repo.v2.RevisionValidation;
 import ai.protomolt.proto.repo.v2.SaveDocumentRequest;
 import ai.protomolt.proto.repo.v2.SaveDocumentResponse;
 import ai.protomolt.proto.repo.v2.SaveOwner;
+import ai.protomolt.proto.repo.v2.UploadDocumentRequest;
+import ai.protomolt.proto.repo.v2.UploadDocumentResponse;
 import ai.protomolt.proto.repo.v2.ValidationStatus;
 import com.google.protobuf.ByteString;
 import com.google.protobuf.Timestamp;
+import io.grpc.CallOptions;
+import io.grpc.Channel;
+import io.grpc.ClientCall;
+import io.grpc.ClientInterceptor;
+import io.grpc.ClientInterceptors;
+import io.grpc.ForwardingClientCall;
 import io.grpc.ManagedChannel;
+import io.grpc.Metadata;
+import io.grpc.MethodDescriptor;
 import io.grpc.Server;
 import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
@@ -67,7 +82,11 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
@@ -228,6 +247,14 @@ class DocumentArchiveTest {
             }
 
             @Override
+            public void listRevisions(
+                    ListRevisionsRequest request,
+                    StreamObserver<ListRevisionsResponse> responseObserver) {
+                responseObserver.onNext(ListRevisionsResponse.getDefaultInstance());
+                responseObserver.onCompleted();
+            }
+
+            @Override
             public void saveDocument(
                     SaveDocumentRequest request, StreamObserver<SaveDocumentResponse> responseObserver) {
                 NodeAddress addr = request.getTarget().getAddress();
@@ -342,6 +369,158 @@ class DocumentArchiveTest {
         assertThat(stats.getVersions()).isEqualTo(1L);
         assertThat(stats.getCurrentBytes()).isEqualTo(pdf.size());
         assertThat(stats.getRetainedBytes()).isEqualTo(pdf.size());
+    }
+
+    @Test
+    void flowControlledUploadWaitsForDownstreamReadinessAndResumesOnReadyCallback() throws Exception {
+        ByteString chunkBytes = ByteString.copyFromUtf8("flow-controlled-bytes");
+        NodeAddress entryNode = ArchiveCoordinates.address(
+                EntryAddress.newBuilder().setAccountId(ACCOUNT).setArchive(ARCHIVE).setEntryId("e-flow").build());
+        AtomicBoolean committed = new AtomicBoolean(false);
+
+        startService(new DocumentServiceGrpc.DocumentServiceImplBase() {
+            @Override
+            public void getOperationOutcome(
+                    GetOperationOutcomeRequest request,
+                    StreamObserver<GetOperationOutcomeResponse> responseObserver) {
+                responseObserver.onNext(GetOperationOutcomeResponse.getDefaultInstance());
+                responseObserver.onCompleted();
+            }
+
+            @Override
+            public void listRevisions(
+                    ListRevisionsRequest request,
+                    StreamObserver<ListRevisionsResponse> responseObserver) {
+                responseObserver.onNext(ListRevisionsResponse.getDefaultInstance());
+                responseObserver.onCompleted();
+            }
+
+            @Override
+            public StreamObserver<UploadDocumentRequest> uploadDocument(
+                    StreamObserver<UploadDocumentResponse> responseObserver) {
+                return new StreamObserver<>() {
+                    @Override
+                    public void onNext(UploadDocumentRequest value) {
+                    }
+
+                    @Override
+                    public void onError(Throwable t) {
+                        responseObserver.onError(t);
+                    }
+
+                    @Override
+                    public void onCompleted() {
+                        committed.set(true);
+                        responseObserver.onNext(UploadDocumentResponse.newBuilder()
+                                .setSaved(SaveDocumentResponse.newBuilder()
+                                        .setAccession(Accession.newBuilder().setAddress(entryNode).setRevision(1L)))
+                                .build());
+                        responseObserver.onCompleted();
+                    }
+                };
+            }
+
+            @Override
+            public void getDocument(
+                    GetDocumentRequest request, StreamObserver<GetDocumentResponse> responseObserver) {
+                if (!committed.get()) {
+                    responseObserver.onError(Status.NOT_FOUND.asRuntimeException());
+                    return;
+                }
+                responseObserver.onNext(documentWithBlob(entryNode, 1L, "original", chunkBytes));
+                responseObserver.onCompleted();
+            }
+        });
+
+        AtomicBoolean downstreamReady = new AtomicBoolean(false);
+        AtomicReference<ClientCall.Listener<?>> uploadListener = new AtomicReference<>();
+        Channel throttledChannel = ClientInterceptors.intercept(channel, new ClientInterceptor() {
+            @Override
+            public <ReqT, RespT> ClientCall<ReqT, RespT> interceptCall(
+                    MethodDescriptor<ReqT, RespT> method, CallOptions callOptions, Channel next) {
+                ClientCall<ReqT, RespT> call = next.newCall(method, callOptions);
+                if (!method.getFullMethodName().equals(
+                        DocumentServiceGrpc.getUploadDocumentMethod().getFullMethodName())) {
+                    return call;
+                }
+                return new ForwardingClientCall.SimpleForwardingClientCall<>(call) {
+                    @Override
+                    public void start(Listener<RespT> responseListener, Metadata headers) {
+                        uploadListener.set(responseListener);
+                        super.start(responseListener, headers);
+                    }
+
+                    @Override
+                    public boolean isReady() {
+                        return downstreamReady.get();
+                    }
+                };
+            }
+        });
+
+        ArchiveBindings bindings = (acct, name) -> Optional.of(
+                new ArchiveBinding(acct, name, "ds", "intake", VersioningPolicy.VERSIONING_POLICY_RETAINED));
+        DocumentArchive archive = new DocumentArchive(throttledChannel, bindings, FIXED_CLOCK);
+        RenditionUploads uploads = new RenditionUploads(archive);
+        CompletableFuture<UploadRenditionResponse> done = new CompletableFuture<>();
+        RenditionUploads.FlowControlledUpload stream = uploads.uploadFlowControlled(new StreamObserver<>() {
+            private UploadRenditionResponse result;
+
+            @Override
+            public void onNext(UploadRenditionResponse value) {
+                result = value;
+            }
+
+            @Override
+            public void onError(Throwable t) {
+                done.completeExceptionally(t);
+            }
+
+            @Override
+            public void onCompleted() {
+                done.complete(result);
+            }
+        });
+
+        assertThat(stream.isReady()).isTrue();
+        stream.onNext(UploadRenditionRequest.newBuilder()
+                .setHeader(UploadRenditionHeader.newBuilder()
+                        .setOperationId("op-flow-1")
+                        .setSizeBytes(chunkBytes.size())
+                        .setAddress(EntryAddress.newBuilder()
+                                .setAccountId(ACCOUNT)
+                                .setArchive(ARCHIVE)
+                                .setEntryId("e-flow"))
+                        .setRendition(RenditionDescriptor.newBuilder()
+                                .setName("original")
+                                .setMediaType("application/pdf")))
+                .build());
+
+        // Downstream is not ready: isReady() is false and awaitReady times out until onReady fires.
+        assertThat(stream.isReady()).isFalse();
+        assertThat(stream.awaitReady(TimeUnit.MILLISECONDS.toNanos(15))).isFalse();
+
+        CompletableFuture<Boolean> waiter = CompletableFuture.supplyAsync(() -> {
+            try {
+                return stream.awaitReady(TimeUnit.SECONDS.toNanos(5));
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new RuntimeException(e);
+            }
+        });
+
+        downstreamReady.set(true);
+        uploadListener.get().onReady();
+
+        assertThat(waiter.get(5, TimeUnit.SECONDS)).isTrue();
+        assertThat(stream.isReady()).isTrue();
+
+        stream.onNext(UploadRenditionRequest.newBuilder().setChunk(chunkBytes).build());
+        stream.onCompleted();
+
+        UploadRenditionResponse response = done.get(5, TimeUnit.SECONDS);
+        assertThat(response.getVersion()).isEqualTo(1L);
+        assertThat(response.getSizeBytes()).isEqualTo(chunkBytes.size());
     }
 
     private void startService(DocumentServiceGrpc.DocumentServiceImplBase service) throws Exception {

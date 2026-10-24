@@ -15,6 +15,7 @@ import io.grpc.stub.StreamObserver;
 import java.security.MessageDigest;
 import java.util.HexFormat;
 import java.util.Objects;
+import java.util.concurrent.locks.Condition;
 import java.util.concurrent.locks.ReentrantLock;
 
 /**
@@ -34,6 +35,31 @@ import java.util.concurrent.locks.ReentrantLock;
  * the rendition it recorded, and other bytes are {@code ALREADY_EXISTS}.</p>
  */
 public final class RenditionUploads {
+
+    /**
+     * A flow-controlled upload request observer for non-gRPC producers (such as HTTP
+     * streaming handlers) that wait for the underlying v2 {@code UploadDocument}
+     * stream to become ready before reading and sending the next chunk.
+     */
+    public interface FlowControlledUpload extends StreamObserver<UploadRenditionRequest> {
+        /**
+         * Returns {@code true} when the underlying upload stream can accept another frame
+         * without unbounded queueing, or when the upload has already terminated.
+         *
+         * @return whether the producer may send the next frame immediately
+         */
+        boolean isReady();
+
+        /**
+         * Blocks the calling thread until {@link #isReady()} is {@code true} or the upload
+         * finishes, up to {@code timeoutNanos}.
+         *
+         * @param timeoutNanos maximum time to wait in nanoseconds
+         * @return {@code true} if the upload is ready or finished; {@code false} if the wait timed out
+         * @throws InterruptedException if the thread is interrupted while waiting
+         */
+        boolean awaitReady(long timeoutNanos) throws InterruptedException;
+    }
 
     private final DocumentArchive archive;
     private final DocumentServiceGrpc.DocumentServiceStub documents;
@@ -70,10 +96,21 @@ public final class RenditionUploads {
         return new Call(responses);
     }
 
-    private final class Call implements StreamObserver<UploadRenditionRequest> {
+    /**
+     * Starts one flow-controlled upload call for a non-gRPC producer.
+     *
+     * @param responses receives the upload response or error
+     * @return the flow-controlled request observer
+     */
+    public FlowControlledUpload uploadFlowControlled(StreamObserver<UploadRenditionResponse> responses) {
+        return new Call(responses);
+    }
+
+    private final class Call implements FlowControlledUpload {
         private final StreamObserver<UploadRenditionResponse> responses;
         private final ServerCallStreamObserver<UploadRenditionResponse> server;
         private final ReentrantLock lock = new ReentrantLock();
+        private final Condition readyChanged = lock.newCondition();
         private DocumentArchive.Pending pending;
         private DocumentArchive.Verify verifying;
         private ClientCallStreamObserver<UploadDocumentRequest> upload;
@@ -90,6 +127,40 @@ public final class RenditionUploads {
                 server.disableAutoRequest();
                 server.request(1);
             }
+        }
+
+        @Override
+        public boolean isReady() {
+            lock.lock();
+            try {
+                return readyLocked();
+            } finally {
+                lock.unlock();
+            }
+        }
+
+        @Override
+        public boolean awaitReady(long timeoutNanos) throws InterruptedException {
+            long remaining = timeoutNanos;
+            lock.lock();
+            try {
+                while (!readyLocked()) {
+                    if (remaining <= 0L) {
+                        return false;
+                    }
+                    remaining = readyChanged.awaitNanos(remaining);
+                }
+                return true;
+            } finally {
+                lock.unlock();
+            }
+        }
+
+        private boolean readyLocked() {
+            if (finished || verifying != null || upload == null) {
+                return true;
+            }
+            return upload.isReady();
         }
 
         @Override
@@ -132,12 +203,14 @@ public final class RenditionUploads {
             DocumentArchive.UploadStart start = archive.startUpload(frame.getHeader());
             if (start instanceof DocumentArchive.Replay replay) {
                 finished = true;
+                readyChanged.signalAll();
                 responses.onNext(replay.response());
                 responses.onCompleted();
                 return;
             }
             if (start instanceof DocumentArchive.Verify verify) {
                 verifying = verify;
+                readyChanged.signalAll();
                 if (server != null) {
                     server.request(1);
                 }
@@ -173,11 +246,11 @@ public final class RenditionUploads {
         }
 
         private void requestNext() {
-            if (server == null) {
-                return;
-            }
             if (upload.isReady()) {
-                server.request(1);
+                readyChanged.signalAll();
+                if (server != null) {
+                    server.request(1);
+                }
             } else {
                 waitingForUpload = true;
             }
@@ -186,9 +259,12 @@ public final class RenditionUploads {
         private void uploadReady() {
             lock.lock();
             try {
+                readyChanged.signalAll();
                 if (waitingForUpload && !finished) {
                     waitingForUpload = false;
-                    server.request(1);
+                    if (server != null) {
+                        server.request(1);
+                    }
                 }
             } finally {
                 lock.unlock();
@@ -200,6 +276,7 @@ public final class RenditionUploads {
             lock.lock();
             try {
                 finished = true;
+                readyChanged.signalAll();
                 if (upload != null) {
                     upload.cancel("The archive upload's client failed", failure);
                 }
@@ -223,6 +300,7 @@ public final class RenditionUploads {
                         return;
                     }
                     finished = true;
+                    readyChanged.signalAll();
                     responses.onNext(verifying.response());
                     responses.onCompleted();
                     return;
@@ -260,6 +338,7 @@ public final class RenditionUploads {
                     return;
                 }
                 finished = true;
+                readyChanged.signalAll();
             } finally {
                 lock.unlock();
             }
@@ -304,6 +383,7 @@ public final class RenditionUploads {
                     return;
                 }
                 finished = true;
+                readyChanged.signalAll();
             } finally {
                 lock.unlock();
             }
@@ -318,6 +398,7 @@ public final class RenditionUploads {
                     return;
                 }
                 finished = true;
+                readyChanged.signalAll();
             } finally {
                 lock.unlock();
             }
