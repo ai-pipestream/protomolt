@@ -145,22 +145,26 @@ final class FieldAccessor {
                 return;
             }
 
-            if (FieldPathResolver.isAnyField(fd)) {
-                if (FieldPathResolver.isAnyMessage(value)) {
-                    containerBuilder.setField(fd, FieldPathResolver.toAny(value, rule));
-                } else if (value instanceof Message message) {
-                    Any packedAny = anyHandler.pack(message);
-                    containerBuilder.setField(fd, packedAny);
-                } else {
-                    throw new MappingException(
-                            "Cannot pack non-Message value into Any field: " + fieldName, rule);
-                }
-            } else {
-                Object convertedValue = typeConverter.convertToFieldType(value, fd);
-                containerBuilder.setField(fd, convertedValue);
-            }
+            containerBuilder.setField(fd, convertForField(value, fd, fieldName, rule));
         }
         result.commit();
+    }
+
+    private Object convertForField(Object value, FieldDescriptor fd, String fieldName, String rule)
+            throws MappingException {
+        if (FieldPathResolver.isAnyField(fd)) {
+            Any any;
+            if (FieldPathResolver.isAnyMessage(value)) {
+                any = FieldPathResolver.toAny(value, rule);
+            } else if (value instanceof Message message) {
+                any = anyHandler.pack(message);
+            } else {
+                throw new MappingException(
+                        "Cannot pack non-Message value into Any field: " + fieldName, rule);
+            }
+            return typeConverter.convertToFieldType(any, fd);
+        }
+        return typeConverter.convertToFieldType(value, fd);
     }
 
     void appendValue(Message.Builder root, String path, Object value, String rule)
@@ -191,13 +195,13 @@ final class FieldAccessor {
                 if (item == null) {
                     throw new MappingException("Cannot append null to field '" + fd.getName() + "'", rule);
                 }
-                finalBuilder.addRepeatedField(fd, typeConverter.convertToFieldType(item, fd));
+                finalBuilder.addRepeatedField(fd, convertForField(item, fd, fd.getName(), rule));
             }
         } else {
             if (value == null) {
                 throw new MappingException("Cannot append null to field '" + fd.getName() + "'", rule);
             }
-            finalBuilder.addRepeatedField(fd, typeConverter.convertToFieldType(value, fd));
+            finalBuilder.addRepeatedField(fd, convertForField(value, fd, fd.getName(), rule));
         }
         result.commit();
     }

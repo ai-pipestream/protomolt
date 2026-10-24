@@ -9,6 +9,8 @@ import java.sql.SQLTransientConnectionException;
  * would recur on retry.
  */
 public class CatalogException extends RuntimeException {
+    private static final String UNIQUE_VIOLATION_SQL_STATE = "23505";
+
     private final boolean unavailable;
 
     public CatalogException(String message, Throwable cause, boolean unavailable) {
@@ -17,6 +19,17 @@ public class CatalogException extends RuntimeException {
     }
 
     public boolean unavailable() { return unavailable; }
+
+    /**
+     * Returns whether this failure is a unique-constraint conflict ({@code SQLState 23505}).
+     *
+     * @return {@code true} when the underlying SQL failure is a unique-constraint violation
+     */
+    public boolean alreadyExists() {
+        return !unavailable
+                && getCause() instanceof SQLException sql
+                && UNIQUE_VIOLATION_SQL_STATE.equals(sql.getSQLState());
+    }
 
     static CatalogException from(String operation, SQLException failure) {
         return new CatalogException(operation + " failed: " + failure.getMessage(), failure, unavailable(failure));

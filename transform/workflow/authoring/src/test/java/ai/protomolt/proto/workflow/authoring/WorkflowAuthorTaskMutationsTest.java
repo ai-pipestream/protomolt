@@ -205,6 +205,67 @@ class WorkflowAuthorTaskMutationsTest {
         }
     }
 
+    @Test void concurrentVirtualThreadEnsureRegistrationAcceptAndSubmitSerializeViaBridgeMutationLock()
+            throws Exception {
+        try (Fixture fixture = new Fixture(new InMemoryTranscriptRepository(), temp.resolve("vt-concurrency"));
+             var executor = java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor()) {
+            var secondMutations = new WorkflowAuthorTaskMutations(
+                    fixture.bridge, fixture.artifacts, fixture.policy, Clock.systemUTC());
+            var ensureRequest = ai.protomolt.proto.workflow.authoring.v1.EnsureWorkflowAuthorRegistrationRequest
+                    .newBuilder().setRegistration(registration()).build();
+
+            java.util.List<java.util.concurrent.Future<
+                    ai.protomolt.proto.workflow.authoring.v1.EnsureWorkflowAuthorRegistrationResponse>> regFutures =
+                    new java.util.ArrayList<>();
+            for (int i = 0; i < 8; i++) {
+                var target = (i % 2 == 0) ? fixture.mutations : secondMutations;
+                regFutures.add(executor.submit(() -> target.ensureRegistration(ensureRequest, AUTHOR)));
+            }
+            String sessionId = null;
+            for (var future : regFutures) {
+                var response = future.get();
+                assertThat(response.getRegistration().getAdmitted()).isTrue();
+                if (sessionId == null) {
+                    sessionId = response.getRegistration().getSessionId();
+                } else {
+                    assertThat(response.getRegistration().getSessionId()).isEqualTo(sessionId);
+                }
+            }
+
+            fixture.coordinator.offer("author", TASK, spec(fixture.policy), Duration.ofMinutes(5));
+
+            java.util.List<java.util.concurrent.Future<AcceptTaskResponse>> acceptFutures =
+                    new java.util.ArrayList<>();
+            for (int i = 0; i < 6; i++) {
+                var target = (i % 2 == 0) ? fixture.mutations : secondMutations;
+                acceptFutures.add(executor.submit(() -> target.accept(accept(), AUTHOR)));
+            }
+            for (var future : acceptFutures) {
+                assertThat(future.get().getOk()).isTrue();
+            }
+
+            SubmitCandidateRequest submitRequest = submit();
+            java.util.List<java.util.concurrent.Future<SubmitCandidateResponse>> submitFutures =
+                    new java.util.ArrayList<>();
+            for (int i = 0; i < 6; i++) {
+                var target = (i % 2 == 0) ? fixture.mutations : secondMutations;
+                submitFutures.add(executor.submit(() -> target.submit(submitRequest, AUTHOR)));
+            }
+            for (var future : submitFutures) {
+                assertThat(future.get().getOk()).isTrue();
+            }
+
+            Transcript transcript = fixture.coordinator.transcript();
+            assertThat(new DelegationReducer().reduce(transcript).clean()).isTrue();
+            assertThat(transcript.getEntriesList().stream()
+                    .filter(entry -> entry.hasWorkerFrame() && entry.getWorkerFrame().hasAccept())
+                    .count()).isEqualTo(1);
+            assertThat(transcript.getEntriesList().stream()
+                    .filter(entry -> entry.hasWorkerFrame() && entry.getWorkerFrame().hasCompletion())
+                    .count()).isEqualTo(1);
+        }
+    }
+
     private static final class Fixture implements AutoCloseable {
         final InProcessDelegationCoordinator coordinator;
         final DelegationBridge bridge;

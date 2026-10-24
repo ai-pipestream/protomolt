@@ -100,6 +100,13 @@ class OpenSearchSearchTest {
                 .hasMessageContaining("not a knn_vector");
     }
 
+    @Test
+    void constructorRejectsNullBaseUrl() {
+        assertThatThrownBy(() -> new OpenSearchSearch(null))
+                .isInstanceOf(NullPointerException.class)
+                .hasMessageContaining("baseUrl");
+    }
+
     /**
      * Fake engine: records requests and answers with a pinned status and body, a bare
      * {@code {"hits":{"hits":[]}}} by default.

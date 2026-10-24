@@ -42,10 +42,14 @@ import com.google.protobuf.InvalidProtocolBufferException;
 
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
+import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.OptionalInt;
 import java.util.OptionalLong;
+import java.util.WeakHashMap;
 
 /**
  * Built-in {@link ValidationRuleSource} reading the Pipestream {@code validate.v1}
@@ -55,6 +59,10 @@ import java.util.OptionalLong;
 public final class ProtomoltRuleSource implements ValidationRuleSource {
 
     private static final ExtensionRegistry EXTENSIONS = createExtensionRegistry();
+    private static final Map<FieldDescriptor, Optional<FieldConstraints>> FIELD_CONSTRAINTS =
+            Collections.synchronizedMap(new WeakHashMap<>());
+    private static final Map<Descriptor, Optional<MessageConstraints>> MESSAGE_CONSTRAINTS =
+            Collections.synchronizedMap(new WeakHashMap<>());
 
     private static ExtensionRegistry createExtensionRegistry() {
         ExtensionRegistry registry = ExtensionRegistry.newInstance();
@@ -64,21 +72,39 @@ public final class ProtomoltRuleSource implements ValidationRuleSource {
 
     @Override
     public Optional<FieldConstraints> fieldConstraints(FieldDescriptor field) {
+        Objects.requireNonNull(field, "field");
+        Optional<FieldConstraints> cached = FIELD_CONSTRAINTS.get(field);
+        if (cached != null) {
+            return cached;
+        }
         FieldRules rules = fieldRules(field.getOptions());
-        return rules == null ? Optional.empty() : Optional.of(toFieldConstraints(rules));
+        Optional<FieldConstraints> resolved =
+                rules == null ? Optional.empty() : Optional.of(toFieldConstraints(rules));
+        FIELD_CONSTRAINTS.put(field, resolved);
+        return resolved;
     }
 
     @Override
     public Optional<MessageConstraints> messageConstraints(Descriptor message) {
+        Objects.requireNonNull(message, "message");
+        Optional<MessageConstraints> cached = MESSAGE_CONSTRAINTS.get(message);
+        if (cached != null) {
+            return cached;
+        }
         MessageRules rules = messageRules(message.getOptions());
         if (rules == null) {
-            return Optional.empty();
+            Optional<MessageConstraints> empty = Optional.empty();
+            MESSAGE_CONSTRAINTS.put(message, empty);
+            return empty;
         }
         List<CelConstraint> cel = new ArrayList<>(rules.getCelList().size());
         for (CelRule rule : rules.getCelList()) {
             cel.add(toCel(rule));
         }
-        return Optional.of(new MessageConstraints(cel, List.of(), List.of(), rules.getSkipWhen()));
+        Optional<MessageConstraints> resolved =
+                Optional.of(new MessageConstraints(cel, List.of(), List.of(), rules.getSkipWhen()));
+        MESSAGE_CONSTRAINTS.put(message, resolved);
+        return resolved;
     }
 
     /**

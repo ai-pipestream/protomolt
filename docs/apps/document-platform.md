@@ -24,7 +24,8 @@ the jobs store) and RustFS for object storage. Ports:
 
 | Port | Surface |
 | --- | --- |
-| 9090 | repo-service gRPC (DocumentService, DriveService, health, reflection) |
+| 9090 | repo-service gRPC (DocumentService, DriveService, ArchiveService, health, reflection) |
+| 8080 | repo-service HTTP (bulk upload, Connect gateway, and `/console`) |
 | 9092 | intake gRPC (`IntakeService`, API-key authenticated) |
 | 9093 | parsing coordinator gRPC (`ParseCoordinatorService`) |
 | 9094 | search service gRPC (`SearchService`, `SearchIndexService`) |
@@ -230,11 +231,14 @@ authority. Scoped ownership grants remain a separate authorization boundary.
 `s3-redis-cache` (S3 of record behind a Redis cache). `repo` and
 `repo-inprocess` refuse startup with `Remote repository blob storage is
 retired`; any other value refuses startup naming the three supported modes.
-`DOCUMENT_PLATFORM_READ_BUDGET_BYTES` (default 268435456, 256 MiB) is the
-host byte budget shared by concurrent verified reads; a reservation that does
-not fit the remaining budget fails fast with `RESOURCE_EXHAUSTED`. The
-[repository README](../../repo/README.md) configuration table lists what each
-read reserves.
+`DOCUMENT_PLATFORM_READ_BUDGET_BYTES` (default 268435456, 256 MiB) sizes two
+independent host byte budgets of that capacity: one shared by concurrent
+verified reads (`Read buffer budget exhausted`) and a separate save-admission
+pool (`ReadByteBudget.forSaves`, `Save buffer budget exhausted`), so concurrent
+reads and saves can hold up to `2 * DOCUMENT_PLATFORM_READ_BUDGET_BYTES` in
+combined reservations. A reservation that does not fit the remaining pool fails
+fast with `RESOURCE_EXHAUSTED`. The [repository README](../../repo/README.md)
+configuration table lists what each read and save reserves.
 
 A policy principal's `metric_access` section drives the metric role's
 compile-time rewrite on the same guarded node — denied members and

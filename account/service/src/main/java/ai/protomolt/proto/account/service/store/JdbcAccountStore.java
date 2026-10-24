@@ -113,13 +113,11 @@ public final class JdbcAccountStore implements AccountStore {
             conditions.add("status = ?");
         }
         String where = conditions.isEmpty() ? "" : " WHERE " + String.join(" AND ", conditions);
-        try {
-            Array ids = accountIds == null ? null
-                    : c.createArrayOf("text", accountIds.toArray(new String[0]));
+        try (ScopedArray ids = ScopedArray.of(c, accountIds)) {
             long total;
             try (PreparedStatement count = c.prepareStatement(
                     "SELECT COUNT(*) FROM accounts" + where)) {
-                bindConditions(count, ids, byStatus ? statusFilter : null);
+                bindConditions(count, ids.array(), byStatus ? statusFilter : null);
                 try (ResultSet rs = count.executeQuery()) {
                     rs.next();
                     total = rs.getLong(1);
@@ -132,7 +130,7 @@ public final class JdbcAccountStore implements AccountStore {
                             // Stable order: the offset continuation token is
                             // only meaningful against a deterministic scan.
                             + " ORDER BY created_at ASC, account_id ASC LIMIT ? OFFSET ?")) {
-                int p = bindConditions(page, ids, byStatus ? statusFilter : null);
+                int p = bindConditions(page, ids.array(), byStatus ? statusFilter : null);
                 page.setInt(p++, limit);
                 page.setLong(p, offset);
                 try (ResultSet rs = page.executeQuery()) {
@@ -144,6 +142,22 @@ public final class JdbcAccountStore implements AccountStore {
             return new ListAccountsResult(rows, total);
         } catch (SQLException e) {
             throw AccountStoreException.wrap("list accounts failed", e);
+        }
+    }
+
+    private record ScopedArray(Array array) implements AutoCloseable {
+        static ScopedArray of(Connection c, Collection<String> values) throws SQLException {
+            if (values == null) {
+                return new ScopedArray(null);
+            }
+            return new ScopedArray(c.createArrayOf("text", values.toArray(new String[0])));
+        }
+
+        @Override
+        public void close() throws SQLException {
+            if (array != null) {
+                array.free();
+            }
         }
     }
 

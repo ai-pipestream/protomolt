@@ -14,8 +14,8 @@ import io.grpc.netty.shaded.io.grpc.netty.NettyServerBuilder;
 import io.grpc.protobuf.services.HealthStatusManager;
 import io.grpc.protobuf.services.ProtoReflectionServiceV1;
 import java.io.IOException;
-import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 
@@ -38,8 +38,9 @@ public final class IntakeServices implements AutoCloseable {
     private final boolean ownsRepoChannel;
     private final DocumentServiceGrpc.DocumentServiceBlockingStub documents;
     private final ServerServiceDefinition intakeService;
-    private final List<IntakeHttpServer> httpServers = new ArrayList<>();
-    private Server server;
+    private final List<IntakeHttpServer> httpServers = new CopyOnWriteArrayList<>();
+    private final List<Server> servers = new CopyOnWriteArrayList<>();
+    private volatile Server server;
 
     private IntakeServices(IntakeServiceConfig config, ApiKeyIdentityResolver resolver,
                            ManagedChannel borrowedRepoChannel) {
@@ -47,10 +48,17 @@ public final class IntakeServices implements AutoCloseable {
         this.resolver = resolver;
         this.ownsRepoChannel = borrowedRepoChannel == null;
         this.repoChannel = ownsRepoChannel ? openRepoChannel(config.repoTarget()) : borrowedRepoChannel;
-        this.documents = DocumentServiceGrpc.newBlockingStub(repoChannel);
-        IntakeGrpcService intake = new IntakeGrpcService(documents, config.maxPayloadBytes(), config.stepWriters());
-        this.intakeService =
-                ServerInterceptors.intercept(intake, new ApiKeyServerInterceptor(resolver));
+        try {
+            this.documents = DocumentServiceGrpc.newBlockingStub(repoChannel);
+            IntakeGrpcService intake = new IntakeGrpcService(documents, config.maxPayloadBytes(), config.stepWriters());
+            this.intakeService =
+                    ServerInterceptors.intercept(intake, new ApiKeyServerInterceptor(resolver));
+        } catch (RuntimeException | Error failure) {
+            if (ownsRepoChannel) {
+                repoChannel.shutdownNow();
+            }
+            throw failure;
+        }
     }
 
     /**
@@ -93,19 +101,21 @@ public final class IntakeServices implements AutoCloseable {
 
     /** Starts the intake service on an in-process server named {@code name}. */
     public Server startInProcess(String name) throws IOException {
-        server =
+        Server started =
                 InProcessServerBuilder.forName(name)
                         .executor(Executors.newVirtualThreadPerTaskExecutor())
                         .addService(intakeService)
                         .build()
                         .start();
-        return server;
+        servers.add(started);
+        server = started;
+        return started;
     }
 
     /** Starts the intake service on a Netty server with health and reflection. */
     public Server startNetty(int port) throws IOException {
         HealthStatusManager health = new HealthStatusManager();
-        server =
+        Server started =
                 NettyServerBuilder.forPort(port)
                         .executor(Executors.newVirtualThreadPerTaskExecutor())
                         .addService(intakeService)
@@ -113,7 +123,9 @@ public final class IntakeServices implements AutoCloseable {
                         .addService(ProtoReflectionServiceV1.newInstance())
                         .build()
                         .start();
-        return server;
+        servers.add(started);
+        server = started;
+        return started;
     }
 
     /**
@@ -145,9 +157,11 @@ public final class IntakeServices implements AutoCloseable {
         for (IntakeHttpServer http : httpServers) {
             http.close();
         }
-        if (server != null) {
-            server.shutdownNow();
+        httpServers.clear();
+        for (Server started : servers) {
+            started.shutdownNow();
         }
+        servers.clear();
         if (!ownsRepoChannel) {
             return;
         }

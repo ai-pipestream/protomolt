@@ -18,22 +18,23 @@ import java.time.Clock;
 import java.util.Objects;
 import java.util.UUID;
 import java.util.concurrent.ExecutorService;
+import java.util.concurrent.locks.ReentrantLock;
 
 /**
  * The coordinator's candidate-review runtime: review-start frame construction, review
  * identity lookup against the recorded transcript, asynchronous reviewer dispatch, review
  * deadline timers, and deadline/interruption/infrastructure failure recording.
  *
- * <p>The single monitor is preserved: every method either documents that its caller holds
- * the coordinator's {@code lock} (passed to the constructor) or synchronizes on that same
- * object itself. This class never creates a lock of its own. Frame emission and review
+ * <p>The single lock is preserved: every method either documents that its caller holds
+ * the coordinator's {@code lock} (passed to the constructor) or acquires that same
+ * lock itself. This class never creates a lock of its own. Frame emission and review
  * application stay with the coordinator behind {@link CoordinatorFrames}, so transcript
  * authority and reducer ordering are unchanged; this runtime decides <em>when</em> a
  * review frame is due, never how a frame becomes durable.
  */
 final class CoordinatorReviewRuntime {
 
-    private final Object lock;
+    private final ReentrantLock lock;
     private final DelegationCoordinatorState state;
     private final CandidateReviewer reviewer;
     private final Clock clock;
@@ -47,12 +48,12 @@ final class CoordinatorReviewRuntime {
      * The last reduced transcript projection and the {@code state.transcriptVersion} it was
      * reduced at. The transcript is append-only through {@code state.record}, so a matching
      * version means the reduction is still exact; both fields are touched only under the
-     * coordinator monitor.
+     * coordinator lock.
      */
     private DelegationReducer.Result reduced;
     private long reducedVersion = -1;
 
-    CoordinatorReviewRuntime(Object lock, DelegationCoordinatorState state,
+    CoordinatorReviewRuntime(ReentrantLock lock, DelegationCoordinatorState state,
             CandidateReviewer reviewer, Clock clock, java.time.Duration reviewWindow,
             boolean scheduleReviewDeadlines, ExecutorService runtimeTasks,
             DelegationReducer reducer, CoordinatorFrames frames) {
@@ -216,18 +217,22 @@ final class CoordinatorReviewRuntime {
         try {
             runtimeTasks.submit(() -> {
                 ReviewContext context;
-                synchronized (lock) {
+                lock.lock();
+                try {
                     TaskRuntime task = state.tasks.get(dispatch.taskId());
                     if (!isCurrentReview(task, dispatch.started())) return;
                     if (settleExpiredReview(task)) return;
                     context = new ReviewContext(task.taskId, task.workerId,
                             task.offer.getSpec(), task.candidate);
+                } finally {
+                    lock.unlock();
                 }
                 ReviewDecision decision;
                 try {
                     decision = reviewer.review(context);
                 } catch (Exception failure) {
-                    synchronized (lock) {
+                    lock.lock();
+                    try {
                         TaskRuntime task = state.tasks.get(dispatch.taskId());
                         if (isCurrentReview(task, dispatch.started())) {
                             if (!settleExpiredReview(task)) {
@@ -235,10 +240,13 @@ final class CoordinatorReviewRuntime {
                                         ReviewFailureCode.REVIEW_FAILURE_CODE_INFRASTRUCTURE);
                             }
                         }
+                    } finally {
+                        lock.unlock();
                     }
                     return;
                 }
-                synchronized (lock) {
+                lock.lock();
+                try {
                     TaskRuntime task = state.tasks.get(dispatch.taskId());
                     if (!isCurrentReview(task, dispatch.started())) return;
                     if (settleExpiredReview(task)) return;
@@ -262,15 +270,20 @@ final class CoordinatorReviewRuntime {
                             }
                         }
                     }
+                } finally {
+                    lock.unlock();
                 }
             });
         } catch (java.util.concurrent.RejectedExecutionException rejected) {
-            synchronized (lock) {
+            lock.lock();
+            try {
                 TaskRuntime task = state.tasks.get(dispatch.taskId());
                 if (isCurrentReview(task, dispatch.started())) {
                     recordReviewFailure(task, dispatch.started(),
                             ReviewFailureCode.REVIEW_FAILURE_CODE_INFRASTRUCTURE);
                 }
+            } finally {
+                lock.unlock();
             }
         }
     }
@@ -289,10 +302,13 @@ final class CoordinatorReviewRuntime {
                         java.time.Duration delay = java.time.Duration.between(clock.instant(),
                                 DelegationTimes.toInstant(dispatch.started().getDeadline()));
                         if (!delay.isNegative() && !delay.isZero()) Thread.sleep(delay);
-                        synchronized (lock) {
+                        lock.lock();
+                        try {
                             TaskRuntime task = state.tasks.get(dispatch.taskId());
                             if (!isCurrentReview(task, dispatch.started())) return;
                             if (settleExpiredReview(task)) return;
+                        } finally {
+                            lock.unlock();
                         }
                     }
                 } catch (InterruptedException interrupted) {
@@ -300,12 +316,15 @@ final class CoordinatorReviewRuntime {
                 }
             });
         } catch (java.util.concurrent.RejectedExecutionException rejected) {
-            synchronized (lock) {
+            lock.lock();
+            try {
                 TaskRuntime task = state.tasks.get(dispatch.taskId());
                 if (isCurrentReview(task, dispatch.started())) {
                     recordReviewFailure(task, dispatch.started(),
                             ReviewFailureCode.REVIEW_FAILURE_CODE_INFRASTRUCTURE);
                 }
+            } finally {
+                lock.unlock();
             }
         }
     }

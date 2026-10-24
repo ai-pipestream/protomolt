@@ -26,6 +26,7 @@ import java.util.List;
 import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.locks.ReentrantLock;
 
 /** One-process, crash-durable recovery state for the demonstration author. */
 public final class AuthoringWorkerStateStore implements AutoCloseable {
@@ -36,6 +37,7 @@ public final class AuthoringWorkerStateStore implements AutoCloseable {
     private static final String DELIVERABLE_TYPE_URL = "type.googleapis.com/"
             + WorkflowAuthoringDeliverable.getDescriptor().getFullName();
 
+    private final ReentrantLock stateLock = new ReentrantLock();
     private final Path root;
     private final Path file;
     private final FileChannel lockChannel;
@@ -63,7 +65,16 @@ public final class AuthoringWorkerStateStore implements AutoCloseable {
         this.afterMove = afterMove;
     }
 
-    /** Locks the directory for this worker's entire run and validates its saved identity. */
+    /**
+     * Locks the directory for this worker's entire run and validates its saved identity.
+     *
+     * @param directory the directory holding the durable worker state file
+     * @param coordinator the expected coordinator endpoint identity
+     * @param fixture the expected fixture endpoint identity
+     * @param workerId the expected worker identifier
+     * @return the opened state store holding the directory lock
+     * @throws IOException if the directory lock cannot be acquired or the state file is invalid
+     */
     public static AuthoringWorkerStateStore open(Path directory, String coordinator,
             String fixture, String workerId) throws IOException {
         return open(directory, coordinator, fixture, workerId,
@@ -111,45 +122,64 @@ public final class AuthoringWorkerStateStore implements AutoCloseable {
         }
     }
 
-    /** Returns the last fully committed snapshot. A failed commit poisons this instance. */
-    public synchronized AuthoringWorkerState state() {
-        requireOpen();
-        return state;
+    /**
+     * Returns the last fully committed snapshot. A failed commit poisons this instance.
+     *
+     * @return the last committed worker state snapshot
+     */
+    public AuthoringWorkerState state() {
+        stateLock.lock();
+        try {
+            requireOpen();
+            return state;
+        } finally {
+            stateLock.unlock();
+        }
     }
 
-    /** Publishes the entire validated snapshot before its dependent network effect. */
-    public synchronized void commit(AuthoringWorkerState proposed) throws IOException {
-        requireOpen();
-        validate(proposed, coordinator, fixture, workerId);
-        if (state != null) requireTransition(state, proposed);
-        byte[] bytes = proposed.toByteArray();
-        Path temporary = null;
+    /**
+     * Publishes the entire validated snapshot before its dependent network effect.
+     *
+     * @param proposed the candidate worker state snapshot to validate and persist
+     * @throws IOException if writing, moving, or syncing the state file fails
+     */
+    public void commit(AuthoringWorkerState proposed) throws IOException {
+        stateLock.lock();
         try {
-            temporary = Files.createTempFile(root, ".authoring-worker-state-", ".tmp");
-            try (FileChannel output = FileChannel.open(temporary, StandardOpenOption.WRITE,
-                    LinkOption.NOFOLLOW_LINKS)) {
-                ByteBuffer buffer = ByteBuffer.wrap(bytes);
-                while (buffer.hasRemaining()) output.write(buffer);
-                output.force(true);
-            }
-            atomicMove.move(temporary, file);
-            afterMove.run();
-            forceDirectory();
-            state = proposed;
-        } catch (IOException | RuntimeException | Error failure) {
-            // A failure after rename has an ambiguous durable outcome. No call using
-            // this instance may proceed from stale in-memory state.
-            poisoned = true;
-            throw failure;
-        } finally {
-            if (temporary != null) {
-                try {
-                    Files.deleteIfExists(temporary);
-                } catch (IOException cleanup) {
-                    poisoned = true;
-                    throw cleanup;
+            requireOpen();
+            validate(proposed, coordinator, fixture, workerId);
+            if (state != null) requireTransition(state, proposed);
+            byte[] bytes = proposed.toByteArray();
+            Path temporary = null;
+            try {
+                temporary = Files.createTempFile(root, ".authoring-worker-state-", ".tmp");
+                try (FileChannel output = FileChannel.open(temporary, StandardOpenOption.WRITE,
+                        LinkOption.NOFOLLOW_LINKS)) {
+                    ByteBuffer buffer = ByteBuffer.wrap(bytes);
+                    while (buffer.hasRemaining()) output.write(buffer);
+                    output.force(true);
+                }
+                atomicMove.move(temporary, file);
+                afterMove.run();
+                forceDirectory();
+                state = proposed;
+            } catch (IOException | RuntimeException | Error failure) {
+                // A failure after rename has an ambiguous durable outcome. No call using
+                // this instance may proceed from stale in-memory state.
+                poisoned = true;
+                throw failure;
+            } finally {
+                if (temporary != null) {
+                    try {
+                        Files.deleteIfExists(temporary);
+                    } catch (IOException cleanup) {
+                        poisoned = true;
+                        throw cleanup;
+                    }
                 }
             }
+        } finally {
+            stateLock.unlock();
         }
     }
 
@@ -315,13 +345,19 @@ public final class AuthoringWorkerStateStore implements AutoCloseable {
         if (closed || poisoned) throw new IllegalStateException("author state store is closed or uncertain");
     }
 
-    @Override public synchronized void close() throws IOException {
-        if (closed) return;
-        closed = true;
+    @Override
+    public void close() throws IOException {
+        stateLock.lock();
         try {
-            lock.release();
+            if (closed) return;
+            closed = true;
+            try {
+                lock.release();
+            } finally {
+                lockChannel.close();
+            }
         } finally {
-            lockChannel.close();
+            stateLock.unlock();
         }
     }
 

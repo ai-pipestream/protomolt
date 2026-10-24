@@ -23,6 +23,7 @@ import java.util.UUID;
 import java.util.concurrent.CancellationException;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Future;
+import java.util.concurrent.locks.ReentrantLock;
 
 /**
  * Streamable HTTP transport for {@link McpServer}. Each initialize request creates a bounded,
@@ -45,7 +46,7 @@ public final class McpHttpHandler implements HttpHandler, AutoCloseable {
     private final byte[] apiToken;
     private final CallerResolver resolver;
     private final ObjectMapper mapper = new ObjectMapper();
-    private final Object sessionLock = new Object();
+    private final ReentrantLock sessionLock = new ReentrantLock();
     private final LinkedHashMap<String, McpServer.Session> sessions =
             new LinkedHashMap<>(16, 0.75f, true);
 
@@ -320,12 +321,15 @@ public final class McpHttpHandler implements HttpHandler, AutoCloseable {
 
     private void putSession(String id, McpServer.Session session) {
         McpServer.Session evicted = null;
-        synchronized (sessionLock) {
+        sessionLock.lock();
+        try {
             if (sessions.size() >= MAX_SESSIONS) {
                 // Access-ordered, so the first entry is the least-recently-used session.
                 evicted = sessions.pollFirstEntry().getValue();
             }
             sessions.put(id, session);
+        } finally {
+            sessionLock.unlock();
         }
         if (evicted != null) {
             evicted.close();
@@ -336,15 +340,21 @@ public final class McpHttpHandler implements HttpHandler, AutoCloseable {
         if (id == null || id.isBlank()) {
             return null;
         }
-        synchronized (sessionLock) {
+        sessionLock.lock();
+        try {
             return sessions.get(id);
+        } finally {
+            sessionLock.unlock();
         }
     }
 
     private McpServer.Session removeSession(String id) {
         McpServer.Session session;
-        synchronized (sessionLock) {
+        sessionLock.lock();
+        try {
             session = sessions.remove(id);
+        } finally {
+            sessionLock.unlock();
         }
         if (session != null) {
             session.close();
@@ -356,9 +366,12 @@ public final class McpHttpHandler implements HttpHandler, AutoCloseable {
     @Override
     public void close() {
         Map<String, McpServer.Session> closing;
-        synchronized (sessionLock) {
+        sessionLock.lock();
+        try {
             closing = new LinkedHashMap<>(sessions);
             sessions.clear();
+        } finally {
+            sessionLock.unlock();
         }
         closing.values().forEach(McpServer.Session::close);
     }

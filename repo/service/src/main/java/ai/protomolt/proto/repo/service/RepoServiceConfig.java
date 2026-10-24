@@ -1,6 +1,9 @@
 package ai.protomolt.proto.repo.service;
 
 import ai.protomolt.proto.repo.container.ledger.LedgerConfig;
+import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.List;
 
 /**
  * Everything repo-service needs from the outside world, in one value object —
@@ -120,6 +123,9 @@ import ai.protomolt.proto.repo.container.ledger.LedgerConfig;
  *        across concurrent reads and saves is {@code 2 * readBudgetBytes}. A
  *        reservation the remaining budget does not cover fails fast with
  *        {@code RESOURCE_EXHAUSTED}, never allocating from the recorded length
+ * @param conceptSchemePaths optional paths (files, directories, or {@code schemeId=path} specs)
+ *        to concept scheme definitions mounted at startup
+ *        ({@code DOCUMENT_PLATFORM_CONCEPT_SCHEMES} or {@code PROTOMOLT_REPO_CONCEPT_SCHEME_PATHS})
  */
 public record RepoServiceConfig(
         int grpcPort,
@@ -148,7 +154,40 @@ public record RepoServiceConfig(
         String kafkaPurgeTopic,
         boolean s3ConditionalWrites,
         ManagedStoragePolicy managedStorage,
+        long readBudgetBytes,
+        List<Path> conceptSchemePaths) {
+
+    /** Compatibility constructor: without startup concept scheme paths. */
+    public RepoServiceConfig(
+        int grpcPort,
+        LedgerConfig ledger,
+        String s3Endpoint,
+        String s3Region,
+        String s3AccessKey,
+        String s3SecretKey,
+        String defaultBucketBase,
+        int httpPort,
+        String blobStore,
+        String redisUri,
+        int redisTtlSeconds,
+        long redisMaxObjectBytes,
+        boolean lifecycleEnabled,
+        long purgeIntervalMs,
+        long sweepIntervalMs,
+        boolean reconcileEnabled,
+        boolean reconcileDryRun,
+        long reconcileMinAgeMs,
+        String kafkaBootstrapServers,
+        String kafkaTopic,
+        String schemaRegistryUrl,
+        String seedAccountId,
+        String purgeQueue,
+        String kafkaPurgeTopic,
+        boolean s3ConditionalWrites,
+        ManagedStoragePolicy managedStorage,
         long readBudgetBytes) {
+        this(grpcPort, ledger, s3Endpoint, s3Region, s3AccessKey, s3SecretKey, defaultBucketBase, httpPort, blobStore, redisUri, redisTtlSeconds, redisMaxObjectBytes, lifecycleEnabled, purgeIntervalMs, sweepIntervalMs, reconcileEnabled, reconcileDryRun, reconcileMinAgeMs, kafkaBootstrapServers, kafkaTopic, schemaRegistryUrl, seedAccountId, purgeQueue, kafkaPurgeTopic, s3ConditionalWrites, managedStorage, readBudgetBytes, List.of());
+    }
 
     /** Compatibility constructor: the pre-read-budget components, with the default read budget. */
     public RepoServiceConfig(
@@ -178,7 +217,7 @@ public record RepoServiceConfig(
         String kafkaPurgeTopic,
         boolean s3ConditionalWrites,
         ManagedStoragePolicy managedStorage) {
-        this(grpcPort, ledger, s3Endpoint, s3Region, s3AccessKey, s3SecretKey, defaultBucketBase, httpPort, blobStore, redisUri, redisTtlSeconds, redisMaxObjectBytes, lifecycleEnabled, purgeIntervalMs, sweepIntervalMs, reconcileEnabled, reconcileDryRun, reconcileMinAgeMs, kafkaBootstrapServers, kafkaTopic, schemaRegistryUrl, seedAccountId, purgeQueue, kafkaPurgeTopic, s3ConditionalWrites, managedStorage, DEFAULT_READ_BUDGET_BYTES);
+        this(grpcPort, ledger, s3Endpoint, s3Region, s3AccessKey, s3SecretKey, defaultBucketBase, httpPort, blobStore, redisUri, redisTtlSeconds, redisMaxObjectBytes, lifecycleEnabled, purgeIntervalMs, sweepIntervalMs, reconcileEnabled, reconcileDryRun, reconcileMinAgeMs, kafkaBootstrapServers, kafkaTopic, schemaRegistryUrl, seedAccountId, purgeQueue, kafkaPurgeTopic, s3ConditionalWrites, managedStorage, DEFAULT_READ_BUDGET_BYTES, List.of());
     }
 
     /** Compatibility constructor: managed ingestion requires separate explicit qualification. */
@@ -212,7 +251,17 @@ public record RepoServiceConfig(
     }
 
     public RepoServiceConfig withManagedStorage(ManagedStoragePolicy policy) {
-        return new RepoServiceConfig(grpcPort, ledger, s3Endpoint, s3Region, s3AccessKey, s3SecretKey, defaultBucketBase, httpPort, blobStore, redisUri, redisTtlSeconds, redisMaxObjectBytes, lifecycleEnabled, purgeIntervalMs, sweepIntervalMs, reconcileEnabled, reconcileDryRun, reconcileMinAgeMs, kafkaBootstrapServers, kafkaTopic, schemaRegistryUrl, seedAccountId, purgeQueue, kafkaPurgeTopic, s3ConditionalWrites, policy, readBudgetBytes);
+        return new RepoServiceConfig(grpcPort, ledger, s3Endpoint, s3Region, s3AccessKey, s3SecretKey, defaultBucketBase, httpPort, blobStore, redisUri, redisTtlSeconds, redisMaxObjectBytes, lifecycleEnabled, purgeIntervalMs, sweepIntervalMs, reconcileEnabled, reconcileDryRun, reconcileMinAgeMs, kafkaBootstrapServers, kafkaTopic, schemaRegistryUrl, seedAccountId, purgeQueue, kafkaPurgeTopic, s3ConditionalWrites, policy, readBudgetBytes, conceptSchemePaths);
+    }
+
+    /**
+     * Returns a copy of this configuration with the given startup concept-scheme paths.
+     *
+     * @param paths paths to concept scheme files or directories
+     * @return the updated configuration
+     */
+    public RepoServiceConfig withConceptSchemePaths(List<Path> paths) {
+        return new RepoServiceConfig(grpcPort, ledger, s3Endpoint, s3Region, s3AccessKey, s3SecretKey, defaultBucketBase, httpPort, blobStore, redisUri, redisTtlSeconds, redisMaxObjectBytes, lifecycleEnabled, purgeIntervalMs, sweepIntervalMs, reconcileEnabled, reconcileDryRun, reconcileMinAgeMs, kafkaBootstrapServers, kafkaTopic, schemaRegistryUrl, seedAccountId, purgeQueue, kafkaPurgeTopic, s3ConditionalWrites, managedStorage, readBudgetBytes, paths);
     }
 
 
@@ -277,6 +326,10 @@ public record RepoServiceConfig(
     public static final String ENV_KAFKA_PURGE_TOPIC = "DOCUMENT_PLATFORM_KAFKA_PURGE_TOPIC";
     /** Environment variable for the read-side byte budget shared by concurrent verified reads. */
     public static final String ENV_READ_BUDGET_BYTES = "DOCUMENT_PLATFORM_READ_BUDGET_BYTES";
+    /** Environment variable for startup concept-scheme files or directories. */
+    public static final String ENV_CONCEPT_SCHEMES = "DOCUMENT_PLATFORM_CONCEPT_SCHEMES";
+    /** Alias environment variable for startup concept-scheme files or directories. */
+    public static final String ENV_CONCEPT_SCHEME_PATHS = "PROTOMOLT_REPO_CONCEPT_SCHEME_PATHS";
 
     static final int DEFAULT_GRPC_PORT = 9090;
     static final String DEFAULT_S3_REGION = "us-east-1";
@@ -513,6 +566,7 @@ public record RepoServiceConfig(
         if (readBudgetBytes < 1) {
             readBudgetBytes = DEFAULT_READ_BUDGET_BYTES;
         }
+        conceptSchemePaths = conceptSchemePaths == null ? List.of() : List.copyOf(conceptSchemePaths);
     }
 
     /**
@@ -575,7 +629,36 @@ public record RepoServiceConfig(
                 env.text(ENV_KAFKA_PURGE_TOPIC, DEFAULT_KAFKA_PURGE_TOPIC),
                 env.flag(ENV_S3_CONDITIONAL_WRITES, false),
                 ManagedStoragePolicy.fromEnvironment(environment),
-                env.number(ENV_READ_BUDGET_BYTES, DEFAULT_READ_BUDGET_BYTES, 1, Long.MAX_VALUE));
+                env.number(ENV_READ_BUDGET_BYTES, DEFAULT_READ_BUDGET_BYTES, 1, Long.MAX_VALUE),
+                parseConceptSchemePaths(environment));
+    }
+
+    static List<Path> parseConceptSchemePaths(java.util.Map<String, String> environment) {
+        String raw = blankToNull(environment.get(ENV_CONCEPT_SCHEMES));
+        if (raw == null) {
+            raw = blankToNull(environment.get(ENV_CONCEPT_SCHEME_PATHS));
+        }
+        return parseConceptSchemePaths(raw);
+    }
+
+    static List<Path> parseConceptSchemePaths(String raw) {
+        if (raw == null || raw.isBlank()) {
+            return List.of();
+        }
+        List<Path> paths = new ArrayList<>();
+        int start = 0;
+        int len = raw.length();
+        for (int i = 0; i <= len; i++) {
+            char c = i < len ? raw.charAt(i) : ',';
+            if (c == ',' || c == ';') {
+                String trimmed = raw.substring(start, i).trim();
+                if (!trimmed.isEmpty()) {
+                    paths.add(Path.of(trimmed));
+                }
+                start = i + 1;
+            }
+        }
+        return List.copyOf(paths);
     }
 
     private static String blankToNull(String value) {

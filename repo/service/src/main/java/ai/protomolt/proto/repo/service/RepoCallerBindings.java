@@ -99,6 +99,9 @@ final class RepoCallerBindings {
                 new RepositoryCredentialBinding(binding.issuer(), binding.credentialId(), binding.generation()));
         if (caller.unrestricted()) return new RepositoryCaller(caller.name(), true);
         Optional<AccountBinding> binding = accounts.bindingOf(authentication);
+        if (credential.isEmpty() && binding.isPresent() && writers.isPresent()) {
+            credential = writers.get().credentialOf(binding.get());
+        }
         Set<String> accountIds = binding.map(found -> Set.copyOf(found.getAccountIdsList())).orElse(Set.of());
         Set<Principal> identities = new LinkedHashSet<>();
         binding.ifPresent(found -> {

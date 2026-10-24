@@ -170,4 +170,31 @@ class GraphAuthTest {
                 .isInstanceOf(IOException.class)
                 .hasMessageContaining("naïve");
     }
+
+    @Test
+    void stalledTokenEndpointTimesOutInsteadOfBlockingForever() throws Exception {
+        java.util.concurrent.CountDownLatch releaseServer =
+                new java.util.concurrent.CountDownLatch(1);
+        server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/tenant-1/oauth2/v2.0/token", exchange -> {
+            try {
+                releaseServer.await(5, java.util.concurrent.TimeUnit.SECONDS);
+            } catch (InterruptedException ignored) {
+                Thread.currentThread().interrupt();
+            }
+        });
+        server.start();
+        String base = "http://127.0.0.1:" + server.getAddress().getPort();
+        GraphAuth auth = new GraphAuth(
+                new GraphAuth.Config(base, "tenant-1", "client-1", "s3cret"),
+                java.net.http.HttpClient.newHttpClient(),
+                java.time.Duration.ofMillis(100));
+
+        try {
+            assertThatThrownBy(auth::clientCredentials)
+                    .isInstanceOf(java.net.http.HttpTimeoutException.class);
+        } finally {
+            releaseServer.countDown();
+        }
+    }
 }

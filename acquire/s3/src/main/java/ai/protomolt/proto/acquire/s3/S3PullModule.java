@@ -101,15 +101,33 @@ public final class S3PullModule implements ServiceModule {
 
     @Override
     public ServiceMount wire(NodeContext context) {
+        boolean plaintext = GrpcIntakeFeed.plaintextRequested(context.environment());
+        String target = context.channels().targetOf("intake");
         S3Client s3 = client(config);
-        GrpcIntakeFeed feed = new GrpcIntakeFeed(
-                context.channels().targetOf("intake"), config.apiKey(),
-                GrpcIntakeFeed.plaintextRequested(context.environment()));
-        context.contributions().contribute(ProtoAction.class,
-                new S3PullAction(new S3Pull(s3, feed)));
-        return ServiceMount.inert(() -> {
-            feed.close();
+        GrpcIntakeFeed feed;
+        try {
+            feed = new GrpcIntakeFeed(target, config.apiKey(), plaintext);
+        } catch (RuntimeException e) {
             s3.close();
+            throw e;
+        }
+        try {
+            context.contributions().contribute(ProtoAction.class,
+                    new S3PullAction(new S3Pull(s3, feed)));
+        } catch (RuntimeException e) {
+            try {
+                feed.close();
+            } finally {
+                s3.close();
+            }
+            throw e;
+        }
+        return ServiceMount.inert(() -> {
+            try {
+                feed.close();
+            } finally {
+                s3.close();
+            }
         });
     }
 

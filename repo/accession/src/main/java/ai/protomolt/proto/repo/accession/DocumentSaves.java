@@ -1,5 +1,6 @@
 package ai.protomolt.proto.repo.accession;
 
+import ai.protomolt.proto.config.ConceptSchemeMounts;
 import ai.protomolt.proto.repo.admission.BuiltinDocumentSchema;
 import ai.protomolt.proto.repo.admission.DocumentAdmissionReservations;
 import ai.protomolt.proto.repo.admission.DocumentCandidateAdmission;
@@ -58,6 +59,7 @@ import java.util.OptionalLong;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.Supplier;
 
 /**
  * The v2 save (requirements §5, §7, §9; change map §3 steps S1-S15). One save
@@ -210,6 +212,8 @@ public final class DocumentSaves {
     private final Map<String, Descriptors.Descriptor> types = new ConcurrentHashMap<>();
     private final WriterAuthority authority;
     private final boolean opaqueAllowed;
+    private final Supplier<? extends ConceptSchemeCatalog> conceptSchemes;
+    private final ThreadLocal<ConceptSchemeCatalog> saveConceptSnapshot = new ThreadLocal<>();
     private final ProtoValidator contentValidator;
 
     /** A host without a schema registry: the compiled contract is the only Document version. */
@@ -254,7 +258,26 @@ public final class DocumentSaves {
     public DocumentSaves(Catalog catalog, Drives drives, DocumentSchemaAdmission.Resolver resolver,
             DocumentSchemaAdmission.Limits limits, DocumentAdmissionReservations reservations, Clock clock,
             DocumentSchemas schemas, boolean opaqueAllowed, ConceptSchemeCatalog conceptSchemes) {
-        this.contentValidator = DocumentSchemaAdmission.contentValidator(Objects.requireNonNull(conceptSchemes));
+        this(catalog, drives, resolver, limits, reservations, clock, schemas, opaqueAllowed,
+                asSupplier(Objects.requireNonNull(conceptSchemes, "conceptSchemes")));
+    }
+
+    /**
+     * @param schemas the latest registered {@code Document} version, asked on every save
+     * @param opaqueAllowed host policy: attested opaque occurrences may be accessioned
+     * @param conceptSchemes supplier of the host's mounted concept schemes, sampled once per
+     *        save so all {@code concept_schemes}-bound fields in one save evaluate against a
+     *        single consistent snapshot
+     */
+    public DocumentSaves(Catalog catalog, Drives drives, DocumentSchemaAdmission.Resolver resolver,
+            DocumentSchemaAdmission.Limits limits, DocumentAdmissionReservations reservations, Clock clock,
+            DocumentSchemas schemas, boolean opaqueAllowed,
+            Supplier<? extends ConceptSchemeCatalog> conceptSchemes) {
+        this.conceptSchemes = Objects.requireNonNull(conceptSchemes, "conceptSchemes");
+        this.contentValidator = DocumentSchemaAdmission.contentValidator(schemeId -> {
+            ConceptSchemeCatalog pinned = saveConceptSnapshot.get();
+            return (pinned != null ? pinned : this.conceptSchemes.get()).scheme(schemeId);
+        });
         this.catalog = Objects.requireNonNull(catalog);
         this.drives = Objects.requireNonNull(drives);
         this.resolver = Objects.requireNonNull(resolver);
@@ -265,6 +288,16 @@ public final class DocumentSaves {
         this.opaqueAllowed = opaqueAllowed;
         this.authority = new WriterAuthority(catalog, DocumentSchemaRetention.retain(
                 BuiltinDocumentSchema.definition(WriterGrant.getDescriptor())));
+    }
+
+    private static Supplier<ConceptSchemeCatalog> asSupplier(ConceptSchemeCatalog catalog) {
+        return () -> catalog;
+    }
+
+    private static ConceptSchemeCatalog snapshotConcepts(ConceptSchemeCatalog live) {
+        ConceptSchemeCatalog pinned = Objects.requireNonNull(live.snapshot(), "live.snapshot()");
+        Map<String, Optional<ConceptSchemeCatalog.Mounted>> memoizedSchemes = new HashMap<>();
+        return schemeId -> memoizedSchemes.computeIfAbsent(schemeId, pinned::scheme);
     }
 
     /** Seam for tests that need another container identity as the only registered version. */
@@ -940,6 +973,8 @@ public final class DocumentSaves {
                 attested.add(new DocumentCandidateAdmission.AttestedOpaque(
                         fragment(resolved.attestation().getOccurrence().getPart(), ByteString.empty()).part(),
                         resolved.attestation().getOccurrence().getStepsList(), resolved.attestation().getTypeUrl()));
+            saveConceptSnapshot.set(
+                    snapshotConcepts(Objects.requireNonNull(conceptSchemes.get(), "conceptSchemes.get()")));
             try (var result = DocumentCandidateAdmission.check(
                     new DocumentCandidateAdmission.Request(address.getDocId(), admitted, container, attested),
                     resolver, limits, reservations, clock.instant(), () -> {}, contentValidator)) {
@@ -992,6 +1027,8 @@ public final class DocumentSaves {
             } catch (DocumentCandidateAdmission.HostFailure | InvalidProtocolBufferException host) {
                 // Not the caller's content: surface it, never as a recorded outcome against the operation ID.
                 throw new AccessionException(Status.Code.INTERNAL, "Admission host failure: " + host.getMessage(), null, host);
+            } finally {
+                saveConceptSnapshot.remove();
             }
         }
         // Gap 9: carried parts keep the expected revision's schema entries; their bytes are unchanged.

@@ -14,6 +14,7 @@ import java.io.OutputStream;
 import java.io.OutputStreamWriter;
 import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
+import java.util.concurrent.locks.ReentrantLock;
 
 /**
  * Package-private newline-delimited JSON-RPC 2.0 stdio transport framing for {@link McpServer}.
@@ -39,7 +40,7 @@ final class StdioLineTransport {
                 new BufferedReader(new InputStreamReader(in, StandardCharsets.UTF_8));
         BufferedWriter writer =
                 new BufferedWriter(new OutputStreamWriter(out, StandardCharsets.UTF_8));
-        Object writeLock = new Object();
+        ReentrantLock writeLock = new ReentrantLock();
         try (session) {
             String line;
             while ((line = reader.readLine()) != null) {
@@ -50,19 +51,24 @@ final class StdioLineTransport {
                 try {
                     message = mapper.readTree(line);
                 } catch (JsonProcessingException e) {
-                    synchronized (writeLock) {
-                        write(writer, JsonRpc.error(
-                                mapper, null, JsonRpc.PARSE_ERROR, "Parse error"));
-                    }
+                    writeLocked(writeLock, writer, JsonRpc.error(
+                            mapper, null, JsonRpc.PARSE_ERROR, "Parse error"));
                     continue;
                 }
-                session.dispatch(message, response -> response.ifPresent(value -> {
-                    synchronized (writeLock) {
-                        write(writer, value);
-                    }
-                }));
+                session.dispatch(message, response -> response.ifPresent(
+                        value -> writeLocked(writeLock, writer, value)));
             }
             session.awaitInFlight(DRAIN_TIMEOUT_MILLIS);
+        }
+    }
+
+    private static void writeLocked(
+            ReentrantLock writeLock, BufferedWriter writer, ObjectNode response) {
+        writeLock.lock();
+        try {
+            write(writer, response);
+        } finally {
+            writeLock.unlock();
         }
     }
 

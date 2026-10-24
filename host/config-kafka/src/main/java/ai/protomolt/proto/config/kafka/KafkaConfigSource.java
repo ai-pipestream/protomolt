@@ -10,6 +10,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Properties;
+import java.util.concurrent.locks.ReentrantLock;
 import org.apache.kafka.clients.consumer.ConsumerConfig;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.apache.kafka.clients.consumer.ConsumerRecords;
@@ -105,6 +106,7 @@ public final class KafkaConfigSource implements ConfigSource {
     private record Poisoned(String version, String reason) implements Slot {
     }
 
+    private final ReentrantLock lock = new ReentrantLock();
     private final String topic;
     private final KafkaConsumer<String, byte[]> consumer;
     private final ProtoMoltProtobufDeserializer values;
@@ -121,39 +123,65 @@ public final class KafkaConfigSource implements ConfigSource {
         // The config lane never reads an unvalidated document.
         serde.put(ProtoMoltSerdeConfig.VALIDATE_ON_READ, true);
         this.values = new ProtoMoltProtobufDeserializer();
-        this.values.configure(serde, false);
+        try {
+            this.values.configure(serde, false);
 
-        Properties consumerProperties = new Properties();
-        consumerProperties.put(ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG,
-                config.bootstrapServers());
-        consumerProperties.put(ConsumerConfig.ENABLE_AUTO_COMMIT_CONFIG, "false");
-        consumerProperties.put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "earliest");
-        this.consumer = new KafkaConsumer<>(consumerProperties,
-                new StringDeserializer(), new ByteArrayDeserializer());
-        List<TopicPartition> partitions = consumer.partitionsFor(topic).stream()
-                .map(partition -> new TopicPartition(topic, partition.partition()))
-                .toList();
-        if (partitions.isEmpty()) {
-            throw new IllegalStateException(
-                    "topic '" + topic + "' has no partitions: create the compacted"
-                            + " config topic first");
+            Properties consumerProperties = new Properties();
+            consumerProperties.put(ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG,
+                    config.bootstrapServers());
+            consumerProperties.put(ConsumerConfig.ENABLE_AUTO_COMMIT_CONFIG, "false");
+            consumerProperties.put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "earliest");
+            this.consumer = new KafkaConsumer<>(consumerProperties,
+                    new StringDeserializer(), new ByteArrayDeserializer());
+            try {
+                var partitionInfos = consumer.partitionsFor(topic);
+                List<TopicPartition> partitions = partitionInfos == null
+                        ? List.of()
+                        : partitionInfos.stream()
+                                .map(partition -> new TopicPartition(topic, partition.partition()))
+                                .toList();
+                if (partitions.isEmpty()) {
+                    throw new IllegalStateException(
+                            "topic '" + topic + "' has no partitions: create the compacted"
+                                    + " config topic first");
+                }
+                consumer.assign(partitions);
+                consumer.seekToBeginning(partitions);
+            } catch (RuntimeException | Error e) {
+                try {
+                    this.consumer.close();
+                } catch (RuntimeException | Error cleanup) {
+                    e.addSuppressed(cleanup);
+                }
+                throw e;
+            }
+        } catch (RuntimeException | Error e) {
+            try {
+                this.values.close();
+            } catch (RuntimeException | Error cleanup) {
+                e.addSuppressed(cleanup);
+            }
+            throw e;
         }
-        consumer.assign(partitions);
-        consumer.seekToBeginning(partitions);
     }
 
     @Override
-    public synchronized Optional<Fetched> fetch(String subject) {
-        drainToEnd();
-        // Exhaustive over the sealed Slot, so a third variant has to be answered here rather
-        // than reaching the reader through an unchecked cast.
-        return switch (latest.get(subject)) {
-            case null -> Optional.empty();
-            case Valid valid -> Optional.of(new Fetched(valid.version(), valid.payload()));
-            case Poisoned poisoned -> throw new IllegalStateException("config record for '"
-                    + subject + "' at " + poisoned.version() + " refused by the serde: "
-                    + poisoned.reason());
-        };
+    public Optional<Fetched> fetch(String subject) {
+        lock.lock();
+        try {
+            drainToEnd();
+            // Exhaustive over the sealed Slot, so a third variant has to be answered here rather
+            // than reaching the reader through an unchecked cast.
+            return switch (latest.get(subject)) {
+                case null -> Optional.empty();
+                case Valid valid -> Optional.of(new Fetched(valid.version(), valid.payload()));
+                case Poisoned poisoned -> throw new IllegalStateException("config record for '"
+                        + subject + "' at " + poisoned.version() + " refused by the serde: "
+                        + poisoned.reason());
+            };
+        } finally {
+            lock.unlock();
+        }
     }
 
     /** Reads every record up to the end offsets observed at entry. */
@@ -213,8 +241,16 @@ public final class KafkaConfigSource implements ConfigSource {
     }
 
     @Override
-    public synchronized void close() {
-        consumer.close();
-        values.close();
+    public void close() {
+        lock.lock();
+        try {
+            try {
+                consumer.close();
+            } finally {
+                values.close();
+            }
+        } finally {
+            lock.unlock();
+        }
     }
 }

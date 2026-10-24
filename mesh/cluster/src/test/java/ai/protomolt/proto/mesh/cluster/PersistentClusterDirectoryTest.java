@@ -356,6 +356,35 @@ class PersistentClusterDirectoryTest {
                 .isEqualTo(directory.snapshot().getSnapshotSeq());
     }
 
+    @Test
+    void inMemoryRepositorySupportsConcurrentLoadsAndSaves() throws Exception {
+        InMemoryClusterEventRepository repo = new InMemoryClusterEventRepository();
+        ClusterFixtures.MutableClock clock = new ClusterFixtures.MutableClock(ClusterFixtures.T0);
+        PersistentClusterDirectory directory = new PersistentClusterDirectory(
+                ClusterFixtures.cluster(), clock, repo, 64);
+        int threads = 8;
+        java.util.concurrent.CyclicBarrier barrier = new java.util.concurrent.CyclicBarrier(threads);
+        java.util.List<Throwable> errors = new java.util.concurrent.CopyOnWriteArrayList<>();
+        java.util.List<Thread> workers = new java.util.ArrayList<>(threads);
+        for (int i = 0; i < threads; i++) {
+            int idx = i;
+            workers.add(Thread.ofVirtual().start(() -> {
+                try {
+                    barrier.await();
+                    directory.register(ClusterFixtures.node("node-" + idx));
+                    assertThat(repo.load(ClusterFixtures.cluster())).isPresent();
+                } catch (Throwable t) {
+                    errors.add(t);
+                }
+            }));
+        }
+        for (Thread worker : workers) {
+            worker.join();
+        }
+        assertThat(errors).isEmpty();
+        assertThat(directory.snapshot().getNodesCount()).isEqualTo(threads);
+    }
+
     private static class CountingRepository implements ClusterEventRepository {
         private StoredDirectory current = StoredDirectory.of(List.of());
         private int saves;

@@ -16,6 +16,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.ThreadLocalRandom;
+import java.util.concurrent.locks.ReentrantLock;
 
 /**
  * A thin authorized client for the Confluence Cloud REST API v2: JSON in, JSON
@@ -275,17 +276,24 @@ public final class ConfluenceClient {
         return response;
     }
 
+    private final ReentrantLock throttleLock = new ReentrantLock();
+
     /** Keeps at least {@code minRequestInterval} between requests, sleeping on the caller. */
-    private synchronized void throttle() throws InterruptedException {
+    private void throttle() throws InterruptedException {
         if (minRequestInterval.isZero() || minRequestInterval.isNegative()) {
             return;
         }
-        long now = System.nanoTime();
-        long wait = lastRequestNanos + minRequestInterval.toNanos() - now;
-        if (wait > 0) {
-            Thread.sleep(Duration.ofNanos(wait));
+        throttleLock.lockInterruptibly();
+        try {
+            long now = System.nanoTime();
+            long wait = lastRequestNanos + minRequestInterval.toNanos() - now;
+            if (wait > 0) {
+                Thread.sleep(Duration.ofNanos(wait));
+            }
+            lastRequestNanos = System.nanoTime();
+        } finally {
+            throttleLock.unlock();
         }
-        lastRequestNanos = System.nanoTime();
     }
 
     private static JsonNode json(HttpResponse<String> response) throws IOException {

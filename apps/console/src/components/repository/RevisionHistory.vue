@@ -76,6 +76,10 @@ async function load(first: boolean) {
   const signal = scope.next()
   loading.value = true
   failure.value = null
+  if (first) {
+    rows.value = []
+    nextToken.value = ''
+  }
   try {
     const page = await clients.documents.listRevisions(
       create(ListRevisionsRequestSchema, {
@@ -85,13 +89,14 @@ async function load(first: boolean) {
       }),
       { signal },
     )
+    if (signal.aborted) return
     const more = page.revisions.map(revisionRow)
     rows.value = first ? more : [...rows.value, ...more]
     nextToken.value = page.nextPageToken
   } catch (error) {
     if (!isOwnCancellation(error, signal)) failure.value = rpcFailure(error)
   } finally {
-    loading.value = false
+    if (!signal.aborted) loading.value = false
   }
 }
 

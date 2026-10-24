@@ -82,6 +82,9 @@ class RegistryConfigSourceTest {
 
     @AfterAll
     static void shutdown() throws Exception {
+        if (http != null) {
+            http.close();
+        }
         if (server != null) {
             server.close();
         }
@@ -157,8 +160,9 @@ class RegistryConfigSourceTest {
 
     @Test
     void aMissingDocumentIsEmptinessNeverAnError() throws Exception {
-        RegistryConfigSource source = new RegistryConfigSource(base, null);
-        assertThat(source.fetch("no-such-config")).isEmpty();
+        try (RegistryConfigSource source = new RegistryConfigSource(base, null)) {
+            assertThat(source.fetch("no-such-config")).isEmpty();
+        }
     }
 
     @Test
@@ -173,10 +177,11 @@ class RegistryConfigSourceTest {
                 HttpResponse.BodyHandlers.ofString());
         assertThat(served.statusCode()).isEqualTo(422);
         assertThat(served.body()).contains("no longer gates");
-        RegistryConfigSource source = new RegistryConfigSource(base, null);
-        org.assertj.core.api.Assertions
-                .assertThatThrownBy(() -> source.fetch("hand-edited"))
-                .hasMessageContaining("422");
+        try (RegistryConfigSource source = new RegistryConfigSource(base, null)) {
+            org.assertj.core.api.Assertions
+                    .assertThatThrownBy(() -> source.fetch("hand-edited"))
+                    .hasMessageContaining("422");
+        }
     }
 
     @Test
