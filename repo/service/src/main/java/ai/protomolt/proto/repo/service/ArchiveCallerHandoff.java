@@ -196,10 +196,12 @@ final class ArchiveCallerHandoff {
                             return;
                         }
                         if (message instanceof UploadDocumentRequest uploadReq
-                                && uploadReq.hasHeader()
                                 && repoCaller != null
                                 && !repoCaller.processAuthority()
-                                && !uploadReq.getHeader().getSave().getDocument().getOwnership().hasSecurity()) {
+                                && ((uploadReq.hasHeader()
+                                        && !uploadReq.getHeader().getSave().getDocument().getOwnership().hasSecurity())
+                                    || (uploadReq.hasTrailer()
+                                        && !uploadReq.getTrailer().getDocument().getOwnership().hasSecurity()))) {
                             UploadDocumentRequest updated = withUploaderSecurity(uploadReq, repoCaller);
                             super.sendMessage((ReqT) updated);
                             return;
@@ -266,8 +268,9 @@ final class ArchiveCallerHandoff {
 
     /**
      * Stamps READ and WRITE access rules for each ACL identity presented by a scoped
-     * caller, matching {@code UploadHttpHandler.uploadSecurity}. A scoped caller that
-     * presents no ACL identities writes no rules.
+     * caller, matching {@code UploadHttpHandler.uploadSecurity}, on the upload header's
+     * document and on the trailer's, so the trailer keeps the ownership the header was
+     * accepted with. A scoped caller that presents no ACL identities writes no rules.
      */
     private static UploadDocumentRequest withUploaderSecurity(
             UploadDocumentRequest request, RepositoryCaller caller) {
@@ -286,6 +289,11 @@ final class ArchiveCallerHandoff {
                                 .setAccess(access));
                     }
                 });
+        if (request.hasTrailer()) {
+            var trailer = request.getTrailer().toBuilder();
+            trailer.getDocumentBuilder().getOwnershipBuilder().setSecurity(security);
+            return request.toBuilder().setTrailer(trailer).build();
+        }
         var header = request.getHeader().toBuilder();
         header.getSaveBuilder().getDocumentBuilder().getOwnershipBuilder().setSecurity(security);
         return request.toBuilder().setHeader(header).build();

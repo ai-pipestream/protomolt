@@ -92,6 +92,7 @@ class BlobBindingFactsIT {
         f.stack.reset();
         var payload = MARKDOWN.getBytes();
         var header = UploadHeader.newBuilder()
+                .setStreamed(ai.protomolt.proto.repo.v2.StreamedBody.getDefaultInstance())
                 .setSave(blobsOnly("op-2", address, 1, carried("original").build(),
                         Blob.newBuilder().setBlobId("markdown").setMimeType("text/markdown")
                                 .setSizeBytes(payload.length).setChecksum(SaveIntents.sha256Hex(payload)).build()))
@@ -287,7 +288,8 @@ class BlobBindingFactsIT {
                 new Object[] {"op-sha", Blob.newBuilder().setBlobId("b1").setChecksum("0".repeat(64)).build()});
         for (var item : cases) {
             var operation = (String) item[0];
-            var header = UploadHeader.newBuilder().setSave(create(operation, address,
+            var header = UploadHeader.newBuilder()
+                .setStreamed(ai.protomolt.proto.repo.v2.StreamedBody.getDefaultInstance()).setSave(create(operation, address,
                     bag(account, "doc-streamed-mismatch", (Blob) item[1]))).setBlobId("b1").build();
             assertThatThrownBy(() -> f.saves.upload(processAuthority(), header, new ByteArrayInputStream(payload)))
                     .isInstanceOfSatisfying(AccessionException.class, failure -> {

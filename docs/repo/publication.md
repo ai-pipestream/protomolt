@@ -145,9 +145,17 @@ message has been split and inline blobs extracted).
   yields exactly one response (`saved` or `ItemError`, correlated by
   `request_id`); one document's failure never fails the stream, and item
   side effects are exactly `SaveDocument`'s.
-- **`UploadDocument`** (client stream) — one `UploadHeader` (the
-  `SaveDocumentRequest` to commit, plus what the bytes are), then data
-  frames, then half-close. The payload is either a **raw blob** (`blob_id`:
+- **`UploadDocument`** (bidirectional stream): one `UploadHeader` (the
+  `SaveDocumentRequest` to commit, what the bytes are, and how they
+  arrive), answered before any byte is staged. An `inline_data` body
+  commits in that round trip and is answered `saved`. A `streamed` body is
+  answered `accepted` (data frames follow, then an `UploadTrailer` when the
+  header set `core_in_trailer`, then half-close, answered `saved`) or
+  `replayed` (the header's declared length and SHA-256 match an intent
+  already recorded under its operation ID; no data is sent). Every admission
+  check runs on the header, and owner match and writer authority run again
+  on the trailer's finished CORE, which may not change the address,
+  ownership or any other part. The payload is either a **raw blob** (`blob_id`:
   the save's document carries that blob's metadata without data, writes
   include BLOBS PUT, and the server fills the claim check) or **one encoded
   codec fragment** (`encoded_part.selector`: the stream supplies that

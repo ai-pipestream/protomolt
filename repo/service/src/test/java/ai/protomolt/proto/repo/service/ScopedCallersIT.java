@@ -47,6 +47,10 @@ import ai.protomolt.proto.repo.v2.PartSelector;
 import ai.protomolt.proto.repo.v2.PartWrite;
 import ai.protomolt.proto.repo.v2.SaveDocumentRequest;
 import ai.protomolt.proto.repo.v2.SaveOwner;
+import ai.protomolt.proto.repo.v2.StreamedBody;
+import ai.protomolt.proto.repo.v2.UploadDocumentRequest;
+import ai.protomolt.proto.repo.v2.UploadDocumentResponse;
+import ai.protomolt.proto.repo.v2.UploadHeader;
 import ai.protomolt.proto.repo.v2.WriteAction;
 import com.google.protobuf.ByteString;
 import io.grpc.ManagedChannel;
@@ -57,6 +61,7 @@ import io.grpc.health.v1.HealthCheckRequest;
 import io.grpc.health.v1.HealthGrpc;
 import io.grpc.netty.shaded.io.grpc.netty.NettyChannelBuilder;
 import io.grpc.stub.AbstractStub;
+import io.grpc.stub.StreamObserver;
 import io.grpc.stub.MetadataUtils;
 import java.util.List;
 import java.util.UUID;
@@ -334,6 +339,120 @@ class ScopedCallersIT {
         return Principal.newBuilder().setName(name)
                 .addCredentialSha256(AccessPolicyCallers.sha256Hex(credential))
                 .addScopes("search-query").build();
+    }
+
+    // ------------------------------------------------------------------
+    // Uploads: identity comes from the transport credential, and every
+    // refusal is the first answer, before a byte moves
+    // ------------------------------------------------------------------
+
+    @Test
+    void anAnonymousUploadIsRefusedInTheFirstAnswer() throws Exception {
+        var upload = new Upload(DocumentServiceGrpc.newStub(channel));
+        upload.send(header(ACCOUNT_A, "doc-anonymous-upload", intakeOwner()));
+        assertThat(upload.failure().getStatus().getCode()).isEqualTo(Status.Code.UNAUTHENTICATED);
+        assertThat(upload.answers).isEmpty();
+    }
+
+    @Test
+    void aScopedCallerWithoutWriterAuthorityIsRefusedInTheFirstAnswer() throws Exception {
+        var upload = new Upload(as(ALICE, DocumentServiceGrpc.newStub(channel)));
+        upload.send(header(ACCOUNT_A, "doc-alice-upload", intakeOwner()));
+        assertThat(upload.failure().getStatus().getCode()).isEqualTo(Status.Code.PERMISSION_DENIED);
+        assertThat(upload.answers).isEmpty();
+    }
+
+    @Test
+    void aScopedCallerCannotUploadIntoAnAccountItIsNotBoundTo() throws Exception {
+        var upload = new Upload(as(ALICE, DocumentServiceGrpc.newStub(channel)));
+        upload.send(header(ACCOUNT_B, "doc-alice-into-b", intakeOwner()));
+        assertThat(upload.failure().getStatus().getCode()).isEqualTo(Status.Code.PERMISSION_DENIED);
+        assertThat(upload.answers).isEmpty();
+    }
+
+    @Test
+    void theOperatorCredentialAsABearerTokenUploadsOnlyAsAnExplicitIntakeOwner() throws Exception {
+        var bearer = new Metadata();
+        bearer.put(Metadata.Key.of("authorization", Metadata.ASCII_STRING_MARSHALLER), "Bearer " + OPERATOR);
+        var operator = DocumentServiceGrpc.newStub(channel)
+                .withInterceptors(MetadataUtils.newAttachHeadersInterceptor(bearer));
+        // Its own account, so the listing assertions above stay exact.
+        String account = "scoped-account-upload";
+        as(OPERATOR, DriveServiceGrpc.newBlockingStub(channel)).createDrive(CreateDriveRequest.newBuilder()
+                .setName("intake").setAccountId(account).setDriveType(DriveType.DRIVE_TYPE_INTAKE).build());
+
+        var stepOwned = new Upload(operator);
+        stepOwned.send(header(account, "doc-operator-step", SaveOwner.newBuilder()
+                .setStep(ai.protomolt.proto.repo.v1.WriteProvenance.newBuilder().setModuleId("module-1")).build()));
+        assertThat(stepOwned.failure().getStatus().getDescription())
+                .isEqualTo("Process authority may save only as an intake owner");
+        assertThat(stepOwned.answers).isEmpty();
+
+        var upload = new Upload(operator);
+        upload.send(header(account, "doc-operator-upload", intakeOwner()));
+        assertThat(upload.answer().getAnswerCase()).isEqualTo(UploadDocumentResponse.AnswerCase.ACCEPTED);
+        upload.send(UploadDocumentRequest.newBuilder().setData(ByteString.copyFromUtf8(UPLOAD_BODY)).build());
+        upload.complete();
+        var saved = upload.answer();
+        assertThat(saved.getAnswerCase()).isEqualTo(UploadDocumentResponse.AnswerCase.SAVED);
+        assertThat(saved.getSaved().getAccession().getRevision()).isEqualTo(1L);
+    }
+
+    private static final String UPLOAD_BODY = "uploaded body";
+
+    private static SaveOwner intakeOwner() {
+        return SaveOwner.newBuilder().setIntake(IntakeOrigin.newBuilder().setDatasourceId(DATASOURCE)).build();
+    }
+
+    private static UploadDocumentRequest header(String account, String doc, SaveOwner owner) {
+        var save = save(account, doc, rule("public", "public")).toBuilder()
+                .setOperationId("op-upload-" + doc)
+                .setOwner(owner)
+                .addWrites(PartWrite.newBuilder()
+                        .setSelector(PartSelector.newBuilder().setPart(DocumentPart.DOCUMENT_PART_BLOBS))
+                        .setAction(WriteAction.WRITE_ACTION_PUT));
+        save.getDocumentBuilder().setBlobBag(ai.protomolt.proto.repo.v1.BlobBag.newBuilder()
+                .setBlob(ai.protomolt.proto.repo.v1.Blob.newBuilder().setBlobId("b1")
+                        .setMimeType("text/plain").setFilename("b1.txt")));
+        return UploadDocumentRequest.newBuilder().setHeader(UploadHeader.newBuilder()
+                .setStreamed(StreamedBody.getDefaultInstance())
+                .setSave(save)
+                .setBlobId("b1")
+                .setDeclaredLength(UPLOAD_BODY.length())).build();
+    }
+
+    /** One UploadDocument call driven a frame at a time, its answers read in order. */
+    private static final class Upload {
+        final java.util.concurrent.LinkedBlockingQueue<UploadDocumentResponse> answers =
+                new java.util.concurrent.LinkedBlockingQueue<>();
+        private final java.util.concurrent.CompletableFuture<Void> end = new java.util.concurrent.CompletableFuture<>();
+        private final StreamObserver<UploadDocumentRequest> requests;
+
+        Upload(DocumentServiceGrpc.DocumentServiceStub stub) {
+            requests = stub.uploadDocument(new StreamObserver<>() {
+                @Override public void onNext(UploadDocumentResponse value) { answers.add(value); }
+                @Override public void onError(Throwable t) { end.completeExceptionally(t); }
+                @Override public void onCompleted() { end.complete(null); }
+            });
+        }
+
+        void send(UploadDocumentRequest frame) { requests.onNext(frame); }
+
+        void complete() { requests.onCompleted(); }
+
+        UploadDocumentResponse answer() throws Exception {
+            var answer = answers.poll(30, java.util.concurrent.TimeUnit.SECONDS);
+            assertThat(answer).as("an UploadDocument answer").isNotNull();
+            return answer;
+        }
+
+        StatusRuntimeException failure() {
+            var thrown = org.assertj.core.api.Assertions.catchThrowable(
+                    () -> end.get(30, java.util.concurrent.TimeUnit.SECONDS));
+            assertThat(thrown).isInstanceOf(java.util.concurrent.ExecutionException.class);
+            assertThat(thrown.getCause()).isInstanceOf(StatusRuntimeException.class);
+            return (StatusRuntimeException) thrown.getCause();
+        }
     }
 
     private static <S extends AbstractStub<S>> S as(String credential, S stub) {

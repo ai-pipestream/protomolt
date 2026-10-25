@@ -393,8 +393,12 @@ wins). `Content-Length` is required; `Content-Type` describes the rendition and
 `X-Content-Sha256` optionally declares its digest. A blank operation ID requires
 the digest and derives a deterministic retry ID.
 
-The v2 path streams through `RenditionUploads` into `UploadDocument`, waiting for
-downstream readiness before reading another 64 KiB chunk. Early replay or refusal
+The v2 path goes through `RenditionUploads` into `UploadDocument`. A rendition of
+at most 1 MiB is sent inline in the header frame and commits in one round trip. A
+larger one sends its header first and reads no body byte until v2 answers
+`accepted`, so a refused caller gets its 401 or 403 before the body moves; it then
+waits for downstream readiness before reading another 64 KiB chunk. Nothing is
+staged on disk. Early replay or refusal
 answers without draining the remaining request body and closes the HTTP connection.
 Success is binary `UploadRenditionResponse` with `Content-Type: application/protobuf`;
 errors are binary `google.rpc.Status` with the same content type and the matching
