@@ -1627,24 +1627,57 @@ class StreamingUploadAndReadIT {
 
     @Test
     void rejectingAnExtraInlineFrameDoesNotCommitTheUpload() throws Exception {
-        var entered = new CountDownLatch(1);
-        var release = new CountDownLatch(1);
-        var worker = new AtomicReference<Thread>();
-        var gatedStack = new ForwardingStack(f.stack) {
-            @Override public StackRef put(java.io.InputStream body, long length) throws IOException {
-                worker.set(Thread.currentThread());
-                entered.countDown();
-                try {
-                    if (!release.await(10, TimeUnit.SECONDS)) throw new IOException("gate timeout");
-                } catch (InterruptedException interrupted) {
-                    Thread.currentThread().interrupt();
-                    throw new IOException(interrupted);
-                }
-                return super.put(body, length);
-            }
-        };
+        // The blob put is the first stack write, before the upload claims its commit.
+        var gated = new GatedStack(f.stack, 1);
+        serveOver(gated);
+        var upload = new Handshake();
+        var payload = ByteString.copyFromUtf8("inline-rejected-body");
+        try {
+            upload.send(UploadDocumentRequest.newBuilder().setHeader(UploadHeader.newBuilder()
+                    .setInlineData(payload).setBlobId("b1").setDeclaredLength(payload.size())
+                    .setSave(create("op-inline-rejected", address(account, "inline-rejected"),
+                            documentWithPendingBlob(account, "inline-rejected", "b1")))).build());
+            assertThat(gated.entered.await(10, TimeUnit.SECONDS)).isTrue();
+            upload.send(UploadDocumentRequest.newBuilder().setData(ByteString.copyFromUtf8("extra")).build());
+            assertThat(upload.failure().getStatus().getCode()).isEqualTo(Status.Code.INVALID_ARGUMENT);
+        } finally {
+            gated.release();
+        }
+        assertThat(gated.worker.get().isAlive()).isFalse();
+        assertThat(f.catalog.outcome(account, "op-inline-rejected"))
+                .as("an upload rejected before its body is staged must not commit").isEmpty();
+    }
+
+    @Test
+    void anExtraInlineFrameAfterTheCommitIsClaimedLeavesTheSavedAnswer() throws Exception {
+        // The second stack write is a fragment of the commit itself, after the claim.
+        var gated = new GatedStack(f.stack, 2);
+        serveOver(gated);
+        var upload = new Handshake();
+        var payload = ByteString.copyFromUtf8("inline-claimed-body");
+        try {
+            upload.send(UploadDocumentRequest.newBuilder().setHeader(UploadHeader.newBuilder()
+                    .setInlineData(payload).setBlobId("b1").setDeclaredLength(payload.size())
+                    .setSave(create("op-inline-claimed", address(account, "inline-claimed"),
+                            documentWithPendingBlob(account, "inline-claimed", "b1")))).build());
+            assertThat(gated.entered.await(10, TimeUnit.SECONDS)).isTrue();
+            upload.send(UploadDocumentRequest.newBuilder().setData(ByteString.copyFromUtf8("extra")).build());
+            // The refusal lost to the claimed commit: it neither answers nor cancels the call.
+            assertThat(upload.answers.poll(500, TimeUnit.MILLISECONDS)).isNull();
+        } finally {
+            gated.release();
+        }
+        var saved = upload.answer();
+        assertThat(saved.getAnswerCase()).isEqualTo(UploadDocumentResponse.AnswerCase.SAVED);
+        assertThat(saved.getSaved().getAccession().getRevision()).isEqualTo(1L);
+        assertThat(upload.completed()).isTrue();
+        assertThat(f.catalog.outcome(account, "op-inline-claimed").orElseThrow().outcome().hasAccession()).isTrue();
+    }
+
+    /** Serves UploadDocument over {@code stack} as process authority, in place of the default server. */
+    private void serveOver(ai.protomolt.proto.repo.stack.Stack stack) throws IOException {
         var saves = new DocumentSaves(f.catalog,
-                new DocumentSaves.Drives("default", java.util.Map.of("default", gatedStack)),
+                new DocumentSaves.Drives("default", java.util.Map.of("default", stack)),
                 resolver(), limits(), bytes -> () -> {}, java.time.Clock.systemUTC());
         var service = new AccessionGrpcService(saves, new DocumentUploads(saves), f.reads,
                 ignored -> processAuthority());
@@ -1660,28 +1693,53 @@ class StreamingUploadAndReadIT {
         };
         channel.shutdownNow();
         server.shutdownNow();
-        var name = "inline-rejection-" + UUID.randomUUID();
+        var name = "inline-gate-" + UUID.randomUUID();
         server = InProcessServerBuilder.forName(name).executor(Executors.newVirtualThreadPerTaskExecutor())
                 .addService(io.grpc.ServerInterceptors.intercept(service, interceptor)).build().start();
         channel = InProcessChannelBuilder.forName(name).executor(Executors.newVirtualThreadPerTaskExecutor()).build();
         asyncStub = DocumentServiceGrpc.newStub(channel);
-        var upload = new Handshake();
-        var payload = ByteString.copyFromUtf8("inline-rejected-body");
-        try {
-            upload.send(UploadDocumentRequest.newBuilder().setHeader(UploadHeader.newBuilder()
-                    .setInlineData(payload).setBlobId("b1").setDeclaredLength(payload.size())
-                    .setSave(create("op-inline-rejected", address(account, "inline-rejected"),
-                            documentWithPendingBlob(account, "inline-rejected", "b1")))).build());
-            assertThat(entered.await(10, TimeUnit.SECONDS)).isTrue();
-            upload.send(UploadDocumentRequest.newBuilder().setData(ByteString.copyFromUtf8("extra")).build());
-            assertThat(upload.failure().getStatus().getCode()).isEqualTo(Status.Code.INVALID_ARGUMENT);
-        } finally {
-            release.countDown();
-            if (worker.get() != null) worker.get().join(10_000);
+    }
+
+    /** Holds the upload worker inside its {@code gatedPut}-th stack write until released. */
+    private static final class GatedStack extends ForwardingStack {
+        final CountDownLatch entered = new CountDownLatch(1);
+        final AtomicReference<Thread> worker = new AtomicReference<>();
+        private final CountDownLatch released = new CountDownLatch(1);
+        private final java.util.concurrent.atomic.AtomicInteger puts = new java.util.concurrent.atomic.AtomicInteger();
+        private final int gatedPut;
+
+        GatedStack(ai.protomolt.proto.repo.stack.Stack delegate, int gatedPut) {
+            super(delegate);
+            this.gatedPut = gatedPut;
         }
-        assertThat(worker.get().isAlive()).isFalse();
-        assertThat(f.catalog.outcome(account, "op-inline-rejected"))
-                .as("an upload rejected before its body is staged must not commit").isEmpty();
+
+        @Override public StackRef put(java.io.InputStream body, long length) throws IOException {
+            hold();
+            return super.put(body, length);
+        }
+
+        @Override public StackRef put(byte[] body) throws IOException {
+            hold();
+            return super.put(body);
+        }
+
+        private void hold() throws IOException {
+            if (puts.incrementAndGet() != gatedPut) return;
+            worker.set(Thread.currentThread());
+            entered.countDown();
+            try {
+                if (!released.await(10, TimeUnit.SECONDS)) throw new IOException("gate timeout");
+            } catch (InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
+                throw new IOException(interrupted);
+            }
+        }
+
+        void release() throws InterruptedException {
+            released.countDown();
+            var held = worker.get();
+            if (held != null) held.join(10_000);
+        }
     }
 
     @Test

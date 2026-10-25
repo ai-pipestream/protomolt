@@ -32,9 +32,6 @@ import java.util.concurrent.atomic.AtomicReference;
 public final class DocumentUploads {
     private static final int QUEUE_CAPACITY = 16;
     private static final int INITIAL_DATA_REQUESTS = 4;
-    private static final int OPEN = 0;
-    private static final int COMMITTING = 1;
-    private static final int WITHDRAWN = 2;
 
     private final DocumentSaves saves;
 
@@ -116,17 +113,13 @@ public final class DocumentUploads {
         var serverObserver = responseObserver instanceof ServerCallStreamObserver<UploadDocumentResponse> s ? s : null;
         var streamHolder = new ChunkQueueInputStream[1];
         var trailer = new AtomicReference<UploadTrailer>();
-        // OPEN until the upload claims its commit (COMMITTING) or the call is refused or
-        // cancelled first (WITHDRAWN). The claim and the refusal exclude each other, so a call
-        // answered with an error never commits and a committing call is never answered with one.
-        var commitState = new java.util.concurrent.atomic.AtomicInteger(OPEN);
-        java.util.function.BooleanSupplier claimCommit =
-                () -> !cancelled.get() && commitState.compareAndSet(OPEN, COMMITTING);
+        var gate = new UploadCommitGate();
+        java.util.function.BooleanSupplier claimCommit = () -> !cancelled.get() && gate.claimCommit();
 
         if (serverObserver != null) {
             serverObserver.setOnCancelHandler(() -> {
                 cancelled.set(true);
-                commitState.compareAndSet(OPEN, WITHDRAWN);
+                gate.withdraw();
                 terminated.set(true);
                 var stream = streamHolder[0];
                 if (stream != null) stream.cancel();
@@ -226,7 +219,7 @@ public final class DocumentUploads {
             @Override
             public void onError(Throwable t) {
                 cancelled.set(true);
-                commitState.compareAndSet(OPEN, WITHDRAWN);
+                gate.withdraw();
                 terminated.set(true);
                 var stream = streamHolder[0];
                 if (stream != null) stream.cancel();
@@ -275,12 +268,13 @@ public final class DocumentUploads {
             }
 
             /**
-             * Refuses the call for a frame the client sent. Once the upload has claimed its commit
-             * the refusal is dropped: that commit's own answer ends the call.
+             * Refuses the call for a frame the client sent. The refusal first withdraws the call;
+             * when the upload claimed its commit first, the refusal is dropped and that commit's
+             * own answer ends the call.
              */
             private void refuse(AccessionException failure) {
                 synchronized (responseLock) {
-                    if (commitState.get() == COMMITTING) return;
+                    if (!gate.withdraw()) return;
                     fail(failure);
                 }
             }
@@ -288,7 +282,7 @@ public final class DocumentUploads {
             private void fail(AccessionException failure) {
                 synchronized (responseLock) {
                     cancelled.set(true);
-                    commitState.compareAndSet(OPEN, WITHDRAWN);
+                    gate.withdraw();
                     if (terminated.compareAndSet(false, true)) {
                         var stream = streamHolder[0];
                         if (stream != null) stream.closeConsumer();
@@ -300,7 +294,7 @@ public final class DocumentUploads {
             private void failRuntime(RuntimeException failure) {
                 synchronized (responseLock) {
                     cancelled.set(true);
-                    commitState.compareAndSet(OPEN, WITHDRAWN);
+                    gate.withdraw();
                     if (terminated.compareAndSet(false, true)) {
                         var stream = streamHolder[0];
                         if (stream != null) stream.closeConsumer();
