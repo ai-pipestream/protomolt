@@ -64,6 +64,15 @@ class DocumentCandidateAdmissionTest {
             .build();
 
     @Test
+    void containerTypeLinksARetainedDefinitionOnceAcrossCalls() {
+        var retained = BuiltinDocumentSchema.definition();
+        var reread = new DocumentSchemaAdmission.Definition(retained.metadata(),
+                ByteString.copyFrom(retained.descriptors().toByteArray()), retained.source());
+        var first = DocumentCandidateAdmission.containerType(retained);
+        assertThat(DocumentCandidateAdmission.containerType(reread)).isSameAs(first);
+    }
+
+    @Test
     void reusesDecodedNestedAnyPayloadsDuringLinkAndConceptExtraction() throws Exception {
         var file = buildNestedLinkAndConceptFile();
         var outerType = file.findMessageTypeByName("Outer");
@@ -185,6 +194,13 @@ class DocumentCandidateAdmissionTest {
                 List.of(new DocumentCandidateAdmission.Fragment(DocumentPart.DOCUMENT_PART_CORE, coreDoc.toByteString())),
                 containerDef);
 
+        // Link both schemas into the shared type cache first, so the baseline and every
+        // cancelled run below take the same path. DocumentSchemaBindingTest sweeps the
+        // cold path's ticks.
+        try (var warm = DocumentCandidateAdmission.check(request, selection -> innerDef, limits(),
+                new TrackingReservations(), Instant.EPOCH, () -> {}, DocumentSchemaAdmission.ADMITTED_VALIDATOR)) {
+            assertThat(warm).isInstanceOf(DocumentCandidateAdmission.Accepted.class);
+        }
         var totalControlTicks = new AtomicInteger();
         var baselineReservations = new TrackingReservations();
         try (var result = DocumentCandidateAdmission.check(
