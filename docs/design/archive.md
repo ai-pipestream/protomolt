@@ -212,16 +212,52 @@ document store's event message today.
 
 ## Stats
 
-The archive counts what it does, exactly, in the ledger: per-archive
-transactional counters (entries, versions, retained bytes, current-version
-logical bytes) and a per-rendition-name breakdown (object count, bytes),
-maintained in the same transaction as the mutation they describe.
-`GetArchiveStats` reads them with strong consistency — the ledger is the
-contract, the way a receipt is: what the store claims, the store can prove
-from its own rows. Operation telemetry (reads, latencies, cache behavior)
-is deliberately not ledger state; it belongs to the metrics lane, fed by
-events and process metrics, and never blocks or widens a storage
-transaction.
+`DocumentArchive.getArchiveStats` computes exact per-archive counters
+(`entries`, `versions`, `retained_bytes`, `current_bytes`), a per-rendition-name
+breakdown (`RenditionStats.object_count` and `total_bytes`), and
+per-`ClassificationState` counts (`ArchiveStats.classification_states`) directly
+over the live v2 documents in the `archive:<account_id>` graph (`graph_address_id
+= <archive_name>`) and their projected revision manifests:
+
+- **Live entry scan and `current_bytes`.** `GetArchiveStats` pages through
+  `DocumentService.ListDocuments` (`page_size = 500`) for the archive, fetches
+  each live entry's current revision (`CORE` and `BLOBS`) concurrently, projects
+  its `VersionManifest`, increments `entries`, and adds `manifest.total_bytes` to
+  `current_bytes`.
+- **Classification state breakdown (`classification_states`).** Each live entry
+  contributes `1` to `ArchiveStats.classification_states` under its current
+  `Classification.state` from `metadata_snapshot.classification` (treating an
+  absent classification or `CLASSIFICATION_STATE_UNSPECIFIED` as
+  `CLASSIFICATION_STATE_UNCLASSIFIED`).
+- **`VERSIONING_POLICY_NONE` vs `VERSIONING_POLICY_RETAINED`.** When the archive
+  policy is `VERSIONING_POLICY_NONE` (or when an entry is at revision `1`), only
+  the current revision is counted: `versions` increments by `1`,
+  `retained_bytes` adds `manifest.total_bytes`, and each `RENDITION_STATE_PRESENT`
+  row in the current manifest accumulates into `RenditionStats` by rendition
+  name. When the archive policy is `VERSIONING_POLICY_RETAINED` and an entry has
+  `revision > 1`, `GetArchiveStats` pages through `DocumentService.ListRevisions`,
+  counts every non-tombstone revision toward `versions`, fetches historical
+  revisions (`BLOBS` only) concurrently, and deduplicates
+  `RENDITION_STATE_PRESENT` rendition rows across revisions by
+  `(name, sub_key, sha256)` so carried-forward blobs are counted once in both
+  `retained_bytes` and `RenditionStats`.
+- **`ListEntriesResponse.total_count`.** `DocumentArchive.listEntries` reports
+   the total matching live entries before pagination (respecting any
+  `classification_state` filter mapped to `archive.classification_state` in
+  `DocumentFilter`): when the first page is also the last (`continuation_token`
+  and `next_page_token` are both empty), `total_count` is taken directly from
+  `ListDocumentsResponse.documents` on that page; otherwise `listEntries` scans
+  matching `ListDocuments` pages (`page_size = 500`) to sum the matching live
+  documents. If `ListDocumentsResponse` later adds a `total_matching` field,
+  `listEntries` can read it directly from the first page without extra page
+  scans.
+- **Cost and telemetry separation.** Because the retired pre-cutover ledger
+  counter tables are gone, `GetArchiveStats` derives its numbers from live v2
+  document and revision manifest reads; its work scales with the archive's live
+  entry count (and retained revision count for multi-revision entries under
+  `VERSIONING_POLICY_RETAINED`). Operation telemetry (reads, latencies, cache
+  behavior) belongs to the metrics lane, fed by events and process metrics, and
+  never blocks or widens a storage transaction.
 
 ## Durable deletion and recovery
 
@@ -1018,9 +1054,9 @@ before pagination.
   `FAILED_PRECONDITION`.** Under v2 keep-forever retention, neither destructive
   byte removal across versions (`DeleteRendition`) nor version pruning
   (`PruneVersions`) has a v2 counterpart until per-blob purge or §13 retention
-  lands. After request and `operation_id` validation (without checking archive
-  binding or entry existence first, since the operation is unconditionally
-  unsupported under keep-forever), both record a refusal outcome in
+  lands. After request and `operation_id` validation, outcome replay check, and
+  verifying that the target archive and live entry exist (returning `NOT_FOUND`
+  when the archive or live entry is absent), both record a refusal outcome in
   `DocumentService` under `(account_id, operation_id)` (retaining
   `archive.mutation_kind`, `archive.mutation_sha256`, and
   `archive.mutation_refusal`, and confirming the recorded rejection via

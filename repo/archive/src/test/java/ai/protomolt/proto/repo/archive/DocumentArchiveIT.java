@@ -2235,4 +2235,175 @@ class DocumentArchiveIT {
                         .setKeepLatest(2))
                 .build()))).isEqualTo(Status.Code.ALREADY_EXISTS);
     }
+
+    @Test
+    void oneAccountsArchiveMutationCommandsCannotTouchAnotherAccountsEntries() {
+        String accountA = "acct-mut-iso-a-" + UUID.randomUUID();
+        String accountB = "acct-mut-iso-b-" + UUID.randomUUID();
+        archive.createArchive(CreateArchiveRequest.newBuilder()
+                .setArchive(Archive.newBuilder()
+                        .setAccountId(accountA)
+                        .setName("shared")
+                        .setDriveName("intake")
+                        .setVersioning(VersioningPolicy.VERSIONING_POLICY_RETAINED))
+                .build());
+        archive.createArchive(CreateArchiveRequest.newBuilder()
+                .setArchive(Archive.newBuilder()
+                        .setAccountId(accountA)
+                        .setName("only-a")
+                        .setDriveName("intake")
+                        .setVersioning(VersioningPolicy.VERSIONING_POLICY_RETAINED))
+                .build());
+        archive.createArchive(CreateArchiveRequest.newBuilder()
+                .setArchive(Archive.newBuilder()
+                        .setAccountId(accountB)
+                        .setName("shared")
+                        .setDriveName("intake")
+                        .setVersioning(VersioningPolicy.VERSIONING_POLICY_RETAINED))
+                .build());
+
+        EntryAddress inA = EntryAddress.newBuilder()
+                .setAccountId(accountA)
+                .setArchive("shared")
+                .setEntryId("doc-1")
+                .build();
+        EntryAddress sameInB = inA.toBuilder().setAccountId(accountB).build();
+
+        archive.putEntry(firstPut(inA).build());
+        archive.putEntry(PutEntryRequest.newBuilder()
+                .setAddress(inA)
+                .setTitle("Quarterly report v2")
+                .addRenditions(rendition("markdown", "", "text/markdown", MARKDOWN))
+                .build());
+
+        GetEntryResponse entryABefore = archive.getEntry(
+                GetEntryRequest.newBuilder().setAddress(inA).build());
+        GetEntryManifestResponse v1ManifestABefore = archive.getEntryManifest(
+                GetEntryManifestRequest.newBuilder().setAddress(inA).setVersion(1).build());
+        List<VersionSummary> versionsABefore = archive.listVersions(
+                ListVersionsRequest.newBuilder().setAddress(inA).build()).getSummariesList();
+        ArchiveStats statsABefore = archive.getArchiveStats(
+                GetArchiveStatsRequest.newBuilder()
+                        .setAccountId(accountA)
+                        .setArchive("shared")
+                        .build()).getStats();
+
+        // 1. DeleteEntry, DeleteRendition, and PruneVersions addressed to B's shared/doc-1 all return NOT_FOUND
+        // and leave no recorded mutation outcome in either account.
+        String bDeleteOpId = UUID.randomUUID().toString();
+        assertThat(code(() -> mutations.archiveMutation(ArchiveMutationRequest.newBuilder()
+                .setOperationId(bDeleteOpId)
+                .setDeleteEntry(DeleteEntryRequest.newBuilder().setAddress(sameInB))
+                .build()))).isEqualTo(Status.Code.NOT_FOUND);
+
+        String bDeleteRenditionOpId = UUID.randomUUID().toString();
+        assertThat(code(() -> mutations.archiveMutation(ArchiveMutationRequest.newBuilder()
+                .setOperationId(bDeleteRenditionOpId)
+                .setDeleteRendition(DeleteRenditionRequest.newBuilder()
+                        .setAddress(sameInB)
+                        .setRendition("original")
+                        .setReason("cross-account attempt"))
+                .build()))).isEqualTo(Status.Code.NOT_FOUND);
+
+        String bPruneVersionsOpId = UUID.randomUUID().toString();
+        assertThat(code(() -> mutations.archiveMutation(ArchiveMutationRequest.newBuilder()
+                .setOperationId(bPruneVersionsOpId)
+                .setPruneVersions(PruneVersionsRequest.newBuilder()
+                        .setAddress(sameInB)
+                        .setKeepLatest(1))
+                .build()))).isEqualTo(Status.Code.NOT_FOUND);
+
+        for (String opId : List.of(bDeleteOpId, bDeleteRenditionOpId, bPruneVersionsOpId)) {
+            assertThat(code(() -> mutations.getArchiveMutation(GetArchiveMutationRequest.newBuilder()
+                    .setAccountId(accountA)
+                    .setOperationId(opId)
+                    .build()))).isEqualTo(Status.Code.NOT_FOUND);
+            assertThat(code(() -> mutations.getArchiveMutation(GetArchiveMutationRequest.newBuilder()
+                    .setAccountId(accountB)
+                    .setOperationId(opId)
+                    .build()))).isEqualTo(Status.Code.NOT_FOUND);
+        }
+
+        // 2. Mutations addressed to an archive that exists only in A ("only-a") under account B also return NOT_FOUND.
+        EntryAddress onlyAInB = EntryAddress.newBuilder()
+                .setAccountId(accountB)
+                .setArchive("only-a")
+                .setEntryId("doc-1")
+                .build();
+        assertThat(code(() -> mutations.archiveMutation(ArchiveMutationRequest.newBuilder()
+                .setOperationId(UUID.randomUUID().toString())
+                .setDeleteEntry(DeleteEntryRequest.newBuilder().setAddress(onlyAInB))
+                .build()))).isEqualTo(Status.Code.NOT_FOUND);
+        assertThat(code(() -> mutations.archiveMutation(ArchiveMutationRequest.newBuilder()
+                .setOperationId(UUID.randomUUID().toString())
+                .setDeleteRendition(DeleteRenditionRequest.newBuilder()
+                        .setAddress(onlyAInB)
+                        .setRendition("original")
+                        .setReason("unknown archive attempt"))
+                .build()))).isEqualTo(Status.Code.NOT_FOUND);
+        assertThat(code(() -> mutations.archiveMutation(ArchiveMutationRequest.newBuilder()
+                .setOperationId(UUID.randomUUID().toString())
+                .setPruneVersions(PruneVersionsRequest.newBuilder()
+                        .setAddress(onlyAInB)
+                        .setKeepLatest(1))
+                .build()))).isEqualTo(Status.Code.NOT_FOUND);
+
+        // 3. A's entry, renditions, versions, and archive stats are completely untouched.
+        assertThat(archive.getEntry(GetEntryRequest.newBuilder().setAddress(inA).build()))
+                .isEqualTo(entryABefore);
+        assertThat(archive.getEntryManifest(
+                        GetEntryManifestRequest.newBuilder().setAddress(inA).setVersion(1).build()))
+                .isEqualTo(v1ManifestABefore);
+        assertThat(archive.listVersions(ListVersionsRequest.newBuilder().setAddress(inA).build())
+                .getSummariesList()).isEqualTo(versionsABefore);
+        assertThat(data(read(ReadRenditionRequest.newBuilder()
+                .setAddress(inA).setRendition("original").build()))).isEqualTo(PDF);
+        assertThat(data(read(ReadRenditionRequest.newBuilder()
+                .setAddress(inA).setRendition("markdown").build()))).isEqualTo(MARKDOWN);
+        assertThat(archive.getArchiveStats(GetArchiveStatsRequest.newBuilder()
+                .setAccountId(accountA).setArchive("shared").build()).getStats()).isEqualTo(statsABefore);
+
+        // 4. Operation IDs are account-scoped: B deleting its own shared/doc-1 with sharedOpId does not touch A,
+        // is invisible to A's GetArchiveMutation, and does not collide when A uses the same operation_id.
+        archive.putEntry(firstPut(sameInB).setTitle("B's own doc-1").build());
+        String sharedOpId = UUID.randomUUID().toString();
+        ArchiveMutationReceipt bReceipt = mutations.archiveMutation(ArchiveMutationRequest.newBuilder()
+                .setOperationId(sharedOpId)
+                .setDeleteEntry(DeleteEntryRequest.newBuilder().setAddress(sameInB))
+                .build()).getReceipt();
+        assertThat(bReceipt.getAddress()).isEqualTo(sameInB);
+        assertThat(bReceipt.getEntryDeleted()).isTrue();
+        assertThat(mutations.getArchiveMutation(GetArchiveMutationRequest.newBuilder()
+                .setAccountId(accountB)
+                .setOperationId(sharedOpId)
+                .build()).getReceipt()).isEqualTo(bReceipt);
+        assertThat(code(() -> mutations.getArchiveMutation(GetArchiveMutationRequest.newBuilder()
+                .setAccountId(accountA)
+                .setOperationId(sharedOpId)
+                .build()))).isEqualTo(Status.Code.NOT_FOUND);
+
+        // A's shared/doc-1 is still live and identical after B's delete of B's shared/doc-1.
+        assertThat(archive.getEntry(GetEntryRequest.newBuilder().setAddress(inA).build()))
+                .isEqualTo(entryABefore);
+        assertThat(archive.getArchiveStats(GetArchiveStatsRequest.newBuilder()
+                .setAccountId(accountA).setArchive("shared").build()).getStats()).isEqualTo(statsABefore);
+
+        // A can independently use sharedOpId in account A (for instance, on a refused DeleteRendition on A's entry)
+        // without colliding with B's recorded delete receipt.
+        assertThat(code(() -> mutations.archiveMutation(ArchiveMutationRequest.newBuilder()
+                .setOperationId(sharedOpId)
+                .setDeleteRendition(DeleteRenditionRequest.newBuilder()
+                        .setAddress(inA)
+                        .setRendition("original")
+                        .setReason("A's independent operation"))
+                .build()))).isEqualTo(Status.Code.FAILED_PRECONDITION);
+        assertThat(code(() -> mutations.getArchiveMutation(GetArchiveMutationRequest.newBuilder()
+                .setAccountId(accountA)
+                .setOperationId(sharedOpId)
+                .build()))).isEqualTo(Status.Code.FAILED_PRECONDITION);
+        assertThat(mutations.getArchiveMutation(GetArchiveMutationRequest.newBuilder()
+                .setAccountId(accountB)
+                .setOperationId(sharedOpId)
+                .build()).getReceipt()).isEqualTo(bReceipt);
+    }
 }
