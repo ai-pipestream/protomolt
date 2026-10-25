@@ -486,7 +486,19 @@ public final class DocumentLinks {
         }
     }
 
-    private static DocumentLink value(FieldDescriptor field, Message value) {
+    /**
+     * The {@link DocumentLink} a link field holds. A value whose descriptor matches the
+     * compiled layout is copied field by field; any other layout goes through its wire
+     * bytes, so fields this server does not know surface as unknown fields and refuse.
+     *
+     * @param field the link field, named in a refusal
+     * @param value the field's value
+     * @return the link
+     * @throws SchemaRefused when the value carries unknown fields or does not decode as a link
+     */
+    public static DocumentLink value(FieldDescriptor field, Message value) {
+        Objects.requireNonNull(field, "field");
+        Objects.requireNonNull(value, "value");
         if (value instanceof DocumentLink typed) return typed;
         if (canonicalLink(value.getDescriptorForType())) {
             if (hasUnknownFields(value))

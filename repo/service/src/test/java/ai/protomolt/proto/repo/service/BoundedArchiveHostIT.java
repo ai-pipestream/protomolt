@@ -62,7 +62,7 @@ class BoundedArchiveHostIT {
                     .setRendition(RenditionDescriptor.newBuilder().setName("original"))
                     .setData(ByteString.copyFromUtf8("first"))).build();
             var saved = archive.putEntry(CALLER, request);
-            assertThat(saved.getManifest().getRenditions(0).getStorageObjectId()).isNotBlank();
+            assertThat(saved.getManifest().getRenditions(0).getSha256()).isNotBlank();
             assertThat(archive.putEntry(CALLER, request).getVersion()).isEqualTo(saved.getVersion());
             assertThat(archive.putEntry(CALLER, request.toBuilder().setRenditions(0, request.getRenditions(0).toBuilder()
                     .setData(ByteString.copyFromUtf8("second"))).build()).getVersion()).isEqualTo(2);
@@ -88,6 +88,7 @@ class BoundedArchiveHostIT {
     }
 
     @Test void shutdownRetainsCapacityAndProviderUntilRealWriteReturns() throws Exception {
+        var armed = new java.util.concurrent.atomic.AtomicBoolean(false);
         var entered = new java.util.concurrent.CountDownLatch(1);
         var release = new java.util.concurrent.CountDownLatch(1);
         var closes = new java.util.concurrent.atomic.AtomicInteger();
@@ -102,7 +103,7 @@ class BoundedArchiveHostIT {
                             final Object result;
                             try { result = method.invoke(actual.store(), args); }
                             catch (java.lang.reflect.InvocationTargetException failure) { throw failure.getCause(); }
-                            if (method.getName().equals("put")) {
+                            if (method.getName().equals("put") && armed.compareAndSet(true, false)) {
                                 entered.countDown();
                                 if (!release.await(20, java.util.concurrent.TimeUnit.SECONDS))
                                     throw new AssertionError("Delayed write was not released");
@@ -128,6 +129,7 @@ class BoundedArchiveHostIT {
                     .setArchive("records").setEntryId("entry")).addRenditions(RenditionContent.newBuilder()
                     .setRendition(RenditionDescriptor.newBuilder().setName("original"))
                     .setData(ByteString.copyFromUtf8("held"))).build();
+            armed.set(true);
             var pending = executor.submit(() -> archive.putEntry(CALLER, request));
             assertThat(entered.await(10, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
             assertThat(budget.reservedBytes()).isPositive();

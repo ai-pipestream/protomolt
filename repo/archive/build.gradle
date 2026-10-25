@@ -3,6 +3,10 @@ description = 'The archive over v2 documents: ArchiveService reads projected fro
 dependencies {
     // The archive view messages and the DocumentService client they read through.
     api project(':protomolt-repo-proto')
+    // BridgeEngine is part of the DocumentArchive / DocumentArchiveGrpcService constructor surface.
+    api project(':protomolt-asset-bridge')
+    // Characterization identifies and resolves format classifications on primary renditions.
+    implementation project(':protomolt-asset-characterize')
     // Projections compile the view .proto's (sources) and (from) options.
     implementation project(':protomolt-projection')
     // Every projected view is checked against its own validate.v1 rules.

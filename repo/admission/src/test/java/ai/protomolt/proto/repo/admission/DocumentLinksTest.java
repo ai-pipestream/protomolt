@@ -250,6 +250,59 @@ class DocumentLinksTest {
                 .hasMessageContaining("carries fields this server does not know");
     }
 
+    @Test void valueCopiesARetainedCanonicalLinkAndReparsesAnyOtherLayout() throws Exception {
+        var retainedLink = rebuilt(DocumentLink.getDescriptor().getFile()).findMessageTypeByName("DocumentLink");
+        assertThat(retainedLink).isNotSameAs(DocumentLink.getDescriptor());
+        var link = DocumentLink.newBuilder()
+                .setStaticTarget(StaticTarget.newBuilder().setAddress(ADDRESS).setRevision(3L))
+                .setLabel("prior")
+                .build();
+        var field = DocumentLink.getDescriptor().findFieldByName("label");
+        var copied = DocumentLinks.value(field, DynamicMessage.parseFrom(retainedLink, link.toByteString()));
+        assertThat(copied).isEqualTo(link);
+        assertThat(DocumentLinks.value(field, link)).isSameAs(link);
+
+        var withUnknown = DynamicMessage.newBuilder(retainedLink).mergeFrom(link.toByteString())
+                .setUnknownFields(com.google.protobuf.UnknownFieldSet.newBuilder()
+                        .addField(99, com.google.protobuf.UnknownFieldSet.Field.newBuilder().addVarint(1).build())
+                        .build())
+                .build();
+        assertThatThrownBy(() -> DocumentLinks.value(field, withUnknown))
+                .isInstanceOf(DocumentLinks.SchemaRefused.class)
+                .hasMessageContaining(field.getFullName())
+                .hasMessageContaining("carries fields this server does not know");
+
+        var other = retained(DescriptorProto.newBuilder().setName("Wider")
+                .addField(FieldDescriptorProto.newBuilder().setName("label").setNumber(3)
+                        .setType(FieldDescriptorProto.Type.TYPE_STRING))
+                .addField(FieldDescriptorProto.newBuilder().setName("extra").setNumber(99)
+                        .setType(FieldDescriptorProto.Type.TYPE_STRING)))
+                .findMessageTypeByName("Wider");
+        var labelOnly = DynamicMessage.newBuilder(other).setField(other.findFieldByName("label"), "prior").build();
+        assertThat(DocumentLinks.value(field, labelOnly)).isEqualTo(DocumentLink.newBuilder().setLabel("prior").build());
+        var wider = labelOnly.toBuilder().setField(other.findFieldByName("extra"), "x").build();
+        assertThatThrownBy(() -> DocumentLinks.value(field, wider))
+                .isInstanceOf(DocumentLinks.SchemaRefused.class)
+                .hasMessageContaining("carries fields this server does not know");
+    }
+
+    /** Rebuilds {@code file} and its whole import closure from bytes, as a retained schema is. */
+    private static FileDescriptor rebuilt(FileDescriptor file) throws Exception {
+        return rebuilt(file, new java.util.HashMap<>());
+    }
+
+    private static FileDescriptor rebuilt(FileDescriptor file, java.util.Map<String, FileDescriptor> done)
+            throws Exception {
+        var existing = done.get(file.getName());
+        if (existing != null) return existing;
+        var dependencies = new ArrayList<FileDescriptor>();
+        for (var dependency : file.getDependencies()) dependencies.add(rebuilt(dependency, done));
+        var copy = FileDescriptor.buildFrom(FileDescriptorProto.parseFrom(file.toProto().toByteString()),
+                dependencies.toArray(FileDescriptor[]::new));
+        done.put(file.getName(), copy);
+        return copy;
+    }
+
     // ------------------------------------------------------------------ fixtures
 
     /** Builds the file, then rebuilds it from its bytes as a retained schema is. */

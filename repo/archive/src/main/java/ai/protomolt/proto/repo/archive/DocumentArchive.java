@@ -1,5 +1,17 @@
 package ai.protomolt.proto.repo.archive;
 
+import ai.protomolt.proto.asset.bridge.Bridge;
+import ai.protomolt.proto.asset.bridge.BridgeEngine;
+import ai.protomolt.proto.asset.bridge.Bridges;
+import ai.protomolt.proto.asset.characterize.ByteWindows;
+import ai.protomolt.proto.asset.characterize.WindowCapture;
+import ai.protomolt.proto.asset.v1.BridgeKind;
+import ai.protomolt.proto.asset.v1.BridgeStatus;
+import ai.protomolt.proto.asset.v1.Classification;
+import ai.protomolt.proto.asset.v1.ClassificationState;
+import ai.protomolt.proto.asset.v1.ContentProfile;
+import ai.protomolt.proto.asset.v1.FormatFact;
+import ai.protomolt.proto.asset.v1.ObjectStoreOrigin;
 import ai.protomolt.proto.repo.archive.v1.Archive;
 import ai.protomolt.proto.repo.archive.v1.ArchiveEntryFacts;
 import ai.protomolt.proto.repo.archive.v1.ArchiveMutationKind;
@@ -8,6 +20,12 @@ import ai.protomolt.proto.repo.archive.v1.ArchiveMutationRequest;
 import ai.protomolt.proto.repo.archive.v1.ArchiveMutationResponse;
 import ai.protomolt.proto.repo.archive.v1.ArchiveMutationState;
 import ai.protomolt.proto.repo.archive.v1.ArchiveStats;
+import ai.protomolt.proto.repo.archive.v1.BridgeEntryRequest;
+import ai.protomolt.proto.repo.archive.v1.BridgeEntryResponse;
+import ai.protomolt.proto.repo.archive.v1.BridgeOutcome;
+import ai.protomolt.proto.repo.archive.v1.ClassificationStateCount;
+import ai.protomolt.proto.repo.archive.v1.ClassifyEntryRequest;
+import ai.protomolt.proto.repo.archive.v1.ClassifyEntryResponse;
 import ai.protomolt.proto.repo.archive.v1.CreateArchiveRequest;
 import ai.protomolt.proto.repo.archive.v1.CreateArchiveResponse;
 import ai.protomolt.proto.repo.archive.v1.DeleteEntryRequest;
@@ -43,9 +61,6 @@ import ai.protomolt.proto.repo.archive.v1.UploadRenditionResponse;
 import ai.protomolt.proto.repo.archive.v1.VersionManifest;
 import ai.protomolt.proto.repo.archive.v1.VersioningPolicy;
 import ai.protomolt.proto.repo.archive.v1.WriteAttribution;
-import ai.protomolt.proto.asset.v1.ClassificationState;
-import ai.protomolt.proto.asset.v1.FormatFact;
-import ai.protomolt.proto.asset.v1.ObjectStoreOrigin;
 import ai.protomolt.proto.repo.v1.Blob;
 import ai.protomolt.proto.repo.v1.BlobBag;
 import ai.protomolt.proto.repo.v1.Blobs;
@@ -57,6 +72,7 @@ import ai.protomolt.proto.repo.v1.WriteProvenance;
 import ai.protomolt.proto.repo.v2.Accession;
 import ai.protomolt.proto.repo.v2.DeleteDocumentRequest;
 import ai.protomolt.proto.repo.v2.DeleteDocumentResponse;
+import ai.protomolt.proto.repo.v2.DocumentFilter;
 import ai.protomolt.proto.repo.v2.DocumentServiceGrpc;
 import ai.protomolt.proto.repo.v2.DocumentSummary;
 import ai.protomolt.proto.repo.v2.DocumentTarget;
@@ -70,6 +86,7 @@ import ai.protomolt.proto.repo.v2.ListDocumentsRequest;
 import ai.protomolt.proto.repo.v2.ListDocumentsResponse;
 import ai.protomolt.proto.repo.v2.ListRevisionsRequest;
 import ai.protomolt.proto.repo.v2.ListRevisionsResponse;
+import ai.protomolt.proto.repo.v2.MetadataMatch;
 import ai.protomolt.proto.repo.v2.PartSelection;
 import ai.protomolt.proto.repo.v2.PartSelector;
 import ai.protomolt.proto.repo.v2.PartWrite;
@@ -97,6 +114,7 @@ import com.google.protobuf.Any;
 import com.google.protobuf.ByteString;
 import com.google.protobuf.InvalidProtocolBufferException;
 import com.google.protobuf.Message;
+import com.google.protobuf.Struct;
 import com.google.protobuf.Timestamp;
 import com.google.rpc.Code;
 import io.grpc.Channel;
@@ -104,13 +122,17 @@ import io.grpc.Context;
 import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
 import io.grpc.protobuf.StatusProto;
+import java.io.IOException;
+import java.io.InputStream;
 import java.time.Clock;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.EnumMap;
 import java.util.HashSet;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
@@ -118,6 +140,7 @@ import java.util.Set;
 import java.util.TreeMap;
 import java.util.UUID;
 import java.util.concurrent.ExecutionException;
+import java.util.function.Function;
 import java.util.stream.Collectors;
 
 /**
@@ -135,11 +158,8 @@ import java.util.stream.Collectors;
  * changes nothing, which is what {@code deduplicated} reports: the archive does
  * no dedup of its own. v2 save validation is the only write gate: the translator
  * checks only what the archive contract adds (rendition naming, the PARSED
- * fragment's shape, {@code filename} needing an original).</p>
- *
- * <p>Not served here, each a follow-up under #535: {@code ListEntries}
- * classification filters, and content profiles and classifications (the asset
- * layer's output).</p>
+ * fragment's shape, {@code filename} needing an original, and format-declaration
+ * and origin door rules).</p>
  */
 public final class DocumentArchive {
 
@@ -185,20 +205,37 @@ public final class DocumentArchive {
     private final ArchiveViews views;
     private final Clock clock;
     private final long maxUnaryGetBytes;
+    private final BridgeEngine bridgeEngine;
 
     /**
-     * Constructs a {@link DocumentArchive} with {@link #DEFAULT_MAX_UNARY_GET_BYTES}.
+     * Constructs a {@link DocumentArchive} with {@link #DEFAULT_MAX_UNARY_GET_BYTES}
+     * and {@link BridgeEngine#standard()}.
      *
      * @param documents the v2 document service the archive is stored through
      * @param bindings the archive definitions
      * @param clock stamps {@code created_at} on an entry's creating save
      */
     public DocumentArchive(Channel documents, ArchiveBindings bindings, Clock clock) {
-        this(documents, bindings, clock, DEFAULT_MAX_UNARY_GET_BYTES);
+        this(documents, bindings, clock, DEFAULT_MAX_UNARY_GET_BYTES, BridgeEngine.standard());
     }
 
     /**
-     * Constructs a {@link DocumentArchive} with an explicit unary {@code GetEntry} byte limit.
+     * Constructs a {@link DocumentArchive} with {@link #DEFAULT_MAX_UNARY_GET_BYTES}
+     * and an explicit {@link BridgeEngine}.
+     *
+     * @param documents the v2 document service the archive is stored through
+     * @param bindings the archive definitions
+     * @param clock stamps {@code created_at} on an entry's creating save
+     * @param bridgeEngine the bridges this archive can execute
+     */
+    public DocumentArchive(
+            Channel documents, ArchiveBindings bindings, Clock clock, BridgeEngine bridgeEngine) {
+        this(documents, bindings, clock, DEFAULT_MAX_UNARY_GET_BYTES, bridgeEngine);
+    }
+
+    /**
+     * Constructs a {@link DocumentArchive} with an explicit unary {@code GetEntry} byte limit
+     * and {@link BridgeEngine#standard()}.
      *
      * @param documents the v2 document service the archive is stored through
      * @param bindings the archive definitions
@@ -207,6 +244,25 @@ public final class DocumentArchive {
      */
     public DocumentArchive(
             Channel documents, ArchiveBindings bindings, Clock clock, long maxUnaryGetBytes) {
+        this(documents, bindings, clock, maxUnaryGetBytes, BridgeEngine.standard());
+    }
+
+    /**
+     * Constructs a {@link DocumentArchive} with an explicit unary {@code GetEntry} byte limit
+     * and {@link BridgeEngine}.
+     *
+     * @param documents the v2 document service the archive is stored through
+     * @param bindings the archive definitions
+     * @param clock stamps {@code created_at} on an entry's creating save
+     * @param maxUnaryGetBytes maximum total rendition bytes assembled in one unary {@code GetEntry}
+     * @param bridgeEngine the bridges this archive can execute
+     */
+    public DocumentArchive(
+            Channel documents,
+            ArchiveBindings bindings,
+            Clock clock,
+            long maxUnaryGetBytes,
+            BridgeEngine bridgeEngine) {
         Objects.requireNonNull(documents, "documents");
         Objects.requireNonNull(bindings, "bindings");
         if (maxUnaryGetBytes <= 0) {
@@ -221,6 +277,7 @@ public final class DocumentArchive {
                         documents, DEFAULT_DATASOURCE_ID, "", (acct, drive) -> true, bindings);
         this.clock = Objects.requireNonNull(clock, "clock");
         this.maxUnaryGetBytes = maxUnaryGetBytes;
+        this.bridgeEngine = Objects.requireNonNull(bridgeEngine, "bridgeEngine");
         this.views = new ArchiveViews();
     }
 
@@ -278,7 +335,8 @@ public final class DocumentArchive {
 
     /**
      * {@code GetArchiveStats}: computes exact entry, version, current-byte,
-     * retained-byte and per-rendition counters over the archive's live v2 documents.
+     * retained-byte, per-rendition, and per-classification-state counters over the
+     * archive's live v2 documents.
      */
     public GetArchiveStatsResponse getArchiveStats(GetArchiveStatsRequest request) {
         requireValid(request);
@@ -289,6 +347,7 @@ public final class DocumentArchive {
         long currentBytes = 0L;
         long retainedBytes = 0L;
         Map<String, long[]> renditionTotals = new TreeMap<>();
+        Map<ClassificationState, Long> stateTotals = new EnumMap<>(ClassificationState.class);
 
         String pageToken = "";
         do {
@@ -307,6 +366,14 @@ public final class DocumentArchive {
                 VersionManifest currentManifest = views.manifest(currentDoc);
                 totalEntries++;
                 currentBytes += currentManifest.getTotalBytes();
+                ClassificationState state = currentManifest.hasMetadataSnapshot()
+                                && currentManifest.getMetadataSnapshot().hasClassification()
+                        ? currentManifest.getMetadataSnapshot().getClassification().getState()
+                        : ClassificationState.CLASSIFICATION_STATE_UNCLASSIFIED;
+                if (state == ClassificationState.CLASSIFICATION_STATE_UNSPECIFIED) {
+                    state = ClassificationState.CLASSIFICATION_STATE_UNCLASSIFIED;
+                }
+                stateTotals.merge(state, 1L, Long::sum);
                 if (currentOnly || row.getRevision() <= 1L) {
                     totalVersions++;
                     retainedBytes += currentManifest.getTotalBytes();
@@ -344,6 +411,13 @@ public final class DocumentArchive {
                     .setRenditionName(entry.getKey())
                     .setObjectCount(counts[0])
                     .setTotalBytes(counts[1]));
+        }
+        for (Map.Entry<ClassificationState, Long> entry : stateTotals.entrySet()) {
+            if (entry.getValue() > 0L) {
+                stats.addClassificationStates(ClassificationStateCount.newBuilder()
+                        .setState(entry.getKey())
+                        .setCount(entry.getValue()));
+            }
         }
         return GetArchiveStatsResponse.newBuilder().setStats(stats).build();
     }
@@ -549,32 +623,36 @@ public final class DocumentArchive {
 
     /**
      * {@code ListEntries}: the archive's live documents, each projected through its
-     * {@code DocumentLookup}, with {@code total_count} populated for the archive.
-     * With {@code include_manifests}, each row's current revision is fetched
-     * concurrently at its known revision and projected through {@link ArchiveViews#manifest}
+     * {@code DocumentLookup}, with {@code total_count} populated for the archive (or
+     * for the requested {@code classification_state} filter). With
+     * {@code include_manifests}, each row's current revision is fetched concurrently
+     * at its known revision and projected through {@link ArchiveViews#manifest}
      * without repeating the archive-binding lookup or {@code EntryInfo} projection.
-     *
-     * @throws StatusRuntimeException {@code UNIMPLEMENTED} naming
-     *         {@code classification_state} when a classification filter is asked
-     *         for: classifications are not stored on v2 documents
      */
     public ListEntriesResponse listEntries(ListEntriesRequest request) {
         requireValid(request);
-        if (request.getClassificationState() != ClassificationState.CLASSIFICATION_STATE_UNSPECIFIED) {
-            throw ArchiveErrors.unimplemented("classification_state: the archive over v2 documents stores no"
-                    + " classification to filter on");
-        }
         ArchiveBinding binding = binding(request.getAccountId(), request.getArchive());
-        ListDocumentsResponse page = documents.listDocuments(ListDocumentsRequest.newBuilder()
+        DocumentFilter filter = null;
+        if (request.getClassificationState() != ClassificationState.CLASSIFICATION_STATE_UNSPECIFIED) {
+            filter = DocumentFilter.newBuilder()
+                    .addMetadata(MetadataMatch.newBuilder()
+                            .setKey(ArchiveClassifications.CLASSIFICATION_STATE_METADATA_KEY)
+                            .setValue(request.getClassificationState().name()))
+                    .build();
+        }
+        ListDocumentsRequest.Builder listReq = ListDocumentsRequest.newBuilder()
                 .setAccountId(binding.accountId())
                 .setGraphId(ArchiveCoordinates.graphId(binding.accountId()))
                 .setGraphAddressId(binding.archive())
                 .setPageSize(pageSize(request.getLimit()))
-                .setPageToken(request.getContinuationToken())
-                .build());
+                .setPageToken(request.getContinuationToken());
+        if (filter != null) {
+            listReq.setFilter(filter);
+        }
+        ListDocumentsResponse page = documents.listDocuments(listReq.build());
         long totalCount = request.getContinuationToken().isEmpty() && page.getNextPageToken().isEmpty()
                 ? page.getDocumentsCount()
-                : countLiveEntries(binding);
+                : countLiveEntries(binding, filter);
         ListEntriesResponse.Builder response = ListEntriesResponse.newBuilder()
                 .setNextContinuationToken(page.getNextPageToken())
                 .setTotalCount(totalCount);
@@ -590,17 +668,20 @@ public final class DocumentArchive {
         return response.build();
     }
 
-    private long countLiveEntries(ArchiveBinding binding) {
+    private long countLiveEntries(ArchiveBinding binding, DocumentFilter filter) {
         long count = 0L;
         String pageToken = "";
         do {
-            ListDocumentsResponse page = documents.listDocuments(ListDocumentsRequest.newBuilder()
+            ListDocumentsRequest.Builder listReq = ListDocumentsRequest.newBuilder()
                     .setAccountId(binding.accountId())
                     .setGraphId(ArchiveCoordinates.graphId(binding.accountId()))
                     .setGraphAddressId(binding.archive())
                     .setPageSize(STATS_SCAN_PAGE_SIZE)
-                    .setPageToken(pageToken)
-                    .build());
+                    .setPageToken(pageToken);
+            if (filter != null) {
+                listReq.setFilter(filter);
+            }
+            ListDocumentsResponse page = documents.listDocuments(listReq.build());
             count += page.getDocumentsCount();
             pageToken = page.getNextPageToken();
         } while (!pageToken.isEmpty());
@@ -662,6 +743,9 @@ public final class DocumentArchive {
      */
     public PutEntryResponse putEntry(PutEntryRequest request) {
         requireValid(request);
+        ArchiveClassifications.requireUserMetadataKeys(request.getMetadataMap());
+        FormatFact declared = ArchiveClassifications.declared(request.hasDeclared(), request.getDeclared());
+        ObjectStoreOrigin origin = ArchiveClassifications.origin(request.hasOrigin(), request.getOrigin());
         ArchiveBinding binding = binding(request.getAddress());
         NodeAddress address = ArchiveCoordinates.address(request.getAddress());
         Map<String, RenditionContent> written = writtenRenditions(request);
@@ -679,11 +763,6 @@ public final class DocumentArchive {
                 ? ExpectedRevision.newBuilder().setRevision(request.getExpectedVersion()).build()
                 : lastWriteWins(address, current);
 
-        Document.Builder document = core(binding, request.getAddress(), current, request.getTitle(),
-                request.getContentType(), request.getSourceUri(),
-                request.hasSourceModifiedAt() ? request.getSourceModifiedAt() : null,
-                request.getMetadataMap(), facts(request.hasDeclared() ? request.getDeclared() : null,
-                        request.hasOrigin() ? request.getOrigin() : null));
         List<Blob> currentBlobs = current.map(read -> read.getDocument().getBlobBag().getBlobs().getBlobList())
                 .orElse(List.of());
         boolean blobsChange = written.keySet().stream().anyMatch(id -> !id.equals(ArchiveCoordinates.PARSED));
@@ -696,6 +775,19 @@ public final class DocumentArchive {
         boolean filenameChange = !request.getFilename().isEmpty() && currentBlobs.stream()
                 .filter(blob -> blob.getBlobId().equals(ArchiveCoordinates.ORIGINAL))
                 .noneMatch(blob -> blob.getFilename().equals(request.getFilename()));
+        Classification classification = resolvePutClassification(
+                address, current, currentBlobs, written, request, declared, origin, filenameChange);
+        Document.Builder document = core(
+                binding,
+                request.getAddress(),
+                current,
+                request.getTitle(),
+                request.getContentType(),
+                request.getSourceUri(),
+                request.hasSourceModifiedAt() ? request.getSourceModifiedAt() : null,
+                request.getMetadataMap(),
+                facts(declared, origin),
+                classification);
         if (blobsChange || (filenameChange && !written.containsKey(ArchiveCoordinates.ORIGINAL))) {
             document.setBlobBag(BlobBag.newBuilder().setBlobs(blobs(currentBlobs, written, request.getFilename())));
         }
@@ -735,6 +827,370 @@ public final class DocumentArchive {
         }
         GetDocumentResponse committed = read(address, revision(saved.getAccession().getRevision()), CORE_AND_BLOBS);
         return putResponse(committed, operationId, saved.getUnchanged(), saved.getReplayed());
+    }
+
+    private Classification resolvePutClassification(
+            NodeAddress address,
+            Optional<GetDocumentResponse> current,
+            List<Blob> currentBlobs,
+            Map<String, RenditionContent> written,
+            PutEntryRequest request,
+            FormatFact declared,
+            ObjectStoreOrigin origin,
+            boolean filenameChange) {
+        Optional<Classification> stored = current.flatMap(ArchiveClassifications::storedClassification);
+        FormatFact effectiveDeclared = declared != null
+                ? declared
+                : stored.filter(Classification::hasDeclared).map(Classification::getDeclared).orElse(null);
+        ObjectStoreOrigin effectiveOrigin = origin != null
+                ? origin
+                : stored.filter(Classification::hasOrigin).map(Classification::getOrigin).orElse(null);
+        String effectiveFilename = effectiveFilename(request.getFilename(), currentBlobs);
+        Optional<String> previousPrimaryId = ArchiveClassifications.primaryBlobId(currentBlobs, Map.of());
+        Optional<String> primaryId = ArchiveClassifications.primaryBlobId(currentBlobs, written);
+        boolean samePrimaryIdentity = primaryId.equals(previousPrimaryId);
+        RenditionContent primaryNew = primaryId.map(written::get).orElse(null);
+        WriteAttribution attribution = request.hasWrittenBy() ? request.getWrittenBy() : null;
+
+        if (samePrimaryIdentity && primaryNew == null && declared == null && origin == null && !filenameChange && stored.isPresent()) {
+            return stored.get();
+        }
+        ByteWindows windows = null;
+        boolean primaryUnchanged = samePrimaryIdentity && !filenameChange;
+        if (primaryNew != null && !primaryNew.getData().isEmpty()) {
+            windows = ByteWindows.ofWhole(primaryNew.getData().toByteArray());
+            String primaryBlobId = primaryId.get();
+            String newSha = RenditionReads.sha256Hex(primaryNew.getData());
+            long newSize = primaryNew.getData().size();
+            primaryUnchanged = !filenameChange && currentBlobs.stream()
+                    .filter(b -> b.getBlobId().equals(primaryBlobId))
+                    .anyMatch(b -> b.getSizeBytes() == newSize && b.getChecksum().equalsIgnoreCase(newSha));
+        } else if (primaryId.isPresent() && current.isPresent()) {
+            windows = readBlobWindows(
+                    address, current.get().getManifest().getRevision(), primaryId.get());
+        }
+        Classification resolved = ArchiveClassifications.classify(
+                effectiveDeclared, effectiveOrigin, windows, effectiveFilename, attribution, clock.instant());
+        return ArchiveClassifications.preserveIfUnchanged(resolved, stored, primaryUnchanged);
+    }
+
+    private static String effectiveFilename(String requestedFilename, List<Blob> currentBlobs) {
+        if (requestedFilename != null && !requestedFilename.isEmpty()) {
+            return requestedFilename;
+        }
+        for (Blob blob : currentBlobs) {
+            if (blob.getBlobId().equals(ArchiveCoordinates.ORIGINAL) && blob.hasFilename()) {
+                return blob.getFilename();
+            }
+        }
+        return "";
+    }
+
+    /**
+     * {@code ClassifyEntry}: validates any supplied format declaration at the door,
+     * reads the primary rendition's byte windows from the entry's current revision,
+     * resolves the classification state machine, and commits a CORE save.
+     */
+    public ClassifyEntryResponse classifyEntry(ClassifyEntryRequest request) {
+        requireValid(request);
+        FormatFact requestDeclared = ArchiveClassifications.declared(request.hasDeclared(), request.getDeclared());
+        ArchiveBinding binding = binding(request.getAddress());
+        NodeAddress address = ArchiveCoordinates.address(request.getAddress());
+        GetDocumentResponse current = read(address, current(), CORE_AND_BLOBS);
+        long currentRevision = current.getManifest().getRevision();
+
+        Optional<Classification> stored = ArchiveClassifications.storedClassification(current);
+        FormatFact effectiveDeclared = requestDeclared != null
+                ? requestDeclared
+                : stored.filter(Classification::hasDeclared).map(Classification::getDeclared).orElse(null);
+        ObjectStoreOrigin effectiveOrigin =
+                stored.filter(Classification::hasOrigin).map(Classification::getOrigin).orElse(null);
+        List<Blob> currentBlobs = current.getDocument().getBlobBag().getBlobs().getBlobList();
+        String filename = effectiveFilename("", currentBlobs);
+        Optional<Blob> primary = ArchiveClassifications.primaryBlob(currentBlobs);
+        ByteWindows windows = primary
+                .map(blob -> readBlobWindows(address, currentRevision, blob.getBlobId()))
+                .orElse(null);
+        WriteAttribution attribution = request.hasClassifiedBy() ? request.getClassifiedBy() : null;
+        Classification resolved = ArchiveClassifications.preserveIfUnchanged(
+                ArchiveClassifications.classify(
+                        effectiveDeclared, effectiveOrigin, windows, filename, attribution, clock.instant()),
+                stored,
+                true);
+
+        String contentSha256 = ArchiveOperationKeys.classifyEntryContentSha256(request, resolved);
+        String operationId = ArchiveOperationKeys.classifyOperationId(request, currentRevision, contentSha256);
+
+        Optional<Recorded> recorded = recordedOutcome(address, operationId, contentSha256, false);
+        if (recorded.isPresent()) {
+            return ClassifyEntryResponse.newBuilder()
+                    .setClassification(views.entryInfo(recorded.get().revision()).getClassification())
+                    .build();
+        }
+
+        Document.Builder document = core(
+                binding,
+                request.getAddress(),
+                Optional.of(current),
+                "",
+                "",
+                "",
+                null,
+                Map.of(),
+                facts(requestDeclared, null),
+                resolved);
+        SaveDocumentRequest save = SaveDocumentRequest.newBuilder()
+                .setOperationId(operationId)
+                .setTarget(DocumentTarget.newBuilder().setAddress(address))
+                .setExpected(ExpectedRevision.newBuilder().setRevision(currentRevision))
+                .setDocument(document)
+                .addWrites(put(ArchiveCoordinates.CORE))
+                .setOwner(owner(binding, request.getClassifiedBy()))
+                .setValidationMode(ValidationMode.VALIDATION_MODE_TYPED)
+                .setUnchanged(UnchangedPolicy.UNCHANGED_POLICY_RECORD_OUTCOME)
+                .setDrive(binding.drive())
+                .putMetadata(CONTENT_SHA256_METADATA, contentSha256)
+                .build();
+        SaveDocumentResponse saved;
+        try {
+            saved = documents.saveDocument(save);
+        } catch (StatusRuntimeException failure) {
+            Recorded winner = afterLostRace(address, operationId, contentSha256, false, failure);
+            return ClassifyEntryResponse.newBuilder()
+                    .setClassification(views.entryInfo(winner.revision()).getClassification())
+                    .build();
+        }
+        GetDocumentResponse committed = read(address, revision(saved.getAccession().getRevision()), CORE_AND_BLOBS);
+        return ClassifyEntryResponse.newBuilder()
+                .setClassification(views.entryInfo(committed).getClassification())
+                .build();
+    }
+
+    /**
+     * {@code BridgeEntry}: gates on the entry's stored classification state, runs
+     * every applicable (or requested) bridge in routing order against the primary
+     * rendition's bytes, escalates silent prose extraction to OCR when executable,
+     * and saves all produced derived renditions in one BLOBS save.
+     */
+    public BridgeEntryResponse bridgeEntry(BridgeEntryRequest request) {
+        requireValid(request);
+        ArchiveBinding binding = binding(request.getAddress());
+        NodeAddress address = ArchiveCoordinates.address(request.getAddress());
+        GetDocumentResponse current = read(address, current(), CORE_AND_BLOBS);
+        long currentRevision = current.getManifest().getRevision();
+
+        Classification classification = ArchiveClassifications.storedClassification(current)
+                .orElse(Classification.getDefaultInstance());
+        ClassificationState state = classification.getState();
+        if (!Bridges.bridgeable(state)) {
+            String stateName = state == ClassificationState.CLASSIFICATION_STATE_UNSPECIFIED
+                    ? "UNCLASSIFIED"
+                    : state.name().startsWith("CLASSIFICATION_STATE_")
+                            ? state.name().substring("CLASSIFICATION_STATE_".length())
+                            : state.name();
+            throw ArchiveErrors.failedPrecondition("entry '" + request.getAddress().getEntryId() + "' is "
+                    + stateName + "; bridging needs a classification that names exactly one format");
+        }
+        FormatFact format = Bridges.formatOfRecord(classification);
+        List<BridgeKind> applicable = Bridges.applicableTo(format);
+        for (BridgeKind kind : request.getBridgesList()) {
+            if (!applicable.contains(kind)) {
+                throw ArchiveErrors.invalid(
+                        "bridges",
+                        "bridge " + kind.name() + " does not apply to a "
+                                + format.getFormatCase().name().toLowerCase(Locale.ROOT) + " asset");
+            }
+        }
+        List<BridgeKind> wanted = request.getBridgesList().isEmpty() ? applicable : request.getBridgesList();
+
+        List<Blob> currentBlobs = current.getDocument().getBlobBag().getBlobs().getBlobList();
+        Blob primary = ArchiveClassifications.primaryBlob(currentBlobs)
+                .orElseThrow(() -> ArchiveErrors.failedPrecondition(
+                        "entry '" + request.getAddress().getEntryId()
+                                + "' has no present primary rendition to bridge from"));
+
+        String filename = effectiveFilename("", currentBlobs);
+        List<BridgeOutcome.Builder> outcomes = new ArrayList<>();
+        Map<String, DerivedRendition> produced = new LinkedHashMap<>();
+        List<BridgeKind> run = new ArrayList<>(wanted);
+        for (int at = 0; at < run.size(); at++) {
+            BridgeKind kind = run.get(at);
+            BridgeOutcome.Builder outcome = BridgeOutcome.newBuilder()
+                    .setBridge(kind)
+                    .setRendition(Bridges.renditionName(kind));
+            outcomes.add(outcome);
+            Optional<Bridge> bridge = bridgeEngine.forKind(kind, format);
+            if (bridge.isEmpty()) {
+                outcome.setStatus(BridgeStatus.BRIDGE_STATUS_DEFERRED)
+                        .setDetail(Bridges.deferralReason(kind, format));
+                continue;
+            }
+            Bridge.Derivation derivation;
+            try (InputStream stream = openBlobStream(address, currentRevision, primary.getBlobId())) {
+                derivation = bridge.get().derive(stream, new Bridge.Context(format, filename.isEmpty() ? null : filename));
+            } catch (StatusRuntimeException storageFailure) {
+                throw storageFailure;
+            } catch (IOException | RuntimeException e) {
+                if (e.getCause() instanceof StatusRuntimeException storageFailure) {
+                    throw storageFailure;
+                }
+                outcome.setStatus(BridgeStatus.BRIDGE_STATUS_FAILED)
+                        .setDetail(e.getMessage() == null ? e.toString() : e.getMessage());
+                continue;
+            }
+            RenditionDescriptor descriptor = derivedDescriptor(kind);
+            produced.put(
+                    ArchiveCoordinates.blobId(descriptor.getName(), descriptor.getSubKey()),
+                    new DerivedRendition(descriptor, derivation, outcome));
+            if (kind == BridgeKind.BRIDGE_KIND_DOCUMENT_TEXT
+                    && derivation.content().length == 0
+                    && !run.contains(BridgeKind.BRIDGE_KIND_OCR_TEXT)
+                    && bridgeEngine.forKind(BridgeKind.BRIDGE_KIND_OCR_TEXT, format).isPresent()) {
+                run.add(BridgeKind.BRIDGE_KIND_OCR_TEXT);
+            }
+        }
+
+        if (produced.isEmpty()) {
+            return BridgeEntryResponse.newBuilder()
+                    .setVersion(currentRevision)
+                    .addAllOutcomes(outcomes.stream().map(BridgeOutcome.Builder::build).toList())
+                    .build();
+        }
+
+        List<Blob> derivedBlobs = produced.entrySet().stream()
+                .map(entry -> derivedBlob(entry.getKey(), entry.getValue()).build())
+                .toList();
+        String contentSha256 = ArchiveOperationKeys.bridgeEntryContentSha256(request, derivedBlobs);
+        String operationId = ArchiveOperationKeys.bridgeOperationId(request, currentRevision, contentSha256);
+        Optional<Recorded> recorded = recordedOutcome(address, operationId, contentSha256, false);
+        if (recorded.isPresent()) {
+            boolean unchanged = recorded.get().unchanged();
+            populateDerivedOutcomes(produced, currentBlobs, unchanged);
+            return BridgeEntryResponse.newBuilder()
+                    .setVersion(recorded.get().revision().getManifest().getRevision())
+                    .addAllOutcomes(outcomes.stream().map(BridgeOutcome.Builder::build).toList())
+                    .build();
+        }
+
+        Document.Builder document = Document.newBuilder()
+                .setDocId(request.getAddress().getEntryId())
+                .setBlobBag(BlobBag.newBuilder().setBlobs(bridgedBlobs(currentBlobs, produced)));
+        SaveDocumentRequest save = SaveDocumentRequest.newBuilder()
+                .setOperationId(operationId)
+                .setTarget(DocumentTarget.newBuilder().setAddress(address))
+                .setExpected(ExpectedRevision.newBuilder().setRevision(currentRevision))
+                .setDocument(document)
+                .addWrites(put(ArchiveCoordinates.BLOBS))
+                .setOwner(owner(binding, request.getBridgedBy()))
+                .setValidationMode(ValidationMode.VALIDATION_MODE_TYPED)
+                .setUnchanged(UnchangedPolicy.UNCHANGED_POLICY_RECORD_OUTCOME)
+                .setDrive(binding.drive())
+                .putMetadata(CONTENT_SHA256_METADATA, contentSha256)
+                .build();
+        SaveDocumentResponse saved;
+        try {
+            saved = documents.saveDocument(save);
+        } catch (StatusRuntimeException failure) {
+            Recorded winner = afterLostRace(address, operationId, contentSha256, false, failure);
+            populateDerivedOutcomes(produced, currentBlobs, winner.unchanged());
+            return BridgeEntryResponse.newBuilder()
+                    .setVersion(winner.revision().getManifest().getRevision())
+                    .addAllOutcomes(outcomes.stream().map(BridgeOutcome.Builder::build).toList())
+                    .build();
+        }
+        populateDerivedOutcomes(produced, currentBlobs, saved.getUnchanged());
+        return BridgeEntryResponse.newBuilder()
+                .setVersion(saved.getAccession().getRevision())
+                .addAllOutcomes(outcomes.stream().map(BridgeOutcome.Builder::build).toList())
+                .build();
+    }
+
+    private record DerivedRendition(
+            RenditionDescriptor descriptor,
+            Bridge.Derivation derivation,
+            BridgeOutcome.Builder outcome) {
+    }
+
+    private static RenditionDescriptor derivedDescriptor(BridgeKind kind) {
+        RenditionDescriptor.Builder descriptor = RenditionDescriptor.newBuilder()
+                .setName(Bridges.renditionName(kind))
+                .setMediaType(Bridges.mediaType(kind));
+        String subject = Bridges.schemaSubject(kind);
+        if (!subject.isBlank()) {
+            descriptor.setSchemaSubject(subject);
+        }
+        return descriptor.build();
+    }
+
+    private static Blobs.Builder bridgedBlobs(
+            List<Blob> currentBlobs, Map<String, DerivedRendition> produced) {
+        Blobs.Builder blobs = Blobs.newBuilder();
+        Set<String> placed = new HashSet<>();
+        for (Blob blob : currentBlobs) {
+            DerivedRendition replacement = produced.get(blob.getBlobId());
+            if (replacement != null) {
+                blobs.addBlob(derivedBlob(blob.getBlobId(), replacement));
+            } else {
+                blobs.addBlob(carriedStub(blob));
+            }
+            placed.add(blob.getBlobId());
+        }
+        for (Map.Entry<String, DerivedRendition> entry : produced.entrySet()) {
+            if (!placed.contains(entry.getKey())) {
+                blobs.addBlob(derivedBlob(entry.getKey(), entry.getValue()));
+            }
+        }
+        return blobs;
+    }
+
+    private static Blob.Builder derivedBlob(String blobId, DerivedRendition derived) {
+        ByteString data = ByteString.copyFrom(derived.derivation().content());
+        Blob.Builder blob = Blob.newBuilder()
+                .setBlobId(blobId)
+                .setData(data);
+        RenditionDescriptor rendition = derived.descriptor();
+        if (!rendition.getMediaType().isEmpty()) {
+            blob.setMimeType(rendition.getMediaType());
+        }
+        if (!rendition.getSchemaSubject().isEmpty()) {
+            blob.setSchemaSubject(rendition.getSchemaSubject());
+        }
+        ContentProfile profile = derived.derivation().profile();
+        if (profile != null) {
+            blob.setMetadata(Struct.newBuilder()
+                    .putFields(
+                            ArchiveClassifications.CONTENT_PROFILE_FIELD,
+                            ArchiveClassifications.encodeContentProfile(profile)));
+        }
+        return blob;
+    }
+
+    private static void populateDerivedOutcomes(
+            Map<String, DerivedRendition> produced, List<Blob> currentBlobs, boolean wholeSaveUnchanged) {
+        for (Map.Entry<String, DerivedRendition> entry : produced.entrySet()) {
+            DerivedRendition item = entry.getValue();
+            boolean unchanged = wholeSaveUnchanged || derivedRenditionUnchanged(entry.getKey(), item, currentBlobs);
+            item.outcome().setStatus(
+                    unchanged ? BridgeStatus.BRIDGE_STATUS_UNCHANGED : BridgeStatus.BRIDGE_STATUS_PRODUCED);
+            if (item.derivation().degraded()) {
+                item.outcome().setDetail(String.join("; ", item.derivation().warnings()));
+            }
+        }
+    }
+
+    private static boolean derivedRenditionUnchanged(
+            String blobId, DerivedRendition item, List<Blob> currentBlobs) {
+        ByteString data = ByteString.copyFrom(item.derivation().content());
+        String sha = RenditionReads.sha256Hex(data);
+        Blob candidateMeta = derivedBlob(blobId, item).clearData().build();
+        for (Blob current : currentBlobs) {
+            if (current.getBlobId().equals(blobId)) {
+                return current.getSizeBytes() == data.size()
+                        && current.getChecksum().equalsIgnoreCase(sha)
+                        && carriedStub(current).build().equals(candidateMeta);
+            }
+        }
+        return false;
     }
 
     /**
@@ -849,9 +1305,17 @@ public final class DocumentArchive {
      * sets replacing its stored value, as the ledger's blank-keeps rule did.
      * {@code created_at} is stamped on the creating save and carried after.
      */
-    Document.Builder core(ArchiveBinding binding, EntryAddress entry, Optional<GetDocumentResponse> current,
-            String title, String contentType, String sourceUri, Timestamp sourceModifiedAt,
-            Map<String, String> metadata, FactsSource facts) {
+    Document.Builder core(
+            ArchiveBinding binding,
+            EntryAddress entry,
+            Optional<GetDocumentResponse> current,
+            String title,
+            String contentType,
+            String sourceUri,
+            Timestamp sourceModifiedAt,
+            Map<String, String> metadata,
+            FactsSource facts,
+            Classification classification) {
         Document.Builder document = Document.newBuilder()
                 .setDocId(entry.getEntryId())
                 .setOwnership(OwnershipContext.newBuilder()
@@ -874,6 +1338,14 @@ public final class DocumentArchive {
         }
         if (!metadata.isEmpty()) {
             search.clearMetadata().putAllMetadata(metadata);
+        }
+        if (classification != null) {
+            search.putMetadata(
+                    ArchiveClassifications.CLASSIFICATION_METADATA_KEY,
+                    ArchiveClassifications.encodeClassification(classification));
+            search.putMetadata(
+                    ArchiveClassifications.CLASSIFICATION_STATE_METADATA_KEY,
+                    classification.getState().name());
         }
         document.setSearchMetadata(search);
         ArchiveEntryFacts.Builder stored = current
@@ -1152,6 +1624,97 @@ public final class DocumentArchive {
         return Timestamp.newBuilder().setSeconds(instant.getEpochSecond()).setNanos(instant.getNano()).build();
     }
 
+    ByteWindows readBlobWindows(NodeAddress address, long revision, String blobId) {
+        try (WindowCapture capture = new WindowCapture(openBlobStream(address, revision, blobId))) {
+            byte[] buffer = new byte[8192];
+            while (capture.read(buffer) >= 0) {
+                // WindowCapture records the leading and trailing windows as the stream passes.
+            }
+            return capture.windows();
+        } catch (StatusRuntimeException storageFailure) {
+            throw storageFailure;
+        } catch (IOException e) {
+            if (e.getCause() instanceof StatusRuntimeException storageFailure) {
+                throw storageFailure;
+            }
+            throw Status.INTERNAL.withCause(e).asRuntimeException();
+        }
+    }
+
+    InputStream openBlobStream(NodeAddress address, long revision, String blobId) {
+        Context.CancellableContext callContext = Context.current().withCancellation();
+        try {
+            Iterator<ReadBlobResponse> frames = callContext.call(() -> documents.readBlob(
+                    ReadBlobRequest.newBuilder()
+                            .setAddress(address)
+                            .setRevision(revision(revision))
+                            .setBlobId(blobId)
+                            .build()));
+            return new BlobFrameInputStream(callContext, frames);
+        } catch (RuntimeException e) {
+            callContext.close();
+            throw e;
+        } catch (Exception e) {
+            callContext.close();
+            throw new IllegalStateException(e);
+        }
+    }
+
+    private static final class BlobFrameInputStream extends InputStream {
+        private final Context.CancellableContext callContext;
+        private final Iterator<ReadBlobResponse> frames;
+        private ByteString current = ByteString.EMPTY;
+        private int position;
+
+        BlobFrameInputStream(Context.CancellableContext callContext, Iterator<ReadBlobResponse> frames) {
+            this.callContext = callContext;
+            this.frames = frames;
+        }
+
+        @Override
+        public int read() {
+            if (!advance()) {
+                return -1;
+            }
+            return current.byteAt(position++) & 0xFF;
+        }
+
+        @Override
+        public int read(byte[] buffer, int offset, int length) {
+            Objects.checkFromIndexSize(offset, length, buffer.length);
+            if (length == 0) {
+                return 0;
+            }
+            if (!advance()) {
+                return -1;
+            }
+            int toCopy = Math.min(length, current.size() - position);
+            current.substring(position, position + toCopy).copyTo(buffer, offset);
+            position += toCopy;
+            return toCopy;
+        }
+
+        private boolean advance() {
+            while (position >= current.size()) {
+                if (!frames.hasNext()) {
+                    return false;
+                }
+                ReadBlobResponse frame = frames.next();
+                if (frame.hasData() && !frame.getData().isEmpty()) {
+                    current = frame.getData();
+                    position = 0;
+                    return true;
+                }
+            }
+            return true;
+        }
+
+        @Override
+        public void close() {
+            callContext.close();
+        }
+    }
+
     /**
      * The whole bytes of one PRESENT rendition: a raw blob through
      * {@code ReadBlob}, PARSED through the part frames of {@code ReadDocument}.
@@ -1282,8 +1845,19 @@ public final class DocumentArchive {
      * named no {@code expected_sha256}: a lost race is then replayed only for the
      * same bytes.
      */
-    record Pending(NodeAddress address, String operationId, String contentSha256, boolean derivedLastWriteWins,
-            RenditionDescriptor rendition, UploadHeader header, boolean checkBytes) implements UploadStart {
+    record Pending(
+            NodeAddress address,
+            String operationId,
+            String contentSha256,
+            boolean derivedLastWriteWins,
+            RenditionDescriptor rendition,
+            Optional<PartSelector> encodedPartSelector,
+            boolean needsWindows,
+            Function<ByteWindows, UploadHeader> headerBuilder,
+            boolean checkBytes) implements UploadStart {
+        UploadHeader header(ByteWindows windows) {
+            return headerBuilder.apply(windows);
+        }
     }
 
     /**
@@ -1308,10 +1882,15 @@ public final class DocumentArchive {
      */
     UploadStart startUpload(UploadRenditionHeader header) {
         requireValid(header);
+        FormatFact declared = ArchiveClassifications.declared(header.hasDeclared(), header.getDeclared());
+        ObjectStoreOrigin origin = ArchiveClassifications.origin(header.hasOrigin(), header.getOrigin());
         ArchiveBinding binding = binding(header.getAddress());
         NodeAddress address = ArchiveCoordinates.address(header.getAddress());
         RenditionDescriptor rendition = header.getRendition();
         boolean parsed = rendition.getName().equals(ArchiveCoordinates.PARSED);
+        if (!header.getFilename().isEmpty() && !rendition.getName().equals(ArchiveCoordinates.ORIGINAL)) {
+            throw ArchiveErrors.invalid("filename", "describes only the original rendition");
+        }
         if (parsed && !rendition.getSubKey().isEmpty()) {
             throw ArchiveErrors.invalid("rendition.sub_key",
                     "the parsed rendition is the document's PARSED part and takes no sub-key");
@@ -1327,62 +1906,142 @@ public final class DocumentArchive {
         }
 
         Optional<GetDocumentResponse> current = readCurrent(address);
-        Document.Builder document = core(binding, header.getAddress(), current, "", "", "", null, Map.of(),
-                facts(header.hasDeclared() ? header.getDeclared() : null,
-                        header.hasOrigin() ? header.getOrigin() : null));
-        SaveDocumentRequest.Builder save = SaveDocumentRequest.newBuilder()
-                .setOperationId(operationId)
-                .setTarget(DocumentTarget.newBuilder().setAddress(address))
-                .setExpected(header.getExpectedVersion() > 0
-                        ? ExpectedRevision.newBuilder().setRevision(header.getExpectedVersion()).build()
-                        : lastWriteWins(address, current))
-                .addWrites(put(ArchiveCoordinates.CORE))
-                .setOwner(owner(binding, header.getWrittenBy()))
-                .setValidationMode(ValidationMode.VALIDATION_MODE_TYPED)
-                .setUnchanged(UnchangedPolicy.UNCHANGED_POLICY_RECORD_OUTCOME)
-                .setDrive(binding.drive())
-                .putMetadata(CONTENT_SHA256_METADATA, contentSha256);
-        UploadHeader.Builder upload = UploadHeader.newBuilder()
-                .setDeclaredLength(header.getSizeBytes())
-                .setExpectedSha256(header.getExpectedSha256());
-        if (parsed) {
-            save.addWrites(put(ArchiveCoordinates.PARSED_PART));
-            upload.setEncodedPart(StreamedPart.newBuilder().setSelector(ArchiveCoordinates.PARSED_PART));
-        } else {
-            String blobId = ArchiveCoordinates.blobId(rendition.getName(), rendition.getSubKey());
-            List<Blob> currentBlobs = current.map(read -> read.getDocument().getBlobBag().getBlobs().getBlobList())
-                    .orElse(List.of());
-            Blobs.Builder blobs = Blobs.newBuilder();
-            Blob.Builder streamed = Blob.newBuilder().setBlobId(blobId);
-            if (!rendition.getMediaType().isEmpty()) {
-                streamed.setMimeType(rendition.getMediaType());
-            }
-            if (!rendition.getSchemaSubject().isEmpty()) {
-                streamed.setSchemaSubject(rendition.getSchemaSubject());
-            }
-            boolean placed = false;
-            for (Blob blob : currentBlobs) {
-                if (blob.getBlobId().equals(blobId)) {
-                    if (blob.hasFilename()) {
-                        streamed.setFilename(blob.getFilename());
-                    }
-                    blobs.addBlob(streamed);
-                    placed = true;
-                } else {
-                    blobs.addBlob(carriedStub(blob));
+        List<Blob> currentBlobs = current.map(read -> read.getDocument().getBlobBag().getBlobs().getBlobList())
+                .orElse(List.of());
+        boolean primaryUpload = !parsed && ArchiveClassifications.isPrimaryUpload(currentBlobs, rendition);
+        ExpectedRevision expected = header.getExpectedVersion() > 0
+                ? ExpectedRevision.newBuilder().setRevision(header.getExpectedVersion()).build()
+                : lastWriteWins(address, current);
+        Function<ByteWindows, UploadHeader> headerBuilder = windows -> {
+            Classification classification = resolveUploadClassification(
+                    address, current, currentBlobs, header, declared, origin, primaryUpload, windows);
+            Document.Builder document = core(
+                    binding,
+                    header.getAddress(),
+                    current,
+                    "",
+                    "",
+                    "",
+                    null,
+                    Map.of(),
+                    facts(declared, origin),
+                    classification);
+            SaveDocumentRequest.Builder save = SaveDocumentRequest.newBuilder()
+                    .setOperationId(operationId)
+                    .setTarget(DocumentTarget.newBuilder().setAddress(address))
+                    .setExpected(expected)
+                    .addWrites(put(ArchiveCoordinates.CORE))
+                    .setOwner(owner(binding, header.getWrittenBy()))
+                    .setValidationMode(ValidationMode.VALIDATION_MODE_TYPED)
+                    .setUnchanged(UnchangedPolicy.UNCHANGED_POLICY_RECORD_OUTCOME)
+                    .setDrive(binding.drive())
+                    .putMetadata(CONTENT_SHA256_METADATA, contentSha256);
+            UploadHeader.Builder upload = UploadHeader.newBuilder()
+                    .setDeclaredLength(header.getSizeBytes())
+                    .setExpectedSha256(header.getExpectedSha256());
+            if (parsed) {
+                save.addWrites(put(ArchiveCoordinates.PARSED_PART));
+                upload.setEncodedPart(StreamedPart.newBuilder().setSelector(ArchiveCoordinates.PARSED_PART));
+            } else {
+                String blobId = ArchiveCoordinates.blobId(rendition.getName(), rendition.getSubKey());
+                Blobs.Builder blobs = Blobs.newBuilder();
+                Blob.Builder streamed = Blob.newBuilder().setBlobId(blobId);
+                if (!rendition.getMediaType().isEmpty()) {
+                    streamed.setMimeType(rendition.getMediaType());
                 }
+                if (!rendition.getSchemaSubject().isEmpty()) {
+                    streamed.setSchemaSubject(rendition.getSchemaSubject());
+                }
+                if (!header.getFilename().isEmpty()) {
+                    streamed.setFilename(header.getFilename());
+                }
+                boolean placed = false;
+                for (Blob blob : currentBlobs) {
+                    if (blob.getBlobId().equals(blobId)) {
+                        if (header.getFilename().isEmpty() && blob.hasFilename()) {
+                            streamed.setFilename(blob.getFilename());
+                        }
+                        blobs.addBlob(streamed);
+                        placed = true;
+                    } else {
+                        blobs.addBlob(carriedStub(blob));
+                    }
+                }
+                if (!placed) {
+                    blobs.addBlob(streamed);
+                }
+                document.setBlobBag(BlobBag.newBuilder().setBlobs(blobs));
+                save.addWrites(put(ArchiveCoordinates.BLOBS));
+                upload.setBlobId(blobId);
             }
-            if (!placed) {
-                blobs.addBlob(streamed);
-            }
-            document.setBlobBag(BlobBag.newBuilder().setBlobs(blobs));
-            save.addWrites(put(ArchiveCoordinates.BLOBS));
-            upload.setBlobId(blobId);
-        }
-        save.setDocument(document);
-        upload.setSave(save);
-        return new Pending(address, operationId, contentSha256, derivedLastWriteWins, rendition, upload.build(),
+            save.setDocument(document);
+            upload.setSave(save);
+            return upload.build();
+        };
+        return new Pending(
+                address,
+                operationId,
+                contentSha256,
+                derivedLastWriteWins,
+                rendition,
+                parsed ? Optional.of(ArchiveCoordinates.PARSED_PART) : Optional.empty(),
+                primaryUpload,
+                headerBuilder,
                 checkBytes);
+    }
+
+    private Classification resolveUploadClassification(
+            NodeAddress address,
+            Optional<GetDocumentResponse> current,
+            List<Blob> currentBlobs,
+            UploadRenditionHeader header,
+            FormatFact declared,
+            ObjectStoreOrigin origin,
+            boolean primaryUpload,
+            ByteWindows uploadedWindows) {
+        Optional<Classification> stored = current.flatMap(ArchiveClassifications::storedClassification);
+        FormatFact effectiveDeclared = declared != null
+                ? declared
+                : stored.filter(Classification::hasDeclared).map(Classification::getDeclared).orElse(null);
+        ObjectStoreOrigin effectiveOrigin = origin != null
+                ? origin
+                : stored.filter(Classification::hasOrigin).map(Classification::getOrigin).orElse(null);
+        String filename = effectiveFilename(header.getFilename(), currentBlobs);
+        WriteAttribution attribution = header.hasWrittenBy() ? header.getWrittenBy() : null;
+
+        if (primaryUpload && uploadedWindows != null && uploadedWindows.head().length > 0) {
+            String blobId = ArchiveCoordinates.blobId(
+                    header.getRendition().getName(), header.getRendition().getSubKey());
+            String knownSha = !header.getExpectedSha256().isEmpty()
+                    ? header.getExpectedSha256()
+                    : (uploadedWindows.sizeBytes() == uploadedWindows.head().length
+                            ? RenditionReads.sha256Hex(ByteString.copyFrom(uploadedWindows.head()))
+                            : "");
+            boolean primaryUnchanged = filename.equals(effectiveFilename("", currentBlobs)) && !knownSha.isEmpty()
+                    && currentBlobs.stream()
+                            .filter(b -> b.getBlobId().equals(blobId))
+                            .anyMatch(b -> b.getSizeBytes() == header.getSizeBytes()
+                                    && b.getChecksum().equalsIgnoreCase(knownSha));
+            Classification resolved = ArchiveClassifications.classify(
+                    effectiveDeclared, effectiveOrigin, uploadedWindows, filename, attribution, clock.instant());
+            return ArchiveClassifications.preserveIfUnchanged(resolved, stored, primaryUnchanged);
+        }
+        if (declared == null && origin == null && stored.isPresent() && !primaryUpload) {
+            return stored.get();
+        }
+        String uploadedBlobId = header.getRendition().getName().equals(ArchiveCoordinates.PARSED)
+                ? ""
+                : ArchiveCoordinates.blobId(header.getRendition().getName(), header.getRendition().getSubKey());
+        List<Blob> remainingBlobs = primaryUpload
+                ? currentBlobs.stream().filter(b -> !b.getBlobId().equals(uploadedBlobId)).toList()
+                : currentBlobs;
+        Optional<Blob> existingPrimary = ArchiveClassifications.primaryBlob(remainingBlobs);
+        ByteWindows windows = existingPrimary.isPresent() && current.isPresent()
+                ? readBlobWindows(address, current.get().getManifest().getRevision(), existingPrimary.get().getBlobId())
+                : null;
+        Classification resolved = ArchiveClassifications.classify(
+                effectiveDeclared, effectiveOrigin, windows, filename, attribution, clock.instant());
+        return ArchiveClassifications.preserveIfUnchanged(resolved, stored, !primaryUpload);
     }
 
     /** The archive receipt of a committed (or raced and replayed) upload. */
@@ -1395,9 +2054,10 @@ public final class DocumentArchive {
         Accession accession = saved.getAccession();
         String rootChecksum = accession.getValidation().getCandidateSha256();
         if (!saved.getReplayed() && !rootChecksum.isEmpty()) {
-            if (pending.header().hasEncodedPart()) {
+            if (pending.encodedPartSelector().isPresent()) {
+                PartSelector selector = pending.encodedPartSelector().get();
                 var part = accession.getManifest().getPartsList().stream()
-                        .filter(p -> p.getSelector().equals(pending.header().getEncodedPart().getSelector()))
+                        .filter(p -> p.getSelector().equals(selector))
                         .findFirst().orElseThrow(() -> ArchiveErrors.dataLoss(
                                 "Committed upload has no streamed part in its manifest", null));
                 sentSha256 = part.getSha256();
@@ -1571,25 +2231,33 @@ public final class DocumentArchive {
 
     /**
      * {@code DeleteRendition}: refused by name with {@code FAILED_PRECONDITION}
-     * under v2 keep-forever retention.
+     * under v2 keep-forever retention after verifying the archive and live entry
+     * exist.
      *
      * @param request the delete-rendition request
      * @return never returns normally
-     * @throws StatusRuntimeException {@code FAILED_PRECONDITION} naming {@code DeleteRendition}
+     * @throws StatusRuntimeException {@code NOT_FOUND} when the archive or live
+     *         entry is absent, {@code ALREADY_EXISTS} on conflicting
+     *         {@code operation_id} reuse, or {@code FAILED_PRECONDITION} naming
+     *         {@code DeleteRendition}
      */
     public ArchiveMutationResponse deleteRendition(DeleteRenditionRequest request) {
         return deleteRendition("", request);
     }
 
     /**
-     * {@code DeleteRendition}: validates the request, records the refusal outcome
-     * under {@code (account_id, operation_id)}, and refuses by name with
-     * {@code FAILED_PRECONDITION} under v2 keep-forever retention.
+     * {@code DeleteRendition}: validates the request, verifies the archive and live
+     * entry exist, records the refusal outcome under {@code (account_id, operation_id)},
+     * and refuses by name with {@code FAILED_PRECONDITION} under v2 keep-forever
+     * retention.
      *
      * @param operationId the caller-supplied operation UUID, or empty
      * @param request the delete-rendition request
      * @return never returns normally
-     * @throws StatusRuntimeException {@code FAILED_PRECONDITION} naming {@code DeleteRendition}
+     * @throws StatusRuntimeException {@code NOT_FOUND} when the archive or live
+     *         entry is absent, {@code ALREADY_EXISTS} on conflicting
+     *         {@code operation_id} reuse, or {@code FAILED_PRECONDITION} naming
+     *         {@code DeleteRendition}
      */
     public ArchiveMutationResponse deleteRendition(
             String operationId, DeleteRenditionRequest request) {
@@ -1611,25 +2279,33 @@ public final class DocumentArchive {
 
     /**
      * {@code PruneVersions}: refused by name with {@code FAILED_PRECONDITION}
-     * under v2 keep-forever retention.
+     * under v2 keep-forever retention after verifying the archive and live entry
+     * exist.
      *
      * @param request the prune-versions request
      * @return never returns normally
-     * @throws StatusRuntimeException {@code FAILED_PRECONDITION} naming {@code PruneVersions}
+     * @throws StatusRuntimeException {@code NOT_FOUND} when the archive or live
+     *         entry is absent, {@code ALREADY_EXISTS} on conflicting
+     *         {@code operation_id} reuse, or {@code FAILED_PRECONDITION} naming
+     *         {@code PruneVersions}
      */
     public ArchiveMutationResponse pruneVersions(PruneVersionsRequest request) {
         return pruneVersions("", request);
     }
 
     /**
-     * {@code PruneVersions}: validates the request, records the refusal outcome
-     * under {@code (account_id, operation_id)}, and refuses by name with
-     * {@code FAILED_PRECONDITION} under v2 keep-forever retention.
+     * {@code PruneVersions}: validates the request, verifies the archive and live
+     * entry exist, records the refusal outcome under {@code (account_id, operation_id)},
+     * and refuses by name with {@code FAILED_PRECONDITION} under v2 keep-forever
+     * retention.
      *
      * @param operationId the caller-supplied operation UUID, or empty
      * @param request the prune-versions request
      * @return never returns normally
-     * @throws StatusRuntimeException {@code FAILED_PRECONDITION} naming {@code PruneVersions}
+     * @throws StatusRuntimeException {@code NOT_FOUND} when the archive or live
+     *         entry is absent, {@code ALREADY_EXISTS} on conflicting
+     *         {@code operation_id} reuse, or {@code FAILED_PRECONDITION} naming
+     *         {@code PruneVersions}
      */
     public ArchiveMutationResponse pruneVersions(
             String operationId, PruneVersionsRequest request) {
@@ -1816,21 +2492,21 @@ public final class DocumentArchive {
             return ArchiveErrors.alreadyExists(
                     "operation_id", operationId + " is already recorded for another operation");
         }
+        ArchiveBinding archiveBinding = binding(entryAddress);
+        read(ArchiveCoordinates.address(entryAddress), current(), BLOBS_ONLY);
         recordRefusedMutationInDocuments(
-                entryAddress, operationId, kind, commandSha256, refusalMessage);
+                archiveBinding, entryAddress, operationId, kind, commandSha256, refusalMessage);
         return ArchiveErrors.failedPrecondition(refusalMessage);
     }
 
     private void recordRefusedMutationInDocuments(
+            ArchiveBinding binding,
             EntryAddress entryAddress,
             String operationId,
             String kind,
             String commandSha256,
             String refusalMessage) {
-        Optional<ArchiveBinding> binding =
-                bindings.find(entryAddress.getAccountId(), entryAddress.getArchive());
-        String datasourceId =
-                binding.map(ArchiveBinding::datasourceId).orElse(DEFAULT_DATASOURCE_ID);
+        String datasourceId = binding.datasourceId();
         NodeAddress syntheticAddress = NodeAddress.newBuilder()
                 .setAccountId(entryAddress.getAccountId())
                 .setGraphId(MUTATION_GRAPH_PREFIX + entryAddress.getAccountId())
@@ -1856,6 +2532,7 @@ public final class DocumentArchive {
                 .setOwner(SaveOwner.newBuilder()
                         .setIntake(IntakeOrigin.newBuilder().setDatasourceId(datasourceId)))
                 .setValidationMode(ValidationMode.VALIDATION_MODE_TYPED)
+                .setDrive(binding.drive())
                 .putMetadata(MUTATION_KIND_METADATA, kind)
                 .putMetadata(MUTATION_SHA256_METADATA, commandSha256)
                 .putMetadata(MUTATION_REFUSAL_METADATA, refusalMessage)

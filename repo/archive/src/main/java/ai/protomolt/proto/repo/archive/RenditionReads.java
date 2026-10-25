@@ -16,10 +16,14 @@ import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
 import io.grpc.stub.ServerCallStreamObserver;
 import io.grpc.stub.StreamObserver;
+import java.io.IOException;
+import java.io.InputStream;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.util.Collections;
 import java.util.HexFormat;
 import java.util.Iterator;
+import java.util.NoSuchElementException;
 import java.util.Objects;
 
 /**
@@ -50,6 +54,55 @@ public final class RenditionReads {
 
         boolean parsed() {
             return row.getRendition().getName().equals(ArchiveCoordinates.PARSED);
+        }
+    }
+
+    /**
+     * An opened rendition read with its validated {@link RenditionReadHeader} and
+     * a streaming {@link InputStream} that pulls chunks on demand and verifies the
+     * byte count and whole-object SHA-256 before returning end-of-stream.
+     *
+     * @param header the validated rendition read header
+     * @param body the streaming rendition bytes
+     */
+    public record OpenedRead(RenditionReadHeader header, InputStream body) {
+        /** Validates non-null components. */
+        public OpenedRead {
+            Objects.requireNonNull(header, "header");
+            Objects.requireNonNull(body, "body");
+        }
+    }
+
+    /**
+     * Plans a rendition read and opens a streaming {@link InputStream} over the
+     * underlying {@code ReadBlob} or {@code ReadDocument} frames without buffering
+     * the whole rendition in memory.
+     *
+     * @param request the rendition read request
+     * @return the planned header and streaming byte input
+     */
+    public OpenedRead open(ReadRenditionRequest request) {
+        Plan plan = archive.planRead(request);
+        RenditionReadHeader header = RenditionReadHeader.newBuilder()
+                .setVersion(plan.version())
+                .setRendition(plan.row().getRendition())
+                .setSizeBytes(plan.row().getSizeBytes())
+                .setSha256(plan.row().getSha256())
+                .setOffset(plan.offset())
+                .setLength(plan.length())
+                .setWholeObject(plan.wholeObject())
+                .build();
+        DocumentArchive.requireValidView(header);
+        Context.CancellableContext context = Context.current().withCancellation();
+        Context previous = context.attach();
+        try {
+            Iterator<ByteString> chunks = plan.parsed() ? openParsedChunks(plan) : openBlobChunks(plan);
+            return new OpenedRead(header, new VerifyingChunkInputStream(plan, chunks, context));
+        } catch (RuntimeException | Error failure) {
+            context.cancel(failure);
+            throw failure;
+        } finally {
+            context.detach(previous);
         }
     }
 
@@ -161,6 +214,185 @@ public final class RenditionReads {
             pacing.send(ReadRenditionResponse.newBuilder().setData(frame).build());
         }
         return data.size();
+    }
+
+    private Iterator<ByteString> openBlobChunks(Plan plan) {
+        if (plan.length() == 0) {
+            return Collections.emptyIterator();
+        }
+        Iterator<ReadBlobResponse> frames = archive.documents().readBlob(ReadBlobRequest.newBuilder()
+                .setAddress(plan.address())
+                .setRevision(DocumentArchive.revision(plan.version()))
+                .setBlobId(ArchiveCoordinates.blobId(
+                        plan.row().getRendition().getName(), plan.row().getRendition().getSubKey()))
+                .setOffset(plan.offset())
+                .setLength(plan.length())
+                .build());
+        return new Iterator<>() {
+            private ByteString next;
+
+            @Override
+            public boolean hasNext() {
+                while (next == null && frames.hasNext()) {
+                    ReadBlobResponse frame = frames.next();
+                    if (frame.hasData() && !frame.getData().isEmpty()) {
+                        next = frame.getData();
+                    }
+                }
+                return next != null;
+            }
+
+            @Override
+            public ByteString next() {
+                if (!hasNext()) {
+                    throw new NoSuchElementException();
+                }
+                ByteString current = next;
+                next = null;
+                return current;
+            }
+        };
+    }
+
+    private Iterator<ByteString> openParsedChunks(Plan plan) {
+        if (plan.length() == 0) {
+            return Collections.emptyIterator();
+        }
+        Iterator<ReadDocumentResponse> frames = archive.documents().readDocument(ReadDocumentRequest.newBuilder()
+                .setAddress(plan.address())
+                .setRevision(DocumentArchive.revision(plan.version()))
+                .setSelection(PartSelection.newBuilder().addSelectors(ArchiveCoordinates.PARSED_PART))
+                .build());
+        long end = plan.offset() + plan.length();
+        return new Iterator<>() {
+            private long position;
+            private ByteString next;
+
+            @Override
+            public boolean hasNext() {
+                while (next == null && frames.hasNext()) {
+                    ReadDocumentResponse frame = frames.next();
+                    if (!frame.hasPartData()) {
+                        continue;
+                    }
+                    ByteString data = frame.getPartData().getData();
+                    long start = position;
+                    position += data.size();
+                    long from = Math.max(start, plan.offset());
+                    long to = Math.min(position, end);
+                    if (from < to) {
+                        next = data.substring((int) (from - start), (int) (to - start));
+                    }
+                }
+                return next != null;
+            }
+
+            @Override
+            public ByteString next() {
+                if (!hasNext()) {
+                    throw new NoSuchElementException();
+                }
+                ByteString current = next;
+                next = null;
+                return current;
+            }
+        };
+    }
+
+    private static final class VerifyingChunkInputStream extends InputStream {
+        private final Plan plan;
+        private final Iterator<ByteString> chunks;
+        private final MessageDigest digest;
+        private ByteString current = ByteString.EMPTY;
+        private int offset;
+        private long delivered;
+        private boolean verified;
+        private volatile boolean closed;
+        private final Context.CancellableContext context;
+
+        VerifyingChunkInputStream(Plan plan, Iterator<ByteString> chunks, Context.CancellableContext context) {
+            this.context = context;
+            this.plan = plan;
+            this.chunks = chunks;
+            this.digest = plan.wholeObject() ? sha256() : null;
+        }
+
+        @Override
+        public int read() throws IOException {
+            byte[] single = new byte[1];
+            int n = read(single, 0, 1);
+            return n == -1 ? -1 : (single[0] & 0xFF);
+        }
+
+        @Override
+        public int read(byte[] b, int off, int len) throws IOException {
+            Objects.checkFromIndexSize(off, len, b.length);
+            if (closed) throw new IOException("Rendition stream is closed");
+            try {
+                return readChunk(b, off, len);
+            } catch (RuntimeException | Error failure) {
+                context.cancel(failure);
+                throw failure;
+            }
+        }
+
+        @Override
+        public void close() {
+            closed = true;
+            context.cancel(null);
+        }
+
+        private int readChunk(byte[] b, int off, int len) {
+            if (len == 0) {
+                return 0;
+            }
+            while (offset >= current.size()) {
+                if (!chunks.hasNext()) {
+                    verifyComplete();
+                    context.cancel(null);
+                    return -1;
+                }
+                current = chunks.next();
+                offset = 0;
+            }
+            int count = Math.min(len, current.size() - offset);
+            current.copyTo(b, offset, off, count);
+            offset += count;
+            delivered += count;
+            if (delivered > plan.length()) {
+                throw ArchiveErrors.dataLoss(
+                        "Rendition " + plan.row().getRendition().getName() + " of version "
+                                + plan.version() + " delivered " + delivered + " of " + plan.length() + " bytes",
+                        null);
+            }
+            if (digest != null) {
+                digest.update(b, off, count);
+            }
+            return count;
+        }
+
+        private void verifyComplete() {
+            if (verified) {
+                return;
+            }
+            verified = true;
+            if (delivered != plan.length()) {
+                throw ArchiveErrors.dataLoss(
+                        "Rendition " + plan.row().getRendition().getName() + " of version "
+                                + plan.version() + " delivered " + delivered + " of " + plan.length() + " bytes",
+                        null);
+            }
+            if (digest != null) {
+                String actual = HexFormat.of().formatHex(digest.digest());
+                if (!actual.equals(plan.row().getSha256())) {
+                    throw ArchiveErrors.dataLoss(
+                            "Rendition " + plan.row().getRendition().getName() + " of version "
+                                    + plan.version() + " hashes to " + actual + ", not its manifest's "
+                                    + plan.row().getSha256(),
+                            null);
+                }
+            }
+        }
     }
 
     static String sha256Hex(ByteString data) {

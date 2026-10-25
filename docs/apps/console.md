@@ -396,7 +396,11 @@ the procedures the screens call, listed in `ConsoleProcedures` in
   request's caller with the same resolver as the gateway: the operator token
   uploads with process authority, and a console session uploads as the scoped
   caller its principal is bound as, so an account it is not bound to answers
-  403 and a request with neither credential answers 401.
+  403 and a request with neither credential answers 401. A host that starts
+  the upload routes without the gateway resolves callers the same way through
+  the same account bindings, with the operator token as its only credential:
+  the upload is recorded under the `operator` caller, and a session or any
+  other credential answers 401.
 - **Session writes.** A session uploads and deletes only as an intake owner
   its principal's account binding lists in `intake_writers` (account,
   datasource, optional connector, and whether it may create documents). For
