@@ -1344,6 +1344,33 @@ class DocumentArchiveTest {
         return chunks;
     }
 
+    @Test
+    void closingRenditionInputCancelsUnderlyingRpc() throws Exception {
+        ByteString body = ByteString.copyFromUtf8("stream-body");
+        NodeAddress node = ArchiveCoordinates.address(EntryAddress.newBuilder()
+                .setAccountId(ACCOUNT).setArchive(ARCHIVE).setEntryId("close-read").build());
+        var cancelled = new java.util.concurrent.CountDownLatch(1);
+        startService(new DocumentServiceGrpc.DocumentServiceImplBase() {
+            @Override public void getDocument(GetDocumentRequest request, StreamObserver<GetDocumentResponse> response) {
+                response.onNext(documentWithBlob(node, 1L, "original", body));
+                response.onCompleted();
+            }
+            @Override public void readBlob(ReadBlobRequest request, StreamObserver<ReadBlobResponse> response) {
+                ((io.grpc.stub.ServerCallStreamObserver<ReadBlobResponse>) response)
+                        .setOnCancelHandler(cancelled::countDown);
+                response.onNext(ReadBlobResponse.newBuilder().setData(body).build());
+            }
+        });
+        var archive = new DocumentArchive(channel, (a, n) -> Optional.of(new ArchiveBinding(
+                a, n, "ds", "intake", VersioningPolicy.VERSIONING_POLICY_RETAINED)), FIXED_CLOCK);
+        var opened = new RenditionReads(archive).open(ai.protomolt.proto.repo.archive.v1.ReadRenditionRequest.newBuilder()
+                .setAddress(EntryAddress.newBuilder().setAccountId(ACCOUNT).setArchive(ARCHIVE).setEntryId("close-read"))
+                .setRendition("original").build());
+        assertThat(opened.body().read()).isEqualTo((int) 's');
+        opened.body().close();
+        assertThat(cancelled.await(2, TimeUnit.SECONDS)).as("closing the read must cancel its live RPC").isTrue();
+    }
+
     private void startService(DocumentServiceGrpc.DocumentServiceImplBase service) throws Exception {
         String name = "doc-archive-unit-" + UUID.randomUUID();
         server = InProcessServerBuilder.forName(name).directExecutor().addService(service).build().start();
