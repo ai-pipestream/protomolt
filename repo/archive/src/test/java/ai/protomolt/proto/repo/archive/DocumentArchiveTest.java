@@ -4,6 +4,14 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.Assertions.catchThrowableOfType;
 
+import ai.protomolt.proto.asset.v1.BridgeKind;
+import ai.protomolt.proto.asset.v1.BridgeStatus;
+import ai.protomolt.proto.asset.v1.Classification;
+import ai.protomolt.proto.asset.v1.ClassificationState;
+import ai.protomolt.proto.asset.v1.DelimitedTable;
+import ai.protomolt.proto.asset.v1.FormatFact;
+import ai.protomolt.proto.asset.v1.HeaderPresence;
+import ai.protomolt.proto.asset.v1.PdfDocument;
 import ai.protomolt.proto.repo.archive.v1.Archive;
 import ai.protomolt.proto.repo.archive.v1.ArchiveMutationKind;
 import ai.protomolt.proto.repo.archive.v1.ArchiveMutationReceipt;
@@ -11,6 +19,11 @@ import ai.protomolt.proto.repo.archive.v1.ArchiveMutationRequest;
 import ai.protomolt.proto.repo.archive.v1.ArchiveMutationServiceGrpc;
 import ai.protomolt.proto.repo.archive.v1.ArchiveMutationState;
 import ai.protomolt.proto.repo.archive.v1.ArchiveStats;
+import ai.protomolt.proto.repo.archive.v1.BridgeEntryRequest;
+import ai.protomolt.proto.repo.archive.v1.BridgeEntryResponse;
+import ai.protomolt.proto.repo.archive.v1.ClassificationStateCount;
+import ai.protomolt.proto.repo.archive.v1.ClassifyEntryRequest;
+import ai.protomolt.proto.repo.archive.v1.ClassifyEntryResponse;
 import ai.protomolt.proto.repo.archive.v1.CreateArchiveRequest;
 import ai.protomolt.proto.repo.archive.v1.DeleteEntryRequest;
 import ai.protomolt.proto.repo.archive.v1.DeleteRenditionRequest;
@@ -71,6 +84,7 @@ import ai.protomolt.proto.repo.v2.SaveOwner;
 import ai.protomolt.proto.repo.v2.SaveRejection;
 import ai.protomolt.proto.repo.v2.UploadDocumentRequest;
 import ai.protomolt.proto.repo.v2.UploadDocumentResponse;
+import ai.protomolt.proto.repo.v2.UploadHeader;
 import ai.protomolt.proto.repo.v2.ValidationStatus;
 import com.google.protobuf.ByteString;
 import com.google.protobuf.Timestamp;
@@ -385,6 +399,143 @@ class DocumentArchiveTest {
         assertThat(stats.getVersions()).isEqualTo(1L);
         assertThat(stats.getCurrentBytes()).isEqualTo(pdf.size());
         assertThat(stats.getRetainedBytes()).isEqualTo(pdf.size());
+        assertThat(stats.getClassificationStatesList()).containsExactly(
+                ClassificationStateCount.newBuilder()
+                        .setState(ClassificationState.CLASSIFICATION_STATE_UNCLASSIFIED)
+                        .setCount(1L)
+                        .build());
+    }
+
+    @Test
+    void classifyEntryBridgeEntryAndClassificationFilterWorkOverInMemoryService() throws Exception {
+        ByteString csv = ByteString.copyFromUtf8("id,name\n1,Ada\n2,Grace\n");
+        NodeAddress entryNode = ArchiveCoordinates.address(
+                EntryAddress.newBuilder().setAccountId(ACCOUNT).setArchive(ARCHIVE).setEntryId("users.csv").build());
+        List<ListDocumentsRequest> listCalls = new ArrayList<>();
+        List<SaveDocumentRequest> saves = new ArrayList<>();
+        GetDocumentResponse[] currentHolder = {documentWithBlob(entryNode, 1L, "original", csv)};
+
+        startService(new DocumentServiceGrpc.DocumentServiceImplBase() {
+            @Override
+            public void getOperationOutcome(
+                    GetOperationOutcomeRequest request,
+                    StreamObserver<GetOperationOutcomeResponse> responseObserver) {
+                responseObserver.onNext(GetOperationOutcomeResponse.getDefaultInstance());
+                responseObserver.onCompleted();
+            }
+
+            @Override
+            public void getDocument(
+                    GetDocumentRequest request, StreamObserver<GetDocumentResponse> responseObserver) {
+                responseObserver.onNext(currentHolder[0]);
+                responseObserver.onCompleted();
+            }
+
+            @Override
+            public void readBlob(
+                    ReadBlobRequest request, StreamObserver<ReadBlobResponse> responseObserver) {
+                responseObserver.onNext(ReadBlobResponse.newBuilder()
+                        .setHeader(BlobHeader.getDefaultInstance())
+                        .build());
+                responseObserver.onNext(ReadBlobResponse.newBuilder().setData(csv).build());
+                responseObserver.onCompleted();
+            }
+
+            @Override
+            public void saveDocument(
+                    SaveDocumentRequest request, StreamObserver<SaveDocumentResponse> responseObserver) {
+                saves.add(request);
+                long nextRev = currentHolder[0].getManifest().getRevision() + 1;
+                Document.Builder updated = currentHolder[0].getDocument().toBuilder();
+                if (request.getDocument().hasSearchMetadata()) {
+                    updated.setSearchMetadata(request.getDocument().getSearchMetadata());
+                }
+                if (request.getDocument().hasStructuredData()) {
+                    updated.setStructuredData(request.getDocument().getStructuredData());
+                }
+                if (request.getDocument().hasBlobBag()) {
+                    updated.setBlobBag(request.getDocument().getBlobBag());
+                }
+                currentHolder[0] = currentHolder[0].toBuilder()
+                        .setDocument(updated)
+                        .setManifest(currentHolder[0].getManifest().toBuilder().setRevision(nextRev))
+                        .build();
+                responseObserver.onNext(SaveDocumentResponse.newBuilder()
+                        .setOperationId(request.getOperationId())
+                        .setAccession(Accession.newBuilder().setAddress(entryNode).setRevision(nextRev))
+                        .build());
+                responseObserver.onCompleted();
+            }
+
+            @Override
+            public void listDocuments(
+                    ListDocumentsRequest request, StreamObserver<ListDocumentsResponse> responseObserver) {
+                listCalls.add(request);
+                SearchMetadata sm = currentHolder[0].getDocument().getSearchMetadata();
+                responseObserver.onNext(ListDocumentsResponse.newBuilder()
+                        .addDocuments(DocumentSummary.newBuilder()
+                                .setAddress(entryNode)
+                                .setRevision(currentHolder[0].getManifest().getRevision())
+                                .setCommittedAt(NOW)
+                                .setLookup(DocumentLookup.newBuilder()
+                                        .setTitle(sm.getTitle())
+                                        .setCreationDate(NOW)
+                                        .putAllMetadata(sm.getMetadataMap())))
+                        .build());
+                responseObserver.onCompleted();
+            }
+        });
+
+        ArchiveBindings bindings = (acct, name) -> Optional.of(
+                new ArchiveBinding(acct, name, "ds", "", VersioningPolicy.VERSIONING_POLICY_RETAINED));
+        DocumentArchive archive = new DocumentArchive(channel, bindings, FIXED_CLOCK);
+        EntryAddress addr = EntryAddress.newBuilder()
+                .setAccountId(ACCOUNT).setArchive(ARCHIVE).setEntryId("users.csv").build();
+
+        // Refuses declaration without filename.
+        assertThatThrownBy(() -> archive.classifyEntry(ClassifyEntryRequest.newBuilder()
+                        .setAddress(addr)
+                        .setDeclared(FormatFact.newBuilder().setPdf(PdfDocument.getDefaultInstance()))
+                        .build()))
+                .isInstanceOfSatisfying(StatusRuntimeException.class, failure -> {
+                    assertThat(failure.getStatus().getCode()).isEqualTo(Status.Code.INVALID_ARGUMENT);
+                    assertThat(failure.getStatus().getDescription()).contains("declared.pdf.filename is required");
+                });
+
+        // ClassifyEntry with DelimitedTable declaration resolves to DECLARED.
+        ClassifyEntryResponse classified = archive.classifyEntry(ClassifyEntryRequest.newBuilder()
+                .setAddress(addr)
+                .setDeclared(FormatFact.newBuilder().setDelimited(DelimitedTable.newBuilder()
+                        .setFilename("users.csv")
+                        .setDelimiter(",")
+                        .setHeader(HeaderPresence.HEADER_PRESENCE_PRESENT)))
+                .build());
+        assertThat(classified.getClassification().getState())
+                .isEqualTo(ClassificationState.CLASSIFICATION_STATE_DECLARED);
+
+        // BridgeEntry runs dataset-schema bridge and saves derived rendition.
+        BridgeEntryResponse bridged = archive.bridgeEntry(BridgeEntryRequest.newBuilder()
+                .setAddress(addr)
+                .build());
+        assertThat(bridged.getVersion()).isEqualTo(3L);
+        assertThat(bridged.getOutcomesList()).hasSize(2);
+        assertThat(bridged.getOutcomes(0).getBridge()).isEqualTo(BridgeKind.BRIDGE_KIND_DATASET_SCHEMA);
+        assertThat(bridged.getOutcomes(0).getStatus()).isEqualTo(BridgeStatus.BRIDGE_STATUS_PRODUCED);
+        assertThat(bridged.getOutcomes(1).getBridge()).isEqualTo(BridgeKind.BRIDGE_KIND_TABULAR_DATASET);
+        assertThat(bridged.getOutcomes(1).getStatus()).isEqualTo(BridgeStatus.BRIDGE_STATUS_DEFERRED);
+
+        // ListEntries with classification_state sends MetadataMatch on archive.classification_state.
+        ListEntriesResponse listed = archive.listEntries(ListEntriesRequest.newBuilder()
+                .setAccountId(ACCOUNT)
+                .setArchive(ARCHIVE)
+                .setClassificationState(ClassificationState.CLASSIFICATION_STATE_DECLARED)
+                .build());
+        assertThat(listed.getEntriesCount()).isEqualTo(1);
+        assertThat(listed.getEntries(0).getClassification().getState())
+                .isEqualTo(ClassificationState.CLASSIFICATION_STATE_DECLARED);
+        assertThat(listCalls.getLast().getFilter().getMetadataList())
+                .extracting(m -> m.getKey() + "=" + m.getValue())
+                .containsExactly("archive.classification_state=CLASSIFICATION_STATE_DECLARED");
     }
 
     @Test
@@ -862,65 +1013,11 @@ class DocumentArchiveTest {
     }
 
     @Test
-    void flowControlledUploadWaitsForDownstreamReadinessAndResumesOnReadyCallback() throws Exception {
-        ByteString chunkBytes = ByteString.copyFromUtf8("flow-controlled-bytes");
-        NodeAddress entryNode = ArchiveCoordinates.address(
-                EntryAddress.newBuilder().setAccountId(ACCOUNT).setArchive(ARCHIVE).setEntryId("e-flow").build());
-        AtomicBoolean committed = new AtomicBoolean(false);
-
-        startService(new DocumentServiceGrpc.DocumentServiceImplBase() {
-            @Override
-            public void getOperationOutcome(
-                    GetOperationOutcomeRequest request,
-                    StreamObserver<GetOperationOutcomeResponse> responseObserver) {
-                responseObserver.onNext(GetOperationOutcomeResponse.getDefaultInstance());
-                responseObserver.onCompleted();
-            }
-
-            @Override
-            public void listRevisions(
-                    ListRevisionsRequest request,
-                    StreamObserver<ListRevisionsResponse> responseObserver) {
-                responseObserver.onNext(ListRevisionsResponse.getDefaultInstance());
-                responseObserver.onCompleted();
-            }
-
-            @Override
-            public StreamObserver<UploadDocumentRequest> uploadDocument(
-                    StreamObserver<UploadDocumentResponse> responseObserver) {
-                return new StreamObserver<>() {
-                    @Override
-                    public void onNext(UploadDocumentRequest value) {
-                    }
-
-                    @Override
-                    public void onError(Throwable t) {
-                        responseObserver.onError(t);
-                    }
-
-                    @Override
-                    public void onCompleted() {
-                        committed.set(true);
-                        responseObserver.onNext(UploadDocumentResponse.newBuilder()
-                                .setSaved(SaveDocumentResponse.newBuilder()
-                                        .setAccession(Accession.newBuilder().setAddress(entryNode).setRevision(1L)))
-                                .build());
-                        responseObserver.onCompleted();
-                    }
-                };
-            }
-
-            @Override
-            public void getDocument(
-                    GetDocumentRequest request, StreamObserver<GetDocumentResponse> responseObserver) {
-                if (!committed.get()) {
-                    responseObserver.onError(Status.NOT_FOUND.asRuntimeException());
-                    return;
-                }
-                responseObserver.onNext(documentWithBlob(entryNode, 1L, "original", chunkBytes));
-                responseObserver.onCompleted();
-            }
-        });
+    void aStreamedUploadSendsItsHeaderFirstAndNoChunkBeforeAcceptedThenTheTrailerLast() throws Exception {
+        ByteString body = pdfBytes(2 * 1024 * 1024);
+        NodeAddress entryNode = entryNode("e-flow");
+        V2Uploads v2 = new V2Uploads(entryNode, body, header -> null);
+        startService(v2);
 
         AtomicBoolean downstreamReady = new AtomicBoolean(false);
         AtomicReference<ClientCall.Listener<?>> uploadListener = new AtomicReference<>();
@@ -948,48 +1045,24 @@ class DocumentArchiveTest {
             }
         });
 
-        ArchiveBindings bindings = (acct, name) -> Optional.of(
-                new ArchiveBinding(acct, name, "ds", "intake", VersioningPolicy.VERSIONING_POLICY_RETAINED));
-        DocumentArchive archive = new DocumentArchive(throttledChannel, bindings, FIXED_CLOCK);
-        RenditionUploads uploads = new RenditionUploads(archive);
-        CompletableFuture<UploadRenditionResponse> done = new CompletableFuture<>();
-        RenditionUploads.FlowControlledUpload stream = uploads.uploadFlowControlled(new StreamObserver<>() {
-            private UploadRenditionResponse result;
-
-            @Override
-            public void onNext(UploadRenditionResponse value) {
-                result = value;
-            }
-
-            @Override
-            public void onError(Throwable t) {
-                done.completeExceptionally(t);
-            }
-
-            @Override
-            public void onCompleted() {
-                done.complete(result);
-            }
-        });
-
+        v2.answerAccepted.set(false);
+        Received received = new Received();
+        RenditionUploads.FlowControlledUpload stream = new RenditionUploads(archive(throttledChannel))
+                .uploadFlowControlled(received);
         assertThat(stream.isReady()).isTrue();
-        stream.onNext(UploadRenditionRequest.newBuilder()
-                .setHeader(UploadRenditionHeader.newBuilder()
-                        .setOperationId("op-flow-1")
-                        .setSizeBytes(chunkBytes.size())
-                        .setAddress(EntryAddress.newBuilder()
-                                .setAccountId(ACCOUNT)
-                                .setArchive(ARCHIVE)
-                                .setEntryId("e-flow"))
-                        .setRendition(RenditionDescriptor.newBuilder()
-                                .setName("original")
-                                .setMediaType("application/pdf")))
-                .build());
+        stream.onNext(header("e-flow", "op-flow-1", body.size(), "").build());
 
-        // Downstream is not ready: isReady() is false and awaitReady times out until onReady fires.
+        // The header is on the wire, and nothing more may be sent until v2 accepts it.
+        assertThat(v2.frames).hasSize(1);
+        UploadHeader sent = v2.frames.getFirst().getHeader();
+        assertThat(sent.hasInlineData()).isFalse();
+        assertThat(sent.getStreamed().getCoreInTrailer()).isTrue();
         assertThat(stream.isReady()).isFalse();
         assertThat(stream.awaitReady(TimeUnit.MILLISECONDS.toNanos(15))).isFalse();
 
+        v2.accept();
+        // Accepted, but the downstream call is not ready yet.
+        assertThat(stream.isReady()).isFalse();
         CompletableFuture<Boolean> waiter = CompletableFuture.supplyAsync(() -> {
             try {
                 return stream.awaitReady(TimeUnit.SECONDS.toNanos(5));
@@ -998,19 +1071,304 @@ class DocumentArchiveTest {
                 throw new RuntimeException(e);
             }
         });
-
         downstreamReady.set(true);
         uploadListener.get().onReady();
-
         assertThat(waiter.get(5, TimeUnit.SECONDS)).isTrue();
-        assertThat(stream.isReady()).isTrue();
 
-        stream.onNext(UploadRenditionRequest.newBuilder().setChunk(chunkBytes).build());
+        for (ByteString chunk : chunks(body, 64 * 1024)) {
+            assertThat(stream.awaitReady(TimeUnit.SECONDS.toNanos(5))).isTrue();
+            stream.onNext(UploadRenditionRequest.newBuilder().setChunk(chunk).build());
+        }
         stream.onCompleted();
 
-        UploadRenditionResponse response = done.get(5, TimeUnit.SECONDS);
+        UploadRenditionResponse response = received.done.get(5, TimeUnit.SECONDS);
         assertThat(response.getVersion()).isEqualTo(1L);
-        assertThat(response.getSizeBytes()).isEqualTo(chunkBytes.size());
+        assertThat(response.getSizeBytes()).isEqualTo(body.size());
+        assertThat(v2.frames.getFirst().hasHeader()).isTrue();
+        assertThat(v2.frames.subList(1, v2.frames.size() - 1))
+                .allMatch(UploadDocumentRequest::hasData);
+        assertThat(v2.frames.subList(1, v2.frames.size() - 1).stream().mapToLong(f -> f.getData().size()).sum())
+                .isEqualTo(body.size());
+        UploadDocumentRequest last = v2.frames.getLast();
+        assertThat(last.hasTrailer()).isTrue();
+        // Only CORE may differ: the blob bag and ownership are the header's.
+        assertThat(last.getTrailer().getDocument().getBlobBag()).isEqualTo(sent.getSave().getDocument().getBlobBag());
+        assertThat(last.getTrailer().getDocument().getOwnership())
+                .isEqualTo(sent.getSave().getDocument().getOwnership());
+        // The finished CORE carries the classification of the bytes, which the header could not.
+        assertThat(last.getTrailer().getDocument()).isNotEqualTo(sent.getSave().getDocument());
+    }
+
+    @Test
+    void aRefusedStreamedHeaderEndsTheUploadBeforeAnyChunkIsForwarded() throws Exception {
+        ByteString body = pdfBytes(2 * 1024 * 1024);
+        V2Uploads v2 = new V2Uploads(entryNode("e-denied"), body,
+                header -> Status.PERMISSION_DENIED.withDescription("The caller may not write this document")
+                        .asRuntimeException());
+        startService(v2);
+        Received received = new Received();
+        RenditionUploads.FlowControlledUpload stream = new RenditionUploads(archive(channel))
+                .uploadFlowControlled(received);
+        stream.onNext(header("e-denied", "op-denied", body.size(), "").build());
+
+        assertThat(stream.awaitReady(TimeUnit.SECONDS.toNanos(5))).isTrue();
+        assertThatThrownBy(() -> received.done.get(5, TimeUnit.SECONDS))
+                .hasCauseInstanceOf(StatusRuntimeException.class)
+                .hasMessageContaining("PERMISSION_DENIED");
+        // A chunk sent after the refusal is dropped, never forwarded.
+        stream.onNext(UploadRenditionRequest.newBuilder().setChunk(body.substring(0, 1024)).build());
+        assertThat(v2.frames).hasSize(1);
+        assertThat(v2.frames.getFirst().hasHeader()).isTrue();
+    }
+
+    @Test
+    void aRenditionOfAtMostOneMebibyteIsOneInlineHeaderWithItsFinishedCore() throws Exception {
+        ByteString body = pdfBytes(RenditionUploads.INLINE_BODY_MAX_BYTES);
+        V2Uploads v2 = new V2Uploads(entryNode("e-inline"), body, header -> null);
+        startService(v2);
+        Received received = new Received();
+        RenditionUploads.FlowControlledUpload stream = new RenditionUploads(archive(channel))
+                .uploadFlowControlled(received);
+        stream.onNext(header("e-inline", "op-inline", body.size(), "").build());
+        assertThat(v2.frames).isEmpty();
+        for (ByteString chunk : chunks(body, 64 * 1024)) {
+            assertThat(stream.isReady()).isTrue();
+            stream.onNext(UploadRenditionRequest.newBuilder().setChunk(chunk).build());
+        }
+        stream.onCompleted();
+
+        assertThat(received.done.get(5, TimeUnit.SECONDS).getVersion()).isEqualTo(1L);
+        assertThat(v2.frames).hasSize(1);
+        UploadHeader sent = v2.frames.getFirst().getHeader();
+        assertThat(sent.getInlineData()).isEqualTo(body);
+        assertThat(sent.hasStreamed()).isFalse();
+        assertThat(v2.answers).containsExactly(UploadDocumentResponse.AnswerCase.SAVED);
+    }
+
+    @Test
+    void anInlineRenditionLongerThanTheInlineLimitIsRefusedWithoutReachingV2() throws Exception {
+        ByteString body = pdfBytes(RenditionUploads.INLINE_BODY_MAX_BYTES + 1);
+        V2Uploads v2 = new V2Uploads(entryNode("e-long"), body, header -> null);
+        startService(v2);
+        Received received = new Received();
+        RenditionUploads.FlowControlledUpload stream = new RenditionUploads(archive(channel))
+                .uploadFlowControlled(received);
+        stream.onNext(header("e-long", "op-long", 10, "").build());
+        stream.onNext(UploadRenditionRequest.newBuilder().setChunk(body).build());
+
+        assertThatThrownBy(() -> received.done.get(5, TimeUnit.SECONDS))
+                .hasCauseInstanceOf(StatusRuntimeException.class)
+                .hasMessageContaining("more bytes than its size_bytes 10");
+        assertThat(v2.frames).isEmpty();
+    }
+
+    @Test
+    void aHeaderV2ReplaysSendsNoChunkAndAnswersTheRecordedRendition() throws Exception {
+        ByteString body = pdfBytes(2 * 1024 * 1024);
+        V2Uploads v2 = new V2Uploads(entryNode("e-replay"), body, header -> null);
+        v2.replayHeaders = true;
+        startService(v2);
+        Received received = new Received();
+        RenditionUploads.FlowControlledUpload stream = new RenditionUploads(archive(channel))
+                .uploadFlowControlled(received);
+        stream.onNext(header("e-replay", "op-replay", body.size(), RenditionReads.sha256Hex(body)).build());
+
+        UploadRenditionResponse response = received.done.get(5, TimeUnit.SECONDS);
+        assertThat(response.getReplayed()).isTrue();
+        assertThat(response.getSizeBytes()).isEqualTo(body.size());
+        assertThat(v2.frames).hasSize(1);
+        assertThat(v2.answers).containsExactly(UploadDocumentResponse.AnswerCase.REPLAYED);
+    }
+
+    /** A v2 document service whose UploadDocument answers like the bidirectional handshake. */
+    private static final class V2Uploads extends DocumentServiceGrpc.DocumentServiceImplBase {
+        final List<UploadDocumentRequest> frames = new java.util.concurrent.CopyOnWriteArrayList<>();
+        final List<UploadDocumentResponse.AnswerCase> answers = new java.util.concurrent.CopyOnWriteArrayList<>();
+        final AtomicBoolean answerAccepted = new AtomicBoolean(true);
+        final AtomicBoolean committed = new AtomicBoolean(false);
+        private final AtomicReference<StreamObserver<UploadDocumentResponse>> open = new AtomicReference<>();
+        private final NodeAddress entryNode;
+        private final ByteString body;
+        private final java.util.function.Function<UploadHeader, StatusRuntimeException> refuse;
+        volatile boolean replayHeaders;
+
+        V2Uploads(NodeAddress entryNode, ByteString body,
+                java.util.function.Function<UploadHeader, StatusRuntimeException> refuse) {
+            this.entryNode = entryNode;
+            this.body = body;
+            this.refuse = refuse;
+        }
+
+        void accept() {
+            answer(open.get(), UploadDocumentResponse.newBuilder()
+                    .setAccepted(ai.protomolt.proto.repo.v2.UploadAccepted.getDefaultInstance()).build());
+        }
+
+        private void answer(StreamObserver<UploadDocumentResponse> responses, UploadDocumentResponse answer) {
+            answers.add(answer.getAnswerCase());
+            responses.onNext(answer);
+        }
+
+        private SaveDocumentResponse saved(boolean replayed) {
+            committed.set(true);
+            return SaveDocumentResponse.newBuilder().setOperationId("op").setReplayed(replayed)
+                    .setAccession(Accession.newBuilder().setAddress(entryNode).setRevision(1L)).build();
+        }
+
+        @Override
+        public void getOperationOutcome(
+                GetOperationOutcomeRequest request, StreamObserver<GetOperationOutcomeResponse> responseObserver) {
+            responseObserver.onNext(GetOperationOutcomeResponse.getDefaultInstance());
+            responseObserver.onCompleted();
+        }
+
+        @Override
+        public void listRevisions(
+                ListRevisionsRequest request, StreamObserver<ListRevisionsResponse> responseObserver) {
+            responseObserver.onNext(ListRevisionsResponse.getDefaultInstance());
+            responseObserver.onCompleted();
+        }
+
+        @Override
+        public void getDocument(GetDocumentRequest request, StreamObserver<GetDocumentResponse> responseObserver) {
+            if (!committed.get()) {
+                responseObserver.onError(Status.NOT_FOUND.asRuntimeException());
+                return;
+            }
+            responseObserver.onNext(documentWithBlob(entryNode, 1L, "original", body));
+            responseObserver.onCompleted();
+        }
+
+        @Override
+        public StreamObserver<UploadDocumentRequest> uploadDocument(
+                StreamObserver<UploadDocumentResponse> responseObserver) {
+            open.set(responseObserver);
+            return new StreamObserver<>() {
+                @Override
+                public void onNext(UploadDocumentRequest value) {
+                    frames.add(value);
+                    if (!value.hasHeader()) {
+                        return;
+                    }
+                    StatusRuntimeException refusal = refuse.apply(value.getHeader());
+                    if (refusal != null) {
+                        responseObserver.onError(refusal);
+                    } else if (value.getHeader().hasInlineData()) {
+                        answer(responseObserver, UploadDocumentResponse.newBuilder().setSaved(saved(false)).build());
+                        responseObserver.onCompleted();
+                    } else if (replayHeaders) {
+                        answer(responseObserver, UploadDocumentResponse.newBuilder().setReplayed(saved(true)).build());
+                        responseObserver.onCompleted();
+                    } else if (answerAccepted.get()) {
+                        accept();
+                    }
+                }
+
+                @Override
+                public void onError(Throwable t) {
+                }
+
+                @Override
+                public void onCompleted() {
+                    if (frames.getFirst().getHeader().hasStreamed() && !replayHeaders) {
+                        answer(responseObserver, UploadDocumentResponse.newBuilder().setSaved(saved(false)).build());
+                        responseObserver.onCompleted();
+                    }
+                }
+            };
+        }
+    }
+
+    /** The archive client's side of one upload. */
+    private static final class Received implements StreamObserver<UploadRenditionResponse> {
+        final CompletableFuture<UploadRenditionResponse> done = new CompletableFuture<>();
+        private UploadRenditionResponse result;
+
+        @Override
+        public void onNext(UploadRenditionResponse value) {
+            result = value;
+        }
+
+        @Override
+        public void onError(Throwable t) {
+            done.completeExceptionally(t);
+        }
+
+        @Override
+        public void onCompleted() {
+            done.complete(result);
+        }
+    }
+
+    private static DocumentArchive archive(Channel documents) {
+        ArchiveBindings bindings = (acct, name) -> Optional.of(
+                new ArchiveBinding(acct, name, "ds", "intake", VersioningPolicy.VERSIONING_POLICY_RETAINED));
+        return new DocumentArchive(documents, bindings, FIXED_CLOCK);
+    }
+
+    private static NodeAddress entryNode(String entryId) {
+        return ArchiveCoordinates.address(
+                EntryAddress.newBuilder().setAccountId(ACCOUNT).setArchive(ARCHIVE).setEntryId(entryId).build());
+    }
+
+    private static UploadRenditionRequest.Builder header(
+            String entryId, String operationId, long sizeBytes, String expectedSha256) {
+        return UploadRenditionRequest.newBuilder()
+                .setHeader(UploadRenditionHeader.newBuilder()
+                        .setOperationId(operationId)
+                        .setSizeBytes(sizeBytes)
+                        .setExpectedSha256(expectedSha256)
+                        .setAddress(EntryAddress.newBuilder()
+                                .setAccountId(ACCOUNT)
+                                .setArchive(ARCHIVE)
+                                .setEntryId(entryId))
+                        .setRendition(RenditionDescriptor.newBuilder()
+                                .setName("original")
+                                .setMediaType("application/pdf")));
+    }
+
+    private static ByteString pdfBytes(int size) {
+        byte[] bytes = new byte[size];
+        byte[] head = "%PDF-1.7\n".getBytes(java.nio.charset.StandardCharsets.US_ASCII);
+        System.arraycopy(head, 0, bytes, 0, head.length);
+        byte[] tail = "\n%%EOF\n".getBytes(java.nio.charset.StandardCharsets.US_ASCII);
+        System.arraycopy(tail, 0, bytes, size - tail.length, tail.length);
+        return ByteString.copyFrom(bytes);
+    }
+
+    private static List<ByteString> chunks(ByteString body, int size) {
+        List<ByteString> chunks = new ArrayList<>();
+        for (int offset = 0; offset < body.size(); offset += size) {
+            chunks.add(body.substring(offset, Math.min(body.size(), offset + size)));
+        }
+        return chunks;
+    }
+
+    @Test
+    void closingRenditionInputCancelsUnderlyingRpc() throws Exception {
+        ByteString body = ByteString.copyFromUtf8("stream-body");
+        NodeAddress node = ArchiveCoordinates.address(EntryAddress.newBuilder()
+                .setAccountId(ACCOUNT).setArchive(ARCHIVE).setEntryId("close-read").build());
+        var cancelled = new java.util.concurrent.CountDownLatch(1);
+        startService(new DocumentServiceGrpc.DocumentServiceImplBase() {
+            @Override public void getDocument(GetDocumentRequest request, StreamObserver<GetDocumentResponse> response) {
+                response.onNext(documentWithBlob(node, 1L, "original", body));
+                response.onCompleted();
+            }
+            @Override public void readBlob(ReadBlobRequest request, StreamObserver<ReadBlobResponse> response) {
+                ((io.grpc.stub.ServerCallStreamObserver<ReadBlobResponse>) response)
+                        .setOnCancelHandler(cancelled::countDown);
+                response.onNext(ReadBlobResponse.newBuilder().setData(body).build());
+            }
+        });
+        var archive = new DocumentArchive(channel, (a, n) -> Optional.of(new ArchiveBinding(
+                a, n, "ds", "intake", VersioningPolicy.VERSIONING_POLICY_RETAINED)), FIXED_CLOCK);
+        var opened = new RenditionReads(archive).open(ai.protomolt.proto.repo.archive.v1.ReadRenditionRequest.newBuilder()
+                .setAddress(EntryAddress.newBuilder().setAccountId(ACCOUNT).setArchive(ARCHIVE).setEntryId("close-read"))
+                .setRendition("original").build());
+        assertThat(opened.body().read()).isEqualTo((int) 's');
+        opened.body().close();
+        assertThat(cancelled.await(2, TimeUnit.SECONDS)).as("closing the read must cancel its live RPC").isTrue();
     }
 
     private void startService(DocumentServiceGrpc.DocumentServiceImplBase service) throws Exception {

@@ -28,10 +28,11 @@ import java.util.Map;
  *
  * <p>The stored revision passed v2 validation, so a projection that fails or
  * produces a view its own rules refuse is {@code DATA_LOSS} naming the message,
- * field and rule: the view must not invent a different truth. Three fields are
+ * field and rule: the view must not invent a different truth. Four fields are
  * host-filled, each for the reason its {@code .proto} comment names:
- * {@code EntryInfo.metadata}, {@code VersionManifest.total_bytes} and, in
- * {@code metadata_snapshot}, the same metadata map.</p>
+ * {@code EntryInfo.metadata} (with reserved {@code archive.*} keys stripped),
+ * {@code EntryInfo.classification}, {@code VersionManifest.total_bytes}, and
+ * {@code RenditionManifestEntry.content_profile}.</p>
  */
 public final class ArchiveViews {
 
@@ -75,6 +76,19 @@ public final class ArchiveViews {
                     + " archive and is not an archive entry");
         }
         VersionManifest.Builder manifest = project(manifests, read, VersionManifest.newBuilder());
+        List<Blob> blobs = read.getDocument().getBlobBag().getBlobs().getBlobList();
+        for (int i = 0; i < blobs.size(); i++) {
+            Blob blob = blobs.get(i);
+            RenditionManifestEntry.Builder row = manifest.getRenditionsBuilder(i);
+            if (blob.getSizeBytes() == 0L) {
+                row.setState(RenditionState.RENDITION_STATE_EMPTY).clearSha256();
+            }
+            if (blob.hasMetadata()
+                    && blob.getMetadata().getFieldsMap().containsKey(ArchiveClassifications.CONTENT_PROFILE_FIELD)) {
+                row.setContentProfile(ArchiveClassifications.decodeContentProfile(
+                        blob.getMetadata().getFieldsOrThrow(ArchiveClassifications.CONTENT_PROFILE_FIELD)));
+            }
+        }
         long total = 0;
         for (RenditionManifestEntry row : manifest.getRenditionsList()) {
             if (row.getState() == RenditionState.RENDITION_STATE_PRESENT) {
@@ -83,26 +97,39 @@ public final class ArchiveViews {
         }
         manifest.setTotalBytes(total);
         if (manifest.hasMetadataSnapshot()) {
-            manifest.getMetadataSnapshotBuilder()
-                    .putAllMetadata(read.getDocument().getSearchMetadata().getMetadataMap());
+            populateMetadataAndClassification(
+                    manifest.getMetadataSnapshotBuilder(),
+                    read.getDocument().getSearchMetadata().getMetadataMap());
         }
         return validated(manifest.build());
     }
 
     /** The entry metadata of a document read: the revision's CORE and its "original" blob's filename. */
     public EntryInfo entryInfo(GetDocumentResponse read) {
-        EntryInfo info = project(entries, read, EntryInfo.newBuilder())
-                .putAllMetadata(read.getDocument().getSearchMetadata().getMetadataMap())
-                .build();
-        return validated(info);
+        EntryInfo.Builder info = project(entries, read, EntryInfo.newBuilder());
+        populateMetadataAndClassification(info, read.getDocument().getSearchMetadata().getMetadataMap());
+        return validated(info.build());
     }
 
     /** The entry metadata of a listing row, through its {@code DocumentLookup}. Listing rows carry no filename. */
     public EntryInfo entryInfo(DocumentSummary row) {
-        EntryInfo info = project(entries, row, EntryInfo.newBuilder())
-                .putAllMetadata(row.getLookup().getMetadataMap())
-                .build();
-        return validated(info);
+        EntryInfo.Builder info = project(entries, row, EntryInfo.newBuilder());
+        populateMetadataAndClassification(info, row.getLookup().getMetadataMap());
+        return validated(info.build());
+    }
+
+    private static void populateMetadataAndClassification(
+            EntryInfo.Builder info, Map<String, String> storedMetadata) {
+        for (Map.Entry<String, String> entry : storedMetadata.entrySet()) {
+            if (!entry.getKey().startsWith(ArchiveClassifications.RESERVED_METADATA_PREFIX)) {
+                info.putMetadata(entry.getKey(), entry.getValue());
+            }
+        }
+        String encodedClassification =
+                storedMetadata.get(ArchiveClassifications.CLASSIFICATION_METADATA_KEY);
+        if (encodedClassification != null && !encodedClassification.isEmpty()) {
+            info.setClassification(ArchiveClassifications.decodeClassification(encodedClassification));
+        }
     }
 
     /** One {@code ListVersions} row from one revision's history summary. */

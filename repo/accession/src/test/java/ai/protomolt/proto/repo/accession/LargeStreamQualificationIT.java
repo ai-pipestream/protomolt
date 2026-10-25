@@ -112,6 +112,7 @@ class LargeStreamQualificationIT {
                 .build();
 
         var header = UploadHeader.newBuilder()
+                .setStreamed(ai.protomolt.proto.repo.v2.StreamedBody.getDefaultInstance())
                 .setSave(create("op-600mb-grpc", address, document))
                 .setBlobId("blob-600mb")
                 .setDeclaredLength(SIX_HUNDRED_MB)
@@ -274,6 +275,7 @@ class LargeStreamQualificationIT {
                         .setSizeBytes(SIX_HUNDRED_MB)))
                 .build();
         var cancelHeader = UploadHeader.newBuilder()
+                .setStreamed(ai.protomolt.proto.repo.v2.StreamedBody.getDefaultInstance())
                 .setSave(SaveDocumentRequest.newBuilder()
                         .setOperationId("op-cancel-600mb")
                         .setTarget(DocumentTarget.newBuilder().setAddress(cancelAddress))
@@ -357,6 +359,7 @@ class LargeStreamQualificationIT {
                         .setSizeBytes(blobSize)))
                 .build();
         var readHeader = UploadHeader.newBuilder()
+                .setStreamed(ai.protomolt.proto.repo.v2.StreamedBody.getDefaultInstance())
                 .setSave(SaveDocumentRequest.newBuilder()
                         .setOperationId("op-8mb")
                         .setTarget(DocumentTarget.newBuilder().setAddress(readAddress))

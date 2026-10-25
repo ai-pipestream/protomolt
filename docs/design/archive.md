@@ -330,6 +330,11 @@ Every rendition is one stored object of one revision. The mapping from
   `filename` maps to `Blob.filename`. `PutEntryRequest.filename` describes
   the original file, so a request that sets it with no `original` rendition
   written or carried is `INVALID_ARGUMENT` naming `filename`.
+  `UploadRenditionHeader.filename` likewise names the original file: a nonblank
+  value requires the `original` rendition, is limited to 500 code points by its
+  `validate.v1` rule, and participates in retry identity. Blank preserves a
+  stored filename. The filename is stored on the streamed blob in the same revision
+  and is available to characterization.
 - `parsed` is the PARSED part, not an opaque blob. Its bytes are the encoded
   PARSED fragment (a `Document` carrying `doc_id` and `parser_results` only;
   v2 fragment confinement requires and stores `doc_id`, which equals the
@@ -341,6 +346,17 @@ Every rendition is one stored object of one revision. The mapping from
 - `schema_subject` maps to a new optional `Blob.schema_subject`, recorded and
   not enforced, as today. Registry enforcement stays a gate composed in front
   of the service.
+- `content_profile` (`ai.protomolt.proto.asset.v1.ContentProfile`) on a
+  rendition is stored on `Blob.metadata` (`google.protobuf.Struct`) under field
+  `archive.content_profile` as a string `Value` holding the Base64-encoded
+  deterministic binary protobuf bytes of the `ContentProfile`. Because
+  blob-level carry-forward preserves `Blob.metadata`, carried renditions keep
+  their `content_profile` across subsequent saves unless that rendition slot is
+  overwritten.
+- An inline rendition written with zero bytes (`RenditionContent.data` empty on
+  `PutEntry`, or a 0-byte derived rendition from `BridgeEntry`) binds a 0-byte
+  object on the `BLOBS` part and projects to `RENDITION_STATE_EMPTY` with an
+  empty `sha256`.
 
 Entry metadata maps onto CORE:
 
@@ -351,8 +367,9 @@ Entry metadata maps onto CORE:
 | `source_uri` | `search_metadata.source_uri` |
 | `source_modified_at` | `search_metadata.last_modified_date` |
 | `created_at` | `search_metadata.creation_date`, stamped on the creating save and carried forward |
-| `metadata` (field 99) | `search_metadata.metadata` |
-| `declared`, `origin` | `structured_data`, an `Any` of a registered archive message, typed-validated |
+| `metadata` (field 99) | `search_metadata.metadata` (user keys; keys starting with `archive.` are reserved and refused at the door with `INVALID_ARGUMENT`) |
+| `classification` | `search_metadata.metadata["archive.classification"]` (Base64-encoded deterministic binary protobuf `Classification`) and `search_metadata.metadata["archive.classification_state"]` (`ClassificationState` enum name, indexed into `DocumentLookup.metadata` for `ListEntries` filtering) |
+| `declared`, `origin` | `structured_data`, an `Any` of `ArchiveEntryFacts`, typed-validated |
 
 **v2 prerequisites.** The archive's existing guarantees need seven additive
 changes to the v2 contract, specified here so the implementation issues can
@@ -600,7 +617,7 @@ Calls, each one v2 read pinned to one revision (§8):
 | `GetEntry(v)` | as above, then `ReadBlob` per selected PRESENT rendition (PARSED part bytes for `parsed`) | the same projection; bytes are attached, never projected |
 | `ReadRendition` | `ReadBlob` (or the PARSED part frames from `ReadDocument`) | header projected from the manifest row; bytes stream through unchanged |
 | `ListVersions` | `ListRevisions` | each `RevisionSummary` to `VersionSummary` |
-| `ListEntries` | `ListDocuments(account_id, graph_id = "archive:<account>", graph_address_id = archive)` | each `DocumentSummary` to `EntryInfo` through its `DocumentLookup` (#527) |
+| `ListEntries` | `ListDocuments(account_id, graph_id = "archive:<account>", graph_address_id = archive, filter)` | each `DocumentSummary` to `EntryInfo` through its `DocumentLookup` (#527) |
 
 - A BLOBS fragment holds blob metadata only, so reading it fetches no raw
   bytes and `GetEntryManifest` stays a manifest inspection.
@@ -611,7 +628,10 @@ Calls, each one v2 read pinned to one revision (§8):
   (`repeated VersionManifest`) and needs the buf breaking waiver in the
   contract PR.
 - `ListEntries` filters and sorts through the typed `DocumentFilter` and
-  `DocumentSort`, not a query language. `ListEntriesRequest.include_manifests`
+  `DocumentSort`, not a query language. When
+  `ListEntriesRequest.classification_state` is set, the translator attaches a
+  `MetadataMatch` on `archive.classification_state` equal to the requested
+  `ClassificationState` enum name. `ListEntriesRequest.include_manifests`
   is served by `GetEntryManifest` per row until the catalog listing returns
   BLOBS rows itself.
 - `root_checksum` becomes the revision's `candidate_sha256`: one digest of
@@ -621,11 +641,13 @@ Calls, each one v2 read pinned to one revision (§8):
   populated: stack references are internal (§5, §6).
 - Four fields stay host-filled, each named in the view `.proto` with its
   reason: `EntryInfo.metadata` (projection v1 refuses map fields;
-  `DocumentLookup.metadata` is filled the same way);
-  `VersionManifest.total_bytes` (a sum over the rows, and CEL has no fold);
-  `EntryInfo.classification` and `RenditionManifestEntry.content_profile`,
-  which are the asset classification layer's output, not stored document
-  fields.
+  `DocumentLookup.metadata` is filled the same way, with reserved `archive.*`
+  keys stripped); `VersionManifest.total_bytes` (a sum over the `PRESENT`
+  rows, and CEL has no fold); `EntryInfo.classification` (decoded from
+  `search_metadata.metadata["archive.classification"]` on document reads and
+  `lookup.metadata["archive.classification"]` on listing rows); and
+  `RenditionManifestEntry.content_profile` (decoded from
+  `Blob.metadata.fields["archive.content_profile"]`).
 - `ListEntries` rows have no `filename`: `DocumentLookup` projects CORE only,
   and the filename is on the `original` blob. A listing that needs it adds a
   BLOBS-derived lookup field to `DocumentLookup`, which is #527's contract.
@@ -676,7 +698,12 @@ the translator holds no rules v2 does not also enforce.
 `UploadRendition` becomes one `UploadDocument`: the header frame carries the
 same `SaveDocumentRequest` with `UploadHeader.blob_id` naming the streamed
 blob (or `encoded_part{selector: PARSED}` for `parsed`), `declared_length =
-size_bytes` and `expected_sha256` unchanged; chunks become data frames. Its
+size_bytes` and `expected_sha256` unchanged. A rendition of at most 1 MiB is
+held in memory and sent as `inline_data` with its finished CORE, one round
+trip. A larger one sends its header with a `streamed` body before any chunk
+and forwards chunks as data frames only after v2 answers `accepted`; for the
+primary rendition the header sets `core_in_trailer` and the finished CORE
+follows in an `UploadTrailer`. Its
 `expected` follows the `PutEntry` row above, deleted entries included. v2
 already streams through a digest, refuses length and digest mismatches and
 leaves an uncommitted object unreferenced, so the archive's staging key and
@@ -763,6 +790,56 @@ settle copy are retired.
     new revision with the removal applied and `deduplicated = false`.
 - **`VersionManifest.metadata_snapshot`** is the CORE of that revision,
   projected, so every version keeps the metadata it was saved with.
+- **Characterization and `ClassifyEntry`.** At the save doors (`PutEntry` and
+  `UploadRendition`) and on `ClassifyEntry`, any supplied `declared`
+  (`FormatFact`) is validated against its `validate.v1` rules and must carry a
+  non-blank `filename` on its active format arm (`INVALID_ARGUMENT` otherwise);
+  any supplied `origin` (`ObjectStoreOrigin`) is validated the same way. The
+  entry's primary rendition is `original` when present, or the first present
+  non-`parsed`, non-bridge-derived rendition in `(name, sub_key)` order. On
+  `PutEntry` and `UploadRendition` (the whole rendition when it is sent
+  inline, otherwise captured through `WindowCapture` over the upload stream,
+  keeping only the 64 KiB leading and 128 KiB circular trailing windows in
+  memory, with the result sent in the `UploadTrailer`; nothing is staged on
+  disk), the
+  primary rendition's byte windows are characterized with
+  `Characterizer.identify` and resolved with `Classifications.resolve` against
+  the effective `declared` and `origin` facts. When the resolved
+  `Classification` (ignoring `classified_at`) and the primary rendition's bytes
+  match the current revision's stored classification, the stored
+  `Classification` (with its existing `classified_at` timestamp) is preserved so
+  an unchanged save produces a byte-identical `CORE` fragment and deduplicates
+  under `UNCHANGED_POLICY_RECORD_OUTCOME`. `ClassifyEntry` reads the current
+  document (`CORE` and `BLOBS`), streams the primary blob through `ReadBlob`
+  into `WindowCapture` when a primary rendition is present, resolves the
+  classification state machine, and saves `CORE` with `ExpectedRevision` set to
+  the read revision, `UNCHANGED_POLICY_RECORD_OUTCOME`, and a deterministic
+  `operation_id` (`operation_kind = "archive.classify-entry"`).
+- **Bridging (`BridgeEntry`).** `BridgeEntry` reads the current document and
+  requires a bridgeable classification state (`DECLARED`, `IDENTIFIED`, or
+  `VERIFIED`; `UNCLASSIFIED` and `CONFLICTED` fail with `FAILED_PRECONDITION`).
+  Every requested `BridgeKind` must be in `Bridges.applicableTo(format)`
+  (`INVALID_ARGUMENT` otherwise), and the entry must have a present primary
+  rendition (`FAILED_PRECONDITION` otherwise). For each requested (or all
+  applicable) `BridgeKind`, `BridgeEntry` consults `BridgeEngine`: an
+  unregistered kind records `BRIDGE_STATUS_DEFERRED` with
+  `Bridges.deferralReason(kind, format)`; a registered bridge reads the primary
+  blob via `ReadBlob` (at most once per `BridgeEntry` call) and runs
+  `Bridge.derive`. A throwing bridge records `BRIDGE_STATUS_FAILED` with the
+  error detail. When `BRIDGE_KIND_DOCUMENT_TEXT` produces 0 bytes and
+  `BRIDGE_KIND_OCR_TEXT` is not already queued and is registered in the
+  `BridgeEngine`, `BRIDGE_KIND_OCR_TEXT` is appended to the run. If no bridge
+  produced output, no save is issued and the current version is returned.
+  Otherwise all produced renditions (and any measured `ContentProfile` encoded
+  into `Blob.metadata["archive.content_profile"]`) are written in a single
+  `SaveDocument` (`PUT` `BLOBS`, carrying every non-overwritten blob forward by
+  `blob_id`, `ExpectedRevision` set to the read revision,
+  `UNCHANGED_POLICY_RECORD_OUTCOME`, and a deterministic `operation_id` under
+  `operation_kind = "archive.bridge-entry"`). When v2 records an unchanged
+  outcome (`SaveDocumentResponse.unchanged = true`), each produced bridge
+  reports `BRIDGE_STATUS_UNCHANGED` and the version stays at the read revision;
+  otherwise each reports `BRIDGE_STATUS_PRODUCED` (with degradation warnings in
+  `detail` when present) at the newly committed revision.
 
 ### 5. Deterministic `operation_id`
 
@@ -808,9 +885,9 @@ message UploadRenditionHeader {
 
 // The UUIDv5 name. Binary protobuf, fields in number order (§7).
 message ArchiveOperationKey {
-  string operation_kind = 1;        // "archive.put-entry" or "archive.upload-rendition"
+  string operation_kind = 1;        // "archive.put-entry", "archive.upload-rendition", "archive.classify-entry", or "archive.bridge-entry"
   EntryAddress address = 2;         // account_id, archive, entry_id
-  int64 expected_version = 3;       // as the caller sent it; 0 for last write wins
+  int64 expected_version = 3;       // as the caller sent it (0 for last write wins), or the read revision for ClassifyEntry / BridgeEntry
   string content_sha256 = 4;        // the request content digest below
 }
 ```
@@ -901,11 +978,13 @@ in `search_metadata.metadata` so `ListArchives` projects directly from
 the archive's `drive_name`.
 
 **`GetArchiveStats` and `ListEntriesResponse.total_count`.**
-`DocumentArchive.getArchiveStats` computes exact per-archive and per-rendition
-counters over the `archive:<account_id>` graph documents and revision manifests
+`DocumentArchive.getArchiveStats` computes exact per-archive, per-rendition,
+and per-`ClassificationState` (`ArchiveStats.classification_states`) counters
+over the `archive:<account_id>` graph documents and revision manifests
 (counting only the current revision when the archive policy is
-`VERSIONING_POLICY_NONE`), and `ListEntriesResponse.total_count` reports
-`ListDocumentsResponse.total_matching` before pagination.
+`VERSIONING_POLICY_NONE`), and `ListEntriesResponse.total_count` reports the
+total matching live entries (respecting any `classification_state` filter)
+before pagination.
 
 ### 7. `ArchiveMutationService` over v2
 
@@ -951,22 +1030,21 @@ counters over the `archive:<account_id>` graph documents and revision manifests
   - `DeleteRendition`: `"DeleteRendition is not supported by the archive over v2 documents under keep-forever retention; destructive byte removal across versions requires per-blob purge or section 13 retention"`
   - `PruneVersions`: `"PruneVersions is not supported by the archive over v2 documents under keep-forever retention; removing retained versions requires section 13 retention"`
 
-### Not settled here
+### Cutover & Remaining Follow-Ups
 
-Each needs its own follow-up issue under #535 before the ledger retires:
-
+- **Host cutover and ledger retirement (#632).** No live deployment holds legacy
+  `archive_*` ledger rows at cutover, so `RepoServices` and
+  `RepoBoundedArchiveMain` mount `DocumentArchiveGrpcService` and
+  `DocumentArchiveMutationGrpcService` directly, `UploadHttpServer` routes
+  `POST /v1/archive:upload` exclusively through `DocumentArchive`
+  (`RenditionUploads`) into `UploadDocument`, and Flyway migration `V121`
+  drops the retired `archives` and `archive_*` ledger tables alongside the
+  `ArchiveGrpcService`, `ArchiveMutationGrpcService`, `ArchiveOperations`, and
+  `ArchiveLedger` stack without shipping an unexercised data migrator.
 - **`DeleteRendition` and `PruneVersions` byte removal.** `DeleteEntry` and
   `GetArchiveMutation` run over `DeleteDocument` and `GetOperationOutcome`
   (section 7 above); `DeleteRendition` and `PruneVersions` are refused by name
   with `FAILED_PRECONDITION` until per-blob purge or §13 retention lands.
-- **Host cutover (#632).** Switching `RepoServices` from `JdbcArchiveStore` to
-  `DocumentArchiveGrpcService` once `ArchiveMutationService` and the HTTP upload
-  route cut over.
-- **Classification and bridging** (`ClassifyEntry`, `BridgeEntry`, content
-  profiles) run over renditions read through this section and write their
-  derived renditions through it.
-- **The HTTP upload route** for archives becomes the v2 HTTP upload route with
-  the section 1 call number and the section 5 operation ID.
 
 ## Rules of the house
 

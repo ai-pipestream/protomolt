@@ -5,8 +5,6 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import ai.protomolt.proto.repo.blob.spi.BlobStore;
 import ai.protomolt.proto.repo.blob.spi.BlobStoreException;
-import ai.protomolt.proto.repo.container.archive.ArchiveLedger;
-import ai.protomolt.proto.repo.container.archive.ArchiveUploadLedger;
 import ai.protomolt.proto.repo.spi.RepositoryCaller;
 import ai.protomolt.proto.repo.spi.RepositoryException;
 import java.util.Set;
@@ -18,7 +16,7 @@ import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 
 /**
- * The domain failure translation shared by the archive, drive and document operations:
+ * The domain failure translation shared by the drive operations:
  * which storage and ledger failures become which {@link RepositoryException} code, that
  * the message and cause survive, and who {@code requireProcessAuthority} refuses.
  */
@@ -27,20 +25,6 @@ class RepositoryErrorsTest {
     @Test
     void callReturnsTheOperationResult() {
         assertThat(RepositoryErrors.call(() -> "stored")).isEqualTo("stored");
-    }
-
-    @Test
-    void versionConflictBecomesConflict() {
-        var conflict = new ArchiveLedger.VersionConflictException("entry e moved from 3 to 4");
-        assertTranslated(() -> { throw conflict; }, RepositoryException.Code.CONFLICT,
-                "entry e moved from 3 to 4", conflict);
-    }
-
-    @Test
-    void uploadFenceBecomesConflict() {
-        var fence = new ArchiveUploadLedger.FenceException("upload lease was taken over");
-        assertTranslated(() -> { throw fence; }, RepositoryException.Code.CONFLICT,
-                "upload lease was taken over", fence);
     }
 
     @Test

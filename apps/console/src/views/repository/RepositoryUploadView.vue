@@ -286,7 +286,7 @@ async function send() {
   // The screen went away while the send ran: nothing more to show or ask.
   if (signal.aborted && answer.kind !== 'unsettled') return
   if (answer.kind === 'saved') {
-    const saved = answer.response.saved
+    const saved = answer.response.answer.case === 'saved' ? answer.response.answer.value : undefined
     const accession = saved?.accession
     if (saved === undefined || accession === undefined) {
       failure.value = rpcFailure(new Error('The upload route answered 200 without the saved accession.'))
