@@ -150,6 +150,8 @@ jobs:
           npm test
           npm run typecheck
           npm run build
+          npx playwright install --with-deps chromium
+          npm run test:preview-browser
 
   # Scores the validation executor against buf's own protovalidate-conformance
   # binary, so the documented full-suite pass rate is enforced on every push,

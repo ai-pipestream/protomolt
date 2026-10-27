@@ -483,3 +483,18 @@ no intake writers. Run it with:
     PROTOMOLT_CONSOLE_BROWSER_IT=1 ./gradlew :protomolt-repo-fixtures:integrationTest --tests '*ConsoleBrowserIT'
 
 A failing run leaves its report and traces in `playwright-report/`.
+
+### Retained protobuf inspection and local WASM previews
+
+The repository document's Parts view can expand nested `Any` at its exact
+retained occurrence, including repeated/map ancestors and nested envelopes.
+Opaque, missing-binding, mismatched and malformed values are distinguished.
+Branches expand lazily with explicit display limits; original part downloads
+preserve the complete binary payload.
+
+A selected local WASM module can produce a plain-text preview in a disposable
+browser worker, with protobuf input/output, bounded linear memory, a deadline
+and cancellation. This is read-only, optional, and unavailable for opaque parts.
+The [preview ABI and example](../../apps/console/examples/README.md) document
+the contract and its limitations. Server-side WASM plugin execution and native
+qualification of this preview ABI are not part of this console feature.

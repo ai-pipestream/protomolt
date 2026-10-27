@@ -112,6 +112,7 @@
           <v-card v-if="partView" class="mb-4" data-testid="part-view">
             <v-card-title class="text-subtitle-2 d-flex align-center flex-wrap ga-2">
               {{ partView.label }}
+              <v-btn size="x-small" variant="text" data-testid="download-part" @click="downloadPart">Download protobuf</v-btn>
               <span class="text-caption text-medium-emphasis">revision {{ partView.revision }} · {{ byteSize(partView.size) }}</span>
             </v-card-title>
             <v-card-text>
@@ -123,6 +124,8 @@
                 <div class="pmv">
                   <ProtoMessageNode v-for="(node, n) in partView.tree" :key="n" :node="node" :depth="0" />
                 </div>
+                <WasmPreview :type-url="partView.decoded.typeUrl" :bytes="partView.bytes"
+                             :descriptor-set="partView.decoded.descriptorSet" :unavailable="partView.previewUnavailable" />
               </template>
               <template v-else>
                 <v-alert type="info" variant="tonal" density="compact" class="mb-2" data-testid="raw-reason">
@@ -230,7 +233,7 @@
 <script setup lang="ts">
 import { computed, ref, shallowRef, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { create, type DescMessage, type Message } from '@bufbuild/protobuf'
+import { create, equals, type DescMessage, type Message } from '@bufbuild/protobuf'
 import { Code, ConnectError } from '@connectrpc/connect'
 import ProtoMessageNode from '@/components/ProtoMessageNode.vue'
 import BlobFiles from '@/components/repository/BlobFiles.vue'
@@ -255,6 +258,8 @@ import {
 } from '@/gen/ai/protomolt/proto/repo/v2/manifest_pb'
 import type { ViewNode } from '@/lib/message-view/messageTree'
 import { useRepositoryClients } from '@/repository/clients'
+import WasmPreview from '@/components/WasmPreview.vue'
+import { AnySchemas } from '@/repository/anySchemas'
 import { decodedTree } from '@/repository/decodedTreeCore'
 import {
   blobRows,
@@ -336,6 +341,8 @@ const partView = shallowRef<{
   revision: bigint
   size: bigint
   decoded: DecodedPart
+  bytes: Uint8Array
+  previewUnavailable: string | null
   tree: ViewNode[]
   hex: string[]
 } | null>(null)
@@ -458,6 +465,17 @@ async function findTombstone(target: NodeAddress, signal: AbortSignal) {
   }
 }
 
+function downloadPart() {
+  if (!partView.value) return
+  const blob = new Blob([Uint8Array.from(partView.value.bytes)], { type: 'application/x-protobuf' })
+  const url = URL.createObjectURL(blob)
+  const link = document.createElement('a')
+  link.href = url
+  link.download = `part-r${partView.value.revision}.pb`
+  link.click()
+  setTimeout(() => URL.revokeObjectURL(url), 1000)
+}
+
 async function readPartAt(index: number) {
   const entry = manifest.value?.parts[index]
   if (!entry?.selector || !address.value || pinned.value === null || !validation.value) return
@@ -468,13 +486,18 @@ async function readPartAt(index: number) {
   try {
     const part = await readPart(clients.documents, address.value, pinned.value, entry.selector, allowOpaque.value, signal)
     const decoded = await decodePart(clients.documents, address.value, part.revision, validation.value, entry.selector, part.bytes, signal)
+    const schemas = decoded.kind === 'decoded'
+      ? await AnySchemas.load(clients.documents, address.value, part.revision, validation.value, signal, entry.selector) : AnySchemas.none()
     if (signal.aborted) return
     partView.value = {
       label: parts.value[index].label,
       revision: part.revision,
       size: BigInt(part.bytes.length),
       decoded,
-      tree: decoded.kind === 'decoded' ? decodedTree(decoded.desc as DescMessage, decoded.message as Message) : [],
+      bytes: part.bytes,
+      previewUnavailable: entry.opaque || validation.value.opaqueOccurrences.some((o) => o.occurrence?.part && equals(PartSelectorSchema, o.occurrence.part, entry.selector!))
+        ? 'Custom previews are unavailable for parts containing opaque payloads.' : null,
+      tree: decoded.kind === 'decoded' ? decodedTree(decoded.desc as DescMessage, decoded.message as Message, { schemas, location: { part: entry.selector, steps: [] } }) : [],
       hex: decoded.kind === 'raw' ? hexDump(part.bytes.subarray(0, 4096)) : [],
     }
   } catch (error) {

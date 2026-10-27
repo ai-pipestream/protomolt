@@ -130,6 +130,14 @@ export async function retainedRegistry(
   descriptorSha256: string,
   signal: AbortSignal,
 ): Promise<FileRegistry> {
+  return createFileRegistry(fromBinary(FileDescriptorSetSchema, await retainedDescriptorSet(client, address, revision, descriptorSha256, signal)))
+}
+
+/** Exact artifact bytes for decoding and a local preview, verified before use. */
+export async function retainedDescriptorSet(
+  client: Client<typeof DocumentService>, address: NodeAddress, revision: bigint,
+  descriptorSha256: string, signal: AbortSignal,
+): Promise<Uint8Array> {
   const response = await client.getSchemaDescriptor(
     create(GetSchemaDescriptorRequestSchema, { address, revision: revisionSelector(revision), descriptorSha256 }),
     { signal },
@@ -138,12 +146,12 @@ export async function retainedRegistry(
   if (actual !== descriptorSha256) {
     throw new Error(`The descriptor set hashes to ${actual}, but revision ${revision} retained ${descriptorSha256}.`)
   }
-  return createFileRegistry(fromBinary(FileDescriptorSetSchema, response.descriptorSet))
+  return response.descriptorSet
 }
 
 /** A part decoded with its retained schema, or the reason it is shown raw. */
 export type DecodedPart =
-  | { kind: 'decoded'; desc: DescMessage; message: Message; typeUrl: string; descriptorSha256: string }
+  | { kind: 'decoded'; desc: DescMessage; message: Message; typeUrl: string; descriptorSha256: string; descriptorSet: Uint8Array }
   | { kind: 'raw'; reason: string; descriptorSha256: string | null }
 
 /** The message name a type URL names: the text after its last slash. */
@@ -173,7 +181,8 @@ export async function decodePart(
   }
   const schema = binding.fragmentSchema
   if (schema === undefined) throw new Error(`The fragment schema binding for ${partLabel(selector)} has no reference.`)
-  const registry = await retainedRegistry(client, address, revision, schema.descriptorSha256, signal)
+  const descriptorSet = await retainedDescriptorSet(client, address, revision, schema.descriptorSha256, signal)
+  const registry = createFileRegistry(fromBinary(FileDescriptorSetSchema, descriptorSet))
   const typeName = typeNameOf(schema.typeUrl)
   const desc = registry.getMessage(typeName)
   if (desc === undefined) {
@@ -181,6 +190,7 @@ export async function decodePart(
   }
   return {
     kind: 'decoded',
+    descriptorSet,
     desc,
     message: fromBinary(desc, bytes),
     typeUrl: schema.typeUrl,
