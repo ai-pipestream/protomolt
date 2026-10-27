@@ -287,7 +287,9 @@ Rate is a fixed one-minute window per principal and scope: admitted
 requests count, refusals do not. Payload caps apply on surfaces that
 know their request size (the catalog's JSON input, a gRPC request
 message, an HTTP body's declared length) and an oversize refusal
-spends no rate. The refusal is uniform: error code
+spends no rate. A compressed gRPC message is inflated at most one
+byte past the cap, so its refusal names the cap ("more than N
+bytes") rather than the message's full size. The refusal is uniform: error code
 `resource-exhausted`, gRPC `RESOURCE_EXHAUSTED`, HTTP `429`, message
 naming the principal, the scope, and the exhausted limit — never a
 credential.

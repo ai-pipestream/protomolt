@@ -34,3 +34,10 @@ The application is a standalone Vue app that talks only to `protomolt-serve`.
 The schema-form and descriptor utilities under `src/lib/` are part of this
 app; `x-protomolt-lookup` is the schema annotation its reference pickers
 resolve, with the resolver registry in `src/lib/schema-form/lookups.ts`.
+
+## Protobuf inspection and WASM previews
+
+Repository part reads now expand nested `Any` using the selected revision's
+retained schemas. Download the original protobuf or run a local WASM text
+preview without writing repository data. See the [preview guide and binary
+ABI](examples/README.md) for the example module, limits, and browser checks.

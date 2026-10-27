@@ -11,6 +11,7 @@ import ai.protomolt.proto.repo.spi.RepositoryCredentialBinding;
 import ai.protomolt.proto.repo.v1.Principal;
 import ai.protomolt.proto.repo.v2.SaveDocumentRequest;
 import ai.protomolt.proto.repo.v2.StepWriterScope;
+import ai.protomolt.proto.repo.v2.UploadDocumentRequest;
 import ai.protomolt.proto.repo.v2.WriterCredential;
 import ai.protomolt.proto.repo.v2.WriterGrant;
 import io.grpc.Context;
@@ -69,9 +70,15 @@ final class RepoStepSaveRebinding {
                 return new ForwardingServerCallListener.SimpleForwardingServerCallListener<>(next.startCall(call, headers)) {
                     private Context stepContext;
                     @Override public void onMessage(ReqT message) {
+                        SaveDocumentRequest save = null;
+                        if (message instanceof SaveDocumentRequest s) {
+                            save = s;
+                        } else if (message instanceof UploadDocumentRequest u && u.hasHeader()) {
+                            save = u.getHeader().getSave();
+                        }
                         if (stepContext == null
                                 && CallerContexts.current().unrestricted()
-                                && message instanceof SaveDocumentRequest save
+                                && save != null
                                 && save.getOwner().hasStep()) {
                             String accountId = save.getTarget().getAddress().getAccountId();
                             String moduleId = save.getOwner().getStep().getModuleId();
@@ -114,9 +121,12 @@ final class RepoStepSaveRebinding {
             var moduleId = CURRENT_STEP_MODULE.get();
             // The step's service identity lets the document's ACL name which pipeline
             // modules may advance it (intake writes those rules at creation).
-            var identities = moduleId == null ? Set.<Principal>of()
-                    : Set.of(Principal.newBuilder()
-                            .setIdentityType("service").setIdentity(moduleId).build());
+            var stepPrincipal = Principal.newBuilder()
+                    .setIdentityType("service").setIdentity("internal-step-writer").build();
+            var identities = moduleId == null ? Set.of(stepPrincipal)
+                    : Set.of(
+                            Principal.newBuilder().setIdentityType("service").setIdentity(moduleId).build(),
+                            stepPrincipal);
             return new RepositoryCaller(auth.caller().name(), false,
                     accounts == null ? Set.of() : accounts, identities,
                     Optional.of(new RepositoryCredentialBinding(
@@ -137,6 +147,7 @@ final class RepoStepSaveRebinding {
                             .setIssuer("repo-service")
                             .setCredentialId(INTERNAL_STEP_CREDENTIAL_ID.toString()))
                     .setStep(StepWriterScope.newBuilder().setModuleId(moduleId))
+                    .setAllowCreate(true)
                     .build();
             boolean present = catalog.grants(accountId, "repo-service", INTERNAL_STEP_CREDENTIAL_ID).stream()
                     .anyMatch(existing -> !existing.revoked() && existing.grant().equals(grant));

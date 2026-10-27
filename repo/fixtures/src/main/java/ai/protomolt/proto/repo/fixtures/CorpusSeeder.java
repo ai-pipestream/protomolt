@@ -3,6 +3,8 @@ package ai.protomolt.proto.repo.fixtures;
 import ai.protomolt.proto.repo.accession.CorpusLoader;
 import ai.protomolt.proto.repo.accession.RepositoryCorpus;
 import ai.protomolt.proto.repo.accession.SteppedClock;
+import ai.protomolt.proto.repo.archive.ArchiveCoordinates;
+import ai.protomolt.proto.repo.archive.DocumentArchiveBindings;
 import ai.protomolt.proto.repo.catalog.CatalogRecords;
 import ai.protomolt.proto.repo.service.RepoServices;
 import ai.protomolt.proto.repo.spi.RepositoryCaller;
@@ -11,6 +13,7 @@ import ai.protomolt.proto.repo.v1.DriveType;
 import ai.protomolt.proto.repo.v1.NodeAddress;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -81,8 +84,16 @@ public final class CorpusSeeder {
                 .setAccountId(accountId).setName(name).setDriveType(type).build());
     }
 
-    /** The addresses the corpus writes into one account, for callers that compare a store against it. */
+    /** Every distinct v2 address the corpus writes, including archive definitions and entries. */
     public static List<NodeAddress> addresses(RepositoryCorpus corpus, String accountId) {
-        return corpus.documents(accountId).stream().map(RepositoryCorpus.DocumentScript::address).toList();
+        var addresses = new LinkedHashSet<NodeAddress>();
+        corpus.documents(accountId).forEach(script -> addresses.add(script.address()));
+        for (var script : corpus.archives()) {
+            var archive = script.archive();
+            if (!archive.getAccountId().equals(accountId)) continue;
+            addresses.add(DocumentArchiveBindings.definitionAddress(accountId, archive.getName()));
+            script.entries().forEach(entry -> addresses.add(ArchiveCoordinates.address(entry.getAddress())));
+        }
+        return List.copyOf(addresses);
     }
 }

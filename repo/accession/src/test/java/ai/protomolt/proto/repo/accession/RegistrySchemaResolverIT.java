@@ -259,7 +259,7 @@ class RegistrySchemaResolverIT {
                 .isNotEmpty()
                 .anySatisfy(
                         violation -> {
-                            assertThat(violation.getFieldPath()).isEqualTo("embedding_set_id");
+                            assertThat(violation.getFieldPath()).isEqualTo("structured_data.embedding_set_id");
                             assertThat(violation.getRuleId()).isEqualTo("required");
                         });
         assertThat(fixture.catalog().current(addrInvalidRule)).isEmpty();

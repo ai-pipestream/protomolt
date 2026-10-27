@@ -29,10 +29,13 @@ const savedBody = (operationId: string) =>
   toBinary(
     UploadDocumentResponseSchema,
     create(UploadDocumentResponseSchema, {
-      saved: create(SaveDocumentResponseSchema, {
-        operationId,
-        accession: create(AccessionSchema, { address: testAddress(), revision: 5n, committedAt: at('2026-10-21T10:00:00Z') }),
-      }),
+      answer: {
+        case: 'saved',
+        value: create(SaveDocumentResponseSchema, {
+          operationId,
+          accession: create(AccessionSchema, { address: testAddress(), revision: 5n, committedAt: at('2026-10-21T10:00:00Z') }),
+        }),
+      },
     }),
   )
 

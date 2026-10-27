@@ -50,6 +50,8 @@ export interface ViewNode {
   /** Oneof group name when the field is a oneof member. */
   oneof?: string
   children?: ViewNode[]
+  /** Load a bounded page of children only when expanded. */
+  loadChildren?: () => ViewNode[]
 }
 
 const LONG_SCALARS = new Set<ScalarType>([
