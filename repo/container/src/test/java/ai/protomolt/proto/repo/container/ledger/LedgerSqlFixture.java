@@ -36,28 +36,6 @@ final class LedgerSqlFixture {
         } catch (RuntimeException | Error failure) { pool.close(); throw failure; }
     }
 
-    static UUID archive(Connection connection, boolean deleted) throws Exception {
-        UUID object = UUID.randomUUID(), entry = UUID.randomUUID();
-        try (var insert = connection.prepareStatement("""
-                INSERT INTO archive_object_bindings(object_id,entry_uuid,account_id,archive,backend_generation,storage_realm,bucket,object_key)
-                VALUES (?,?,'account','retention','retention-original','retention-realm','namespace',?)
-                """)) {
-            insert.setObject(1, object); insert.setObject(2, entry); insert.setString(3, "object-" + object); insert.executeUpdate();
-        }
-        execute(connection, "INSERT INTO archive_object_uploads(object_id,expected_size,content_type,lease_token,lease_until,state) VALUES ('" + object + "',0,'text/plain',gen_random_uuid(),clock_timestamp()+interval '1 hour','STAGING')");
-        if (deleted) {
-            execute(connection, "UPDATE archive_object_uploads SET state='DELETING',cleanup_token=gen_random_uuid(),cleanup_attempts=1 WHERE object_id='" + object + "'");
-            execute(connection, "UPDATE archive_object_uploads SET state='DELETED' WHERE object_id='" + object + "'");
-        } else {
-            execute(connection, "UPDATE archive_object_uploads SET state='VERIFIED',sha256='" + "a".repeat(64) + "' WHERE object_id='" + object + "'");
-            execute(connection, "UPDATE archive_object_uploads SET state='LIVE' WHERE object_id='" + object + "'");
-            execute(connection, "INSERT INTO archive_entries(entry_uuid,account_id,archive,entry_id,current_version) VALUES ('" + entry + "','account','retention','" + entry + "',1)");
-            execute(connection, "INSERT INTO archive_versions(entry_uuid,version,manifest,root_checksum,total_bytes) VALUES ('" + entry + "',1,'{}','sql-fixture',0)");
-            execute(connection, "INSERT INTO archive_version_object_refs VALUES ('" + entry + "',1,'" + object + "')");
-        }
-        return object;
-    }
-
     static UUID abandonedDocument(Connection connection) throws Exception {
         UUID attempt = UUID.randomUUID(), node = UUID.randomUUID();
         connection.setAutoCommit(false);

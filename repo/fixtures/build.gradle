@@ -12,6 +12,7 @@ dependencies {
     }
     implementation project(':protomolt-repo-accession')
     implementation project(':protomolt-repo-admission')
+    implementation project(':protomolt-repo-archive')
     implementation project(':protomolt-repo-catalog')
     implementation project(':protomolt-repo-proto')
     implementation project(':protomolt-repo-spi')

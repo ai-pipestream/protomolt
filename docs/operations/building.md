@@ -99,6 +99,34 @@ deep module compiles more than later ones. On a small machine keep
 `--max-workers` low (2 is a safe default); the module-level test forking
 already uses the cores.
 
+## Repository release evaluation
+
+`:protomolt-repo-service:repoEval` is the release-grade check of the
+document store. It is not part of `test`, `integrationTest`, `check` or
+`build`; it runs only when named, so a version or release job adds it as one
+extra step without changing the default build:
+
+```shell
+./gradlew :protomolt-repo-service:repoEval --max-workers=2
+```
+
+It lives in the module's `eval` source set
+(`repo/service/src/eval/java`). The suite boots the production entry point
+`RepoServiceMain` in a child JVM from environment variables, the way a
+container does, against Testcontainers PostgreSQL, RustFS (the deployment's
+object store, not LocalStack) and a Redpanda broker, with Kafka eventing and
+the lifecycle loops on and an access policy plus account bindings mounted.
+It then follows one document and one archive entry through their whole life
+over real gRPC and HTTP: save with blobs and whole, selective and streamed
+reads; a second revision with copy-forward and receipt replay; the streaming
+and HTTP upload doors; catalog listings, revisions and outcomes; the
+tombstone; the purge refusal the host is wired with; the archive's three
+doors in and streamed reads out; the exact event sequence per address on the
+topic; a scoped caller's account boundary; and a SIGTERM restart on the same
+stores with the outbox drained. The steps are ordered and build on each
+other, so the first failure is the finding. Docker is the only
+prerequisite; expect a few minutes, most of it container start-up.
+
 ## Snapshot dependencies
 
 Everything resolves from Maven Central, including stock

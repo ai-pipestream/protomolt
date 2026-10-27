@@ -2,9 +2,12 @@ package ai.protomolt.proto.repo.accession;
 
 import ai.protomolt.proto.repo.spi.RepositoryCaller;
 import ai.protomolt.proto.repo.v1.DocumentSecurity;
+import ai.protomolt.proto.repo.v2.SaveDocumentResponse;
+import ai.protomolt.proto.repo.v2.UploadAccepted;
 import ai.protomolt.proto.repo.v2.UploadDocumentRequest;
 import ai.protomolt.proto.repo.v2.UploadDocumentResponse;
 import ai.protomolt.proto.repo.v2.UploadHeader;
+import ai.protomolt.proto.repo.v2.UploadTrailer;
 import com.google.protobuf.ByteString;
 import io.grpc.Status;
 import io.grpc.stub.ServerCallStreamObserver;
@@ -16,6 +19,7 @@ import java.util.Optional;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * Streaming upload coordinator for {@code UploadDocument} and the HTTP raw upload surface
@@ -82,12 +86,17 @@ public final class DocumentUploads {
     }
 
     /**
-     * Creates a gRPC client-streaming observer for {@code UploadDocument}.
+     * Creates the request observer of one bidirectional {@code UploadDocument} call.
      * <p>
-     * Frame 1 must be an {@link UploadHeader}, which is validated and pre-authorized before any bytes
-     * are accepted or written to the stack. Subsequent frames must carry {@code data} chunks, which
-     * are fed through a bounded queue with gRPC flow-control backpressure into a virtual thread
-     * running the stack upload and catalog commit.
+     * Frame 1 must be an {@link UploadHeader}. It is validated and admitted (authentication was
+     * resolved before the call reached here; ownership, owner match, writer authority and the
+     * revision checks run now) before any payload byte is accepted. An inline body then commits
+     * and is answered {@code saved}. A streamed body is answered {@code replayed} when the header
+     * alone fixes an intent already recorded under its operation ID, and otherwise
+     * {@code accepted}, after which data frames are fed through a bounded queue with gRPC
+     * flow-control backpressure into a virtual thread running the stack upload and catalog
+     * commit. The trailer, when the header announced one, is applied and admitted again once the
+     * client half-closes, before the one commit.
      *
      * @param caller the authenticated repository caller
      * @param responseObserver the server response observer
@@ -103,10 +112,14 @@ public final class DocumentUploads {
         var responseLock = new Object();
         var serverObserver = responseObserver instanceof ServerCallStreamObserver<UploadDocumentResponse> s ? s : null;
         var streamHolder = new ChunkQueueInputStream[1];
+        var trailer = new AtomicReference<UploadTrailer>();
+        var gate = new UploadCommitGate();
+        java.util.function.BooleanSupplier claimCommit = () -> !cancelled.get() && gate.claimCommit();
 
         if (serverObserver != null) {
             serverObserver.setOnCancelHandler(() -> {
                 cancelled.set(true);
+                gate.withdraw();
                 terminated.set(true);
                 var stream = streamHolder[0];
                 if (stream != null) stream.cancel();
@@ -117,6 +130,9 @@ public final class DocumentUploads {
 
         return new StreamObserver<>() {
             private boolean headerReceived;
+            private boolean inline;
+            private boolean trailerAnnounced;
+            private boolean trailerReceived;
 
             @Override
             public void onNext(UploadDocumentRequest request) {
@@ -127,9 +143,12 @@ public final class DocumentUploads {
                         return;
                     }
                     headerReceived = true;
+                    var header = request.getHeader();
                     final DocumentSaves.PreparedUpload prepared;
+                    final Optional<SaveDocumentResponse> replayed;
                     try {
-                        prepared = saves.precheckUpload(caller, request.getHeader());
+                        prepared = saves.precheckUpload(caller, header);
+                        replayed = header.hasInlineData() ? Optional.empty() : saves.headerReplay(prepared);
                     } catch (AccessionException failure) {
                         fail(failure);
                         return;
@@ -137,41 +156,70 @@ public final class DocumentUploads {
                         failRuntime(failure);
                         return;
                     }
+                    var name = "repo-upload-" + prepared.request().getOperationId();
+                    if (header.hasInlineData()) {
+                        inline = true;
+                        Thread.ofVirtual().name(name).start(() -> runUpload(prepared, header.getInlineData().newInput(), null));
+                        request(1);
+                        return;
+                    }
+                    if (replayed.isPresent()) {
+                        answerLast(UploadDocumentResponse.newBuilder().setReplayed(replayed.get()).build());
+                        return;
+                    }
+                    trailerAnnounced = header.getStreamed().getCoreInTrailer();
                     var stream = new ChunkQueueInputStream(serverObserver, cancelled);
                     streamHolder[0] = stream;
-                    Thread.ofVirtual()
-                            .name("repo-upload-" + prepared.request().getOperationId())
-                            .start(() -> runUpload(prepared, stream));
-                    if (serverObserver != null && !cancelled.get() && !terminated.get()) {
-                        serverObserver.request(INITIAL_DATA_REQUESTS);
+                    synchronized (responseLock) {
+                        if (terminated.get()) return;
+                        responseObserver.onNext(UploadDocumentResponse.newBuilder()
+                                .setAccepted(UploadAccepted.getDefaultInstance()).build());
                     }
+                    Thread.ofVirtual().name(name).start(() -> runUpload(prepared, stream, stream));
+                    request(INITIAL_DATA_REQUESTS);
                     return;
                 }
 
+                if (inline) {
+                    refuse(DocumentSaves.malformedException("An inline UploadDocument takes no further frames"));
+                    return;
+                }
                 var stream = streamHolder[0];
-                if (request == null || request.getFrameCase() != UploadDocumentRequest.FrameCase.DATA) {
-                    if (stream != null) {
-                        stream.failProtocol("Subsequent UploadDocument frames must carry data");
-                    } else {
-                        fail(DocumentSaves.malformedException("Subsequent UploadDocument frames must carry data"));
+                var frame = request == null ? UploadDocumentRequest.FrameCase.FRAME_NOT_SET : request.getFrameCase();
+                switch (frame) {
+                    case DATA -> {
+                        if (trailerReceived) {
+                            stream.failProtocol("No UploadDocument frame may follow the trailer");
+                            return;
+                        }
+                        var chunk = request.getData();
+                        if (chunk.isEmpty()) {
+                            request(1);
+                            return;
+                        }
+                        stream.enqueue(chunk);
                     }
-                    return;
-                }
-                var chunk = request.getData();
-                if (chunk.isEmpty()) {
-                    if (serverObserver != null && !cancelled.get() && !terminated.get()) {
-                        serverObserver.request(1);
+                    case TRAILER -> {
+                        if (!trailerAnnounced) {
+                            stream.failProtocol("The upload header announced no UploadTrailer");
+                            return;
+                        }
+                        if (trailerReceived) {
+                            stream.failProtocol("No UploadDocument frame may follow the trailer");
+                            return;
+                        }
+                        trailerReceived = true;
+                        trailer.set(request.getTrailer());
+                        request(1);
                     }
-                    return;
-                }
-                if (stream != null) {
-                    stream.enqueue(chunk);
+                    default -> stream.failProtocol("Subsequent UploadDocument frames must carry data or the trailer");
                 }
             }
 
             @Override
             public void onError(Throwable t) {
                 cancelled.set(true);
+                gate.withdraw();
                 terminated.set(true);
                 var stream = streamHolder[0];
                 if (stream != null) stream.cancel();
@@ -190,27 +238,51 @@ public final class DocumentUploads {
                 }
             }
 
-            private void runUpload(DocumentSaves.PreparedUpload prepared, ChunkQueueInputStream stream) {
+            private void request(int frames) {
+                if (serverObserver != null && !cancelled.get() && !terminated.get()) {
+                    serverObserver.request(frames);
+                }
+            }
+
+            private void runUpload(DocumentSaves.PreparedUpload prepared, InputStream body, ChunkQueueInputStream stream) {
                 try {
-                    var result = saves.executeUpload(prepared, stream, cancelled::get);
+                    var result = saves.executeUpload(prepared, body, cancelled::get, trailer::get, claimCommit);
                     if (cancelled.get()) return;
-                    synchronized (responseLock) {
-                        if (terminated.compareAndSet(false, true)) {
-                            responseObserver.onNext(result.response());
-                            responseObserver.onCompleted();
-                        }
-                    }
+                    answerLast(result.response());
                 } catch (AccessionException failure) {
                     if (!cancelled.get()) fail(failure);
                 } catch (RuntimeException failure) {
                     if (!cancelled.get()) failRuntime(failure);
                 } finally {
-                    stream.closeConsumer();
+                    if (stream != null) stream.closeConsumer();
+                }
+            }
+
+            private void answerLast(UploadDocumentResponse answer) {
+                synchronized (responseLock) {
+                    if (terminated.compareAndSet(false, true)) {
+                        responseObserver.onNext(answer);
+                        responseObserver.onCompleted();
+                    }
+                }
+            }
+
+            /**
+             * Refuses the call for a frame the client sent. The refusal first withdraws the call;
+             * when the upload claimed its commit first, the refusal is dropped and that commit's
+             * own answer ends the call.
+             */
+            private void refuse(AccessionException failure) {
+                synchronized (responseLock) {
+                    if (!gate.withdraw()) return;
+                    fail(failure);
                 }
             }
 
             private void fail(AccessionException failure) {
                 synchronized (responseLock) {
+                    cancelled.set(true);
+                    gate.withdraw();
                     if (terminated.compareAndSet(false, true)) {
                         var stream = streamHolder[0];
                         if (stream != null) stream.closeConsumer();
@@ -221,6 +293,8 @@ public final class DocumentUploads {
 
             private void failRuntime(RuntimeException failure) {
                 synchronized (responseLock) {
+                    cancelled.set(true);
+                    gate.withdraw();
                     if (terminated.compareAndSet(false, true)) {
                         var stream = streamHolder[0];
                         if (stream != null) stream.closeConsumer();
