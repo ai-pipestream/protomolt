@@ -4,6 +4,7 @@ import { create } from '@bufbuild/protobuf'
 import { Code, ConnectError, type ConnectRouter } from '@connectrpc/connect'
 import { afterEach, describe, expect, it } from 'vitest'
 import { ClassificationState } from '@/gen/ai/protomolt/proto/asset/v1/classification_pb'
+import { ContentClass, ContentProfileSchema, QualityScoreSchema } from '@/gen/ai/protomolt/proto/asset/v1/content_pb'
 import { ArchiveSchema, ArchiveStatsSchema, RenditionStatsSchema, VersioningPolicy } from '@/gen/ai/protomolt/proto/repo/archive/v1/archive_pb'
 import {
   ArchiveService,
@@ -43,8 +44,23 @@ function manifest(version: bigint) {
     totalBytes: BigInt(PDF.length),
     createdAt: at(`2026-10-0${version}T00:00:00Z`),
     renditions: [
-      create(RenditionManifestEntrySchema, { rendition: original, state: RenditionState.PRESENT, sizeBytes: BigInt(PDF.length), sha256: PDF_SHA }),
-      create(RenditionManifestEntrySchema, { rendition: create(RenditionDescriptorSchema, { name: 'ocr' }), state: RenditionState.DELETED, deletedReason: 'RETENTION' }),
+      create(RenditionManifestEntrySchema, {
+        rendition: original,
+        state: RenditionState.PRESENT,
+        sizeBytes: BigInt(PDF.length),
+        sha256: PDF_SHA,
+        contentProfile: create(ContentProfileSchema, {
+          contentClass: ContentClass.OCR_TEXT,
+          quality: create(QualityScoreSchema, { score: 0.91 }),
+        }),
+      }),
+      create(RenditionManifestEntrySchema, {
+        rendition: create(RenditionDescriptorSchema, { name: 'ocr' }),
+        state: version === 1n ? RenditionState.PRESENT : RenditionState.DELETED,
+        sizeBytes: version === 1n ? 512n : 0n,
+        sha256: version === 1n ? 'f'.repeat(64) : '',
+        deletedReason: version === 1n ? '' : 'RETENTION',
+      }),
     ],
   })
 }
@@ -259,6 +275,33 @@ describe('RepositoryArchiveEntryView', () => {
     const { wrapper } = await mountRepositoryView(RepositoryArchiveEntryView, { ...ENTRY, query: { ...ENTRY.query, version: '9' } }, archives(seen()))
     expect(wrapper.get('[data-testid="rpc-failure"]').text()).toContain('NOT_FOUND')
     expect(wrapper.find('[data-testid="rendition-table"]').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('displays rendition content profiles, compares two versions side by side, and toggles the upload panel', async () => {
+    const s = seen()
+    const { wrapper } = await mountRepositoryView(RepositoryArchiveEntryView, ENTRY, archives(s))
+    expect(wrapper.get('[data-testid="rendition-profile-original"]').text()).toContain('OCR_TEXT · quality 0.91')
+
+    await wrapper.get('[data-testid="compare-version-1"]').trigger('click')
+    await settle()
+    expect(wrapper.find('[data-testid="version-compare"]').exists()).toBe(true)
+    const compareText = wrapper.get('[data-testid="version-compare-table"]').text()
+    expect(compareText).toContain('ocr')
+    expect(compareText).toContain('original')
+
+    await wrapper.get('[data-testid="version-compare-changed-only"] input').setValue(true)
+    await settle()
+    expect(wrapper.get('[data-testid="version-compare-table"]').text()).toContain('ocr')
+    expect(wrapper.get('[data-testid="version-compare-table"]').text()).not.toContain('unchanged')
+
+    await wrapper.get('[data-testid="version-compare-close"]').trigger('click')
+    await settle()
+    expect(wrapper.find('[data-testid="version-compare"]').exists()).toBe(false)
+
+    await wrapper.get('[data-testid="toggle-rendition-upload"]').trigger('click')
+    await settle()
+    expect(wrapper.find('[data-testid="rendition-upload-panel"]').exists()).toBe(true)
     wrapper.unmount()
   })
 })

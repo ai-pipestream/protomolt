@@ -3,10 +3,34 @@
     <v-card class="mb-4">
       <v-card-text class="d-flex align-center flex-wrap ga-3">
         <v-text-field v-model="baseInput" label="Compare with revision" density="compact" hide-details style="max-width: 200px"
+                      autocorrect="off" autocapitalize="off" spellcheck="false"
                       data-testid="compare-input" @keydown.enter="applyBase" />
         <v-btn size="small" variant="tonal" data-testid="compare-apply" @click="applyBase">Compare</v-btn>
         <v-btn size="small" variant="text" prepend-icon="mdi-swap-horizontal" data-testid="compare-swap" @click="emit('swap')">Swap</v-btn>
         <v-btn size="small" variant="text" data-testid="compare-close" @click="emit('close')">Close comparison</v-btn>
+        <v-divider vertical class="mx-1" />
+        <v-switch
+          v-model="changedOnly"
+          label="Changed only"
+          density="compact"
+          hide-details
+          color="primary"
+          data-testid="compare-changed-only"
+        />
+        <v-text-field
+          v-model="lineFilter"
+          label="Filter diff lines"
+          placeholder="field or value"
+          persistent-placeholder
+          density="compact"
+          hide-details
+          clearable
+          autocorrect="off"
+          autocapitalize="off"
+          spellcheck="false"
+          style="min-width: 240px; max-width: 280px"
+          data-testid="compare-line-filter"
+        />
         <v-spacer />
         <span v-if="sides" class="text-caption text-mono" data-testid="compare-heading">
           revision {{ base }} ({{ facts(sides.base) }}) → revision {{ target }} ({{ facts(sides.target) }})
@@ -24,9 +48,12 @@
       <v-card class="mb-4">
         <v-card-title class="text-subtitle-2">Parts</v-card-title>
         <v-card-text>
-          <v-table density="compact" data-testid="compare-parts">
+          <p v-if="parts.length === 0" class="text-body-2 text-medium-emphasis" data-testid="compare-parts-empty">
+            No parts match the active comparison filter.
+          </p>
+          <v-table v-else density="compact" data-testid="compare-parts">
             <thead>
-              <tr><th>Part</th><th>Change</th><th>Revision {{ base }}</th><th>Revision {{ target }}</th></tr>
+              <tr><th scope="col">Part</th><th scope="col">Change</th><th scope="col">Revision {{ base }}</th><th scope="col">Revision {{ target }}</th></tr>
             </thead>
             <tbody>
               <tr v-for="row in parts" :key="row.label" :data-testid="`compare-part-${row.label}`">
@@ -64,6 +91,7 @@ import { useRepositoryClients } from '@/repository/clients'
 import { parseRevision, type PartRow } from '@/repository/documentCore'
 import { byteSize } from '@/repository/formatCore'
 import {
+  filterSectionDiff,
   fragmentLines,
   partDiff,
   readSide,
@@ -89,6 +117,8 @@ const loading = ref(false)
 const failure = ref<RpcFailure | null>(null)
 const baseInput = ref(props.base.toString())
 const inputError = ref<string | null>(null)
+const changedOnly = ref(false)
+const lineFilter = ref('')
 
 /** One manifest entry's columns, with the columns that changed marked. */
 const PartCell = defineComponent({
@@ -122,7 +152,16 @@ function changeColor(change: PartChange): string {
   return change === 'added' ? 'success' : change === 'removed' ? 'error' : change === 'changed' ? 'warning' : 'default'
 }
 
-const parts = computed(() => (sides.value ? partDiff(sides.value.base.manifest, sides.value.target.manifest) : []))
+const parts = computed(() => {
+  if (!sides.value) return []
+  const rows = partDiff(sides.value.base.manifest, sides.value.target.manifest)
+  const needle = (lineFilter.value ?? '').trim().toLowerCase()
+  return rows.filter((row) => {
+    if (changedOnly.value && row.change === 'unchanged') return false
+    if (needle !== '' && !row.label.toLowerCase().includes(needle)) return false
+    return true
+  })
+})
 
 interface Section {
   key: string
@@ -146,6 +185,8 @@ function fragmentFailures(name: string, revision: bigint, side: FragmentSide) {
 const sections = computed<Section[]>(() => {
   const s = sides.value
   if (s === null) return []
+  const query = lineFilter.value ?? ''
+  const onlyChanges = changedOnly.value
   const fragment = (
     id: string,
     key: 'core' | 'parsed',
@@ -157,7 +198,7 @@ const sections = computed<Section[]>(() => {
     key: id,
     title,
     same,
-    diff: sectionDiff(fragmentLines(s.base[key], pick), fragmentLines(s.target[key], pick)),
+    diff: filterSectionDiff(sectionDiff(fragmentLines(s.base[key], pick), fragmentLines(s.target[key], pick)), query, onlyChanges),
     notes: [...fragmentNotes(name, props.base, s.base[key]), ...fragmentNotes(name, props.target, s.target[key])],
     failures: [...fragmentFailures(name, props.base, s.base[key]), ...fragmentFailures(name, props.target, s.target[key])],
   })
@@ -165,16 +206,20 @@ const sections = computed<Section[]>(() => {
     ...(s.base.links.kind === 'failed' ? [{ title: `Listing links at revision ${props.base}`, failure: s.base.links.failure }] : []),
     ...(s.target.links.kind === 'failed' ? [{ title: `Listing links at revision ${props.target}`, failure: s.target.links.failure }] : []),
   ]
-  return [
+  const rawSections: Section[] = [
     fragment('metadata', 'core', 'CORE', (f) => searchMetadataLines(f.lines), 'Search metadata', 'The search metadata is the same.'),
     fragment('concepts', 'core', 'CORE', (f) => f.concepts, 'Concept tags', 'The bound concept tags are the same.'),
     {
       key: 'links',
       title: 'Outbound links',
       same: 'The links are the same.',
-      diff: sectionDiff(
-        s.base.links.kind === 'lines' ? s.base.links.lines : [],
-        s.target.links.kind === 'lines' ? s.target.links.lines : [],
+      diff: filterSectionDiff(
+        sectionDiff(
+          s.base.links.kind === 'lines' ? s.base.links.lines : [],
+          s.target.links.kind === 'lines' ? s.target.links.lines : [],
+        ),
+        query,
+        onlyChanges,
       ),
       notes: [],
       failures: linkFailures,
@@ -182,6 +227,10 @@ const sections = computed<Section[]>(() => {
     fragment('core', 'core', 'CORE', (f) => f.lines, 'CORE', 'The decoded CORE fragments are the same.'),
     fragment('parsed', 'parsed', 'PARSED', (f) => f.lines, 'PARSED', 'The decoded PARSED fragments are the same.'),
   ]
+  if (!onlyChanges && query.trim() === '') return rawSections
+  return rawSections.filter(
+    (section) => section.failures.length > 0 || section.diff.stats.added > 0 || section.diff.stats.removed > 0 || (!onlyChanges && section.diff.lines.length > 0),
+  )
 })
 
 async function load() {

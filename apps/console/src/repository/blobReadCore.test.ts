@@ -10,6 +10,7 @@ import {
   type ReadBlobResponse,
 } from '@/gen/ai/protomolt/proto/repo/v2/document_service_pb'
 import { BlobStreamError, collector, parseRange, readBlob } from './blobReadCore'
+import { isSafeAudioMediaType, isSafeImageMediaType, prepareBytePreview, tryFormatJson } from './byteReadCore'
 import { routerClients, testAddress } from './repositoryTestKit'
 
 const FILE = new Uint8Array(Array.from({ length: 200_000 }, (_, i) => (i * 31 + 7) & 0xff))
@@ -214,5 +215,39 @@ describe('parseRange', () => {
     expect(parseRange('10', '20')).toEqual({ offset: 10n, length: 20n })
     expect(() => parseRange('-1', '')).toThrow('Offset must not be negative')
     expect(() => parseRange('', '1.5')).toThrow('Length "1.5" is not a whole number')
+  })
+})
+
+describe('prepareBytePreview', () => {
+  it('pretty-prints valid JSON and offers json, text, and hex modes', () => {
+    const raw = new TextEncoder().encode('{"b":2,"a":[1,true]}')
+    const preview = prepareBytePreview(raw, 0n, 'application/json; charset=utf-8', true)
+    expect(preview.modes).toEqual(['json', 'text', 'hex'])
+    expect(preview.defaultMode).toBe('json')
+    expect(preview.formattedJson).toContain('  "b": 2')
+    expect(preview.rawText).toBe('{"b":2,"a":[1,true]}')
+    expect(preview.hex.length).toBeGreaterThan(0)
+    expect(tryFormatJson('not-json')).toBeNull()
+  })
+
+  it('enables safe raster image and audio previews only when the whole object is verified and excludes SVG from img rendering', () => {
+    const bytes = new Uint8Array([0x89, 0x50, 0x4e, 0x47])
+    expect(isSafeImageMediaType('image/png')).toBe(true)
+    expect(isSafeImageMediaType('image/svg+xml')).toBe(false)
+    expect(isSafeAudioMediaType('audio/wav')).toBe(true)
+
+    const verifiedPng = prepareBytePreview(bytes, 0n, 'image/png', true)
+    expect(verifiedPng.modes).toEqual(['image', 'hex'])
+    expect(verifiedPng.defaultMode).toBe('image')
+    expect(verifiedPng.safeMediaType).toBe('image/png')
+
+    const unverifiedPng = prepareBytePreview(bytes, 10n, 'image/png', false)
+    expect(unverifiedPng.modes).toEqual(['hex'])
+    expect(unverifiedPng.safeMediaType).toBeNull()
+
+    const svgBytes = new TextEncoder().encode('<svg xmlns="http://www.w3.org/2000/svg"/>')
+    const verifiedSvg = prepareBytePreview(svgBytes, 0n, 'image/svg+xml', true)
+    expect(verifiedSvg.modes).toEqual(['text', 'hex'])
+    expect(verifiedSvg.safeMediaType).toBeNull()
   })
 })

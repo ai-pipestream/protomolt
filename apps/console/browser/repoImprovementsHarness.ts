@@ -1,0 +1,614 @@
+/**
+ * Browser harness for the 5 Repository Console frontend improvement slices.
+ * Mounts real Vue views with Vuetify and in-memory binary Connect routers in Chromium.
+ */
+import 'vuetify/styles'
+import '@mdi/font/css/materialdesignicons.css'
+import '@/styles/console.css'
+import { createApp, h } from 'vue'
+import { createVuetify } from 'vuetify'
+import * as components from 'vuetify/components'
+import * as directives from 'vuetify/directives'
+import { create, toBinary } from '@bufbuild/protobuf'
+import { anyPack, StringValueSchema } from '@bufbuild/protobuf/wkt'
+import { ClassificationSchema, ClassificationState } from '@/gen/ai/protomolt/proto/asset/v1/classification_pb'
+import { ContentClass, ContentProfileSchema, QualityDimensionSchema, QualityScoreSchema } from '@/gen/ai/protomolt/proto/asset/v1/content_pb'
+import { FormatFactSchema, PdfDocumentSchema } from '@/gen/ai/protomolt/proto/asset/v1/format_pb'
+import { IntakeWriterScopeSchema } from '@/gen/ai/protomolt/proto/authz/v1/account_bindings_pb'
+import { ConsoleSessionStatusSchema } from '@/gen/ai/protomolt/proto/authz/v1/console_session_pb'
+import { ArchiveSchema, ArchiveStatsSchema, VersioningPolicy } from '@/gen/ai/protomolt/proto/repo/archive/v1/archive_pb'
+import {
+  ArchiveService,
+  GetArchiveResponseSchema,
+  GetArchiveStatsResponseSchema,
+  GetEntryManifestResponseSchema,
+  ListArchivesResponseSchema,
+  ListVersionsResponseSchema,
+} from '@/gen/ai/protomolt/proto/repo/archive/v1/archive_service_pb'
+import {
+  EntryAddressSchema,
+  EntryInfoSchema,
+  RenditionDescriptorSchema,
+  RenditionManifestEntrySchema,
+  RenditionState,
+  VersionManifestSchema,
+  WriteAttributionSchema,
+} from '@/gen/ai/protomolt/proto/repo/archive/v1/entry_pb'
+import { BlobBagSchema, BlobSchema, BlobsSchema, DocumentSchema, SearchMetadataSchema } from '@/gen/ai/protomolt/proto/repo/v1/document_pb'
+import { DriveSchema, DriveService, DriveStatus, DriveType, ListDrivesResponseSchema } from '@/gen/ai/protomolt/proto/repo/v1/drive_pb'
+import {
+  BlobHeaderSchema,
+  ConceptFilterEvidenceSchema,
+  DocumentLookupSchema,
+  DocumentService,
+  DocumentSummarySchema,
+  GetDocumentResponseSchema,
+  GetManifestResponseSchema,
+  GetSchemaDescriptorResponseSchema,
+  ListDocumentsResponseSchema,
+  ListLinksResponseSchema,
+  ListRevisionsResponseSchema,
+  MountedConceptSchemeSchema,
+  ReadBlobResponseSchema,
+  ReadDocumentResponseSchema,
+  RevisionSummarySchema,
+} from '@/gen/ai/protomolt/proto/repo/v2/document_service_pb'
+import {
+  DocumentManifestSchema,
+  DocumentPart,
+  PartSelectorSchema,
+  PartState,
+  RevisionValidationSchema,
+  ValidationStatus,
+} from '@/gen/ai/protomolt/proto/repo/v2/manifest_pb'
+import {
+  ConceptNotationSchema,
+  ConceptSchema,
+  ConceptSchemeSchema,
+  LangLabelSchema,
+} from '@/gen/ai/protomolt/proto/types/v1/concepts_pb'
+import { REPOSITORY_CLIENTS, REPOSITORY_SESSION, REPOSITORY_SIGN_IN } from '@/repository/clients'
+import { at, descriptorSetOf, routerClients, testAddress } from '@/repository/repositoryTestKit'
+import { repositoryRouter } from '@/repository/repositoryViewKit'
+import { Sha256 } from '@/repository/sha256'
+import { moltDark } from '@/styles/theme'
+import RepositoryAccountView from '@/views/repository/RepositoryAccountView.vue'
+import RepositoryArchiveEntryView from '@/views/repository/RepositoryArchiveEntryView.vue'
+import RepositoryDocumentView from '@/views/repository/RepositoryDocumentView.vue'
+
+const hash = (bytes: Uint8Array) => new Sha256().update(bytes).hex()
+
+/** Builds a 360x96 PNG badge in the browser canvas for Slice 3 verified raster image preview. */
+function buildSamplePng(): Uint8Array {
+  const canvas = document.createElement('canvas')
+  canvas.width = 360
+  canvas.height = 96
+  const ctx = canvas.getContext('2d')
+  if (ctx) {
+    ctx.fillStyle = '#132a38'
+    ctx.fillRect(0, 0, 360, 96)
+    ctx.strokeStyle = '#38bdf8'
+    ctx.lineWidth = 3
+    ctx.strokeRect(4, 4, 352, 88)
+    ctx.fillStyle = '#38bdf8'
+    ctx.font = 'bold 16px monospace'
+    ctx.fillText('PROTOMOLT VERIFIED BLOB PREVIEW', 22, 40)
+    ctx.fillStyle = '#a7f3d0'
+    ctx.font = '13px monospace'
+    ctx.fillText('signature-stamp.png · image/png · SHA-256 OK', 22, 66)
+  }
+  const dataUrl = canvas.toDataURL('image/png')
+  const b64 = dataUrl.slice(dataUrl.indexOf(',') + 1)
+  return Uint8Array.from(atob(b64), (c) => c.charCodeAt(0))
+}
+
+const SAMPLE_JSON = new TextEncoder().encode(
+  JSON.stringify(
+    {
+      pipeline: 'intake-enrichment-v2',
+      documentId: 'doc-1',
+      revision: 7,
+      metrics: { latencyMs: 42, tokens: 1280, verified: true },
+      tags: ['contracts', 'nda', 'verified'],
+    },
+    null,
+    2,
+  ),
+)
+
+function buildVuetify() {
+  return createVuetify({
+    components,
+    directives,
+    theme: { defaultTheme: 'moltDark', themes: { moltDark } },
+  })
+}
+
+export async function mountDocumentImprovements(initialTab?: string) {
+  const SAMPLE_PNG = buildSamplePng()
+  const packed7 = anyPack(
+    StringValueSchema,
+    create(StringValueSchema, { value: 'Clause 7.2: Mutual non-disclosure obligations remain active for 5 years.' }),
+  )
+  const packed6 = anyPack(
+    StringValueSchema,
+    create(StringValueSchema, { value: 'Clause 7.1: Initial draft confidentiality obligations for 3 years.' }),
+  )
+
+  const jsonSha = hash(SAMPLE_JSON)
+  const pngSha = hash(SAMPLE_PNG)
+
+  const doc7 = create(DocumentSchema, {
+    docId: 'doc-1',
+    structuredData: packed7,
+    searchMetadata: create(SearchMetadataSchema, {
+      title: 'Master Mutual NDA — Acme Corp (Final)',
+      documentType: 'contract/nda',
+      sourceMimeType: 'application/pdf',
+      metadata: {
+        department: 'legal',
+        counterparty: 'Acme Corp',
+        status: 'executed',
+      },
+    }),
+    blobBag: create(BlobBagSchema, {
+      blobData: {
+        case: 'blobs',
+        value: create(BlobsSchema, {
+          blob: [
+            create(BlobSchema, {
+              blobId: 'blob-json',
+              filename: 'enrichment-receipt.json',
+              mimeType: 'application/json',
+              sizeBytes: BigInt(SAMPLE_JSON.byteLength),
+              checksum: jsonSha,
+            }),
+            create(BlobSchema, {
+              blobId: 'blob-png',
+              filename: 'signature-stamp.png',
+              mimeType: 'image/png',
+              sizeBytes: BigInt(SAMPLE_PNG.byteLength),
+              checksum: pngSha,
+            }),
+          ],
+        }),
+      },
+    }),
+  })
+
+  const doc6 = create(DocumentSchema, {
+    docId: 'doc-1',
+    structuredData: packed6,
+    searchMetadata: create(SearchMetadataSchema, {
+      title: 'Master Mutual NDA — Acme Corp (Draft)',
+      documentType: 'contract/nda',
+      sourceMimeType: 'application/pdf',
+      metadata: {
+        department: 'legal',
+        counterparty: 'Acme Corp',
+        status: 'draft',
+      },
+    }),
+  })
+
+  const bytes7 = toBinary(DocumentSchema, doc7)
+  const bytes6 = toBinary(DocumentSchema, doc6)
+  const rootSet = descriptorSetOf(DocumentSchema.file)
+  const anySet = descriptorSetOf(StringValueSchema.file)
+  const selector = create(PartSelectorSchema, { selector: { case: 'part', value: DocumentPart.CORE } })
+
+  const manifest7 = create(DocumentManifestSchema, {
+    address: testAddress(),
+    revision: 7n,
+    committedAt: at('2026-10-27T18:30:00Z'),
+    parts: [
+      {
+        selector,
+        state: PartState.PRESENT,
+        sizeBytes: BigInt(bytes7.length),
+        sha256: hash(bytes7),
+        writtenInRevision: 7n,
+        contentIncluded: true,
+      },
+    ],
+  })
+
+  const manifest6 = create(DocumentManifestSchema, {
+    address: testAddress(),
+    revision: 6n,
+    committedAt: at('2026-10-26T12:00:00Z'),
+    parts: [
+      {
+        selector,
+        state: PartState.PRESENT,
+        sizeBytes: BigInt(bytes6.length),
+        sha256: hash(bytes6),
+        writtenInRevision: 6n,
+        contentIncluded: true,
+      },
+    ],
+  })
+
+  const makeValidation = (packed: typeof packed7, coreBytes: Uint8Array) =>
+    create(RevisionValidationSchema, {
+      status: ValidationStatus.TYPED_VALID,
+      candidateSha256: hash(coreBytes),
+      partSchemas: [
+        {
+          part: selector,
+          fragmentSchema: {
+            typeUrl: `type.googleapis.com/${DocumentSchema.typeName}`,
+            descriptorSha256: hash(rootSet),
+          },
+        },
+      ],
+      resolvedOccurrences: [
+        {
+          occurrence: { part: selector, steps: [{ step: { case: 'fieldNumber', value: 4 } }] },
+          schema: { typeUrl: packed.typeUrl, descriptorSha256: hash(anySet) },
+          payloadSha256: hash(packed.value),
+          payloadLength: BigInt(packed.value.length),
+        },
+      ],
+    })
+
+  const validation7 = makeValidation(packed7, bytes7)
+  const validation6 = makeValidation(packed6, bytes6)
+
+  const clients = routerClients((router) =>
+    router.service(DocumentService, {
+      getManifest: (req) => {
+        const rev = req.revision?.selector.case === 'revision' ? req.revision.selector.value : 7n
+        return create(GetManifestResponseSchema, {
+          manifest: rev === 6n ? manifest6 : manifest7,
+          validation: rev === 6n ? validation6 : validation7,
+        })
+      },
+      getDocument: (req) => {
+        const rev = req.revision?.selector.case === 'revision' ? req.revision.selector.value : 7n
+        return create(GetDocumentResponseSchema, {
+          document: rev === 6n ? doc6 : doc7,
+          manifest: rev === 6n ? manifest6 : manifest7,
+          validation: rev === 6n ? validation6 : validation7,
+        })
+      },
+      listRevisions: () =>
+        create(ListRevisionsResponseSchema, {
+          revisions: [
+            create(RevisionSummarySchema, {
+              revision: 7n,
+              previousRevision: 6n,
+              committedAt: at('2026-10-27T18:30:00Z'),
+              validationStatus: ValidationStatus.TYPED_VALID,
+              owner: { owner: { case: 'step', value: { moduleId: 'legal-enricher' } } },
+            }),
+            create(RevisionSummarySchema, {
+              revision: 6n,
+              previousRevision: 0n,
+              committedAt: at('2026-10-26T12:00:00Z'),
+              validationStatus: ValidationStatus.TYPED_VALID,
+              owner: { owner: { case: 'step', value: { moduleId: 'intake-gateway' } } },
+            }),
+          ],
+        }),
+      listLinks: () => create(ListLinksResponseSchema),
+      getSchemaDescriptor: (request) => {
+        if (request.descriptorSha256 === hash(rootSet)) {
+          return create(GetSchemaDescriptorResponseSchema, { descriptorSet: rootSet })
+        }
+        return create(GetSchemaDescriptorResponseSchema, { descriptorSet: anySet })
+      },
+      async *readDocument(req) {
+        const rev = req.revision?.selector.case === 'revision' ? req.revision.selector.value : 7n
+        const m = rev === 6n ? manifest6 : manifest7
+        const b = rev === 6n ? bytes6 : bytes7
+        yield create(ReadDocumentResponseSchema, { frame: { case: 'manifest', value: m } })
+        yield create(ReadDocumentResponseSchema, { frame: { case: 'partData', value: { selector, offset: 0n, data: b, last: true } } })
+        yield create(ReadDocumentResponseSchema, { frame: { case: 'complete', value: {} } })
+      },
+      async *readBlob(req) {
+        const isPng = req.blobId === 'blob-png'
+        const payload = isPng ? SAMPLE_PNG : SAMPLE_JSON
+        const sha = isPng ? pngSha : jsonSha
+        const offset = Number(req.offset)
+        const length = req.length === 0n ? payload.byteLength - offset : Number(req.length)
+        const slice = payload.subarray(offset, offset + length)
+        const revision = req.revision?.selector.case === 'revision' ? req.revision.selector.value : 7n
+        yield create(ReadBlobResponseSchema, {
+          frame: {
+            case: 'header',
+            value: create(BlobHeaderSchema, {
+              revision,
+              totalLength: BigInt(payload.byteLength),
+              sha256: sha,
+              mimeType: isPng ? 'image/png' : 'application/json',
+              filename: isPng ? 'signature-stamp.png' : 'enrichment-receipt.json',
+            }),
+          },
+        })
+        yield create(ReadBlobResponseSchema, { frame: { case: 'data', value: slice } })
+      },
+    }),
+  )
+
+  const router = repositoryRouter()
+  const query: Record<string, string> = {
+    account: 'acct-a',
+    graph: 'intake:acct-a',
+    node: 'ds-files',
+    doc: 'doc-1',
+    revision: '7',
+  }
+  if (initialTab) query.tab = initialTab
+  await router.push({ name: 'repository-document', query })
+  await router.isReady()
+
+  const app = createApp({
+    render: () =>
+      h(components.VApp, {}, () =>
+        h(components.VMain, { style: 'padding: 24px; max-width: 1240px; margin: auto;' }, () => h(RepositoryDocumentView)),
+      ),
+  })
+  app
+    .use(buildVuetify())
+    .use(router)
+    .provide(REPOSITORY_CLIENTS, clients)
+    .provide(REPOSITORY_SIGN_IN, () => {})
+    .mount('#app')
+}
+
+export async function mountAccountImprovements(): Promise<{ legalTaxonomyBase64: string }> {
+  const label = (text: string, language = 'en') => create(LangLabelSchema, { text, language })
+  const legalSchemeProto = create(ConceptSchemeSchema, {
+    prefLabel: [label('Legal Matter Taxonomy', 'en')],
+    concepts: [
+      create(ConceptSchema, {
+        id: 'contracts',
+        prefLabel: [label('Commercial Contracts', 'en')],
+        definition: [label('Binding commercial agreements and confidentiality instruments.', 'en')],
+        notation: [create(ConceptNotationSchema, { value: 'LEGAL-100', datatypeIri: 'https://vocab.protomolt.ai/dt' })],
+        iri: 'https://vocab.protomolt.ai/legal-taxonomy/contracts',
+      }),
+      create(ConceptSchema, {
+        id: 'nda',
+        prefLabel: [label('Non-Disclosure Agreements (NDA)', 'en')],
+        broader: ['contracts'],
+        notation: [create(ConceptNotationSchema, { value: 'LEGAL-110', datatypeIri: 'https://vocab.protomolt.ai/dt' })],
+      }),
+      create(ConceptSchema, {
+        id: 'msa',
+        prefLabel: [label('Master Services Agreements (MSA)', 'en')],
+        broader: ['contracts'],
+        notation: [create(ConceptNotationSchema, { value: 'LEGAL-120', datatypeIri: 'https://vocab.protomolt.ai/dt' })],
+      }),
+    ],
+  })
+  const legalBytes = toBinary(ConceptSchemeSchema, legalSchemeProto)
+  let binary = ''
+  for (const byte of legalBytes) binary += String.fromCharCode(byte)
+  const legalTaxonomyBase64 = btoa(binary)
+
+  const clients = routerClients((router) => {
+    router.service(DriveService, {
+      listDrives: (r) =>
+        create(ListDrivesResponseSchema, {
+          drives: [
+            create(DriveSchema, {
+              driveId: 'legal-vault',
+              name: 'legal-vault',
+              accountId: r.accountId,
+              driveType: DriveType.INTAKE,
+              status: DriveStatus.ACTIVE,
+              createdAt: at('2026-01-15T09:00:00Z'),
+            }),
+          ],
+        }),
+    })
+    router.service(ArchiveService, {
+      listArchives: (r) =>
+        create(ListArchivesResponseSchema, {
+          archives: [
+            create(ArchiveSchema, {
+              name: 'executed-agreements',
+              accountId: r.accountId,
+              driveName: 'legal-vault',
+              versioning: VersioningPolicy.NONE,
+              description: 'Signed agreements and OCR renditions',
+            }),
+          ],
+        }),
+    })
+    router.service(DocumentService, {
+      listDocuments: (r) =>
+        create(ListDocumentsResponseSchema, {
+          documents: [
+            create(DocumentSummarySchema, {
+              address: { accountId: r.accountId, graphId: 'intake:acct-a', graphAddressId: 'ds-legal', docId: 'nda-2026-001' },
+              revision: 7n,
+              committedAt: at('2026-10-27T18:30:00Z'),
+              lookup: create(DocumentLookupSchema, {
+                title: 'Master Mutual NDA — Acme Corp',
+                documentType: 'contract/nda',
+                sourceMimeType: 'application/pdf',
+                datasourceId: 'ds-legal',
+              }),
+            }),
+            create(DocumentSummarySchema, {
+              address: { accountId: r.accountId, graphId: 'intake:acct-a', graphAddressId: 'ds-finance', docId: 'msa-2026-042' },
+              revision: 3n,
+              committedAt: at('2026-10-26T15:10:00Z'),
+              lookup: create(DocumentLookupSchema, {
+                title: 'Enterprise MSA — Globex Systems',
+                documentType: 'contract/msa',
+                sourceMimeType: 'application/pdf',
+                datasourceId: 'ds-finance',
+              }),
+            }),
+          ],
+          conceptEvidence: r.filter?.concept
+            ? create(ConceptFilterEvidenceSchema, {
+                expandedConcepts: 3,
+                mountedSchemes: [create(MountedConceptSchemeSchema, { schemeId: 'legal', version: '2026.10' })],
+              })
+            : undefined,
+        }),
+    })
+  })
+
+  const sessionStatus = create(ConsoleSessionStatusSchema, {
+    authenticated: true,
+    principal: 'legal-ops@acme.example',
+    accountIds: ['acct-a'],
+    intakeWriters: [
+      create(IntakeWriterScopeSchema, {
+        accountId: 'acct-a',
+        datasourceId: 'ds-legal',
+      }),
+      create(IntakeWriterScopeSchema, {
+        accountId: 'acct-a',
+        datasourceId: 'ds-finance',
+      }),
+    ],
+  })
+
+  const router = repositoryRouter()
+  await router.push('/repository/accounts/acct-a')
+  await router.isReady()
+
+  const app = createApp({
+    render: () =>
+      h(components.VApp, {}, () =>
+        h(components.VMain, { style: 'padding: 24px; max-width: 1240px; margin: auto;' }, () => h(RepositoryAccountView)),
+      ),
+  })
+  app
+    .use(buildVuetify())
+    .use(router)
+    .provide(REPOSITORY_CLIENTS, clients)
+    .provide(REPOSITORY_SIGN_IN, () => {})
+    .provide(REPOSITORY_SESSION, {
+      status: async () => sessionStatus,
+    })
+    .mount('#app')
+
+  return { legalTaxonomyBase64 }
+}
+
+export async function mountArchiveEntryImprovements() {
+  const addr = create(EntryAddressSchema, { accountId: 'acct-a', archive: 'executed-agreements', entryId: 'nda-2026-001' })
+  const origDesc = create(RenditionDescriptorSchema, { name: 'original', mediaType: 'application/pdf' })
+  const ocrDesc = create(RenditionDescriptorSchema, { name: 'ocr', subKey: 'page-1', mediaType: 'text/plain' })
+
+  const pdfShaV3 = '9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08'
+  const pdfShaV1 = '4b227777d4dd1fc61c6f884f48641d02b4d121d3fd328cb08b5531fcacdabf8a'
+  const ocrShaV3 = 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855'
+
+  const makeManifest = (version: bigint) =>
+    create(VersionManifestSchema, {
+      address: addr,
+      version,
+      totalBytes: version === 3n ? 248_512n : 240_000n,
+      rootChecksum: version === 3n ? pdfShaV3 : pdfShaV1,
+      createdAt: at(`2026-10-2${version}T14:20:00Z`),
+      renditions: [
+        create(RenditionManifestEntrySchema, {
+          rendition: origDesc,
+          state: RenditionState.PRESENT,
+          sizeBytes: version === 3n ? 244_000n : 240_000n,
+          sha256: version === 3n ? pdfShaV3 : pdfShaV1,
+          writtenAt: at(`2026-10-2${version}T14:20:00Z`),
+          writtenBy: create(WriteAttributionSchema, { module: 'intake-gateway', actor: 'legal-ops' }),
+          contentProfile: create(ContentProfileSchema, {
+            contentClass: ContentClass.INFORMATIONAL_TEXT,
+            quality: create(QualityScoreSchema, { score: 0.97 }),
+          }),
+        }),
+        ...(version >= 2n
+          ? [
+              create(RenditionManifestEntrySchema, {
+                rendition: ocrDesc,
+                state: RenditionState.PRESENT,
+                sizeBytes: 4_512n,
+                sha256: ocrShaV3,
+                writtenAt: at(`2026-10-2${version}T14:21:00Z`),
+                writtenBy: create(WriteAttributionSchema, { module: 'grparse-ocr', actor: 'pipeline' }),
+                contentProfile: create(ContentProfileSchema, {
+                  contentClass: ContentClass.OCR_TEXT,
+                  quality: create(QualityScoreSchema, {
+                    score: 0.92,
+                    dimensions: [
+                      create(QualityDimensionSchema, { name: 'character-confidence', score: 0.95, weight: 0.6 }),
+                      create(QualityDimensionSchema, { name: 'dictionary-hit-rate', score: 0.88, weight: 0.4 }),
+                    ],
+                  }),
+                }),
+              }),
+            ]
+          : []),
+      ],
+    })
+
+  const clients = routerClients((router) =>
+    router.service(ArchiveService, {
+      getArchive: (r) =>
+        create(GetArchiveResponseSchema, {
+          archive: create(ArchiveSchema, { name: r.archive, accountId: r.accountId, driveName: 'legal-vault' }),
+        }),
+      getArchiveStats: (r) =>
+        create(GetArchiveStatsResponseSchema, {
+          stats: create(ArchiveStatsSchema, { archive: r.archive, entries: 12n, versions: 28n }),
+        }),
+      getEntryManifest: (r) => {
+        const ver = r.version === 0n ? 3n : r.version
+        return create(GetEntryManifestResponseSchema, {
+          info: create(EntryInfoSchema, {
+            address: addr,
+            entryUuid: '00000000-0000-5000-8000-000000000101',
+            currentVersion: 3n,
+            title: 'Master Mutual NDA — Acme Corp',
+            filename: 'acme-mutual-nda-signed.pdf',
+            contentType: 'application/pdf',
+            sourceUri: 's3://acme-legal-drop/2026/10/acme-mutual-nda-signed.pdf',
+            createdAt: at('2026-10-21T14:20:00Z'),
+            updatedAt: at('2026-10-23T14:20:00Z'),
+            classification: create(ClassificationSchema, {
+              state: ClassificationState.VERIFIED,
+              declared: create(FormatFactSchema, { format: { case: 'pdf', value: create(PdfDocumentSchema, { filename: 'acme-mutual-nda-signed.pdf' }) } }),
+              identified: create(FormatFactSchema, { format: { case: 'pdf', value: create(PdfDocumentSchema, { filename: 'acme-mutual-nda-signed.pdf' }) } }),
+            }),
+            metadata: {
+              department: 'legal',
+              jurisdiction: 'US-DE',
+              retentionClass: '7-years',
+            },
+          }),
+          manifest: makeManifest(ver),
+        })
+      },
+      listVersions: () =>
+        create(ListVersionsResponseSchema, {
+          versions: [makeManifest(3n), makeManifest(2n), makeManifest(1n)],
+        }),
+    }),
+  )
+
+  const router = repositoryRouter()
+  await router.push({
+    name: 'repository-archive-entry',
+    query: { account: 'acct-a', archive: 'executed-agreements', entry: 'nda-2026-001' },
+  })
+  await router.isReady()
+
+  const app = createApp({
+    render: () =>
+      h(components.VApp, {}, () =>
+        h(components.VMain, { style: 'padding: 24px; max-width: 1240px; margin: auto;' }, () => h(RepositoryArchiveEntryView)),
+      ),
+  })
+  app
+    .use(buildVuetify())
+    .use(router)
+    .provide(REPOSITORY_CLIENTS, clients)
+    .provide(REPOSITORY_SIGN_IN, () => {})
+    .mount('#app')
+}

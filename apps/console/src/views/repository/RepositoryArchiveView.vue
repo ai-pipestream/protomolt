@@ -29,7 +29,7 @@
           <div><div class="text-caption text-medium-emphasis">Retained bytes</div><div class="text-h6">{{ byteSize(stats.retainedBytes) }}</div></div>
         </div>
         <v-table v-if="stats.renditions.length > 0" density="compact" class="mb-2">
-          <thead><tr><th>Rendition</th><th>Objects</th><th>Bytes</th></tr></thead>
+          <thead><tr><th scope="col">Rendition</th><th scope="col">Objects</th><th scope="col">Bytes</th></tr></thead>
           <tbody>
             <tr v-for="r in stats.renditions" :key="r.renditionName">
               <td class="text-mono">{{ r.renditionName }}</td><td>{{ r.objectCount }}</td><td>{{ byteSize(r.totalBytes) }}</td>
@@ -44,20 +44,40 @@
     <RpcFailureAlert v-if="statsFailure" :failure="statsFailure" title="Reading archive stats" />
 
     <v-card v-if="!routeError" class="mb-4">
-      <v-card-title class="text-subtitle-2 d-flex align-center ga-2">
+      <v-card-title class="text-subtitle-2 d-flex align-center flex-wrap ga-2">
         Entries
         <v-spacer />
+        <v-text-field
+          v-model="entrySearch"
+          label="Filter entries"
+          density="compact"
+          hide-details
+          clearable
+          autocorrect="off"
+          autocapitalize="off"
+          spellcheck="false"
+          style="max-width: 220px"
+          data-testid="entry-search-filter"
+        />
         <v-select v-model="classification" :items="classificationItems" label="Classification" density="compact" hide-details
                   style="max-width: 240px" data-testid="classification-filter" />
       </v-card-title>
       <v-card-text>
         <RpcFailureAlert v-if="entriesFailure" :failure="entriesFailure" title="Listing entries" />
-        <v-table v-if="entries.length > 0" density="compact" hover data-testid="entry-table">
+        <v-table v-if="filteredEntries.length > 0" density="compact" hover data-testid="entry-table">
           <thead>
-            <tr><th>Entry</th><th>Title</th><th>File</th><th>Type</th><th>Version</th><th>Classification</th><th>Updated</th></tr>
+            <tr>
+              <th scope="col">Entry</th>
+              <th scope="col">Title</th>
+              <th scope="col">File</th>
+              <th scope="col">Type</th>
+              <th scope="col">Version</th>
+              <th scope="col">Classification</th>
+              <th scope="col">Updated</th>
+            </tr>
           </thead>
           <tbody>
-            <tr v-for="e in entries" :key="e.entryId" class="cursor-pointer" :data-testid="`entry-${e.entryId}`" @click="openEntry(e.entryId)">
+            <tr v-for="e in filteredEntries" :key="e.entryId" class="cursor-pointer" :data-testid="`entry-${e.entryId}`" @click="openEntry(e.entryId)">
               <td class="text-mono">{{ e.entryId }}</td>
               <td>{{ e.title }}</td>
               <td>{{ e.filename }}</td>
@@ -128,8 +148,20 @@ const classificationItems = ClassificationStateSchema.values.map((v) => ({
   value: v.number as ClassificationState,
 }))
 const classification = ref<ClassificationState>(ClassificationState.UNSPECIFIED)
+const entrySearch = ref('')
 const cursor = reactive(new PageCursor()) as PageCursor
 const entries = shallowRef<EntryRow[]>([])
+const filteredEntries = computed(() => {
+  const needle = (entrySearch.value ?? '').trim().toLowerCase()
+  if (needle === '') return entries.value
+  return entries.value.filter(
+    (e) =>
+      e.entryId.toLowerCase().includes(needle) ||
+      e.title.toLowerCase().includes(needle) ||
+      e.filename.toLowerCase().includes(needle) ||
+      e.contentType.toLowerCase().includes(needle),
+  )
+})
 const totalCount = ref<string | null>(null)
 const listing = ref(false)
 const listed = ref(false)

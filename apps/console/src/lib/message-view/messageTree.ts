@@ -52,6 +52,66 @@ export interface ViewNode {
   children?: ViewNode[]
   /** Load a bounded page of children only when expanded. */
   loadChildren?: () => ViewNode[]
+  /** Whether the node should start expanded (e.g. when a search filter matches a descendant). */
+  defaultOpen?: boolean
+}
+
+export interface FilteredViewTree {
+  nodes: ViewNode[]
+  matchCount: number
+}
+
+/**
+ * Filters a rendered message tree by a case-insensitive substring across field labels,
+ * type labels, display values, detail annotations, and oneof names.
+ * Matching ancestor paths are preserved and marked `defaultOpen: true`.
+ */
+export function filterViewTree(nodes: ViewNode[], query: string, maxLazyDepth = 6): FilteredViewTree {
+  const needle = query.trim().toLowerCase()
+  if (needle === '') {
+    return { nodes, matchCount: 0 }
+  }
+  let matchCount = 0
+
+  function nodeMatches(node: ViewNode): boolean {
+    const candidates = [node.label, node.typeLabel, node.display, node.detail, node.oneof]
+    return candidates.some((part) => part !== undefined && part.toLowerCase().includes(needle))
+  }
+
+  function filterList(items: ViewNode[], depth: number): ViewNode[] {
+    const out: ViewNode[] = []
+    for (const node of items) {
+      const selfHit = nodeMatches(node)
+      if (selfHit) {
+        matchCount += 1
+      }
+      const rawChildren =
+        node.children ??
+        (depth < maxLazyDepth && node.loadChildren && node.label !== '(more entries)' && !node.label.startsWith('Show ')
+          ? node.loadChildren()
+          : undefined)
+      const filteredChildren = rawChildren ? filterList(rawChildren, depth + 1) : []
+      if (filteredChildren.length > 0) {
+        out.push({
+          ...node,
+          children: filteredChildren,
+          loadChildren: undefined,
+          defaultOpen: true,
+        })
+      } else if (selfHit) {
+        out.push({
+          ...node,
+          defaultOpen: node.defaultOpen,
+        })
+      }
+    }
+    return out
+  }
+
+  return {
+    nodes: filterList(nodes, 0),
+    matchCount,
+  }
 }
 
 const LONG_SCALARS = new Set<ScalarType>([

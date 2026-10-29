@@ -15,21 +15,45 @@
 
     <v-card class="mb-4">
       <v-card-text>
-        <v-row dense>
-          <v-col cols="12" md="4"><v-text-field v-model="form.accountId" label="Account ID" density="compact" data-testid="up-account" /></v-col>
-          <v-col cols="12" md="4"><v-text-field v-model="form.datasourceId" label="Datasource ID" density="compact" data-testid="up-datasource" /></v-col>
+        <div v-if="availableWriterScopes.length > 0" class="d-flex align-center flex-wrap ga-1 mb-2" data-testid="up-writer-picks">
+          <span class="text-caption text-medium-emphasis mr-1">Session writer scopes:</span>
+          <v-chip
+            v-for="ws in availableWriterScopes"
+            :key="`${ws.accountId}/${ws.datasourceId}/${ws.connectorId ?? ''}`"
+            size="x-small"
+            color="primary"
+            variant="tonal"
+            class="text-mono"
+            :data-testid="`up-pick-scope-${ws.datasourceId}`"
+            @click="pickWriterScope(ws.accountId, ws.datasourceId, ws.connectorId)"
+          >
+            {{ ws.accountId }} / {{ scopeLabel(ws) }}
+          </v-chip>
+        </div>
+        <v-row density="compact">
+          <v-col cols="12" md="4">
+            <v-text-field v-model="form.accountId" label="Account ID" density="compact"
+                          autocorrect="off" autocapitalize="off" spellcheck="false" data-testid="up-account" />
+          </v-col>
+          <v-col cols="12" md="4">
+            <v-text-field v-model="form.datasourceId" label="Datasource ID" density="compact"
+                          autocorrect="off" autocapitalize="off" spellcheck="false" data-testid="up-datasource" />
+          </v-col>
           <v-col cols="12" md="4">
             <v-combobox v-model="form.drive" :items="driveNames" label="Drive" density="compact" data-testid="up-drive" />
           </v-col>
           <v-col cols="12" md="4">
             <v-text-field v-model="form.docId" label="Document ID (blank: derived from the file's SHA-256)" density="compact"
-                          data-testid="up-doc" />
+                          autocorrect="off" autocapitalize="off" spellcheck="false" data-testid="up-doc" />
           </v-col>
           <v-col cols="12" md="4">
             <v-text-field v-model="form.expectedRevision" label="Expected revision (blank: a new document)" density="compact"
-                          data-testid="up-expected" />
+                          autocorrect="off" autocapitalize="off" spellcheck="false" data-testid="up-expected" />
           </v-col>
-          <v-col cols="12" md="2"><v-text-field v-model="form.connectorId" label="Connector ID" density="compact" /></v-col>
+          <v-col cols="12" md="2">
+            <v-text-field v-model="form.connectorId" label="Connector ID" density="compact"
+                          autocorrect="off" autocapitalize="off" spellcheck="false" data-testid="up-connector" />
+          </v-col>
           <v-col cols="12" md="2"><v-text-field v-model="form.contentType" label="Content type" density="compact" /></v-col>
         </v-row>
         <v-alert v-if="writer" :type="writer.covered ? 'info' : 'warning'" variant="tonal" density="compact" class="mb-3"
@@ -328,6 +352,19 @@ function cancel() {
 // the request carries.
 const session = shallowRef<ConsoleSessionStatus | null>(null)
 const sessionFailure = ref<string | null>(null)
+const availableWriterScopes = computed(() => {
+  const s = session.value
+  if (s === null || !s.authenticated) return []
+  const acct = form.accountId.trim()
+  return acct !== '' ? scopesIn(s.intakeWriters, acct) : s.intakeWriters
+})
+
+function pickWriterScope(accountId: string, datasourceId: string, connectorId?: string) {
+  form.accountId = accountId
+  form.datasourceId = datasourceId
+  form.connectorId = connectorId ?? ''
+}
+
 const writer = computed(() => {
   const s = session.value
   if (s === null || !s.authenticated || form.accountId.trim() === '' || form.datasourceId.trim() === '') return null

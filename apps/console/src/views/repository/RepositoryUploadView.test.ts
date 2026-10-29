@@ -251,7 +251,8 @@ describe('RepositoryUploadView', () => {
       [REPOSITORY_SESSION as symbol]: { status },
     })
     expect(wrapper.find('[data-testid="up-writer"]').exists()).toBe(false)
-    await wrapper.get('[data-testid="up-datasource"] input').setValue('ds-files')
+    await wrapper.get('[data-testid="up-pick-scope-ds-files"]').trigger('click')
+    await settle()
     expect(wrapper.get('[data-testid="up-writer"]').text()).toContain('may save as ds-files (create and update)')
     await wrapper.get('[data-testid="up-datasource"] input').setValue('ds-mail')
     const refused = wrapper.get('[data-testid="up-writer"]').text()

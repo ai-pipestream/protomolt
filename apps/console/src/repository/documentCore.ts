@@ -89,6 +89,15 @@ export function parseRevision(raw: string | null | undefined): bigint | null {
   return value
 }
 
+export const DOCUMENT_TABS = ['parts', 'metadata', 'validation', 'links', 'history', 'files'] as const
+export type DocumentTab = (typeof DOCUMENT_TABS)[number] | 'compare'
+
+/** Parses a bookmarkable document tab from a route query; null when absent or unknown. */
+export function parseDocumentTab(raw: string | null | undefined): DocumentTab | null {
+  if (raw === null || raw === undefined || raw === '') return null
+  return (DOCUMENT_TABS as readonly string[]).includes(raw) ? (raw as DocumentTab) : null
+}
+
 /** A part selector as a short label: `CORE`, `chunks seg-1`, `embeddings seg-1 / set-a`. */
 export function partLabel(selector: PartSelector | undefined): string {
   if (selector === undefined) return '(no selector)'
@@ -158,16 +167,19 @@ export function partRows(manifest: DocumentManifest): PartRow[] {
 export interface SchemaArtifact {
   /** Where the revision binds it: a part's fragment schema or a resolved Any occurrence. */
   usage: string
+  /** Label of the part this artifact is bound within, when bound to a manifest part. */
+  partLabel: string | null
   typeUrl: string
   descriptorSha256: string
   metadataSha256: string
   sourceSha256: string | null
 }
 
-function artifact(usage: string, ref: RepositorySchemaAssetReference | undefined): SchemaArtifact {
+function artifact(usage: string, ref: RepositorySchemaAssetReference | undefined, boundPart: PartSelector | undefined = undefined): SchemaArtifact {
   if (ref === undefined) throw new Error(`The validation record has a ${usage} binding without a schema reference.`)
   return {
     usage,
+    partLabel: boundPart === undefined ? null : partLabel(boundPart),
     typeUrl: ref.typeUrl,
     descriptorSha256: ref.descriptorSha256,
     metadataSha256: ref.metadataSha256,
@@ -199,9 +211,9 @@ export function validationView(validation: RevisionValidation): ValidationView {
           ? `process authority ${authority.value.principal}`
           : 'none recorded',
     schemas: [
-      ...validation.partSchemas.map((b) => artifact(`${partLabel(b.part)} fragment`, b.fragmentSchema)),
+      ...validation.partSchemas.map((b) => artifact(`${partLabel(b.part)} fragment`, b.fragmentSchema, b.part)),
       ...validation.resolvedOccurrences.map((o) =>
-        artifact(`Any in ${partLabel(o.occurrence?.part)} (${o.payloadLength} bytes)`, o.schema),
+        artifact(`Any in ${partLabel(o.occurrence?.part)} (${o.payloadLength} bytes)`, o.schema, o.occurrence?.part),
       ),
     ],
     opaque: validation.opaqueOccurrences.map((o) => ({
@@ -223,7 +235,7 @@ export function validationView(validation: RevisionValidation): ValidationView {
 export function fragmentDescriptor(validation: RevisionValidation, part: DocumentPart): SchemaArtifact | null {
   for (const binding of validation.partSchemas) {
     const s = binding.part?.selector
-    if (s?.case === 'part' && s.value === part) return artifact(`${enumLabel(DocumentPartSchema, part)} fragment`, binding.fragmentSchema)
+    if (s?.case === 'part' && s.value === part) return artifact(`${enumLabel(DocumentPartSchema, part)} fragment`, binding.fragmentSchema, binding.part)
   }
   return null
 }

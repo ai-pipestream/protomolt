@@ -13,13 +13,42 @@
         <v-card class="mb-4">
           <v-card-title class="text-subtitle-2">By call number</v-card-title>
           <v-card-text>
-            <v-text-field v-model="call.accountId" label="Account ID" density="compact" data-testid="call-account" />
+            <div v-if="call.accountId.trim() !== '' || writerScopes.length > 0" class="d-flex align-center flex-wrap ga-1 mb-2" data-testid="lookup-scope-picks">
+              <span class="text-caption text-medium-emphasis mr-1">Quick fill:</span>
+              <v-chip
+                v-if="call.accountId.trim() !== ''"
+                size="x-small"
+                variant="tonal"
+                class="text-mono"
+                data-testid="lookup-pick-intake-graph"
+                @click="call.graphId = `intake:${call.accountId.trim()}`"
+              >
+                intake:{{ call.accountId.trim() }}
+              </v-chip>
+              <v-chip
+                v-for="ws in writerScopes"
+                :key="`${ws.accountId}/${ws.datasourceId}/${ws.connectorId ?? ''}`"
+                size="x-small"
+                color="primary"
+                variant="tonal"
+                class="text-mono"
+                :data-testid="`lookup-pick-datasource-${ws.datasourceId}`"
+                @click="pickWriterCallScope(ws.accountId, ws.datasourceId)"
+              >
+                intake:{{ ws.accountId }} / {{ ws.datasourceId }}
+              </v-chip>
+            </div>
+            <v-text-field v-model="call.accountId" label="Account ID" density="compact"
+                          autocorrect="off" autocapitalize="off" spellcheck="false" data-testid="call-account" />
             <v-text-field v-model="call.graphId" label="Graph ID" density="compact" hint="intake:<account> for intake documents"
-                          persistent-hint data-testid="call-graph" />
+                          autocorrect="off" autocapitalize="off" spellcheck="false" persistent-hint data-testid="call-graph" />
             <v-text-field v-model="call.graphAddressId" label="Graph address ID" density="compact"
+                          autocorrect="off" autocapitalize="off" spellcheck="false"
                           hint="The datasource ID for intake documents" persistent-hint class="mt-2" data-testid="call-node" />
-            <v-text-field v-model="call.docId" label="Document ID" density="compact" class="mt-2" data-testid="call-doc" />
-            <v-text-field v-model="revisionText" label="Revision (blank for current)" density="compact" data-testid="call-revision" />
+            <v-text-field v-model="call.docId" label="Document ID" density="compact" class="mt-2"
+                          autocorrect="off" autocapitalize="off" spellcheck="false" data-testid="call-doc" />
+            <v-text-field v-model="revisionText" label="Revision (blank for current)" density="compact"
+                          autocorrect="off" autocapitalize="off" spellcheck="false" data-testid="call-revision" />
             <v-alert v-if="callError" type="warning" variant="tonal" density="compact" class="mb-2" data-testid="call-error">
               {{ callError }}
             </v-alert>
@@ -32,8 +61,10 @@
         <v-card class="mb-4">
           <v-card-title class="text-subtitle-2">By operation ID</v-card-title>
           <v-card-text>
-            <v-text-field v-model="opAccount" label="Account ID" density="compact" data-testid="op-account" />
-            <v-text-field v-model="operationId" label="Operation ID" density="compact" data-testid="op-id" @keydown.enter="lookup" />
+            <v-text-field v-model="opAccount" label="Account ID" density="compact"
+                          autocorrect="off" autocapitalize="off" spellcheck="false" data-testid="op-account" />
+            <v-text-field v-model="operationId" label="Operation ID" density="compact"
+                          autocorrect="off" autocapitalize="off" spellcheck="false" data-testid="op-id" @keydown.enter="lookup" />
             <v-alert v-if="opInputError" type="warning" variant="tonal" density="compact" class="mb-2">{{ opInputError }}</v-alert>
             <v-btn color="primary" size="small" :loading="looking" data-testid="lookup-op" @click="lookup">Look up outcome</v-btn>
 
@@ -82,26 +113,50 @@
 </template>
 
 <script setup lang="ts">
-import { reactive, ref, watch } from 'vue'
+import { computed, onMounted, reactive, ref, shallowRef, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import ConceptSchemeBrowser from '@/components/repository/ConceptSchemeBrowser.vue'
 import RpcFailureAlert from '@/components/repository/RpcFailureAlert.vue'
+import type { ConsoleSessionStatus } from '@/gen/ai/protomolt/proto/authz/v1/console_session_pb'
 import type { NodeAddress } from '@/gen/ai/protomolt/proto/repo/v1/address_pb'
 import { RejectionReasonSchema } from '@/gen/ai/protomolt/proto/repo/v2/errors_pb'
-import { useRepositoryClients } from '@/repository/clients'
+import { useRepositoryClients, useRepositorySession } from '@/repository/clients'
 import { nodeAddress, parseRevision, type CallNumber } from '@/repository/documentCore'
 import { enumLabel } from '@/repository/formatCore'
 import { OutcomeInputError, lookupOutcome, type OutcomeAnswer } from '@/repository/lookupCore'
 import { isOwnCancellation, rpcFailure, type RpcFailure } from '@/repository/rpcErrorCore'
+import { scopesIn } from '@/repository/sessionWritersCore'
 import { useCallScope } from '@/repository/useCallScope'
 
 const clients = useRepositoryClients()
+const sessions = useRepositorySession()
 const route = useRoute()
 const router = useRouter()
 const scope = useCallScope()
 const presetAccount = typeof route.query.account === 'string' ? route.query.account : ''
+const session = shallowRef<ConsoleSessionStatus | null>(null)
 
 const call = reactive<CallNumber>({ accountId: presetAccount, graphId: '', graphAddressId: '', docId: '' })
+const writerScopes = computed(() => {
+  if (!session.value?.authenticated) return []
+  const acct = call.accountId.trim()
+  return acct !== '' ? scopesIn(session.value.intakeWriters, acct) : session.value.intakeWriters
+})
+
+function pickWriterCallScope(accountId: string, datasourceId: string) {
+  call.accountId = accountId
+  call.graphId = `intake:${accountId}`
+  call.graphAddressId = datasourceId
+}
+
+onMounted(() => {
+  void sessions
+    .status()
+    .then((s) => {
+      session.value = s
+    })
+    .catch(() => {})
+})
 const revisionText = ref('')
 const callError = ref<string | null>(null)
 

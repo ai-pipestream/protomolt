@@ -3,14 +3,17 @@
  * classification filter, an entry version's manifest with its renditions,
  * version history, and rendition bytes streamed through ReadRendition.
  */
-import { create } from '@bufbuild/protobuf'
-import type { Client } from '@connectrpc/connect'
+import { create, fromBinary } from '@bufbuild/protobuf'
+import { Code, type Client } from '@connectrpc/connect'
 import { ClassificationStateSchema, type Classification } from '@/gen/ai/protomolt/proto/asset/v1/classification_pb'
+import { ContentClass, ContentClassSchema, type ContentProfile } from '@/gen/ai/protomolt/proto/asset/v1/content_pb'
 import type { FormatFact } from '@/gen/ai/protomolt/proto/asset/v1/format_pb'
 import {
   ReadRenditionRequestSchema,
+  UploadRenditionResponseSchema,
   type ArchiveService,
   type RenditionReadHeader,
+  type UploadRenditionResponse,
 } from '@/gen/ai/protomolt/proto/repo/archive/v1/archive_service_pb'
 import {
   EntryAddressSchema,
@@ -20,9 +23,12 @@ import {
   type RenditionDescriptor,
   type VersionManifest,
 } from '@/gen/ai/protomolt/proto/repo/archive/v1/entry_pb'
+import { ItemErrorSchema } from '@/gen/ai/protomolt/proto/repo/v2/errors_pb'
 import { linkedController, type BlobRange } from './blobReadCore'
 import { enumLabel, instant } from './formatCore'
+import { codeName, type RpcFailure } from './rpcErrorCore'
 import { Sha256 } from './sha256'
+import { UploadInputError, type UploadRequest } from './uploadCore'
 
 /** An entry address from route values; every part is required. */
 export function entryAddress(accountId: string, archive: string, entryId: string): EntryAddress {
@@ -94,6 +100,17 @@ export function renditionLabel(rendition: RenditionDescriptor | undefined): stri
   return rendition.subKey === '' ? rendition.name : `${rendition.name} / ${rendition.subKey}`
 }
 
+/** Formats a rendition's ContentProfile (structural class and quality score/dimensions). */
+export function contentProfileLabel(profile: ContentProfile | undefined): string | null {
+  if (profile === undefined || profile.contentClass === ContentClass.UNSPECIFIED) return null
+  const cls = enumLabel(ContentClassSchema, profile.contentClass)
+  if (profile.quality === undefined) return cls
+  const score = profile.quality.score.toFixed(2)
+  if (profile.quality.dimensions.length === 0) return `${cls} · quality ${score}`
+  const dims = profile.quality.dimensions.map((d) => `${d.name}: ${d.score.toFixed(2)}`).join(', ')
+  return `${cls} · quality ${score} (${dims})`
+}
+
 /** One rendition of a version's manifest. */
 export interface RenditionRow {
   key: string
@@ -107,6 +124,7 @@ export interface RenditionRow {
   writtenAt: string | null
   writtenBy: string
   deletedReason: string
+  contentProfile: string | null
   readable: boolean
 }
 
@@ -126,8 +144,210 @@ export function renditionRows(manifest: VersionManifest): RenditionRow[] {
       writtenAt: instant(entry.writtenAt),
       writtenBy: by === undefined ? '' : [by.module, by.actor].filter((x) => x !== '').join(' by '),
       deletedReason: entry.deletedReason,
+      contentProfile: contentProfileLabel(entry.contentProfile),
       readable: state === 'PRESENT',
     }
+  })
+}
+
+export type RenditionChange = 'added' | 'removed' | 'changed' | 'unchanged'
+
+const RENDITION_DIFF_FIELDS = [
+  'state',
+  'mediaType',
+  'sizeBytes',
+  'sha256',
+  'writtenBy',
+  'contentProfile',
+  'deletedReason',
+] as const
+
+export type RenditionDiffField = (typeof RENDITION_DIFF_FIELDS)[number]
+
+export interface RenditionDiffRow {
+  key: string
+  label: string
+  change: RenditionChange
+  base: RenditionRow | null
+  target: RenditionRow | null
+  differs: RenditionDiffField[]
+}
+
+/**
+ * Compares the renditions of two VersionManifests matched by rendition key (name + subKey).
+ */
+export function renditionDiff(base: VersionManifest, target: VersionManifest): RenditionDiffRow[] {
+  const before = new Map(renditionRows(base).map((r) => [r.key, r]))
+  const after = renditionRows(target)
+  const out: RenditionDiffRow[] = []
+  for (const row of after) {
+    const old = before.get(row.key) ?? null
+    before.delete(row.key)
+    if (old === null) {
+      out.push({ key: row.key, label: row.label, change: 'added', base: null, target: row, differs: [] })
+      continue
+    }
+    const differs = RENDITION_DIFF_FIELDS.filter((f) => old[f] !== row[f])
+    out.push({
+      key: row.key,
+      label: row.label,
+      change: differs.length === 0 ? 'unchanged' : 'changed',
+      base: old,
+      target: row,
+      differs,
+    })
+  }
+  for (const row of before.values()) {
+    out.push({ key: row.key, label: row.label, change: 'removed', base: row, target: null, differs: [] })
+  }
+  return out
+}
+
+export const ARCHIVE_UPLOAD_PATH = '/v1/archive:upload'
+
+export interface RenditionUploadForm {
+  accountId: string
+  archive: string
+  entryId: string
+  rendition: string
+  subKey: string
+  contentType: string
+  module: string
+  expectedVersion: string
+}
+
+export interface RenditionUploadPlan {
+  operationId: string
+  url: string
+  contentType: string
+  file: Blob
+  sizeBytes: number
+  sha256: string
+}
+
+export type RenditionUploadResult =
+  | { kind: 'saved'; response: UploadRenditionResponse }
+  | { kind: 'failed'; httpStatus: number | null; failure: RpcFailure }
+
+export function planRenditionUpload(
+  form: RenditionUploadForm,
+  file: File,
+  operationId: string,
+  sha256: string,
+): RenditionUploadPlan {
+  const addr = entryAddress(form.accountId, form.archive, form.entryId)
+  const rendition = form.rendition.trim()
+  if (rendition === '') throw new UploadInputError('Rendition', 'is blank')
+  const params = new URLSearchParams({
+    account_id: addr.accountId,
+    archive: addr.archive,
+    entry_id: addr.entryId,
+    rendition,
+    operation_id: operationId,
+    expected_sha256: sha256,
+  })
+  if (form.subKey.trim() !== '') params.set('sub_key', form.subKey.trim())
+  if (form.module.trim() !== '') params.set('module', form.module.trim())
+  const contentType = form.contentType.trim() || file.type || 'application/octet-stream'
+  params.set('content_type', contentType)
+  const expectedRaw = form.expectedVersion.trim()
+  if (expectedRaw !== '') {
+    let ver: bigint
+    try {
+      ver = BigInt(expectedRaw)
+    } catch {
+      throw new UploadInputError('Expected version', `"${expectedRaw}" is not a whole number`)
+    }
+    if (ver < 0n) throw new UploadInputError('Expected version', 'must not be negative')
+    params.set('expected_version', ver.toString())
+  }
+  return {
+    operationId,
+    url: `${ARCHIVE_UPLOAD_PATH}?${params.toString()}`,
+    contentType,
+    file,
+    sizeBytes: file.size,
+    sha256,
+  }
+}
+
+export function sendRenditionUpload(
+  plan: RenditionUploadPlan,
+  newRequest: () => UploadRequest,
+  onProgress: (sent: number, total: number) => void,
+  signal: AbortSignal,
+): Promise<RenditionUploadResult> {
+  return new Promise((resolve) => {
+    const request = newRequest()
+    request.open('POST', plan.url)
+    request.withCredentials = true
+    request.responseType = 'arraybuffer'
+    request.setRequestHeader('Accept', 'application/protobuf')
+    request.setRequestHeader('Content-Type', plan.contentType)
+    request.setRequestHeader('X-Content-Sha256', plan.sha256)
+    request.upload.onprogress = (event) => onProgress(event.loaded, plan.sizeBytes)
+    const onAbort = () => request.abort()
+    signal.addEventListener('abort', onAbort, { once: true })
+    const done = (result: RenditionUploadResult) => {
+      signal.removeEventListener('abort', onAbort)
+      resolve(result)
+    }
+    request.onload = () => {
+      const type = request.getResponseHeader('content-type') ?? ''
+      if (request.status === 200 && type.startsWith('application/proto')) {
+        try {
+          const response = fromBinary(UploadRenditionResponseSchema, new Uint8Array(request.response as ArrayBuffer))
+          done({ kind: 'saved', response })
+          return
+        } catch (error) {
+          done({
+            kind: 'failed',
+            httpStatus: 200,
+            failure: { code: 'INTERNAL', codeNumber: Code.Internal, message: (error as Error).message },
+          })
+          return
+        }
+      }
+      if (type.startsWith('application/proto')) {
+        try {
+          const err = fromBinary(ItemErrorSchema, new Uint8Array(request.response as ArrayBuffer))
+          done({
+            kind: 'failed',
+            httpStatus: request.status,
+            failure: {
+              code: err.code >= 1 && err.code <= 16 ? codeName(err.code as Code) : `HTTP ${request.status}`,
+              codeNumber: err.code || null,
+              message: err.message || `Archive upload failed with HTTP ${request.status}`,
+            },
+          })
+          return
+        } catch {
+          // Fall through to generic HTTP status reporting
+        }
+      }
+      done({
+        kind: 'failed',
+        httpStatus: request.status,
+        failure: {
+          code: `HTTP ${request.status}`,
+          codeNumber: null,
+          message: `The archive upload route answered HTTP ${request.status} (${type || 'no content type'}).`,
+        },
+      })
+    }
+    request.onerror = () =>
+      done({
+        kind: 'failed',
+        httpStatus: null,
+        failure: { code: 'UNAVAILABLE', codeNumber: Code.Unavailable, message: 'The connection failed before the upload route answered.' },
+      })
+    request.onabort = () =>
+      done({
+        kind: 'failed',
+        httpStatus: null,
+        failure: { code: 'CANCELED', codeNumber: Code.Canceled, message: 'The rendition upload was cancelled.' },
+      })
+    request.send(plan.file)
   })
 }
 

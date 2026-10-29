@@ -34,10 +34,10 @@ import {
 } from '@/gen/ai/protomolt/proto/repo/v2/manifest_pb'
 import { FieldRulesSchema, field as fieldRules, file_ai_protomolt_proto_validate_v1_validate } from '@/gen/ai/protomolt/proto/validate/v1/validate_pb'
 import { linkRow } from './linksCore'
-import { AnySchemas, flatten, linkLines, partDiff, readSide, searchMetadataLines, sectionDiff } from './revisionDiffCore'
+import { AnySchemas, filterSectionDiff, flatten, linkLines, partDiff, readSide, searchMetadataLines, sectionDiff } from './revisionDiffCore'
 import { descriptorSetOf, routerClients, testAddress } from './repositoryTestKit'
 import { decodedTree } from './decodedTreeCore'
-import type { ViewNode } from '@/lib/message-view/messageTree'
+import { filterViewTree, type ViewNode } from '@/lib/message-view/messageTree'
 import { Sha256 } from './sha256'
 import { ResolvedLinkSchema, StaticLinkStateSchema } from '@/gen/ai/protomolt/proto/repo/v2/document_service_pb'
 
@@ -664,5 +664,32 @@ describe('retained Any inspector', () => {
     expect(children[200].label).toBe('(more entries)')
     expect(children[200].loadChildren!()[0].label).toBe('[200]')
     expect(tree[0].loadChildren!()).toBe(children)
+  })
+
+  it('filters a decoded tree across lazy Any nodes and filters section diffs by line or changed-only', async () => {
+    const tagged = taggedSchema()
+    const root = anyContainer()
+    const packed = anyPack(tagged.desc, create(tagged.desc, { title: 'Needle in Any' } as never))
+    const { schemas } = await loadSchemas(
+      create(RevisionValidationSchema, { resolvedOccurrences: [resolved(packed, tagged.set, [fieldStep(1)])] }),
+      [tagged.set],
+    )
+    const tree = decodedTree(root.desc, create(root.desc, { first: packed } as never), {
+      schemas,
+      location: { part: part(DocumentPart.CORE), steps: [] },
+    })
+    const hit = filterViewTree(tree, 'needle')
+    expect(hit.matchCount).toBe(1)
+    expect(hit.nodes).toHaveLength(1)
+    expect(hit.nodes[0].defaultOpen).toBe(true)
+    expect(inspected(hit.nodes)).toContain('Needle in Any')
+    expect(filterViewTree(tree, 'nonexistent-value').nodes).toEqual([])
+
+    const diff = sectionDiff(['title = "Draft"', 'language = "en"'], ['title = "Final"', 'language = "en"'])
+    const changed = filterSectionDiff(diff, '', true)
+    expect(changed.lines.map((l) => l.op)).toEqual(['del', 'add'])
+    const byText = filterSectionDiff(diff, 'final', false)
+    expect(byText.lines).toHaveLength(1)
+    expect(byText.lines[0].text).toContain('Final')
   })
 })

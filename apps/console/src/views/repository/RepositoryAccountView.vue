@@ -23,11 +23,11 @@
         <v-table v-if="drives.length > 0" density="compact" data-testid="drive-table">
           <thead>
             <tr>
-              <th>Name</th>
-              <th>Type</th>
-              <th>Status</th>
-              <th>Provider</th>
-              <th>Location</th>
+              <th scope="col">Name</th>
+              <th scope="col">Type</th>
+              <th scope="col">Status</th>
+              <th scope="col">Provider</th>
+              <th scope="col">Location</th>
             </tr>
           </thead>
           <tbody>
@@ -71,14 +71,64 @@
     <OperationOutcomeInspector :key="accountId" :account-id="accountId" :initial-operation-id="initialOperationId" />
 
     <v-card class="mb-4">
-      <v-card-title class="text-subtitle-2">Documents</v-card-title>
+      <v-card-title class="text-subtitle-2 d-flex align-center flex-wrap ga-2">
+        <span>Documents</span>
+        <v-spacer />
+        <v-btn
+          size="x-small"
+          variant="tonal"
+          prepend-icon="mdi-sitemap-outline"
+          data-testid="toggle-inline-concept-browser"
+          @click="showConceptBrowser = !showConceptBrowser"
+        >
+          {{ showConceptBrowser ? 'Hide SKOS concept picker' : 'Browse SKOS concepts' }}
+        </v-btn>
+      </v-card-title>
       <v-card-text>
-        <v-row dense>
+        <div class="d-flex align-center flex-wrap ga-1 mb-2" data-testid="scope-quick-picks">
+          <span class="text-caption text-medium-emphasis mr-1">Quick scopes:</span>
+          <v-chip
+            size="x-small"
+            variant="tonal"
+            class="text-mono"
+            data-testid="quick-scope-intake"
+            @click="pickScope(`intake:${accountId}`, query.graphAddressId)"
+          >
+            intake:{{ accountId }}
+          </v-chip>
+          <v-chip
+            v-for="ws in sessionWriterScopes"
+            :key="`ws:${ws.datasourceId}:${ws.connectorId ?? ''}`"
+            size="x-small"
+            color="primary"
+            variant="tonal"
+            class="text-mono"
+            :data-testid="`quick-writer-scope-${ws.datasourceId}`"
+            @click="pickScope(`intake:${accountId}`, ws.datasourceId)"
+          >
+            intake:{{ accountId }} / {{ ws.datasourceId }}
+          </v-chip>
+          <v-chip
+            v-for="pair in observedScopePairs"
+            :key="`${pair.graphId}/${pair.graphAddressId}`"
+            size="x-small"
+            variant="outlined"
+            class="text-mono"
+            :data-testid="`quick-scope-pair-${pair.graphId}-${pair.graphAddressId}`"
+            @click="pickScope(pair.graphId, pair.graphAddressId)"
+          >
+            {{ pair.graphId }} / {{ pair.graphAddressId }}
+          </v-chip>
+        </div>
+
+        <v-row density="compact">
           <v-col cols="12" sm="6" md="3">
-            <v-text-field v-model="query.graphId" label="Graph ID (scope)" density="compact" hide-details />
+            <v-text-field v-model="query.graphId" label="Graph ID (scope)" density="compact" hide-details
+                          autocorrect="off" autocapitalize="off" spellcheck="false" data-testid="scope-graph-id" />
           </v-col>
           <v-col cols="12" sm="6" md="3">
-            <v-text-field v-model="query.graphAddressId" label="Graph address ID (scope)" density="compact" hide-details />
+            <v-text-field v-model="query.graphAddressId" label="Graph address ID (scope)" density="compact" hide-details
+                          autocorrect="off" autocapitalize="off" spellcheck="false" data-testid="scope-node-id" />
           </v-col>
           <v-col cols="6" md="2">
             <v-select v-model="query.sortField" :items="sortItems" label="Sort by" density="compact" hide-details data-testid="sort-field" />
@@ -93,14 +143,14 @@
           </v-col>
         </v-row>
 
-        <v-row dense class="mt-1" data-testid="concept-filter">
+        <v-row density="compact" class="mt-1" data-testid="concept-filter">
           <v-col cols="12" sm="6" md="3">
             <v-text-field v-model="query.filter.concept.schemeId" label="Concept scheme ID" density="compact" hide-details
-                          data-testid="concept-scheme" />
+                          autocorrect="off" autocapitalize="off" spellcheck="false" data-testid="concept-scheme" />
           </v-col>
           <v-col cols="12" sm="6" md="3">
             <v-text-field v-model="query.filter.concept.conceptId" label="Concept ID" density="compact" hide-details
-                          data-testid="concept-id" />
+                          autocorrect="off" autocapitalize="off" spellcheck="false" data-testid="concept-id" />
           </v-col>
           <v-col cols="6" md="3">
             <v-checkbox v-model="query.filter.concept.narrower" label="Include narrower concepts" density="compact" hide-details
@@ -112,10 +162,16 @@
           </v-col>
         </v-row>
 
+        <v-expand-transition>
+          <div v-if="showConceptBrowser" class="my-3" data-testid="inline-concept-browser">
+            <ConceptSchemeBrowser :account-id="accountId" embedded @select="applyPickedConcept" />
+          </div>
+        </v-expand-transition>
+
         <v-expansion-panels variant="accordion" class="my-3">
           <v-expansion-panel title="Filters" data-testid="filter-panel">
             <v-expansion-panel-text>
-              <v-row dense>
+              <v-row density="compact">
                 <v-col v-for="f in TEXT_FILTERS" :key="f.field" cols="12" sm="6" md="4">
                   <v-text-field v-model="query.filter.text[f.field]" :label="f.label" density="compact" hide-details
                                 :data-testid="`filter-${f.field}`" />
@@ -168,13 +224,13 @@
         <v-table v-if="rows.length > 0" density="compact" hover data-testid="document-table">
           <thead>
             <tr>
-              <th>Document</th>
-              <th>Title</th>
-              <th>Type</th>
-              <th>MIME type</th>
-              <th>Owner</th>
-              <th>Revision</th>
-              <th>Committed</th>
+              <th scope="col">Document</th>
+              <th scope="col">Title</th>
+              <th scope="col">Type</th>
+              <th scope="col">MIME type</th>
+              <th scope="col">Owner</th>
+              <th scope="col">Revision</th>
+              <th scope="col">Committed</th>
             </tr>
           </thead>
           <tbody>
@@ -217,15 +273,18 @@ import { computed, onMounted, reactive, ref, shallowRef, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { create } from '@bufbuild/protobuf'
 import ConceptEvidence from '@/components/repository/ConceptEvidence.vue'
+import ConceptSchemeBrowser from '@/components/repository/ConceptSchemeBrowser.vue'
 import OperationOutcomeInspector from '@/components/repository/OperationOutcomeInspector.vue'
 import RpcFailureAlert from '@/components/repository/RpcFailureAlert.vue'
+import type { ConsoleSessionStatus } from '@/gen/ai/protomolt/proto/authz/v1/console_session_pb'
 import type { Archive } from '@/gen/ai/protomolt/proto/repo/archive/v1/archive_pb'
 import { ListArchivesRequestSchema } from '@/gen/ai/protomolt/proto/repo/archive/v1/archive_service_pb'
 import { DriveStatusSchema, DriveTypeSchema, ListDrivesRequestSchema, type Drive } from '@/gen/ai/protomolt/proto/repo/v1/drive_pb'
 import { DocumentSortField } from '@/gen/ai/protomolt/proto/repo/v2/document_service_pb'
-import { useRepositoryClients } from '@/repository/clients'
+import { useRepositoryClients, useRepositorySession } from '@/repository/clients'
 import { enumLabel } from '@/repository/formatCore'
 import { evidenceView, type EvidenceView } from '@/repository/linksCore'
+import { scopesIn } from '@/repository/sessionWritersCore'
 import {
   ListingInputError,
   PageCursor,
@@ -244,11 +303,17 @@ import { isOwnCancellation, rpcFailure, type RpcFailure } from '@/repository/rpc
 import { useCallScope } from '@/repository/useCallScope'
 
 const clients = useRepositoryClients()
+const sessions = useRepositorySession()
 const route = useRoute()
 const router = useRouter()
 const accountId = computed(() => String(route.params.accountId))
 const initialOperationId = computed(() =>
   typeof route.query.operationId === 'string' ? route.query.operationId : '')
+const showConceptBrowser = ref(false)
+const session = shallowRef<ConsoleSessionStatus | null>(null)
+const sessionWriterScopes = computed(() =>
+  session.value?.authenticated ? scopesIn(session.value.intakeWriters, accountId.value) : [],
+)
 
 const sortItems = [
   { title: 'Call number', value: DocumentSortField.UNSPECIFIED },
@@ -333,6 +398,35 @@ const listed = ref(false)
 const listFailure = ref<RpcFailure | null>(null)
 const inputError = ref<string | null>(null)
 const evidence = shallowRef<EvidenceView | null>(null)
+
+const observedScopePairs = computed(() => {
+  const seen = new Set<string>()
+  const out: { graphId: string; graphAddressId: string }[] = []
+  for (const ws of sessionWriterScopes.value) {
+    seen.add(`intake:${accountId.value}\u0000${ws.datasourceId}`)
+  }
+  for (const row of rows.value) {
+    if (!row.graphId || !row.graphAddressId) continue
+    const key = `${row.graphId}\u0000${row.graphAddressId}`
+    if (seen.has(key)) continue
+    seen.add(key)
+    out.push({ graphId: row.graphId, graphAddressId: row.graphAddressId })
+  }
+  return out
+})
+
+function pickScope(graphId: string, graphAddressId: string) {
+  query.graphId = graphId
+  query.graphAddressId = graphAddressId
+}
+
+function applyPickedConcept(selection: { schemeId: string; conceptId: string; narrower: boolean; closeMatch: boolean }) {
+  query.filter.concept.schemeId = selection.schemeId
+  query.filter.concept.conceptId = selection.conceptId
+  query.filter.concept.narrower = selection.narrower
+  query.filter.concept.closeMatch = selection.closeMatch
+  applyQuery()
+}
 
 // The query the page tokens were issued for. Paging uses it, not the form,
 // so editing the form changes nothing until List documents is clicked.
@@ -450,6 +544,12 @@ function loadAll() {
   void loadDrives(true)
   void loadArchives()
   listFromRoute()
+  void sessions
+    .status()
+    .then((s) => {
+      session.value = s
+    })
+    .catch(() => {})
 }
 
 onMounted(loadAll)

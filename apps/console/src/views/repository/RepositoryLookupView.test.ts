@@ -154,6 +154,10 @@ describe('RepositoryLookupView, by call number', () => {
 
     expect(wrapper.get('[data-testid="concept-doc-row-doc-99"]').text()).toContain('Wind Farm')
     expect(wrapper.get('[data-testid="mounted-scheme-chip-topics"]').text()).toContain('topics@v5')
+
+    await wrapper.get('[data-testid="lookup-pick-intake-graph"]').trigger('click')
+    await settle()
+    expect((wrapper.get('[data-testid="call-graph"] input').element as HTMLInputElement).value).toBe('intake:acct-b')
     wrapper.unmount()
   })
 })

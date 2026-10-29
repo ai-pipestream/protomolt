@@ -433,6 +433,16 @@
                 </v-chip>
                 <v-spacer />
                 <v-btn
+                  v-if="embedded"
+                  size="x-small"
+                  color="primary"
+                  variant="flat"
+                  :data-testid="`concept-apply-btn-${selectedConcept.id}`"
+                  @click="emitSelection(selectedConcept)"
+                >
+                  Apply to filter
+                </v-btn>
+                <v-btn
                   size="x-small"
                   color="primary"
                   variant="tonal"
@@ -674,12 +684,18 @@ const props = withDefaults(
   defineProps<{
     accountId?: string
     initialSchemes?: ConceptSchemeView[]
+    embedded?: boolean
   }>(),
   {
     accountId: '',
     initialSchemes: () => [],
+    embedded: false,
   },
 )
+
+const emit = defineEmits<{
+  select: [selection: { schemeId: string; conceptId: string; narrower: boolean; closeMatch: boolean }]
+}>()
 
 const router = useRouter()
 const clients = useRepositoryClients()
@@ -922,6 +938,17 @@ function querySelectedConcept(concept: ConceptNodeView) {
   draft.schemeId = concept.schemeId
   draft.conceptId = concept.id
   void runConceptLookup(true)
+}
+
+function emitSelection(concept: ConceptNodeView) {
+  draft.schemeId = concept.schemeId
+  draft.conceptId = concept.id
+  emit('select', {
+    schemeId: concept.schemeId,
+    conceptId: concept.id,
+    narrower: draft.narrower,
+    closeMatch: draft.closeMatch,
+  })
 }
 
 function selectCrossSchemeTarget(schemeId: string, conceptId: string) {

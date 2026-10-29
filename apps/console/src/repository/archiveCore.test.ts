@@ -1,13 +1,15 @@
 import { createHash } from 'node:crypto'
-import { create } from '@bufbuild/protobuf'
+import { create, toBinary } from '@bufbuild/protobuf'
 import { Code, ConnectError } from '@connectrpc/connect'
 import { describe, expect, it } from 'vitest'
 import { ClassificationSchema, ClassificationState } from '@/gen/ai/protomolt/proto/asset/v1/classification_pb'
+import { ContentClass, ContentProfileSchema, QualityDimensionSchema, QualityScoreSchema } from '@/gen/ai/protomolt/proto/asset/v1/content_pb'
 import { FormatFactSchema, PdfDocumentSchema } from '@/gen/ai/protomolt/proto/asset/v1/format_pb'
 import {
   ArchiveService,
   ReadRenditionResponseSchema,
   RenditionReadHeaderSchema,
+  UploadRenditionResponseSchema,
   type ReadRenditionRequest,
   type ReadRenditionResponse,
 } from '@/gen/ai/protomolt/proto/repo/archive/v1/archive_service_pb'
@@ -24,11 +26,15 @@ import { collector } from './blobReadCore'
 import {
   RenditionStreamError,
   classificationLabel,
+  contentProfileLabel,
   entryAddress,
   entryRow,
   parseVersion,
+  planRenditionUpload,
   readRendition,
+  renditionDiff,
   renditionRows,
+  sendRenditionUpload,
   versionRow,
 } from './archiveCore'
 import { at, routerClients } from './repositoryTestKit'
@@ -175,5 +181,127 @@ describe('rows and labels', () => {
     expect(parseVersion('')).toBeNull()
     expect(parseVersion('4')).toBe(4n)
     expect(() => parseVersion('0')).toThrow('greater than zero')
+  })
+
+  it('formats content profiles and diffs two version manifests by rendition key', () => {
+    const profile = create(ContentProfileSchema, {
+      contentClass: ContentClass.OCR_TEXT,
+      quality: create(QualityScoreSchema, {
+        score: 0.94,
+        dimensions: [create(QualityDimensionSchema, { name: 'character-confidence', score: 0.98, weight: 1.0 })],
+      }),
+    })
+    expect(contentProfileLabel(profile)).toBe('OCR_TEXT · quality 0.94 (character-confidence: 0.98)')
+
+    const v1 = create(VersionManifestSchema, {
+      address: ADDRESS,
+      version: 1n,
+      renditions: [
+        create(RenditionManifestEntrySchema, {
+          rendition,
+          state: RenditionState.PRESENT,
+          sizeBytes: 100n,
+          sha256: 'a'.repeat(64),
+        }),
+        create(RenditionManifestEntrySchema, {
+          rendition: create(RenditionDescriptorSchema, { name: 'legacy' }),
+          state: RenditionState.PRESENT,
+          sizeBytes: 50n,
+          sha256: 'b'.repeat(64),
+        }),
+      ],
+    })
+    const v2 = create(VersionManifestSchema, {
+      address: ADDRESS,
+      version: 2n,
+      renditions: [
+        create(RenditionManifestEntrySchema, {
+          rendition,
+          state: RenditionState.PRESENT,
+          sizeBytes: 100n,
+          sha256: 'a'.repeat(64),
+        }),
+        create(RenditionManifestEntrySchema, {
+          rendition: create(RenditionDescriptorSchema, { name: 'ocr', subKey: 'p1', mediaType: 'text/plain' }),
+          state: RenditionState.PRESENT,
+          sizeBytes: 240n,
+          sha256: 'c'.repeat(64),
+          contentProfile: profile,
+        }),
+      ],
+    })
+    const diff = renditionDiff(v1, v2)
+    expect(diff.map((d) => ({ label: d.label, change: d.change }))).toEqual([
+      { label: 'original', change: 'unchanged' },
+      { label: 'ocr / p1', change: 'added' },
+      { label: 'legacy', change: 'removed' },
+    ])
+  })
+
+  it('plans and sends a streaming rendition upload to /v1/archive:upload', async () => {
+    const body = new TextEncoder().encode('rendition payload')
+    const sha = createHash('sha256').update(body).digest('hex')
+    const file = new File([body], 'ocr-p1.txt', { type: 'text/plain' })
+    const plan = planRenditionUpload(
+      {
+        accountId: 'acct-a',
+        archive: 'papers',
+        entryId: 'e-1',
+        rendition: 'ocr',
+        subKey: 'page-1',
+        contentType: 'text/plain',
+        module: 'grparse',
+        expectedVersion: '3',
+      },
+      file,
+      '018f4063-7d4b-7000-8000-000000000099',
+      sha,
+    )
+    expect(plan.url).toContain('/v1/archive:upload?account_id=acct-a&archive=papers&entry_id=e-1&rendition=ocr')
+    expect(plan.url).toContain('sub_key=page-1')
+    expect(plan.url).toContain('expected_version=3')
+    expect(plan.url).toContain(`expected_sha256=${sha}`)
+    expect(plan.url).toContain('operation_id=018f4063-7d4b-7000-8000-000000000099')
+
+    const wire = toBinary(
+      UploadRenditionResponseSchema,
+      create(UploadRenditionResponseSchema, {
+        operationId: '018f4063-7d4b-7000-8000-000000000099',
+        entryUuid: '00000000-0000-5000-8000-000000000001',
+        version: 4n,
+        sha256: sha,
+        replayed: false,
+      }),
+    )
+    const outcome = await sendRenditionUpload(
+      plan,
+      () => {
+        const req = {
+          upload: { onprogress: null as ((e: ProgressEvent) => void) | null },
+          onload: null as ((this: XMLHttpRequest, ev: ProgressEvent) => unknown) | null,
+          onerror: null as ((this: XMLHttpRequest, ev: ProgressEvent) => unknown) | null,
+          onabort: null as ((this: XMLHttpRequest, ev: ProgressEvent) => unknown) | null,
+          withCredentials: false,
+          status: 200,
+          responseType: 'arraybuffer' as XMLHttpRequestResponseType,
+          response: wire.buffer.slice(wire.byteOffset, wire.byteOffset + wire.byteLength),
+          open: () => {},
+          setRequestHeader: () => {},
+          getResponseHeader: () => 'application/protobuf',
+          send: () => {
+            req.onload?.call(req as unknown as XMLHttpRequest, {} as ProgressEvent)
+          },
+          abort: () => {},
+        }
+        return req
+      },
+      () => {},
+      signal(),
+    )
+    expect(outcome.kind).toBe('saved')
+    if (outcome.kind === 'saved') {
+      expect(outcome.response.version).toBe(4n)
+      expect(outcome.response.operationId).toBe('018f4063-7d4b-7000-8000-000000000099')
+    }
   })
 })

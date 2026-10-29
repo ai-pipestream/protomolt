@@ -404,4 +404,32 @@ describe('RepositoryAccountView', () => {
     expect(router.currentRoute.value.query).toEqual({ sort: 'size' })
     wrapper.unmount()
   })
+
+  it('populates scope quick-picks and toggles the inline SKOS concept picker', async () => {
+    const seen: ListDocumentsRequest[] = []
+    const { wrapper } = await mountRepositoryView(RepositoryAccountView, '/repository/accounts/acct-a', (router) => {
+      drives()(router)
+      router.service(DocumentService, {
+        listDocuments(request) {
+          seen.push(request)
+          return create(ListDocumentsResponseSchema, {
+            documents: [summary('doc-1', 'Doc 1')],
+          })
+        },
+      })
+    })
+    await wrapper.get('[data-testid="quick-scope-intake"]').trigger('click')
+    await settle()
+    expect((wrapper.get('[data-testid="scope-graph-id"] input').element as HTMLInputElement).value).toBe('intake:acct-a')
+
+    await wrapper.get('[data-testid="quick-scope-pair-intake:acct-a-ds-files"]').trigger('click')
+    await settle()
+    expect((wrapper.get('[data-testid="scope-node-id"] input').element as HTMLInputElement).value).toBe('ds-files')
+
+    expect(wrapper.find('[data-testid="inline-concept-browser"]').exists()).toBe(false)
+    await wrapper.get('[data-testid="toggle-inline-concept-browser"]').trigger('click')
+    await settle()
+    expect(wrapper.find('[data-testid="inline-concept-browser"]').exists()).toBe(true)
+    wrapper.unmount()
+  })
 })
