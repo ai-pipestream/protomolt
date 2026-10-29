@@ -14,6 +14,16 @@
           v-if="manifest"
           size="small"
           variant="tonal"
+          prepend-icon="mdi-shape-outline"
+          data-testid="toggle-classify-bridge"
+          @click="toggleClassifyBridge"
+        >
+          {{ showClassifyBridge ? 'Hide classify & bridge' : 'Classify & bridge' }}
+        </v-btn>
+        <v-btn
+          v-if="manifest"
+          size="small"
+          variant="tonal"
           prepend-icon="mdi-upload"
           data-testid="toggle-rendition-upload"
           @click="showUpload = !showUpload"
@@ -31,6 +41,19 @@
           <span v-if="info.entryUuid"> · UUID <span class="text-mono">{{ info.entryUuid }}</span></span>
           <span v-if="info.sourceUri"> · {{ info.sourceUri }}</span>
         </div>
+        <div v-if="classificationEvidence.length > 0" class="d-flex flex-wrap ga-1 mt-1" data-testid="entry-classification-evidence">
+          <v-chip
+            v-for="(ev, idx) in classificationEvidence"
+            :key="idx"
+            size="x-small"
+            variant="tonal"
+            color="info"
+            class="text-mono"
+            :data-testid="`classification-evidence-${ev.signal}`"
+          >
+            {{ ev.signal }}: {{ ev.observation }}
+          </v-chip>
+        </div>
         <div v-if="entryMetadata.length > 0" class="d-flex flex-wrap ga-1 mt-2" data-testid="entry-metadata">
           <v-chip
             v-for="m in entryMetadata"
@@ -43,6 +66,168 @@
             {{ m.key }}={{ m.value }}
           </v-chip>
         </div>
+      </v-card-text>
+    </v-card>
+
+    <v-card v-if="showClassifyBridge && address" class="mb-4" data-testid="classify-bridge-panel">
+      <v-card-title class="text-subtitle-2">Characterization &amp; format bridges</v-card-title>
+      <v-card-text>
+        <v-row density="compact">
+          <v-col cols="12" md="6">
+            <div class="text-subtitle-2 mb-2">Classify &amp; characterize (ArchiveService.ClassifyEntry)</div>
+            <v-select
+              v-model="classifyForm.formatCase"
+              :items="DECLARED_FORMAT_ITEMS"
+              label="Declared format"
+              density="compact"
+              hide-details
+              class="mb-2"
+              data-testid="classify-format"
+            />
+            <v-text-field
+              v-if="classifyForm.formatCase !== ''"
+              v-model="classifyForm.filename"
+              label="Declared filename"
+              density="compact"
+              hide-details
+              class="mb-2"
+              autocorrect="off"
+              autocapitalize="off"
+              spellcheck="false"
+              data-testid="classify-filename"
+            />
+            <v-row v-if="classifyForm.formatCase === 'delimited'" density="compact" class="mb-2">
+              <v-col cols="6">
+                <v-text-field
+                  v-model="classifyForm.delimiter"
+                  label="Delimiter (e.g. , or \t)"
+                  density="compact"
+                  hide-details
+                  autocorrect="off"
+                  autocapitalize="off"
+                  spellcheck="false"
+                  data-testid="classify-delimiter"
+                />
+              </v-col>
+              <v-col cols="6">
+                <v-select
+                  v-model="classifyForm.header"
+                  :items="headerPresenceItems"
+                  label="Header row"
+                  density="compact"
+                  hide-details
+                  data-testid="classify-header"
+                />
+              </v-col>
+            </v-row>
+            <v-text-field
+              v-if="classifyForm.formatCase === 'image'"
+              v-model="classifyForm.mediaType"
+              label="Image media type (e.g. image/png)"
+              density="compact"
+              hide-details
+              class="mb-2"
+              autocorrect="off"
+              autocapitalize="off"
+              spellcheck="false"
+              data-testid="classify-image-media-type"
+            />
+            <v-text-field
+              v-model="classifyForm.module"
+              label="Producing module (optional)"
+              density="compact"
+              hide-details
+              class="mb-2"
+              autocorrect="off"
+              autocapitalize="off"
+              spellcheck="false"
+              data-testid="classify-module"
+            />
+            <v-alert v-if="classifyInputError" type="warning" variant="tonal" density="compact" class="mb-2" data-testid="classify-input-error">
+              {{ classifyInputError }}
+            </v-alert>
+            <RpcFailureAlert v-if="classifyFailure" :failure="classifyFailure" title="Classifying the entry" class="mb-2" />
+            <v-btn size="small" color="primary" :loading="classifyBusy" data-testid="classify-submit" @click="submitClassifyEntry">
+              Classify entry
+            </v-btn>
+            <v-alert v-if="classifyResolved" type="success" variant="tonal" density="compact" class="mt-2" data-testid="classify-result">
+              <div class="font-weight-medium">Resolved: {{ classificationLabel(classifyResolved) }}</div>
+              <div v-for="(ev, idx) in classificationEvidenceRows(classifyResolved)" :key="idx" class="text-caption text-mono">
+                {{ ev.signal }}: {{ ev.observation }}
+              </div>
+            </v-alert>
+          </v-col>
+
+          <v-col cols="12" md="6">
+            <div class="text-subtitle-2 mb-2">Format bridges (ArchiveService.BridgeEntry)</div>
+            <v-select
+              v-model="selectedBridges"
+              :items="BRIDGE_KIND_ITEMS"
+              label="Bridges to run (empty runs all applicable)"
+              multiple
+              chips
+              closable-chips
+              density="compact"
+              hide-details
+              class="mb-2"
+              data-testid="bridge-kinds"
+            />
+            <v-text-field
+              v-model="bridgeModule"
+              label="Producing module (optional)"
+              density="compact"
+              hide-details
+              class="mb-2"
+              autocorrect="off"
+              autocapitalize="off"
+              spellcheck="false"
+              data-testid="bridge-module"
+            />
+            <RpcFailureAlert v-if="bridgeFailure" :failure="bridgeFailure" title="Bridging the entry" class="mb-2" />
+            <v-btn size="small" color="primary" :loading="bridgeBusy" data-testid="bridge-submit" @click="submitBridgeEntry">
+              Run bridges
+            </v-btn>
+            <div v-if="bridgeResponse" class="mt-2" data-testid="bridge-result">
+              <div class="text-caption text-mono mb-1" data-testid="bridge-result-version">
+                Entry version after run: {{ bridgeResponse.version }}
+              </div>
+              <v-table v-if="bridgeOutcomes.length > 0" density="compact" data-testid="bridge-outcomes-table">
+                <thead>
+                  <tr>
+                    <th scope="col">Bridge</th>
+                    <th scope="col">Rendition</th>
+                    <th scope="col">Status</th>
+                    <th scope="col">Detail</th>
+                    <th scope="col"><span class="d-sr-only">Actions</span></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="(row, i) in bridgeOutcomes" :key="i" :data-testid="`bridge-outcome-${row.bridge}`">
+                    <td class="text-mono text-caption">{{ row.bridge }}</td>
+                    <td class="text-mono text-caption">{{ row.rendition || '—' }}</td>
+                    <td>
+                      <v-chip size="x-small" variant="tonal" :color="bridgeStatusColor(row.status)" class="text-mono">
+                        {{ row.status }}
+                      </v-chip>
+                    </td>
+                    <td class="text-caption">{{ row.detail || '—' }}</td>
+                    <td>
+                      <v-btn
+                        v-if="row.inspectable"
+                        size="x-small"
+                        variant="tonal"
+                        :data-testid="`bridge-inspect-${row.rendition}`"
+                        @click="inspectBridgedRendition(row.rendition, bridgeResponse.version)"
+                      >
+                        Inspect bytes
+                      </v-btn>
+                    </td>
+                  </tr>
+                </tbody>
+              </v-table>
+            </div>
+          </v-col>
+        </v-row>
       </v-card-text>
     </v-card>
 
@@ -139,7 +324,15 @@
               <span v-if="uploadSaved.replayed"> (replayed)</span>
             </div>
             <div class="text-caption text-mono">
-              SHA-256 {{ uploadSaved.sha256 }} · operation {{ uploadSaved.operationId }}
+              SHA-256 {{ uploadSaved.sha256 }} · operation
+              <router-link
+                v-if="uploadSaved.operationId"
+                :to="{ name: 'repository-lookup', query: { account: queryText('account'), op: uploadSaved.operationId } }"
+                class="text-mono"
+                data-testid="rendition-upload-op-link"
+              >
+                {{ uploadSaved.operationId }}
+              </router-link>
             </div>
             <v-btn
               size="x-small"
@@ -268,7 +461,10 @@
               <td class="text-mono">{{ byteSize(r.sizeBytes) }}</td>
               <td class="text-mono text-caption">{{ r.sha256 }}</td>
               <td class="text-caption" :data-testid="`rendition-profile-${r.label}`">{{ r.contentProfile ?? '—' }}</td>
-              <td class="text-caption">{{ r.writtenAt ?? '' }}<div v-if="r.writtenBy">{{ r.writtenBy }}</div></td>
+              <td class="text-caption">
+                {{ r.writtenAt ?? '' }}
+                <div v-if="r.writtenBy">{{ r.writtenBy }}</div>
+              </td>
               <td>
                 <v-btn v-if="r.readable" size="x-small" variant="tonal" :data-testid="`select-rendition-${r.label}`" @click="selected = r">Select</v-btn>
               </td>
@@ -333,13 +529,23 @@ import { useRoute, useRouter } from 'vue-router'
 import { create } from '@bufbuild/protobuf'
 import ByteReader from '@/components/repository/ByteReader.vue'
 import RpcFailureAlert from '@/components/repository/RpcFailureAlert.vue'
+import type { BridgeKind } from '@/gen/ai/protomolt/proto/asset/v1/bridge_pb'
+import type { Classification } from '@/gen/ai/protomolt/proto/asset/v1/classification_pb'
+import { HeaderPresence } from '@/gen/ai/protomolt/proto/asset/v1/format_pb'
 import {
   GetEntryManifestRequestSchema,
   ListVersionsRequestSchema,
+  type BridgeEntryResponse,
   type UploadRenditionResponse,
 } from '@/gen/ai/protomolt/proto/repo/archive/v1/archive_service_pb'
 import type { EntryAddress, EntryInfo, VersionManifest } from '@/gen/ai/protomolt/proto/repo/archive/v1/entry_pb'
 import {
+  BRIDGE_KIND_ITEMS,
+  DECLARED_FORMAT_ITEMS,
+  bridgeOutcomeRows,
+  buildBridgeEntryRequest,
+  buildClassifyEntryRequest,
+  classificationEvidenceRows,
   classificationLabel,
   entryAddress,
   parseVersion,
@@ -349,6 +555,7 @@ import {
   renditionRows,
   sendRenditionUpload,
   versionRow,
+  type ClassifyEntryForm,
   type RenditionChange,
   type RenditionRow,
   type VersionRow,
@@ -370,6 +577,8 @@ const readScope = useCallScope()
 const versionsScope = useCallScope()
 const compareScope = useCallScope()
 const uploadScope = useCallScope()
+const classifyScope = useCallScope()
+const bridgeScope = useCallScope()
 
 function queryText(name: string): string {
   const value = route.query[name]
@@ -394,6 +603,32 @@ const compareManifest = shallowRef<VersionManifest | null>(null)
 const compareFailure = ref<RpcFailure | null>(null)
 const compareChangedOnly = ref(false)
 
+// Classify & Bridge state
+const showClassifyBridge = ref(false)
+const headerPresenceItems = [
+  { title: 'PRESENT (first row names columns)', value: HeaderPresence.PRESENT },
+  { title: 'ABSENT (data starts at row 1)', value: HeaderPresence.ABSENT },
+]
+const classifyForm = reactive<ClassifyEntryForm>({
+  formatCase: '',
+  filename: '',
+  delimiter: ',',
+  header: HeaderPresence.PRESENT,
+  mediaType: 'image/png',
+  module: '',
+})
+const classifyBusy = ref(false)
+const classifyInputError = ref<string | null>(null)
+const classifyFailure = ref<RpcFailure | null>(null)
+const classifyResolved = shallowRef<Classification | null>(null)
+
+const selectedBridges = ref<BridgeKind[]>([])
+const bridgeModule = ref('')
+const bridgeBusy = ref(false)
+const bridgeFailure = ref<RpcFailure | null>(null)
+const bridgeResponse = shallowRef<BridgeEntryResponse | null>(null)
+const bridgeOutcomes = computed(() => (bridgeResponse.value ? bridgeOutcomeRows(bridgeResponse.value) : []))
+
 // Rendition upload state
 const showUpload = ref(false)
 const uploadForm = reactive({
@@ -410,7 +645,10 @@ const uploadFailure = ref<RpcFailure | null>(null)
 const uploadSaved = shallowRef<UploadRenditionResponse | null>(null)
 
 const renditions = computed(() => (manifest.value ? renditionRows(manifest.value) : []))
-const classification = computed(() => classificationLabel(info.value?.classification))
+const classification = computed(() => classificationLabel(classifyResolved.value ?? info.value?.classification))
+const classificationEvidence = computed(() =>
+  classificationEvidenceRows(classifyResolved.value ?? info.value?.classification),
+)
 const entryMetadata = computed(() => {
   const map = info.value?.metadata
   if (!map) return []
@@ -418,6 +656,84 @@ const entryMetadata = computed(() => {
     .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
     .map(([key, value]) => ({ key, value }))
 })
+
+function toggleClassifyBridge() {
+  showClassifyBridge.value = !showClassifyBridge.value
+  if (showClassifyBridge.value && classifyForm.filename.trim() === '' && info.value?.filename) {
+    classifyForm.filename = info.value.filename
+  }
+}
+
+function bridgeStatusColor(status: string): string {
+  return status === 'PRODUCED'
+    ? 'success'
+    : status === 'UNCHANGED'
+      ? 'info'
+      : status === 'DEFERRED'
+        ? 'warning'
+        : status === 'FAILED'
+          ? 'error'
+          : 'default'
+}
+
+async function submitClassifyEntry() {
+  classifyInputError.value = null
+  classifyFailure.value = null
+  classifyResolved.value = null
+  if (!address.value) return
+  let req
+  try {
+    req = buildClassifyEntryRequest(address.value, classifyForm)
+  } catch (error) {
+    if (error instanceof UploadInputError) {
+      classifyInputError.value = error.message
+      return
+    }
+    throw error
+  }
+  const signal = classifyScope.next()
+  classifyBusy.value = true
+  try {
+    const answer = await clients.archives.classifyEntry(req, { signal })
+    if (signal.aborted) return
+    classifyResolved.value = answer.classification ?? null
+    await load()
+  } catch (error) {
+    if (!signal.aborted) classifyFailure.value = rpcFailure(error)
+  } finally {
+    if (!signal.aborted) classifyBusy.value = false
+  }
+}
+
+async function submitBridgeEntry() {
+  bridgeFailure.value = null
+  bridgeResponse.value = null
+  if (!address.value) return
+  const req = buildBridgeEntryRequest(address.value, selectedBridges.value, bridgeModule.value)
+  const signal = bridgeScope.next()
+  bridgeBusy.value = true
+  try {
+    const answer = await clients.archives.bridgeEntry(req, { signal })
+    if (signal.aborted) return
+    bridgeResponse.value = answer
+    await load()
+  } catch (error) {
+    if (!signal.aborted) bridgeFailure.value = rpcFailure(error)
+  } finally {
+    if (!signal.aborted) bridgeBusy.value = false
+  }
+}
+
+async function inspectBridgedRendition(renditionName: string, version: bigint) {
+  if (requested.value !== null && requested.value !== version) {
+    openVersion(version)
+    return
+  }
+  const match = renditions.value.find((r) => r.name === renditionName && r.readable)
+  if (match) {
+    selected.value = match
+  }
+}
 
 const comparedRenditions = computed(() => {
   if (!compareManifest.value || !manifest.value) return []

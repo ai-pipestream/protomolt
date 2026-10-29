@@ -5,19 +5,51 @@
  */
 import { create, fromBinary } from '@bufbuild/protobuf'
 import { Code, type Client } from '@connectrpc/connect'
+import { BridgeKind, BridgeKindSchema, BridgeStatus, BridgeStatusSchema } from '@/gen/ai/protomolt/proto/asset/v1/bridge_pb'
 import { ClassificationStateSchema, type Classification } from '@/gen/ai/protomolt/proto/asset/v1/classification_pb'
 import { ContentClass, ContentClassSchema, type ContentProfile } from '@/gen/ai/protomolt/proto/asset/v1/content_pb'
-import type { FormatFact } from '@/gen/ai/protomolt/proto/asset/v1/format_pb'
 import {
+  AvroDatasetSchema,
+  DelimitedTableSchema,
+  FormatFactSchema,
+  GzipFileSchema,
+  HeaderPresence,
+  HtmlDocumentSchema,
+  JsonDocumentSchema,
+  MarkdownDocumentSchema,
+  NdjsonDatasetSchema,
+  ParquetDatasetSchema,
+  PdfDocumentSchema,
+  PlainTextSchema,
+  PresentationDocumentSchema,
+  RasterImageSchema,
+  SpreadsheetDocumentSchema,
+  TarArchiveSchema,
+  WordDocumentSchema,
+  XmlDocumentSchema,
+  YamlDocumentSchema,
+  ZipArchiveSchema,
+  type FormatFact,
+} from '@/gen/ai/protomolt/proto/asset/v1/format_pb'
+import { ArchiveSchema, VersioningPolicy } from '@/gen/ai/protomolt/proto/repo/archive/v1/archive_pb'
+import {
+  BridgeEntryRequestSchema,
+  ClassifyEntryRequestSchema,
+  CreateArchiveRequestSchema,
   ReadRenditionRequestSchema,
   UploadRenditionResponseSchema,
   type ArchiveService,
+  type BridgeEntryRequest,
+  type BridgeEntryResponse,
+  type ClassifyEntryRequest,
+  type CreateArchiveRequest,
   type RenditionReadHeader,
   type UploadRenditionResponse,
 } from '@/gen/ai/protomolt/proto/repo/archive/v1/archive_service_pb'
 import {
   EntryAddressSchema,
   RenditionStateSchema,
+  WriteAttributionSchema,
   type EntryAddress,
   type EntryInfo,
   type RenditionDescriptor,
@@ -148,6 +180,212 @@ export function renditionRows(manifest: VersionManifest): RenditionRow[] {
       readable: state === 'PRESENT',
     }
   })
+}
+
+export type DeclaredFormatCase =
+  | ''
+  | 'pdf'
+  | 'json'
+  | 'markdown'
+  | 'text'
+  | 'html'
+  | 'xml'
+  | 'yaml'
+  | 'ndjson'
+  | 'delimited'
+  | 'parquet'
+  | 'avro'
+  | 'word'
+  | 'spreadsheet'
+  | 'presentation'
+  | 'zip'
+  | 'tar'
+  | 'gzip'
+  | 'image'
+
+export const DECLARED_FORMAT_ITEMS: ReadonlyArray<{ title: string; value: DeclaredFormatCase }> = [
+  { title: 'Characterize bytes only (no new declaration)', value: '' },
+  { title: 'PDF document (.pdf)', value: 'pdf' },
+  { title: 'JSON document (.json)', value: 'json' },
+  { title: 'Markdown document (.md)', value: 'markdown' },
+  { title: 'Plain text (.txt / .log)', value: 'text' },
+  { title: 'HTML document (.html)', value: 'html' },
+  { title: 'XML document (.xml)', value: 'xml' },
+  { title: 'YAML document (.yaml / .yml)', value: 'yaml' },
+  { title: 'NDJSON dataset (.ndjson / .jsonl)', value: 'ndjson' },
+  { title: 'Delimited table (.csv / .tsv / .psv)', value: 'delimited' },
+  { title: 'Parquet dataset (.parquet)', value: 'parquet' },
+  { title: 'Avro dataset (.avro)', value: 'avro' },
+  { title: 'Word document (.docx / .doc)', value: 'word' },
+  { title: 'Spreadsheet (.xlsx / .xls / .ods)', value: 'spreadsheet' },
+  { title: 'Presentation (.pptx / .ppt)', value: 'presentation' },
+  { title: 'ZIP archive (.zip)', value: 'zip' },
+  { title: 'TAR archive (.tar / .tar.gz / .tgz)', value: 'tar' },
+  { title: 'GZIP file (.gz)', value: 'gzip' },
+  { title: 'Raster image (.png / .jpg / .webp / .gif)', value: 'image' },
+]
+
+export interface ClassifyEntryForm {
+  formatCase: DeclaredFormatCase
+  filename: string
+  delimiter: string
+  header: HeaderPresence
+  mediaType: string
+  module: string
+}
+
+export function buildDeclaredFormatFact(form: ClassifyEntryForm): FormatFact | undefined {
+  if (form.formatCase === '') return undefined
+  const filename = form.filename.trim()
+  if (filename === '') throw new UploadInputError('Filename', 'is required when declaring a format')
+  switch (form.formatCase) {
+    case 'pdf':
+      return create(FormatFactSchema, { format: { case: 'pdf', value: create(PdfDocumentSchema, { filename }) } })
+    case 'json':
+      return create(FormatFactSchema, { format: { case: 'json', value: create(JsonDocumentSchema, { filename }) } })
+    case 'markdown':
+      return create(FormatFactSchema, { format: { case: 'markdown', value: create(MarkdownDocumentSchema, { filename }) } })
+    case 'text':
+      return create(FormatFactSchema, { format: { case: 'text', value: create(PlainTextSchema, { filename }) } })
+    case 'html':
+      return create(FormatFactSchema, { format: { case: 'html', value: create(HtmlDocumentSchema, { filename }) } })
+    case 'xml':
+      return create(FormatFactSchema, { format: { case: 'xml', value: create(XmlDocumentSchema, { filename }) } })
+    case 'yaml':
+      return create(FormatFactSchema, { format: { case: 'yaml', value: create(YamlDocumentSchema, { filename }) } })
+    case 'ndjson':
+      return create(FormatFactSchema, { format: { case: 'ndjson', value: create(NdjsonDatasetSchema, { filename }) } })
+    case 'delimited': {
+      const delimiter = form.delimiter === '\\t' ? '\t' : form.delimiter
+      if (delimiter.length !== 1) throw new UploadInputError('Delimiter', 'must be a single character (or \\t)')
+      if (form.header === HeaderPresence.UNSPECIFIED) {
+        throw new UploadInputError('Header presence', 'must state PRESENT or ABSENT')
+      }
+      return create(FormatFactSchema, {
+        format: {
+          case: 'delimited',
+          value: create(DelimitedTableSchema, { filename, delimiter, header: form.header }),
+        },
+      })
+    }
+    case 'parquet':
+      return create(FormatFactSchema, { format: { case: 'parquet', value: create(ParquetDatasetSchema, { filename }) } })
+    case 'avro':
+      return create(FormatFactSchema, { format: { case: 'avro', value: create(AvroDatasetSchema, { filename }) } })
+    case 'word':
+      return create(FormatFactSchema, { format: { case: 'word', value: create(WordDocumentSchema, { filename }) } })
+    case 'spreadsheet':
+      return create(FormatFactSchema, { format: { case: 'spreadsheet', value: create(SpreadsheetDocumentSchema, { filename }) } })
+    case 'presentation':
+      return create(FormatFactSchema, { format: { case: 'presentation', value: create(PresentationDocumentSchema, { filename }) } })
+    case 'zip':
+      return create(FormatFactSchema, { format: { case: 'zip', value: create(ZipArchiveSchema, { filename }) } })
+    case 'tar':
+      return create(FormatFactSchema, { format: { case: 'tar', value: create(TarArchiveSchema, { filename }) } })
+    case 'gzip':
+      return create(FormatFactSchema, { format: { case: 'gzip', value: create(GzipFileSchema, { filename }) } })
+    case 'image':
+      return create(FormatFactSchema, {
+        format: {
+          case: 'image',
+          value: create(RasterImageSchema, { filename, mediaType: form.mediaType.trim() }),
+        },
+      })
+  }
+}
+
+export function buildClassifyEntryRequest(address: EntryAddress, form: ClassifyEntryForm): ClassifyEntryRequest {
+  const declared = buildDeclaredFormatFact(form)
+  const mod = form.module.trim()
+  return create(ClassifyEntryRequestSchema, {
+    address,
+    declared,
+    classifiedBy: mod !== '' ? create(WriteAttributionSchema, { module: mod }) : undefined,
+  })
+}
+
+export function classificationEvidenceRows(
+  classification: Classification | undefined,
+): Array<{ signal: string; observation: string }> {
+  if (!classification) return []
+  return classification.evidence.map((e) => ({ signal: e.signal, observation: e.observation }))
+}
+
+export const BRIDGE_KIND_ITEMS: ReadonlyArray<{ title: string; value: BridgeKind }> = BridgeKindSchema.values
+  .filter((v) => v.number !== BridgeKind.UNSPECIFIED)
+  .map((v) => ({
+    title: enumLabel(BridgeKindSchema, v.number),
+    value: v.number as BridgeKind,
+  }))
+
+export function buildBridgeEntryRequest(
+  address: EntryAddress,
+  bridges: BridgeKind[],
+  module: string,
+): BridgeEntryRequest {
+  const mod = module.trim()
+  return create(BridgeEntryRequestSchema, {
+    address,
+    bridges,
+    bridgedBy: mod !== '' ? create(WriteAttributionSchema, { module: mod }) : undefined,
+  })
+}
+
+export interface BridgeOutcomeRow {
+  bridge: string
+  rendition: string
+  status: string
+  detail: string
+  inspectable: boolean
+}
+
+export function bridgeOutcomeRows(response: BridgeEntryResponse): BridgeOutcomeRow[] {
+  return response.outcomes.map((o) => ({
+    bridge: enumLabel(BridgeKindSchema, o.bridge),
+    rendition: o.rendition,
+    status: enumLabel(BridgeStatusSchema, o.status),
+    detail: o.detail,
+    inspectable:
+      o.rendition.trim() !== '' && (o.status === BridgeStatus.PRODUCED || o.status === BridgeStatus.UNCHANGED),
+  }))
+}
+
+export interface CreateArchiveForm {
+  accountId: string
+  name: string
+  driveName: string
+  versioning: VersioningPolicy
+  description: string
+}
+
+export function buildCreateArchiveRequest(form: CreateArchiveForm): CreateArchiveRequest {
+  const accountId = form.accountId.trim()
+  if (accountId === '') throw new UploadInputError('Account ID', 'is blank')
+  const name = form.name.trim()
+  if (name === '') throw new UploadInputError('Archive name', 'is blank')
+  const driveName = form.driveName.trim()
+  if (driveName === '') throw new UploadInputError('Drive name', 'is blank')
+  const versioning = form.versioning === VersioningPolicy.UNSPECIFIED ? VersioningPolicy.RETAINED : form.versioning
+  return create(CreateArchiveRequestSchema, {
+    archive: create(ArchiveSchema, {
+      accountId,
+      name,
+      driveName,
+      versioning,
+      description: form.description.trim(),
+    }),
+  })
+}
+
+export function suggestEntryIdFromFilename(filename: string): string {
+  const base = filename.split(/[/\\]/).pop()?.trim() ?? ''
+  if (base === '') return ''
+  const dot = base.lastIndexOf('.')
+  const stem = dot > 0 ? base.slice(0, dot) : base
+  return stem
+    .toLowerCase()
+    .replace(/[^a-z0-9._-]+/g, '-')
+    .replace(/^-+|-+$/g, '')
 }
 
 export type RenditionChange = 'added' | 'removed' | 'changed' | 'unchanged'

@@ -46,11 +46,23 @@
             <v-text-field v-model="form.docId" label="Document ID (blank: derived from the file's SHA-256)" density="compact"
                           autocorrect="off" autocapitalize="off" spellcheck="false" data-testid="up-doc" />
           </v-col>
-          <v-col cols="12" md="4">
+          <v-col cols="12" md="3">
+            <v-text-field
+              v-model="pathPrefix"
+              label="Auto-ID path prefix (optional)"
+              density="compact"
+              placeholder="e.g. reports/2026"
+              autocorrect="off"
+              autocapitalize="off"
+              spellcheck="false"
+              data-testid="upload-path-prefix"
+            />
+          </v-col>
+          <v-col cols="12" md="2">
             <v-text-field v-model="form.expectedRevision" label="Expected revision (blank: a new document)" density="compact"
                           autocorrect="off" autocapitalize="off" spellcheck="false" data-testid="up-expected" />
           </v-col>
-          <v-col cols="12" md="2">
+          <v-col cols="12" md="1">
             <v-text-field v-model="form.connectorId" label="Connector ID" density="compact"
                           autocorrect="off" autocapitalize="off" spellcheck="false" data-testid="up-connector" />
           </v-col>
@@ -71,8 +83,114 @@
         <div v-if="sessionFailure" class="text-caption text-medium-emphasis mb-2" data-testid="up-session-failure">
           Your session's writer scopes could not be read: {{ sessionFailure }}
         </div>
-        <input ref="fileInput" type="file" data-testid="up-file" @change="pickFile" />
-        <div v-if="file" class="text-caption text-mono mt-1">{{ file.name }} · {{ byteSize(file.size) }} · {{ file.type || 'no type' }}</div>
+        <v-sheet
+          rounded
+          border
+          class="pa-3 mb-2"
+          :class="{ 'bg-surface-light': dragActive }"
+          data-testid="upload-dropzone"
+          @dragover.prevent="dragActive = true"
+          @dragleave.prevent="dragActive = false"
+          @drop.prevent="dropFiles"
+        >
+          <div class="d-flex align-center flex-wrap ga-2">
+            <v-icon size="small" color="primary">mdi-cloud-upload-outline</v-icon>
+            <span class="text-caption text-medium-emphasis">Drag &amp; drop one or more files here, or choose from disk:</span>
+            <input ref="fileInput" type="file" multiple data-testid="up-file" @change="pickFile" />
+          </div>
+          <div v-if="file && batchQueue.length <= 1" class="d-flex align-center flex-wrap ga-2 text-caption text-mono mt-1">
+            <span>{{ file.name }} · {{ byteSize(file.size) }} · {{ file.type || 'no type' }}</span>
+            <v-chip
+              size="x-small"
+              color="primary"
+              variant="tonal"
+              data-testid="up-use-filename"
+              @click="fillDocIdFromFilename"
+            >
+              Use filename as Document ID ({{ deriveDocIdFromFilename(pathPrefix, file.name) }})
+            </v-chip>
+          </div>
+        </v-sheet>
+
+        <v-sheet v-if="batchQueue.length > 1" rounded border class="pa-3 mb-3" data-testid="batch-upload-panel">
+          <div class="d-flex align-center flex-wrap ga-2 mb-2">
+            <span class="text-subtitle-2">Batch upload queue ({{ batchQueue.length }} files)</span>
+            <v-spacer />
+            <v-btn
+              size="small"
+              color="primary"
+              :loading="batchBusy"
+              :disabled="busy || batchBusy"
+              data-testid="batch-upload-submit"
+              @click="startBatchUpload"
+            >
+              Upload all ({{ batchQueue.length }})
+            </v-btn>
+          </div>
+          <v-table density="compact" data-testid="batch-upload-table">
+            <thead>
+              <tr>
+                <th scope="col">File</th>
+                <th scope="col">Size</th>
+                <th scope="col">Document ID</th>
+                <th scope="col">Status</th>
+                <th scope="col">Outcome</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="(item, idx) in batchQueue" :key="idx" :data-testid="`batch-row-${idx}`">
+                <td class="text-mono text-caption">{{ item.file.name }}</td>
+                <td class="text-mono text-caption">{{ byteSize(item.file.size) }}</td>
+                <td>
+                  <v-text-field
+                    v-model="item.docId"
+                    density="compact"
+                    hide-details
+                    variant="underlined"
+                    autocorrect="off"
+                    autocapitalize="off"
+                    spellcheck="false"
+                    :data-testid="`batch-doc-id-${idx}`"
+                  />
+                </td>
+                <td>
+                  <v-chip
+                    size="x-small"
+                    :color="item.status === 'SAVED' ? 'success' : item.status === 'FAILED' ? 'error' : item.status === 'READY' ? 'default' : 'primary'"
+                    variant="tonal"
+                    class="text-mono"
+                    :data-testid="`batch-status-${idx}`"
+                  >
+                    {{ item.status }}
+                  </v-chip>
+                </td>
+                <td class="text-caption">
+                  <div class="d-flex align-center flex-wrap ga-2">
+                    <span v-if="item.message" class="text-mono">{{ item.message }}</span>
+                    <router-link
+                      v-if="item.operationId"
+                      :to="{ name: 'repository-lookup', query: { account: form.accountId, op: item.operationId } }"
+                      class="text-mono text-caption"
+                      :data-testid="`batch-op-${idx}`"
+                    >
+                      {{ item.operationId.slice(0, 12) }}
+                    </router-link>
+                    <v-btn
+                      v-if="item.address && item.revision !== null"
+                      size="x-small"
+                      variant="tonal"
+                      :to="revisionRoute(item.address, item.revision)"
+                      :data-testid="`batch-open-${idx}`"
+                    >
+                      Open
+                    </v-btn>
+                  </div>
+                </td>
+              </tr>
+            </tbody>
+          </v-table>
+        </v-sheet>
+
         <RpcFailureAlert v-if="drivesFailure" :failure="drivesFailure" title="Listing drives" class="mt-2" />
         <v-alert v-if="inputError" type="warning" variant="tonal" density="compact" class="mt-2" data-testid="up-input-error">
           {{ inputError }}
@@ -163,7 +281,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, inject, onMounted, reactive, ref, shallowRef } from 'vue'
+import { computed, inject, onMounted, reactive, ref, shallowRef, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { create } from '@bufbuild/protobuf'
 import OperationOutcomeInspector from '@/components/repository/OperationOutcomeInspector.vue'
@@ -178,6 +296,7 @@ import type { OutcomeAnswer } from '@/repository/lookupCore'
 import { isOwnCancellation, rpcFailure, type RpcFailure } from '@/repository/rpcErrorCore'
 import {
   UploadInputError,
+  deriveDocIdFromFilename,
   emptyUploadForm,
   fileSha256,
   followOutcome,
@@ -196,6 +315,7 @@ const signIn = useSignIn()
 const newRequest = inject(REPOSITORY_UPLOAD_REQUEST, () => new XMLHttpRequest())
 const route = useRoute()
 const scope = useCallScope()
+const batchScope = useCallScope()
 const drivesScope = useCallScope()
 
 function queryText(name: string): string {
@@ -212,7 +332,23 @@ form.datasourceId = queryText('datasource')
 form.docId = queryText('doc')
 form.expectedRevision = queryText('expected')
 
+const pathPrefix = ref('')
+const lastAutoDocId = ref('')
+const dragActive = ref(false)
 const file = shallowRef<File | null>(null)
+
+export interface BatchQueueItem {
+  file: File
+  docId: string
+  status: 'READY' | 'HASHING' | 'UPLOADING' | 'SAVED' | 'FAILED'
+  operationId: string | null
+  message: string
+  address: NodeAddress | null
+  revision: bigint | null
+}
+
+const batchQueue = ref<BatchQueueItem[]>([])
+const batchBusy = ref(false)
 const driveNames = ref<string[]>([])
 const drivesFailure = ref<RpcFailure | null>(null)
 const inputError = ref<string | null>(null)
@@ -231,9 +367,124 @@ const sentPercent = computed(() =>
   plan.value && sent.value !== null && plan.value.sizeBytes > 0 ? (sent.value * 100) / plan.value.sizeBytes : 100,
 )
 
+function stageSelectedFiles(selected: File[]) {
+  file.value = selected.length > 0 ? selected[0] : null
+  if (selected.length > 1) {
+    batchQueue.value = selected.map((f) => ({
+      file: f,
+      docId: deriveDocIdFromFilename(pathPrefix.value, f.name),
+      status: 'READY',
+      operationId: null,
+      message: '',
+      address: null,
+      revision: null,
+    }))
+  } else {
+    batchQueue.value = []
+    if (selected.length === 1 && pathPrefix.value.trim() !== '') {
+      const current = form.docId.trim()
+      if (current === '' || current === lastAutoDocId.value) {
+        const derived = deriveDocIdFromFilename(pathPrefix.value, selected[0].name)
+        form.docId = derived
+        lastAutoDocId.value = derived
+      }
+    }
+  }
+}
+
+watch(pathPrefix, (nextPrefix, prevPrefix) => {
+  if (file.value !== null && batchQueue.value.length <= 1) {
+    const current = form.docId.trim()
+    const prevDerived = deriveDocIdFromFilename(prevPrefix ?? '', file.value.name)
+    if ((current === '' && nextPrefix.trim() !== '') || current === lastAutoDocId.value || current === prevDerived) {
+      const next = nextPrefix.trim() === '' && lastAutoDocId.value === '' ? '' : deriveDocIdFromFilename(nextPrefix, file.value.name)
+      form.docId = next
+      lastAutoDocId.value = next
+    }
+  }
+  for (const item of batchQueue.value) {
+    if (item.status === 'READY') {
+      const prevDerived = deriveDocIdFromFilename(prevPrefix ?? '', item.file.name)
+      if (item.docId === prevDerived || item.docId.trim() === '') {
+        item.docId = deriveDocIdFromFilename(nextPrefix, item.file.name)
+      }
+    }
+  }
+})
+
+function fillDocIdFromFilename() {
+  if (file.value === null) return
+  const derived = deriveDocIdFromFilename(pathPrefix.value, file.value.name)
+  form.docId = derived
+  lastAutoDocId.value = derived
+}
+
 function pickFile(event: Event) {
   const files = (event.target as HTMLInputElement).files
-  file.value = files && files.length > 0 ? files[0] : null
+  stageSelectedFiles(files ? Array.from(files) : [])
+}
+
+function dropFiles(event: DragEvent) {
+  dragActive.value = false
+  const dropped = event.dataTransfer?.files
+  if (dropped && dropped.length > 0) {
+    stageSelectedFiles(Array.from(dropped))
+  }
+}
+
+async function startBatchUpload() {
+  inputError.value = null
+  if (batchQueue.value.length === 0) return
+  // Validate common fields first using the first item.
+  const firstItem = batchQueue.value[0]
+  try {
+    planUpload({ ...form, docId: firstItem.docId, expectedRevision: '' }, firstItem.file, newOperationId(), '0'.repeat(64))
+  } catch (error) {
+    if (error instanceof UploadInputError) {
+      inputError.value = error.message
+      return
+    }
+    throw error
+  }
+  const signal = batchScope.next()
+  batchBusy.value = true
+  try {
+    for (const item of batchQueue.value) {
+      if (signal.aborted) return
+      item.status = 'HASHING'
+      item.message = ''
+      const opId = newOperationId()
+      item.operationId = opId
+      try {
+        const sha256 = await fileSha256(item.file, signal)
+        if (signal.aborted) return
+        const itemPlan = planUpload({ ...form, docId: item.docId, expectedRevision: '' }, item.file, opId, sha256)
+        item.status = 'UPLOADING'
+        const sendResult = await sendUpload(itemPlan, newRequest, () => {}, signal)
+        if (signal.aborted) return
+        if (sendResult.kind === 'saved') {
+          const saved = sendResult.response.answer.case === 'saved' ? sendResult.response.answer.value : undefined
+          const accession = saved?.accession
+          item.status = 'SAVED'
+          item.address = accession?.address ?? null
+          item.revision = accession?.revision ?? null
+          item.message = accession ? `rev ${accession.revision}` : 'saved'
+        } else if (sendResult.kind === 'unsettled') {
+          item.status = 'FAILED'
+          item.message = sendResult.reason
+        } else {
+          item.status = 'FAILED'
+          item.message = `${sendResult.failure.code}: ${sendResult.failure.message}`
+        }
+      } catch (error) {
+        if (signal.aborted) return
+        item.status = 'FAILED'
+        item.message = error instanceof Error ? error.message : String(error)
+      }
+    }
+  } finally {
+    if (!signal.aborted) batchBusy.value = false
+  }
 }
 
 function rejectionReason(reason: number) {

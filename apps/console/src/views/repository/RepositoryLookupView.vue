@@ -161,22 +161,45 @@ const revisionText = ref('')
 const callError = ref<string | null>(null)
 
 const opAccount = ref(presetAccount)
-const operationId = ref('')
+const presetOp =
+  typeof route.query.op === 'string'
+    ? route.query.op
+    : typeof route.query.operationId === 'string'
+      ? route.query.operationId
+      : ''
+const operationId = ref(presetOp)
 const looking = ref(false)
 const opInputError = ref<string | null>(null)
 const opFailure = ref<RpcFailure | null>(null)
 const answer = ref<OutcomeAnswer | null>(null)
+let lastLookedUpKey = ''
 
 watch(
-  () => route.query.account,
-  (next) => {
-    const account = typeof next === 'string' ? next : ''
+  () => [route.query.account, route.query.op, route.query.operationId],
+  ([nextAccount, nextOp, nextOperationId]) => {
+    const account = typeof nextAccount === 'string' ? nextAccount : ''
     if (account !== '') {
       call.accountId = account
       opAccount.value = account
     }
+    const op = typeof nextOp === 'string' ? nextOp : typeof nextOperationId === 'string' ? nextOperationId : ''
+    if (op !== '' && op !== operationId.value) {
+      operationId.value = op
+    }
+    if (opAccount.value.trim() !== '' && op.trim() !== '') {
+      const key = `${opAccount.value.trim()}/${op.trim()}`
+      if (key !== lastLookedUpKey) {
+        void lookup()
+      }
+    }
   },
 )
+
+onMounted(() => {
+  if (opAccount.value.trim() !== '' && operationId.value.trim() !== '') {
+    void lookup()
+  }
+})
 
 function documentRoute(address: NodeAddress, revision: bigint | null) {
   const query: Record<string, string> = {
@@ -207,6 +230,14 @@ async function lookup() {
   opInputError.value = null
   opFailure.value = null
   answer.value = null
+  const acct = opAccount.value.trim()
+  const op = operationId.value.trim()
+  if (acct !== '' && op !== '') {
+    lastLookedUpKey = `${acct}/${op}`
+    if (route.name === 'repository-lookup' && (route.query.account !== acct || route.query.op !== op)) {
+      void router.replace({ name: 'repository-lookup', query: { ...route.query, account: acct, op } })
+    }
+  }
   const signal = scope.next()
   looking.value = true
   try {

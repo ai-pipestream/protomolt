@@ -274,4 +274,42 @@ describe('RepositoryUploadView', () => {
     expect(wrapper.get('[data-testid="up-session-failure"]').text()).toContain('sign-in is not configured')
     wrapper.unmount()
   })
+
+  it('auto-fills docId from path prefix + filename and uploads a multi-file batch queue', async () => {
+    const outcomes: GetOperationOutcomeRequest[] = []
+    const mounted = await mountRepositoryView(
+      RepositoryUploadView,
+      { name: 'repository-upload', query: { account: 'acct-a', datasource: 'ds-files' } },
+      repository(outcomes),
+      {
+        [REPOSITORY_UPLOAD_REQUEST as symbol]: () => new FakeUploadRequest((r) => saved(r)),
+        [REPOSITORY_SIGN_IN as symbol]: vi.fn(),
+      },
+    )
+    const { wrapper } = mounted
+    ;(wrapper.vm as unknown as { form: { drive: string } }).form.drive = 'intake'
+    await wrapper.get('[data-testid="upload-path-prefix"] input').setValue('reports/2026')
+    await settle()
+
+    const input = wrapper.get('[data-testid="up-file"]').element as HTMLInputElement
+    const fileA = new File([new TextEncoder().encode('alpha')], 'Alpha Report.pdf', { type: 'application/pdf' })
+    const fileB = new File([new TextEncoder().encode('beta')], 'Beta Notes.txt', { type: 'text/plain' })
+    Object.defineProperty(input, 'files', { value: [fileA, fileB], configurable: true })
+    await wrapper.get('[data-testid="up-file"]').trigger('change')
+    await settle()
+
+    expect(wrapper.find('[data-testid="batch-upload-table"]').exists()).toBe(true)
+    expect((wrapper.get('[data-testid="batch-doc-id-0"] input').element as HTMLInputElement).value).toBe('reports/2026/alpha-report.pdf')
+    expect((wrapper.get('[data-testid="batch-doc-id-1"] input').element as HTMLInputElement).value).toBe('reports/2026/beta-notes.txt')
+
+    await wrapper.get('[data-testid="batch-upload-submit"]').trigger('click')
+    await settle()
+    expect(FakeUploadRequest.sent).toHaveLength(2)
+    expect(FakeUploadRequest.sent[0].params().get('doc_id')).toBe('reports/2026/alpha-report.pdf')
+    expect(FakeUploadRequest.sent[1].params().get('doc_id')).toBe('reports/2026/beta-notes.txt')
+    expect(wrapper.get('[data-testid="batch-status-0"]').text()).toBe('SAVED')
+    expect(wrapper.get('[data-testid="batch-status-1"]').text()).toBe('SAVED')
+    expect(wrapper.find('[data-testid="batch-open-0"]').exists()).toBe(true)
+    wrapper.unmount()
+  })
 })

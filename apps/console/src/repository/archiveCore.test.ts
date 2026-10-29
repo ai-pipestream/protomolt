@@ -2,11 +2,15 @@ import { createHash } from 'node:crypto'
 import { create, toBinary } from '@bufbuild/protobuf'
 import { Code, ConnectError } from '@connectrpc/connect'
 import { describe, expect, it } from 'vitest'
-import { ClassificationSchema, ClassificationState } from '@/gen/ai/protomolt/proto/asset/v1/classification_pb'
+import { CharacterizationEvidenceSchema, ClassificationSchema, ClassificationState } from '@/gen/ai/protomolt/proto/asset/v1/classification_pb'
+import { BridgeKind, BridgeStatus } from '@/gen/ai/protomolt/proto/asset/v1/bridge_pb'
 import { ContentClass, ContentProfileSchema, QualityDimensionSchema, QualityScoreSchema } from '@/gen/ai/protomolt/proto/asset/v1/content_pb'
-import { FormatFactSchema, PdfDocumentSchema } from '@/gen/ai/protomolt/proto/asset/v1/format_pb'
+import { FormatFactSchema, HeaderPresence, PdfDocumentSchema } from '@/gen/ai/protomolt/proto/asset/v1/format_pb'
+import { VersioningPolicy } from '@/gen/ai/protomolt/proto/repo/archive/v1/archive_pb'
 import {
   ArchiveService,
+  BridgeEntryResponseSchema,
+  BridgeOutcomeSchema,
   ReadRenditionResponseSchema,
   RenditionReadHeaderSchema,
   UploadRenditionResponseSchema,
@@ -25,6 +29,12 @@ import {
 import { collector } from './blobReadCore'
 import {
   RenditionStreamError,
+  bridgeOutcomeRows,
+  buildBridgeEntryRequest,
+  buildClassifyEntryRequest,
+  buildCreateArchiveRequest,
+  buildDeclaredFormatFact,
+  classificationEvidenceRows,
   classificationLabel,
   contentProfileLabel,
   entryAddress,
@@ -35,6 +45,7 @@ import {
   renditionDiff,
   renditionRows,
   sendRenditionUpload,
+  suggestEntryIdFromFilename,
   versionRow,
 } from './archiveCore'
 import { at, routerClients } from './repositoryTestKit'
@@ -303,5 +314,89 @@ describe('rows and labels', () => {
       expect(outcome.response.version).toBe(4n)
       expect(outcome.response.operationId).toBe('018f4063-7d4b-7000-8000-000000000099')
     }
+  })
+
+  it('builds ClassifyEntry, BridgeEntry, and CreateArchive requests and formats outcomes', () => {
+    const fact = buildDeclaredFormatFact({
+      formatCase: 'delimited',
+      filename: 'metrics.tsv',
+      delimiter: '\\t',
+      header: HeaderPresence.PRESENT,
+      mediaType: '',
+      module: 'console',
+    })
+    expect(fact?.format.case).toBe('delimited')
+    if (fact?.format.case === 'delimited') {
+      expect(fact.format.value.delimiter).toBe('\t')
+      expect(fact.format.value.header).toBe(HeaderPresence.PRESENT)
+    }
+
+    const classifyReq = buildClassifyEntryRequest(ADDRESS, {
+      formatCase: 'pdf',
+      filename: 'paper.pdf',
+      delimiter: ',',
+      header: HeaderPresence.PRESENT,
+      mediaType: '',
+      module: 'grparse',
+    })
+    expect(classifyReq.address).toEqual(ADDRESS)
+    expect(classifyReq.declared?.format.case).toBe('pdf')
+    expect(classifyReq.classifiedBy?.module).toBe('grparse')
+
+    const evidence = classificationEvidenceRows(
+      create(ClassificationSchema, {
+        state: ClassificationState.VERIFIED,
+        declared: create(FormatFactSchema, { format: { case: 'pdf', value: create(PdfDocumentSchema, { filename: 'paper.pdf' }) } }),
+        identified: create(FormatFactSchema, { format: { case: 'pdf', value: create(PdfDocumentSchema, { filename: 'paper.pdf' }) } }),
+        evidence: [
+          create(CharacterizationEvidenceSchema, { signal: 'magic-bytes', observation: '%PDF-1.7 header at offset 0' }),
+        ],
+      }),
+    )
+    expect(evidence).toEqual([
+      { signal: 'magic-bytes', observation: '%PDF-1.7 header at offset 0' },
+    ])
+
+    const bridgeReq = buildBridgeEntryRequest(ADDRESS, [BridgeKind.DOCUMENT_TEXT, BridgeKind.OCR_TEXT], 'bridge-worker')
+    expect(bridgeReq.bridges).toEqual([BridgeKind.DOCUMENT_TEXT, BridgeKind.OCR_TEXT])
+    expect(bridgeReq.bridgedBy?.module).toBe('bridge-worker')
+
+    const outcomes = bridgeOutcomeRows(
+      create(BridgeEntryResponseSchema, {
+        outcomes: [
+          create(BridgeOutcomeSchema, {
+            bridge: BridgeKind.DOCUMENT_TEXT,
+            status: BridgeStatus.PRODUCED,
+            rendition: 'parsed',
+            detail: 'extracted 12 pages',
+          }),
+        ],
+      }),
+    )
+    expect(outcomes).toEqual([
+      {
+        bridge: 'DOCUMENT_TEXT',
+        status: 'PRODUCED',
+        rendition: 'parsed',
+        detail: 'extracted 12 pages',
+        inspectable: true,
+      },
+    ])
+
+    const createArch = buildCreateArchiveRequest({
+      accountId: 'acct-a',
+      name: 'papers-2026',
+      driveName: 'intake',
+      description: '2026 corpus',
+      versioning: VersioningPolicy.RETAINED,
+    })
+    expect(createArch.archive).toMatchObject({
+      accountId: 'acct-a',
+      name: 'papers-2026',
+      driveName: 'intake',
+      description: '2026 corpus',
+      versioning: VersioningPolicy.RETAINED,
+    })
+    expect(suggestEntryIdFromFilename('Quarterly Report (Final).pdf')).toBe('quarterly-report-final')
   })
 })

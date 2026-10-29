@@ -3,11 +3,16 @@ import { createHash } from 'node:crypto'
 import { create } from '@bufbuild/protobuf'
 import { Code, ConnectError, type ConnectRouter } from '@connectrpc/connect'
 import { afterEach, describe, expect, it } from 'vitest'
-import { ClassificationState } from '@/gen/ai/protomolt/proto/asset/v1/classification_pb'
+import { CharacterizationEvidenceSchema, ClassificationSchema, ClassificationState } from '@/gen/ai/protomolt/proto/asset/v1/classification_pb'
+import { BridgeKind, BridgeStatus } from '@/gen/ai/protomolt/proto/asset/v1/bridge_pb'
 import { ContentClass, ContentProfileSchema, QualityScoreSchema } from '@/gen/ai/protomolt/proto/asset/v1/content_pb'
+import { FormatFactSchema, PdfDocumentSchema } from '@/gen/ai/protomolt/proto/asset/v1/format_pb'
 import { ArchiveSchema, ArchiveStatsSchema, RenditionStatsSchema, VersioningPolicy } from '@/gen/ai/protomolt/proto/repo/archive/v1/archive_pb'
 import {
   ArchiveService,
+  BridgeEntryResponseSchema,
+  BridgeOutcomeSchema,
+  ClassifyEntryResponseSchema,
   GetArchiveResponseSchema,
   GetArchiveStatsResponseSchema,
   GetEntryManifestResponseSchema,
@@ -302,6 +307,92 @@ describe('RepositoryArchiveEntryView', () => {
     await wrapper.get('[data-testid="toggle-rendition-upload"]').trigger('click')
     await settle()
     expect(wrapper.find('[data-testid="rendition-upload-panel"]').exists()).toBe(true)
+    wrapper.unmount()
+  })
+
+  it('invokes ClassifyEntry and BridgeEntry from the characterization workbench and inspects produced renditions', async () => {
+    const s = seen()
+    let classifiedDeclared: string | undefined
+    let bridgedKinds: BridgeKind[] = []
+    const { wrapper } = await mountRepositoryView(RepositoryArchiveEntryView, ENTRY, (router) => {
+      archives(s)(router)
+      router.service(ArchiveService, {
+        getEntryManifest: (r) =>
+          create(GetEntryManifestResponseSchema, {
+            info: create(EntryInfoSchema, { address: address('e-1'), currentVersion: 3n, title: 'Paper 1', filename: 'p1.pdf', contentType: 'application/pdf' }),
+            manifest: manifest(r.version === 0n ? 3n : r.version),
+          }),
+        listVersions: () => create(ListVersionsResponseSchema, { versions: [manifest(3n)] }),
+        classifyEntry(request) {
+          classifiedDeclared = request.declared?.format.case
+          return create(ClassifyEntryResponseSchema, {
+            classification: create(ClassificationSchema, {
+              state: ClassificationState.VERIFIED,
+              declared: request.declared,
+              identified: create(FormatFactSchema, { format: { case: 'pdf', value: create(PdfDocumentSchema, { filename: 'p1.pdf' }) } }),
+              evidence: [create(CharacterizationEvidenceSchema, { signal: 'magic-bytes', observation: '%PDF-1.7 header' })],
+            }),
+          })
+        },
+        bridgeEntry(request) {
+          bridgedKinds = [...request.bridges]
+          return create(BridgeEntryResponseSchema, {
+            version: 3n,
+            outcomes: [
+              create(BridgeOutcomeSchema, {
+                bridge: BridgeKind.DOCUMENT_TEXT,
+                status: BridgeStatus.PRODUCED,
+                rendition: 'original',
+                detail: 'extracted 8 pages',
+              }),
+            ],
+          })
+        },
+      })
+    })
+
+    await wrapper.get('[data-testid="toggle-classify-bridge"]').trigger('click')
+    await settle()
+    expect(wrapper.find('[data-testid="classify-bridge-panel"]').exists()).toBe(true)
+
+    ;(wrapper.vm as unknown as { classifyForm: { formatCase: string; filename: string } }).classifyForm.formatCase = 'pdf'
+    ;(wrapper.vm as unknown as { classifyForm: { formatCase: string; filename: string } }).classifyForm.filename = 'p1.pdf'
+    await settle()
+    await wrapper.get('[data-testid="classify-submit"]').trigger('click')
+    await settle()
+    expect(classifiedDeclared).toBe('pdf')
+    expect(wrapper.get('[data-testid="classify-result"]').text()).toContain('VERIFIED')
+    expect(wrapper.get('[data-testid="classify-result"]').text()).toContain('%PDF-1.7 header')
+
+    ;(wrapper.vm as unknown as { selectedBridges: BridgeKind[] }).selectedBridges = [BridgeKind.DOCUMENT_TEXT]
+    await settle()
+    await wrapper.get('[data-testid="bridge-submit"]').trigger('click')
+    await settle()
+    expect(bridgedKinds).toEqual([BridgeKind.DOCUMENT_TEXT])
+    expect(wrapper.get('[data-testid="bridge-outcomes-table"]').text()).toContain('DOCUMENT_TEXT')
+    expect(wrapper.get('[data-testid="bridge-outcomes-table"]').text()).toContain('PRODUCED')
+    await wrapper.get('[data-testid="bridge-inspect-original"]').trigger('click')
+    await settle()
+    expect((wrapper.vm as unknown as { selected: { name: string } | null }).selected?.name).toBe('original')
+    wrapper.unmount()
+  })
+
+  it('syncs archive classification and text filters with the URL query and clears them via active filter chips', async () => {
+    const s = seen()
+    const { wrapper, router } = await mountRepositoryView(
+      RepositoryArchiveView,
+      { name: 'repository-archive', query: { account: 'acct-a', archive: 'papers', classification: 'VERIFIED', q: 'Paper 1' } },
+      archives(s),
+    )
+    expect(s.entries[0].classificationState).toBe(ClassificationState.VERIFIED)
+    expect(wrapper.find('[data-testid="archive-active-filters"]').exists()).toBe(true)
+    expect(wrapper.get('[data-testid="archive-filter-classification"]').text()).toContain('VERIFIED')
+    expect(wrapper.get('[data-testid="archive-filter-q"]').text()).toContain('Paper 1')
+
+    await wrapper.get('[data-testid="archive-clear-filters"]').trigger('click')
+    await settle()
+    expect(router.currentRoute.value.query).toEqual({ account: 'acct-a', archive: 'papers' })
+    expect(wrapper.find('[data-testid="archive-active-filters"]').exists()).toBe(false)
     wrapper.unmount()
   })
 })

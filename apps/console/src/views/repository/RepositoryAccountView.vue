@@ -17,8 +17,93 @@
     </v-card>
 
     <v-card class="mb-4">
-      <v-card-title class="text-subtitle-2">Drives</v-card-title>
+      <v-card-title class="text-subtitle-2 d-flex align-center flex-wrap ga-2">
+        <span>Drives</span>
+        <v-spacer />
+        <v-btn
+          size="x-small"
+          variant="tonal"
+          prepend-icon="mdi-plus"
+          data-testid="toggle-create-drive"
+          @click="showCreateDrive = !showCreateDrive"
+        >
+          {{ showCreateDrive ? 'Hide new drive' : 'New drive' }}
+        </v-btn>
+      </v-card-title>
       <v-card-text>
+        <div v-if="showCreateDrive" class="mb-3 pa-3 rounded border" data-testid="create-drive-panel">
+          <div class="text-caption font-weight-medium mb-2">Provision drive (DriveService.CreateDrive)</div>
+          <v-row density="compact">
+            <v-col cols="12" sm="4">
+              <v-text-field
+                v-model="driveForm.name"
+                label="Drive name"
+                density="compact"
+                hide-details
+                autocorrect="off"
+                autocapitalize="off"
+                spellcheck="false"
+                data-testid="create-drive-name"
+              />
+            </v-col>
+            <v-col cols="12" sm="4">
+              <v-select
+                v-model="driveForm.driveType"
+                :items="driveTypeItems"
+                label="Drive type"
+                density="compact"
+                hide-details
+                data-testid="create-drive-type"
+              />
+            </v-col>
+            <v-col cols="12" sm="4">
+              <v-text-field
+                v-model="driveForm.provider"
+                label="Provider (default s3)"
+                density="compact"
+                hide-details
+                autocorrect="off"
+                autocapitalize="off"
+                spellcheck="false"
+                data-testid="create-drive-provider"
+              />
+            </v-col>
+            <v-col cols="12" sm="6" class="mt-1">
+              <v-text-field
+                v-model="driveForm.bucket"
+                label="Bucket (optional)"
+                density="compact"
+                hide-details
+                autocorrect="off"
+                autocapitalize="off"
+                spellcheck="false"
+                data-testid="create-drive-bucket"
+              />
+            </v-col>
+            <v-col cols="12" sm="6" class="mt-1">
+              <v-text-field
+                v-model="driveForm.prefix"
+                label="Prefix (optional)"
+                density="compact"
+                hide-details
+                autocorrect="off"
+                autocapitalize="off"
+                spellcheck="false"
+                data-testid="create-drive-prefix"
+              />
+            </v-col>
+          </v-row>
+          <v-alert v-if="createDriveInputError" type="warning" variant="tonal" density="compact" class="mt-2" data-testid="create-drive-input-error">
+            {{ createDriveInputError }}
+          </v-alert>
+          <RpcFailureAlert v-if="createDriveFailure" :failure="createDriveFailure" title="Provisioning drive" class="mt-2" />
+          <div class="d-flex align-center ga-2 mt-2">
+            <v-btn size="small" color="primary" :loading="creatingDrive" data-testid="create-drive-submit" @click="submitCreateDrive">
+              Create drive
+            </v-btn>
+          </div>
+        </div>
+
         <RpcFailureAlert v-if="drivesFailure" :failure="drivesFailure" title="Listing drives" />
         <v-table v-if="drives.length > 0" density="compact" data-testid="drive-table">
           <thead>
@@ -51,8 +136,92 @@
     </v-card>
 
     <v-card class="mb-4">
-      <v-card-title class="text-subtitle-2">Archives</v-card-title>
+      <v-card-title class="text-subtitle-2 d-flex align-center flex-wrap ga-2">
+        <span>Archives</span>
+        <v-spacer />
+        <v-btn
+          size="x-small"
+          variant="tonal"
+          prepend-icon="mdi-plus"
+          data-testid="toggle-create-archive"
+          @click="toggleCreateArchive"
+        >
+          {{ showCreateArchive ? 'Hide new archive' : 'New archive' }}
+        </v-btn>
+      </v-card-title>
       <v-card-text>
+        <div v-if="showCreateArchive" class="mb-3 pa-3 rounded border" data-testid="create-archive-panel">
+          <div class="text-caption font-weight-medium mb-2">Create archive (ArchiveService.CreateArchive)</div>
+          <v-row density="compact">
+            <v-col cols="12" sm="4">
+              <v-text-field
+                v-model="archiveForm.name"
+                label="Archive name"
+                density="compact"
+                hide-details
+                autocorrect="off"
+                autocapitalize="off"
+                spellcheck="false"
+                data-testid="create-archive-name"
+              />
+            </v-col>
+            <v-col cols="12" sm="4">
+              <v-text-field
+                v-model="archiveForm.driveName"
+                label="Bound drive name"
+                density="compact"
+                hide-details
+                autocorrect="off"
+                autocapitalize="off"
+                spellcheck="false"
+                data-testid="create-archive-drive"
+              />
+            </v-col>
+            <v-col cols="12" sm="4">
+              <v-select
+                v-model="archiveForm.versioning"
+                :items="versioningItems"
+                label="Versioning policy"
+                density="compact"
+                hide-details
+                data-testid="create-archive-versioning"
+              />
+            </v-col>
+            <v-col cols="12" class="mt-1">
+              <v-text-field
+                v-model="archiveForm.description"
+                label="Description (optional)"
+                density="compact"
+                hide-details
+                data-testid="create-archive-description"
+              />
+            </v-col>
+          </v-row>
+          <div v-if="drives.length > 0" class="d-flex align-center flex-wrap ga-1 mt-2">
+            <span class="text-caption text-medium-emphasis mr-1">Pick drive:</span>
+            <v-chip
+              v-for="d in drives"
+              :key="d.driveId || d.name"
+              size="x-small"
+              variant="tonal"
+              class="text-mono"
+              :data-testid="`pick-archive-drive-${d.name}`"
+              @click="archiveForm.driveName = d.name"
+            >
+              {{ d.name }}
+            </v-chip>
+          </div>
+          <v-alert v-if="createArchiveInputError" type="warning" variant="tonal" density="compact" class="mt-2" data-testid="create-archive-input-error">
+            {{ createArchiveInputError }}
+          </v-alert>
+          <RpcFailureAlert v-if="createArchiveFailure" :failure="createArchiveFailure" title="Creating archive" class="mt-2" />
+          <div class="d-flex align-center ga-2 mt-2">
+            <v-btn size="small" color="primary" :loading="creatingArchive" data-testid="create-archive-submit" @click="submitCreateArchive">
+              Create archive
+            </v-btn>
+          </div>
+        </div>
+
         <RpcFailureAlert v-if="archivesFailure" :failure="archivesFailure" title="Listing archives" />
         <v-list v-if="archives.length > 0" density="compact" data-testid="archive-list">
           <v-list-item
@@ -210,9 +379,26 @@
 
         <div class="d-flex align-center ga-2 mb-3">
           <v-btn color="primary" size="small" :loading="listing" data-testid="apply-query" @click="applyQuery">List documents</v-btn>
-          <v-btn size="small" variant="text" @click="clearFilters">Clear filters</v-btn>
+          <v-btn size="small" variant="text" data-testid="clear-filters" @click="clearFilters">Clear filters</v-btn>
           <v-spacer />
           <v-text-field v-model.number="query.pageSize" type="number" label="Page size" density="compact" hide-details style="max-width: 120px" />
+        </div>
+
+        <div v-if="activeFilterChips.length > 0" class="d-flex align-center flex-wrap ga-1 mb-3" data-testid="account-active-filters">
+          <span class="text-caption text-medium-emphasis mr-1">Active URL filters:</span>
+          <v-chip
+            v-for="chip in activeFilterChips"
+            :key="chip.key"
+            size="x-small"
+            color="primary"
+            variant="tonal"
+            closable
+            class="text-mono"
+            :data-testid="`active-filter-${chip.key}`"
+            @click:close="chip.clear()"
+          >
+            {{ chip.label }}
+          </v-chip>
         </div>
 
         <v-alert v-if="inputError" type="warning" variant="tonal" density="compact" class="mb-3" data-testid="input-error">
@@ -277,14 +463,23 @@ import ConceptSchemeBrowser from '@/components/repository/ConceptSchemeBrowser.v
 import OperationOutcomeInspector from '@/components/repository/OperationOutcomeInspector.vue'
 import RpcFailureAlert from '@/components/repository/RpcFailureAlert.vue'
 import type { ConsoleSessionStatus } from '@/gen/ai/protomolt/proto/authz/v1/console_session_pb'
-import type { Archive } from '@/gen/ai/protomolt/proto/repo/archive/v1/archive_pb'
+import { VersioningPolicy, type Archive } from '@/gen/ai/protomolt/proto/repo/archive/v1/archive_pb'
 import { ListArchivesRequestSchema } from '@/gen/ai/protomolt/proto/repo/archive/v1/archive_service_pb'
-import { DriveStatusSchema, DriveTypeSchema, ListDrivesRequestSchema, type Drive } from '@/gen/ai/protomolt/proto/repo/v1/drive_pb'
+import {
+  CreateDriveRequestSchema,
+  DriveStatusSchema,
+  DriveType,
+  DriveTypeSchema,
+  ListDrivesRequestSchema,
+  type Drive,
+} from '@/gen/ai/protomolt/proto/repo/v1/drive_pb'
 import { DocumentSortField } from '@/gen/ai/protomolt/proto/repo/v2/document_service_pb'
+import { buildCreateArchiveRequest } from '@/repository/archiveCore'
 import { useRepositoryClients, useRepositorySession } from '@/repository/clients'
 import { enumLabel } from '@/repository/formatCore'
 import { evidenceView, type EvidenceView } from '@/repository/linksCore'
 import { scopesIn } from '@/repository/sessionWritersCore'
+import { UploadInputError } from '@/repository/uploadCore'
 import {
   ListingInputError,
   PageCursor,
@@ -328,16 +523,68 @@ const ownerKinds = [
 
 // Drives
 const drivesScope = useCallScope()
+const createDriveScope = useCallScope()
 const drives = ref<Drive[]>([])
 const drivesNext = ref('')
 const drivesLoading = ref(false)
 const drivesFailure = ref<RpcFailure | null>(null)
+const showCreateDrive = ref(false)
+const creatingDrive = ref(false)
+const createDriveInputError = ref<string | null>(null)
+const createDriveFailure = ref<RpcFailure | null>(null)
+const driveTypeItems = [
+  { title: 'INTAKE (staged source material)', value: DriveType.INTAKE },
+  { title: 'PIPELINE (claim-check bodies)', value: DriveType.PIPELINE },
+  { title: 'CUSTOM (account-defined)', value: DriveType.CUSTOM },
+]
+const driveForm = reactive({
+  name: '',
+  driveType: DriveType.INTAKE,
+  provider: 's3',
+  bucket: '',
+  prefix: '',
+})
 
 function driveType(value: number) {
   return enumLabel(DriveTypeSchema, value)
 }
 function driveStatus(value: number) {
   return enumLabel(DriveStatusSchema, value)
+}
+
+async function submitCreateDrive() {
+  createDriveInputError.value = null
+  createDriveFailure.value = null
+  const name = driveForm.name.trim()
+  if (name === '') {
+    createDriveInputError.value = 'Drive name: is blank'
+    return
+  }
+  const signal = createDriveScope.next()
+  creatingDrive.value = true
+  try {
+    await clients.drives.createDrive(
+      create(CreateDriveRequestSchema, {
+        accountId: accountId.value,
+        name,
+        driveType: driveForm.driveType,
+        provider: driveForm.provider.trim(),
+        bucket: driveForm.bucket.trim(),
+        prefix: driveForm.prefix.trim(),
+      }),
+      { signal },
+    )
+    if (signal.aborted) return
+    driveForm.name = ''
+    driveForm.bucket = ''
+    driveForm.prefix = ''
+    showCreateDrive.value = false
+    await loadDrives(true)
+  } catch (error) {
+    if (!isOwnCancellation(error, signal)) createDriveFailure.value = rpcFailure(error)
+  } finally {
+    if (!signal.aborted) creatingDrive.value = false
+  }
 }
 
 async function loadDrives(first: boolean) {
@@ -360,9 +607,66 @@ async function loadDrives(first: boolean) {
 
 // Archives
 const archivesScope = useCallScope()
+const createArchiveScope = useCallScope()
 const archives = shallowRef<Archive[]>([])
 const archivesLoading = ref(false)
 const archivesFailure = ref<RpcFailure | null>(null)
+const showCreateArchive = ref(false)
+const creatingArchive = ref(false)
+const createArchiveInputError = ref<string | null>(null)
+const createArchiveFailure = ref<RpcFailure | null>(null)
+const versioningItems = [
+  { title: 'RETAINED (keep every version)', value: VersioningPolicy.RETAINED },
+  { title: 'NONE (single retained state)', value: VersioningPolicy.NONE },
+]
+const archiveForm = reactive({
+  name: '',
+  driveName: '',
+  versioning: VersioningPolicy.RETAINED,
+  description: '',
+})
+
+function toggleCreateArchive() {
+  showCreateArchive.value = !showCreateArchive.value
+  if (showCreateArchive.value && archiveForm.driveName.trim() === '' && drives.value.length > 0) {
+    archiveForm.driveName = drives.value[0].name
+  }
+}
+
+async function submitCreateArchive() {
+  createArchiveInputError.value = null
+  createArchiveFailure.value = null
+  let req
+  try {
+    req = buildCreateArchiveRequest({
+      accountId: accountId.value,
+      name: archiveForm.name,
+      driveName: archiveForm.driveName,
+      versioning: archiveForm.versioning,
+      description: archiveForm.description,
+    })
+  } catch (error) {
+    if (error instanceof UploadInputError) {
+      createArchiveInputError.value = error.message
+      return
+    }
+    throw error
+  }
+  const signal = createArchiveScope.next()
+  creatingArchive.value = true
+  try {
+    await clients.archives.createArchive(req, { signal })
+    if (signal.aborted) return
+    archiveForm.name = ''
+    archiveForm.description = ''
+    showCreateArchive.value = false
+    await loadArchives()
+  } catch (error) {
+    if (!isOwnCancellation(error, signal)) createArchiveFailure.value = rpcFailure(error)
+  } finally {
+    if (!signal.aborted) creatingArchive.value = false
+  }
+}
 
 async function loadArchives() {
   const signal = archivesScope.next()
@@ -413,6 +717,65 @@ const observedScopePairs = computed(() => {
     out.push({ graphId: row.graphId, graphAddressId: row.graphAddressId })
   }
   return out
+})
+
+const activeFilterChips = computed(() => {
+  const chips: Array<{ key: string; label: string; clear: () => void }> = []
+  if (query.graphId.trim() !== '') {
+    chips.push({
+      key: 'graph',
+      label: `graph: ${query.graphId}`,
+      clear: () => {
+        query.graphId = ''
+        applyQuery()
+      },
+    })
+  }
+  if (query.graphAddressId.trim() !== '') {
+    chips.push({
+      key: 'node',
+      label: `node: ${query.graphAddressId}`,
+      clear: () => {
+        query.graphAddressId = ''
+        applyQuery()
+      },
+    })
+  }
+  if (query.filter.concept.schemeId.trim() !== '' && query.filter.concept.conceptId.trim() !== '') {
+    chips.push({
+      key: 'concept',
+      label: `concept: ${query.filter.concept.schemeId}/${query.filter.concept.conceptId}`,
+      clear: () => {
+        query.filter.concept = { schemeId: '', conceptId: '', narrower: false, closeMatch: false }
+        applyQuery()
+      },
+    })
+  }
+  for (const f of TEXT_FILTERS) {
+    if (query.filter.text[f.field].trim() !== '') {
+      chips.push({
+        key: f.field,
+        label: `${f.field}: ${query.filter.text[f.field]}`,
+        clear: () => {
+          query.filter.text[f.field] = ''
+          applyQuery()
+        },
+      })
+    }
+  }
+  if (query.sortField !== DocumentSortField.UNSPECIFIED) {
+    const sortTitle = sortItems.find((s) => s.value === query.sortField)?.title ?? String(query.sortField)
+    chips.push({
+      key: 'sort',
+      label: `sort: ${sortTitle}${query.descending ? ' (desc)' : ''}`,
+      clear: () => {
+        query.sortField = DocumentSortField.UNSPECIFIED
+        query.descending = false
+        applyQuery()
+      },
+    })
+  }
+  return chips
 })
 
 function pickScope(graphId: string, graphAddressId: string) {

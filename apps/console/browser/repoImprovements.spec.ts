@@ -2,6 +2,11 @@ import { createHash } from 'node:crypto'
 import { test, expect } from '@playwright/test'
 import { create, toBinary } from '@bufbuild/protobuf'
 import { UploadRenditionResponseSchema } from '../src/gen/ai/protomolt/proto/repo/archive/v1/archive_service_pb'
+import {
+  SaveDocumentResponseSchema,
+  UploadDocumentResponseSchema,
+} from '../src/gen/ai/protomolt/proto/repo/v2/document_service_pb'
+import { AccessionSchema } from '../src/gen/ai/protomolt/proto/repo/v2/manifest_pb'
 
 test.beforeEach(async ({ page }) => {
   await page.route('**/console/repo-improvements-test', (route) =>
@@ -175,4 +180,189 @@ test('Slice 5: shows archive rendition ContentProfile, compares versions side by
   await expect(page.getByTestId('rendition-upload-committed')).toContainText('Committed as version 4')
 
   await page.screenshot({ path: 'test-results/slice5-archive-version-compare-and-upload.png', fullPage: true })
+})
+
+test('Ticket #688: runs ClassifyEntry and BridgeEntry workbench on RepositoryArchiveEntryView', async ({ page }) => {
+  await page.setViewportSize({ width: 1360, height: 1180 })
+  await page.goto('/console/repo-improvements-test')
+  await page.evaluate(async () => {
+    const path = '/console/browser/repoImprovementsHarness.ts'
+    const { mountArchiveEntryImprovements } = await import(/* @vite-ignore */ path)
+    await mountArchiveEntryImprovements()
+  })
+
+  await page.getByTestId('toggle-classify-bridge').click()
+  await expect(page.getByTestId('classify-bridge-panel')).toBeVisible()
+
+  await page.getByTestId('classify-module').locator('input').fill('grparse-classifier')
+  await page.getByTestId('classify-submit').click()
+  await expect(page.getByTestId('classify-result')).toContainText('VERIFIED')
+  await expect(page.getByTestId('classify-result')).toContainText('%PDF-1.7 header at offset 0')
+
+  await page.getByTestId('bridge-module').locator('input').fill('grparse-bridge')
+  await page.getByTestId('bridge-submit').click()
+  await expect(page.getByTestId('bridge-outcomes-table')).toContainText('DOCUMENT_TEXT')
+  await expect(page.getByTestId('bridge-outcomes-table')).toContainText('PRODUCED')
+  await expect(page.getByTestId('bridge-outcomes-table')).toContainText('Extracted 14 pages')
+
+  await page.screenshot({ path: 'test-results/ticket688-classify-bridge-workbench.png', fullPage: true })
+})
+
+test('Ticket #689: provisions drives, creates archives, and uploads a new archive entry with auto-suggested ID', async ({
+  page,
+}) => {
+  const newEntryBytes = Buffer.from('%PDF-1.7 signed addendum bytes', 'utf-8')
+  const newEntrySha = createHash('sha256').update(newEntryBytes).digest('hex')
+  const responseBytes = toBinary(
+    UploadRenditionResponseSchema,
+    create(UploadRenditionResponseSchema, {
+      operationId: '018f4063-7d4b-7000-8000-000000000289',
+      entryUuid: '00000000-0000-5000-8000-000000000289',
+      version: 1n,
+      sha256: newEntrySha,
+      replayed: false,
+    }),
+  )
+
+  await page.route('**/v1/archive:upload**', (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: 'application/protobuf',
+      body: Buffer.from(responseBytes),
+    }),
+  )
+
+  await page.setViewportSize({ width: 1360, height: 1180 })
+  await page.goto('/console/repo-improvements-test')
+  await page.evaluate(async () => {
+    const path = '/console/browser/repoImprovementsHarness.ts'
+    const { mountArchiveImprovements } = await import(/* @vite-ignore */ path)
+    await mountArchiveImprovements()
+  })
+
+  await page.getByTestId('toggle-new-entry-upload').click()
+  await expect(page.getByTestId('new-entry-upload-panel')).toBeVisible()
+  await page.getByTestId('new-entry-file').setInputFiles({
+    name: '2026-Q4-Regulatory-Addendum.pdf',
+    mimeType: 'application/pdf',
+    buffer: newEntryBytes,
+  })
+  await expect(page.getByTestId('new-entry-id').locator('input')).toHaveValue('2026-q4-regulatory-addendum')
+  await page.getByTestId('new-entry-submit').click()
+  await expect(page.getByTestId('new-entry-committed')).toContainText('2026-q4-regulatory-addendum')
+  await expect(page.getByTestId('new-entry-op-link')).toBeVisible()
+
+  await page.screenshot({ path: 'test-results/ticket689-create-drive-archive-and-entry.png', fullPage: true })
+})
+
+test('Ticket #690: auto-resolves deep-linked ?op=... outcome on RepositoryLookupView', async ({ page }) => {
+  await page.setViewportSize({ width: 1360, height: 920 })
+  await page.goto('/console/repo-improvements-test')
+  await page.evaluate(async () => {
+    const path = '/console/browser/repoImprovementsHarness.ts'
+    const { mountLookupImprovements } = await import(/* @vite-ignore */ path)
+    await mountLookupImprovements({ account: 'acct-a', op: '018f4063-7d4b-7000-8000-000000000199' })
+  })
+
+  await expect(page.getByTestId('outcome-committed')).toBeVisible()
+  await expect(page.getByTestId('outcome-committed')).toContainText('Revision 7 of nda-2026-001')
+  await expect(page.getByTestId('open-committed')).toBeVisible()
+
+  await page.screenshot({ path: 'test-results/ticket690-operation-outcome-deeplink.png', fullPage: true })
+})
+
+test('Ticket #691: displays URL-synced filter summary chips on RepositoryAccountView and RepositoryArchiveView', async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1360, height: 1080 })
+  await page.goto('/console/repo-improvements-test')
+  await page.evaluate(async () => {
+    const path = '/console/browser/repoImprovementsHarness.ts'
+    const { mountAccountImprovements } = await import(/* @vite-ignore */ path)
+    await mountAccountImprovements('/repository/accounts/acct-a?graph=intake:acct-a&f.title=NDA&sort=title')
+  })
+
+  await expect(page.getByTestId('account-active-filters')).toBeVisible()
+  await expect(page.getByTestId('active-filter-graph')).toContainText('intake:acct-a')
+  await expect(page.getByTestId('active-filter-title')).toContainText('NDA')
+  await expect(page.getByTestId('active-filter-sort')).toContainText('Title')
+
+  await page.screenshot({ path: 'test-results/ticket691-url-synced-filters.png', fullPage: true })
+})
+
+test('Ticket #692: stages and uploads a multi-file batch queue with path-prefixed docId auto-fill', async ({
+  page,
+}) => {
+  await page.route('**/v1/documents:upload**', (route) => {
+    const url = new URL(route.request().url())
+    const opId = url.searchParams.get('operation_id') ?? 'op-batch'
+    const docId = url.searchParams.get('doc_id') ?? 'doc-batch'
+    const body = toBinary(
+      UploadDocumentResponseSchema,
+      create(UploadDocumentResponseSchema, {
+        answer: {
+          case: 'saved',
+          value: create(SaveDocumentResponseSchema, {
+            operationId: opId,
+            accession: create(AccessionSchema, {
+              address: { accountId: 'acct-a', graphId: 'intake:acct-a', graphAddressId: 'ds-legal', docId },
+              revision: 1n,
+            }),
+          }),
+        },
+      }),
+    )
+    return route.fulfill({
+      status: 200,
+      contentType: 'application/proto',
+      body: Buffer.from(body),
+    })
+  })
+
+  await page.setViewportSize({ width: 1360, height: 1020 })
+  await page.goto('/console/repo-improvements-test')
+  await page.evaluate(async () => {
+    const path = '/console/browser/repoImprovementsHarness.ts'
+    const { mountUploadImprovements } = await import(/* @vite-ignore */ path)
+    await mountUploadImprovements()
+  })
+
+  await page.getByTestId('up-drive').locator('input[type="text"]').fill('legal-vault')
+  await page.getByTestId('up-drive').locator('input[type="text"]').press('Tab')
+  await page.getByTestId('upload-path-prefix').locator('input').fill('contracts/2026-q4')
+  await page.getByTestId('up-file').setInputFiles([
+    {
+      name: 'Acme Mutual NDA (Signed).pdf',
+      mimeType: 'application/pdf',
+      buffer: Buffer.from('pdf payload 1'),
+    },
+    {
+      name: 'Globex Enterprise MSA.pdf',
+      mimeType: 'application/pdf',
+      buffer: Buffer.from('pdf payload 2'),
+    },
+    {
+      name: 'DPA Addendum Schedule-A.md',
+      mimeType: 'text/markdown',
+      buffer: Buffer.from('# Schedule A'),
+    },
+  ])
+
+  await expect(page.getByTestId('batch-upload-table')).toBeVisible()
+  await expect(page.getByTestId('batch-doc-id-0').locator('input')).toHaveValue(
+    'contracts/2026-q4/acme-mutual-nda-signed.pdf',
+  )
+  await expect(page.getByTestId('batch-doc-id-1').locator('input')).toHaveValue(
+    'contracts/2026-q4/globex-enterprise-msa.pdf',
+  )
+  await expect(page.getByTestId('batch-doc-id-2').locator('input')).toHaveValue(
+    'contracts/2026-q4/dpa-addendum-schedule-a.md',
+  )
+
+  await page.getByTestId('batch-upload-submit').click()
+  await expect(page.getByTestId('batch-status-0')).toHaveText('SAVED')
+  await expect(page.getByTestId('batch-status-1')).toHaveText('SAVED')
+  await expect(page.getByTestId('batch-status-2')).toHaveText('SAVED')
+
+  await page.screenshot({ path: 'test-results/ticket692-batch-drag-drop-upload.png', fullPage: true })
 })
