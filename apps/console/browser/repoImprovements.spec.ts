@@ -366,3 +366,88 @@ test('Ticket #692: stages and uploads a multi-file batch queue with path-prefixe
 
   await page.screenshot({ path: 'test-results/ticket692-batch-drag-drop-upload.png', fullPage: true })
 })
+
+test('Ticket #694: commits atomic entry metadata and inline renditions via ArchiveService.PutEntry workbench', async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1360, height: 1240 })
+  await page.goto('/console/repo-improvements-test')
+  await page.evaluate(async () => {
+    const path = '/console/browser/repoImprovementsHarness.ts'
+    const { mountArchiveEntryImprovements } = await import(/* @vite-ignore */ path)
+    await mountArchiveEntryImprovements()
+  })
+
+  await expect(page.getByTestId('open-entry-v2-document')).toBeVisible()
+  await expect(page.getByTestId('delete-archive-entry')).toBeVisible()
+
+  await page.getByTestId('toggle-put-entry').click()
+  await expect(page.getByTestId('put-entry-panel')).toBeVisible()
+
+  await page.getByTestId('put-entry-title').locator('input').fill('Master Mutual NDA — Acme Corp (Annotated v4)')
+  await page.getByTestId('put-entry-add-meta').click()
+  await page.getByTestId('put-entry-meta-key-3').locator('input').fill('reviewedBy')
+  await page.getByTestId('put-entry-meta-val-3').locator('input').fill('general-counsel')
+
+  await page.getByTestId('put-rendition-name-0').locator('input').fill('markdown')
+  await page.getByTestId('put-rendition-subkey-0').locator('input').fill('exec-summary')
+  await page
+    .getByTestId('put-rendition-text-0')
+    .locator('textarea')
+    .fill('# Executive Summary\n\nMutual 5-year confidentiality term verified against signed PDF.')
+
+  await page.getByTestId('put-entry-submit').click()
+  await expect(page.getByTestId('put-entry-outcome')).toBeVisible()
+  await expect(page.getByTestId('put-entry-status-chip')).toHaveText('CREATED')
+  await expect(page.getByTestId('put-entry-outcome')).toContainText('Committed new version 4')
+
+  await page.screenshot({ path: 'test-results/ticket694-archive-put-entry.png', fullPage: true })
+})
+
+test('Ticket #695: renders interactive 1-hop link neighborhood graph and batch-resolves dynamic links', async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1360, height: 1180 })
+  await page.goto('/console/repo-improvements-test')
+  await page.evaluate(async () => {
+    const path = '/console/browser/repoImprovementsHarness.ts'
+    const { mountDocumentImprovements } = await import(/* @vite-ignore */ path)
+    await mountDocumentImprovements('links')
+  })
+
+  await expect(page.getByTestId('link-neighborhood-card')).toBeVisible()
+  await expect(page.getByTestId('link-neighborhood-graph')).toBeVisible()
+  await expect(page.getByTestId('link-status-structured_data.related_agreements-0')).toHaveText('DYNAMIC')
+
+  await page.getByTestId('resolve-all-dynamic-links').click()
+  await expect(page.getByTestId('link-status-structured_data.related_agreements-0')).toHaveText('RESOLVED (2)')
+  await expect(page.getByTestId('graph-node-sow-2026-015')).toBeVisible()
+
+  await page.getByTestId('resolve-link-structured_data.related_agreements-0').click()
+  await expect(page.getByTestId('resolved-targets')).toContainText('Statement of Work #15 — AI Platform')
+
+  await page.screenshot({ path: 'test-results/ticket695-link-resolution-graph.png', fullPage: true })
+})
+
+test('Ticket #696: inspects DriveService.GetDrive provider details, options, metadata, and bound archives', async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1360, height: 1180 })
+  await page.goto('/console/repo-improvements-test')
+  await page.evaluate(async () => {
+    const path = '/console/browser/repoImprovementsHarness.ts'
+    const { mountAccountImprovements } = await import(/* @vite-ignore */ path)
+    await mountAccountImprovements()
+  })
+
+  await expect(page.getByTestId('inspect-drive-legal-vault')).toBeVisible()
+  await page.getByTestId('inspect-drive-legal-vault').click()
+
+  await expect(page.getByTestId('drive-inspector-panel')).toBeVisible()
+  await expect(page.getByTestId('drive-inspector-name')).toHaveText('legal-vault')
+  await expect(page.getByTestId('drive-inspector-provider-summary')).toContainText('https://s3.us-east-1.acme.internal')
+  await expect(page.getByTestId('drive-inspector-metadata')).toContainText('compliance=SOC2-Type-II')
+  await expect(page.getByTestId('drive-inspector-archives')).toContainText('executed-agreements')
+
+  await page.screenshot({ path: 'test-results/ticket696-drive-inspector-and-entry-v2.png', fullPage: true })
+})

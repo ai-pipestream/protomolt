@@ -11,6 +11,26 @@
         </v-chip>
         <v-spacer />
         <v-btn
+          v-if="manifest && address"
+          size="small"
+          variant="tonal"
+          prepend-icon="mdi-file-document-outline"
+          data-testid="open-entry-v2-document"
+          @click="openAsV2Document"
+        >
+          Open as v2 document
+        </v-btn>
+        <v-btn
+          v-if="manifest"
+          size="small"
+          variant="tonal"
+          prepend-icon="mdi-pencil-box-multiple-outline"
+          data-testid="toggle-put-entry"
+          @click="togglePutEntry"
+        >
+          {{ showPutEntry ? 'Hide PutEntry' : 'Put entry' }}
+        </v-btn>
+        <v-btn
           v-if="manifest"
           size="small"
           variant="tonal"
@@ -29,6 +49,17 @@
           @click="showUpload = !showUpload"
         >
           {{ showUpload ? 'Hide rendition upload' : 'Upload rendition' }}
+        </v-btn>
+        <v-btn
+          v-if="manifest && requested === null && pinned !== null"
+          size="small"
+          color="error"
+          variant="tonal"
+          prepend-icon="mdi-delete-outline"
+          data-testid="delete-archive-entry"
+          @click="deletingEntry = true"
+        >
+          Delete entry
         </v-btn>
         <v-btn v-if="requested !== null" size="small" variant="text" data-testid="open-current-version" @click="openVersion(null)">
           Open current version
@@ -66,6 +97,240 @@
             {{ m.key }}={{ m.value }}
           </v-chip>
         </div>
+      </v-card-text>
+    </v-card>
+
+    <v-card v-if="showPutEntry && address" class="mb-4" data-testid="put-entry-panel">
+      <v-card-title class="text-subtitle-2">Atomic metadata &amp; inline renditions commit (ArchiveService.PutEntry)</v-card-title>
+      <v-card-text>
+        <v-row density="compact">
+          <v-col cols="12" sm="4">
+            <v-text-field
+              v-model="putForm.title"
+              label="Entry title"
+              density="compact"
+              hide-details
+              data-testid="put-entry-title"
+            />
+          </v-col>
+          <v-col cols="12" sm="4">
+            <v-text-field
+              v-model="putForm.filename"
+              label="Original filename (optional)"
+              density="compact"
+              hide-details
+              autocorrect="off"
+              autocapitalize="off"
+              spellcheck="false"
+              data-testid="put-entry-filename"
+            />
+          </v-col>
+          <v-col cols="12" sm="4">
+            <v-text-field
+              v-model="putForm.contentType"
+              label="Primary content type (optional)"
+              density="compact"
+              hide-details
+              autocorrect="off"
+              autocapitalize="off"
+              spellcheck="false"
+              data-testid="put-entry-content-type"
+            />
+          </v-col>
+          <v-col cols="12" sm="5" class="mt-2">
+            <v-text-field
+              v-model="putForm.sourceUri"
+              label="Source URI (optional)"
+              density="compact"
+              hide-details
+              autocorrect="off"
+              autocapitalize="off"
+              spellcheck="false"
+              data-testid="put-entry-source-uri"
+            />
+          </v-col>
+          <v-col cols="12" sm="4" class="mt-2">
+            <v-text-field
+              v-model="putForm.producingModule"
+              label="Writer module (optional)"
+              density="compact"
+              hide-details
+              autocorrect="off"
+              autocapitalize="off"
+              spellcheck="false"
+              data-testid="put-entry-module"
+            />
+          </v-col>
+          <v-col cols="12" sm="3" class="mt-2">
+            <v-text-field
+              v-model="putExpectedVersionText"
+              label="Expected version (0 = any)"
+              density="compact"
+              hide-details
+              autocorrect="off"
+              autocapitalize="off"
+              spellcheck="false"
+              data-testid="put-entry-expected-version"
+            />
+          </v-col>
+        </v-row>
+
+        <div class="d-flex align-center justify-space-between mt-3 mb-1">
+          <span class="text-caption font-weight-medium">Metadata labels (replaces map when non-empty)</span>
+          <v-btn size="x-small" variant="tonal" prepend-icon="mdi-plus" data-testid="put-entry-add-meta" @click="addPutMetaRow">
+            Add label
+          </v-btn>
+        </div>
+        <v-row v-for="(m, idx) in putForm.metadata" :key="idx" density="compact" class="mb-1 align-center">
+          <v-col cols="5">
+            <v-text-field
+              v-model="m.key"
+              label="Key"
+              density="compact"
+              hide-details
+              autocorrect="off"
+              autocapitalize="off"
+              spellcheck="false"
+              :data-testid="`put-entry-meta-key-${idx}`"
+            />
+          </v-col>
+          <v-col cols="6">
+            <v-text-field
+              v-model="m.value"
+              label="Value"
+              density="compact"
+              hide-details
+              :data-testid="`put-entry-meta-val-${idx}`"
+            />
+          </v-col>
+          <v-col cols="1" class="text-right">
+            <v-btn
+              icon="mdi-close"
+              size="x-small"
+              variant="text"
+              aria-label="Remove metadata label"
+              :data-testid="`put-entry-meta-remove-${idx}`"
+              @click="putForm.metadata.splice(idx, 1)"
+            />
+          </v-col>
+        </v-row>
+
+        <div class="d-flex align-center justify-space-between mt-3 mb-1">
+          <span class="text-caption font-weight-medium">Inline renditions (siblings not listed are carried forward)</span>
+          <v-btn size="x-small" variant="tonal" prepend-icon="mdi-plus" data-testid="put-entry-add-rendition" @click="addPutRenditionRow">
+            Add inline rendition
+          </v-btn>
+        </div>
+        <v-card v-for="(r, idx) in putForm.renditions" :key="idx" variant="outlined" class="mb-2 pa-2" :data-testid="`put-rendition-row-${idx}`">
+          <v-row density="compact" class="align-center">
+            <v-col cols="12" sm="3">
+              <v-text-field
+                v-model="r.name"
+                label="Rendition name (e.g. markdown)"
+                density="compact"
+                hide-details
+                autocorrect="off"
+                autocapitalize="off"
+                spellcheck="false"
+                :data-testid="`put-rendition-name-${idx}`"
+              />
+            </v-col>
+            <v-col cols="12" sm="3">
+              <v-text-field
+                v-model="r.subKey"
+                label="Sub-key (optional)"
+                density="compact"
+                hide-details
+                autocorrect="off"
+                autocapitalize="off"
+                spellcheck="false"
+                :data-testid="`put-rendition-subkey-${idx}`"
+              />
+            </v-col>
+            <v-col cols="12" sm="3">
+              <v-text-field
+                v-model="r.mediaType"
+                label="Media type"
+                density="compact"
+                hide-details
+                autocorrect="off"
+                autocapitalize="off"
+                spellcheck="false"
+                :data-testid="`put-rendition-mime-${idx}`"
+              />
+            </v-col>
+            <v-col cols="10" sm="2">
+              <v-text-field
+                v-model="r.schemaSubject"
+                label="Schema subject"
+                density="compact"
+                hide-details
+                autocorrect="off"
+                autocapitalize="off"
+                spellcheck="false"
+                :data-testid="`put-rendition-schema-${idx}`"
+              />
+            </v-col>
+            <v-col cols="2" sm="1" class="text-right">
+              <v-btn
+                icon="mdi-delete-outline"
+                size="x-small"
+                variant="text"
+                aria-label="Remove inline rendition"
+                :data-testid="`put-rendition-remove-${idx}`"
+                @click="putForm.renditions.splice(idx, 1)"
+              />
+            </v-col>
+            <v-col cols="12" class="mt-1">
+              <v-textarea
+                v-model="r.text"
+                label="UTF-8 payload text / JSON / Markdown"
+                rows="2"
+                density="compact"
+                hide-details
+                :data-testid="`put-rendition-text-${idx}`"
+              />
+            </v-col>
+          </v-row>
+        </v-card>
+
+        <v-alert v-if="putInputError" type="warning" variant="tonal" density="compact" class="mt-2" data-testid="put-entry-input-error">
+          {{ putInputError }}
+        </v-alert>
+        <RpcFailureAlert v-if="putFailure" :failure="putFailure" title="Saving entry via PutEntry" class="mt-2" />
+        <div class="d-flex align-center ga-2 mt-2">
+          <v-btn size="small" color="primary" :loading="putBusy" data-testid="put-entry-submit" @click="submitPutEntry">
+            Commit PutEntry
+          </v-btn>
+        </div>
+        <v-alert
+          v-if="putOutcome"
+          :type="putOutcome.deduplicated || putOutcome.replayed ? 'info' : 'success'"
+          variant="tonal"
+          density="compact"
+          class="mt-2"
+          data-testid="put-entry-outcome"
+        >
+          <div class="d-flex align-center flex-wrap ga-2">
+            <v-chip size="x-small" variant="flat" class="text-mono" data-testid="put-entry-status-chip">
+              {{ putOutcome.statusLabel }}
+            </v-chip>
+            <span class="font-weight-medium">{{ putOutcome.headline }}</span>
+          </div>
+          <div class="text-caption text-mono mt-1">
+            root checksum {{ putOutcome.rootChecksum || '—' }} · {{ byteSize(putOutcome.totalBytes) }}
+            <template v-if="putOutcome.operationId">
+              · op:
+              <router-link
+                :to="{ name: 'repository-lookup', query: { account: queryText('account'), op: putOutcome.operationId } }"
+                class="text-mono"
+                data-testid="put-entry-op-link"
+              >
+                {{ putOutcome.operationId }}
+              </router-link>
+            </template>
+          </div>
+        </v-alert>
       </v-card-text>
     </v-card>
 
@@ -520,6 +785,15 @@
         </v-btn>
       </v-card-text>
     </v-card>
+
+    <DeleteDocumentDialog
+      v-if="deletingEntry && address && pinned !== null"
+      :address="entryNodeAddress(address)"
+      :revision="pinned"
+      @deleted="onEntryDeleted"
+      @reload="onEntryReloadAfterConflict"
+      @close="deletingEntry = false"
+    />
   </div>
 </template>
 
@@ -528,6 +802,7 @@ import { computed, inject, reactive, ref, shallowRef, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { create } from '@bufbuild/protobuf'
 import ByteReader from '@/components/repository/ByteReader.vue'
+import DeleteDocumentDialog from '@/components/repository/DeleteDocumentDialog.vue'
 import RpcFailureAlert from '@/components/repository/RpcFailureAlert.vue'
 import type { BridgeKind } from '@/gen/ai/protomolt/proto/asset/v1/bridge_pb'
 import type { Classification } from '@/gen/ai/protomolt/proto/asset/v1/classification_pb'
@@ -539,15 +814,20 @@ import {
   type UploadRenditionResponse,
 } from '@/gen/ai/protomolt/proto/repo/archive/v1/archive_service_pb'
 import type { EntryAddress, EntryInfo, VersionManifest } from '@/gen/ai/protomolt/proto/repo/archive/v1/entry_pb'
+import type { Accession } from '@/gen/ai/protomolt/proto/repo/v2/manifest_pb'
 import {
   BRIDGE_KIND_ITEMS,
   DECLARED_FORMAT_ITEMS,
   bridgeOutcomeRows,
   buildBridgeEntryRequest,
   buildClassifyEntryRequest,
+  buildPutEntryRequest,
   classificationEvidenceRows,
   classificationLabel,
+  describePutEntryOutcome,
   entryAddress,
+  entryCallNumber,
+  entryNodeAddress,
   parseVersion,
   planRenditionUpload,
   readRendition,
@@ -556,6 +836,8 @@ import {
   sendRenditionUpload,
   versionRow,
   type ClassifyEntryForm,
+  type PutEntryForm,
+  type PutEntryOutcomeSummary,
   type RenditionChange,
   type RenditionRow,
   type VersionRow,
@@ -563,6 +845,7 @@ import {
 import type { ByteRead } from '@/repository/byteReadCore'
 import { REPOSITORY_UPLOAD_REQUEST, useRepositoryClients } from '@/repository/clients'
 import { byteSize, instant } from '@/repository/formatCore'
+import { documentRoute } from '@/repository/linksCore'
 import { rpcFailure, type RpcFailure } from '@/repository/rpcErrorCore'
 import { UploadInputError, fileSha256, newOperationId } from '@/repository/uploadCore'
 import { useCallScope } from '@/repository/useCallScope'
@@ -579,6 +862,7 @@ const compareScope = useCallScope()
 const uploadScope = useCallScope()
 const classifyScope = useCallScope()
 const bridgeScope = useCallScope()
+const putScope = useCallScope()
 
 function queryText(name: string): string {
   const value = route.query[name]
@@ -605,6 +889,125 @@ const compareChangedOnly = ref(false)
 
 // Classify & Bridge state
 const showClassifyBridge = ref(false)
+const deletingEntry = ref(false)
+
+// PutEntry state (#694)
+const showPutEntry = ref(false)
+const putExpectedVersionText = ref('0')
+const putForm = reactive<PutEntryForm>({
+  title: '',
+  filename: '',
+  contentType: '',
+  sourceUri: '',
+  expectedVersion: 0n,
+  producingModule: 'console',
+  metadata: [],
+  renditions: [],
+})
+const putBusy = ref(false)
+const putInputError = ref<string | null>(null)
+const putFailure = ref<RpcFailure | null>(null)
+const putOutcome = shallowRef<PutEntryOutcomeSummary | null>(null)
+
+function togglePutEntry() {
+  showPutEntry.value = !showPutEntry.value
+  if (showPutEntry.value && info.value) {
+    putForm.title = info.value.title
+    putForm.filename = info.value.filename
+    putForm.contentType = info.value.contentType
+    putForm.sourceUri = info.value.sourceUri
+    putExpectedVersionText.value = (pinned.value ?? 0n).toString()
+    putForm.metadata = Object.entries(info.value.metadata ?? {})
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([key, value]) => ({ key, value }))
+    if (putForm.renditions.length === 0) {
+      putForm.renditions = [
+        {
+          name: 'markdown',
+          subKey: '',
+          mediaType: 'text/markdown; charset=utf-8',
+          schemaSubject: '',
+          text: '',
+        },
+      ]
+    }
+  }
+}
+
+function addPutMetaRow() {
+  putForm.metadata.push({ key: '', value: '' })
+}
+
+function addPutRenditionRow() {
+  putForm.renditions.push({
+    name: '',
+    subKey: '',
+    mediaType: 'text/plain; charset=utf-8',
+    schemaSubject: '',
+    text: '',
+  })
+}
+
+async function submitPutEntry() {
+  putInputError.value = null
+  putFailure.value = null
+  putOutcome.value = null
+  if (!address.value) return
+  const rawExpected = putExpectedVersionText.value.trim()
+  let expectedVersion = 0n
+  if (rawExpected !== '') {
+    try {
+      expectedVersion = BigInt(rawExpected)
+    } catch {
+      putInputError.value = `Expected version: "${rawExpected}" is not a whole number`
+      return
+    }
+  }
+  putForm.expectedVersion = expectedVersion
+  let req
+  try {
+    req = buildPutEntryRequest(address.value, putForm, newOperationId())
+  } catch (error) {
+    if (error instanceof UploadInputError) {
+      putInputError.value = error.message
+      return
+    }
+    throw error
+  }
+  const signal = putScope.next()
+  putBusy.value = true
+  try {
+    const answer = await clients.archives.putEntry(req, { signal })
+    if (signal.aborted) return
+    putOutcome.value = describePutEntryOutcome(answer)
+    putExpectedVersionText.value = answer.version.toString()
+    await load()
+  } catch (error) {
+    if (!signal.aborted) putFailure.value = rpcFailure(error)
+  } finally {
+    if (!signal.aborted) putBusy.value = false
+  }
+}
+
+function openAsV2Document() {
+  if (!address.value) return
+  void router.push(documentRoute(entryCallNumber(address.value), pinned.value))
+}
+
+function onEntryDeleted(accession: Accession) {
+  deletingEntry.value = false
+  if (!address.value) return
+  void router.push(documentRoute(entryCallNumber(address.value), accession.revision))
+}
+
+function onEntryReloadAfterConflict(tombstone: bigint | null) {
+  deletingEntry.value = false
+  if (tombstone !== null && address.value) {
+    void router.push(documentRoute(entryCallNumber(address.value), tombstone))
+    return
+  }
+  void load()
+}
 const headerPresenceItems = [
   { title: 'PRESENT (first row names columns)', value: HeaderPresence.PRESENT },
   { title: 'ABSENT (data starts at row 1)', value: HeaderPresence.ABSENT },
@@ -879,6 +1282,7 @@ async function load() {
   const signal = readScope.next()
   versionsScope.next()
   compareScope.next()
+  deletingEntry.value = false
   routeError.value = null
   manifestFailure.value = null
   info.value = null

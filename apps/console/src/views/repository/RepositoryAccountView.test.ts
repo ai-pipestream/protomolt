@@ -4,7 +4,17 @@ import { Code, ConnectError } from '@connectrpc/connect'
 import { describe, expect, it } from 'vitest'
 import { ArchiveSchema, VersioningPolicy } from '@/gen/ai/protomolt/proto/repo/archive/v1/archive_pb'
 import { ArchiveService, CreateArchiveResponseSchema, ListArchivesResponseSchema } from '@/gen/ai/protomolt/proto/repo/archive/v1/archive_service_pb'
-import { CreateDriveResponseSchema, DriveSchema, DriveService, DriveStatus, DriveType, ListDrivesResponseSchema } from '@/gen/ai/protomolt/proto/repo/v1/drive_pb'
+import {
+  CreateDriveResponseSchema,
+  DriveProviderConfigSchema,
+  DriveSchema,
+  DriveService,
+  DriveStatus,
+  DriveType,
+  GetDriveResponseSchema,
+  ListDrivesResponseSchema,
+  S3DriveConfigSchema,
+} from '@/gen/ai/protomolt/proto/repo/v1/drive_pb'
 import { ConceptRefSchema } from '@/gen/ai/protomolt/proto/types/v1/concepts_pb'
 import {
   ConceptFilterEvidenceSchema,
@@ -528,6 +538,81 @@ describe('RepositoryAccountView', () => {
     await settle()
     expect(createdArchiveName).toBe('papers-2026')
     expect(wrapper.get('[data-testid="archive-list"]').text()).toContain('papers-2026')
+    wrapper.unmount()
+  })
+
+  it('inspects a drive via DriveService.GetDrive and displays its provider config, metadata, and archives (#696)', async () => {
+    const inspectedNames: string[] = []
+    const { wrapper } = await mountRepositoryView(RepositoryAccountView, '/repository/accounts/acct-a', (r) => {
+      r.service(DriveService, {
+        listDrives(request) {
+          return create(ListDrivesResponseSchema, {
+            drives: [
+              create(DriveSchema, {
+                driveId: 'drv-1',
+                name: 'intake',
+                accountId: request.accountId,
+                driveType: DriveType.INTAKE,
+                status: DriveStatus.ACTIVE,
+                provider: 's3',
+                bucket: 'corpus-bucket',
+                prefix: 'acct-a',
+              }),
+            ],
+          })
+        },
+        getDrive(request) {
+          const name = request.coordinate.case === 'name' ? request.coordinate.value : 'intake'
+          inspectedNames.push(name)
+          return create(GetDriveResponseSchema, {
+            drive: create(DriveSchema, {
+              driveId: 'drv-1',
+              name,
+              accountId: request.accountId,
+              driveType: DriveType.INTAKE,
+              status: DriveStatus.ACTIVE,
+              provider: 's3',
+              bucket: 'corpus-bucket',
+              prefix: 'acct-a',
+              region: 'us-east-1',
+              credentialsRef: 'vault:s3/intake',
+              providerConfig: create(DriveProviderConfigSchema, {
+                config: {
+                  case: 's3',
+                  value: create(S3DriveConfigSchema, {
+                    endpointOverride: 'http://minio:9000',
+                    forcePathStyle: true,
+                  }),
+                },
+                options: { 'multipart.threshold': '16MB' },
+              }),
+              metadata: { retention: '7y' },
+            }),
+          })
+        },
+      })
+      r.service(ArchiveService, {
+        listArchives() {
+          return create(ListArchivesResponseSchema, {
+            archives: [create(ArchiveSchema, { name: 'contracts', accountId: 'acct-a', driveName: 'intake' })],
+          })
+        },
+      })
+      r.service(DocumentService, {
+        listDocuments() {
+          return create(ListDocumentsResponseSchema, { documents: [] })
+        },
+      })
+    })
+
+    await wrapper.get('[data-testid="inspect-drive-intake"]').trigger('click')
+    await settle()
+    expect(inspectedNames).toEqual(['intake'])
+    expect(wrapper.find('[data-testid="drive-inspector-panel"]').exists()).toBe(true)
+    expect(wrapper.get('[data-testid="drive-inspector-name"]').text()).toBe('intake')
+    expect(wrapper.get('[data-testid="drive-inspector-provider-summary"]').text()).toContain('http://minio:9000')
+    expect(wrapper.get('[data-testid="drive-inspector-metadata"]').text()).toContain('retention=7y')
+    expect(wrapper.get('[data-testid="drive-inspector-archives"]').text()).toContain('contracts')
     wrapper.unmount()
   })
 })

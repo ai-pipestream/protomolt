@@ -271,4 +271,23 @@ describe('RepositoryDocumentView links', () => {
     expect(wrapper.get('[data-testid="no-backlinks"]').text()).toContain('No document you can read links here.')
     wrapper.unmount()
   })
+
+  it('renders the 1-hop link neighborhood graph, resolves all dynamic links in batch, and navigates on node click (#695)', async () => {
+    const seen = fresh()
+    const { wrapper, router } = await openLinks(seen)
+    expect(wrapper.find('[data-testid="link-neighborhood-card"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="link-neighborhood-graph"]').exists()).toBe(true)
+    expect(wrapper.get('[data-testid="link-status-structured_data.related-0"]').text()).toBe('DYNAMIC')
+
+    await wrapper.get('[data-testid="resolve-all-dynamic-links"]').trigger('click')
+    await settle()
+    expect(seen.resolves).toHaveLength(1)
+    expect(wrapper.get('[data-testid="link-status-structured_data.related-0"]').text()).toBe('RESOLVED (1)')
+    expect(wrapper.find('[data-testid="graph-node-match-1"]').exists()).toBe(true)
+
+    await wrapper.get('[data-testid="graph-node-citing"]').trigger('click')
+    await settle()
+    expect(router.currentRoute.value.query).toMatchObject({ doc: 'citing', revision: '7' })
+    wrapper.unmount()
+  })
 })

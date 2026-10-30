@@ -18,10 +18,12 @@ import {
   GetEntryManifestResponseSchema,
   ListEntriesResponseSchema,
   ListVersionsResponseSchema,
+  PutEntryResponseSchema,
   ReadRenditionResponseSchema,
   RenditionReadHeaderSchema,
   type GetEntryManifestRequest,
   type ListEntriesRequest,
+  type PutEntryRequest,
   type ReadRenditionRequest,
 } from '@/gen/ai/protomolt/proto/repo/archive/v1/archive_service_pb'
 import {
@@ -393,6 +395,69 @@ describe('RepositoryArchiveEntryView', () => {
     await settle()
     expect(router.currentRoute.value.query).toEqual({ account: 'acct-a', archive: 'papers' })
     expect(wrapper.find('[data-testid="archive-active-filters"]').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('commits atomic metadata and inline renditions via ArchiveService.PutEntry and bridges to the v2 document view (#694, #696)', async () => {
+    const s = seen()
+    const putCalls: PutEntryRequest[] = []
+    const { wrapper, router } = await mountRepositoryView(RepositoryArchiveEntryView, ENTRY, (r) => {
+      archives(s)(r)
+      r.service(ArchiveService, {
+        getEntryManifest: (req) =>
+          create(GetEntryManifestResponseSchema, {
+            info: create(EntryInfoSchema, { address: address('e-1'), currentVersion: 3n, title: 'Paper 1', filename: 'p1.pdf', contentType: 'application/pdf' }),
+            manifest: manifest(req.version === 0n ? 3n : req.version),
+          }),
+        listVersions: () => create(ListVersionsResponseSchema, { versions: [manifest(3n)] }),
+        putEntry(request) {
+          putCalls.push(request)
+          return create(PutEntryResponseSchema, {
+            version: 4n,
+            rootChecksum: 'd4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5',
+            totalBytes: 150_512n,
+            deduplicated: false,
+            replayed: false,
+            operationId: request.operationId || '018f4063-7d4b-7000-8000-000000000111',
+          })
+        },
+      })
+    })
+
+    await wrapper.get('[data-testid="toggle-put-entry"]').trigger('click')
+    await settle()
+    expect(wrapper.find('[data-testid="put-entry-panel"]').exists()).toBe(true)
+
+    await wrapper.get('[data-testid="put-entry-title"] input').setValue('Paper 1 — Annotated')
+    await wrapper.get('[data-testid="put-entry-add-meta"]').trigger('click')
+    await settle()
+    await wrapper.get('[data-testid="put-entry-meta-key-0"] input').setValue('reviewer')
+    await wrapper.get('[data-testid="put-entry-meta-val-0"] input').setValue('ada')
+
+    await wrapper.get('[data-testid="put-rendition-name-0"] input').setValue('notes')
+    await wrapper.get('[data-testid="put-rendition-subkey-0"] input').setValue('v1')
+    await wrapper.get('[data-testid="put-rendition-text-0"] textarea').setValue('Verified inline notes')
+
+    await wrapper.get('[data-testid="put-entry-submit"]').trigger('click')
+    await settle()
+
+    expect(putCalls).toHaveLength(1)
+    expect(putCalls[0].title).toBe('Paper 1 — Annotated')
+    expect(putCalls[0].metadata).toEqual({ reviewer: 'ada' })
+    expect(putCalls[0].renditions).toHaveLength(1)
+    expect(putCalls[0].renditions[0].rendition?.name).toBe('notes')
+    expect(wrapper.get('[data-testid="put-entry-outcome"]').text()).toContain('Committed new version 4')
+    expect(wrapper.get('[data-testid="put-entry-status-chip"]').text()).toBe('CREATED')
+
+    await wrapper.get('[data-testid="open-entry-v2-document"]').trigger('click')
+    await settle()
+    expect(router.currentRoute.value.query).toEqual({
+      account: 'acct-a',
+      graph: 'archive:acct-a',
+      node: 'papers',
+      doc: 'e-1',
+      revision: '3',
+    })
     wrapper.unmount()
   })
 })

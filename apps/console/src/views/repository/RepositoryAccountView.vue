@@ -113,6 +113,7 @@
               <th scope="col">Status</th>
               <th scope="col">Provider</th>
               <th scope="col">Location</th>
+              <th scope="col"><span class="d-sr-only">Actions</span></th>
             </tr>
           </thead>
           <tbody>
@@ -125,10 +126,84 @@
               <td>{{ driveStatus(drive.status) }}</td>
               <td>{{ drive.provider }}</td>
               <td class="text-mono text-caption">{{ drive.bucket }}{{ drive.prefix ? `/${drive.prefix}` : '' }}</td>
+              <td class="text-right">
+                <v-btn
+                  size="x-small"
+                  variant="tonal"
+                  :loading="inspectingDriveName === drive.name && driveInspectorLoading"
+                  :data-testid="`inspect-drive-${drive.name}`"
+                  @click="inspectDrive(drive.name)"
+                >
+                  {{ inspectedDrive?.name === drive.name ? 'Hide inspector' : 'Inspect' }}
+                </v-btn>
+              </td>
             </tr>
           </tbody>
         </v-table>
         <div v-else-if="!drivesLoading && !drivesFailure" class="text-body-2 text-medium-emphasis">This account has no drives.</div>
+
+        <RpcFailureAlert v-if="driveInspectorFailure" :failure="driveInspectorFailure" title="Inspecting drive" class="mt-2" />
+        <div v-if="inspectedDrive" class="mt-3 pa-3 rounded border" data-testid="drive-inspector-panel">
+          <div class="d-flex align-center flex-wrap ga-2 mb-2">
+            <span class="text-subtitle-2 text-mono" data-testid="drive-inspector-name">{{ inspectedDrive.name }}</span>
+            <v-chip size="x-small" variant="tonal" class="text-mono">{{ inspectedDrive.driveType }}</v-chip>
+            <v-chip size="x-small" variant="tonal" color="success" class="text-mono">{{ inspectedDrive.status }}</v-chip>
+            <span class="text-caption text-medium-emphasis text-mono">ID {{ inspectedDrive.driveId }}</span>
+            <v-spacer />
+            <v-btn size="x-small" variant="text" data-testid="drive-inspector-close" @click="inspectedDrive = null">
+              Close
+            </v-btn>
+          </div>
+          <div class="text-caption text-mono mb-1" data-testid="drive-inspector-coords">
+            provider {{ inspectedDrive.provider }} · location {{ inspectedDrive.location }} · region {{ inspectedDrive.region }} · credentials {{ inspectedDrive.credentialsRef }}
+            <span v-if="inspectedDrive.createdAt"> · created {{ inspectedDrive.createdAt }}</span>
+          </div>
+          <div class="text-caption text-medium-emphasis mb-2" data-testid="drive-inspector-provider-summary">
+            {{ inspectedDrive.providerSummary }}
+          </div>
+          <div v-if="inspectedDrive.providerOptions.length > 0" class="d-flex flex-wrap ga-1 mb-2" data-testid="drive-inspector-options">
+            <v-chip
+              v-for="opt in inspectedDrive.providerOptions"
+              :key="opt.key"
+              size="x-small"
+              variant="outlined"
+              class="text-mono"
+            >
+              opt {{ opt.key }}={{ opt.value }}
+            </v-chip>
+          </div>
+          <div v-if="inspectedDrive.metadata.length > 0" class="d-flex flex-wrap ga-1 mb-2" data-testid="drive-inspector-metadata">
+            <v-chip
+              v-for="m in inspectedDrive.metadata"
+              :key="m.key"
+              size="x-small"
+              variant="tonal"
+              color="info"
+              class="text-mono"
+              :data-testid="`drive-meta-${m.key}`"
+            >
+              {{ m.key }}={{ m.value }}
+            </v-chip>
+          </div>
+          <div class="d-flex align-center flex-wrap ga-1" data-testid="drive-inspector-archives">
+            <span class="text-caption text-medium-emphasis">Bound archives:</span>
+            <template v-if="archivesForInspectedDrive.length > 0">
+              <v-chip
+                v-for="arch in archivesForInspectedDrive"
+                :key="arch.name"
+                size="x-small"
+                variant="tonal"
+                color="primary"
+                class="text-mono"
+                :to="{ name: 'repository-archive', query: { account: accountId, archive: arch.name } }"
+                :data-testid="`drive-bound-archive-${arch.name}`"
+              >
+                {{ arch.name }}
+              </v-chip>
+            </template>
+            <span v-else class="text-caption text-medium-emphasis">none</span>
+          </div>
+        </div>
         <v-btn v-if="drivesNext" size="small" variant="text" class="mt-2" :loading="drivesLoading" @click="loadDrives(false)">
           More drives
         </v-btn>
@@ -470,11 +545,12 @@ import {
   DriveStatusSchema,
   DriveType,
   DriveTypeSchema,
+  GetDriveRequestSchema,
   ListDrivesRequestSchema,
   type Drive,
 } from '@/gen/ai/protomolt/proto/repo/v1/drive_pb'
 import { DocumentSortField } from '@/gen/ai/protomolt/proto/repo/v2/document_service_pb'
-import { buildCreateArchiveRequest } from '@/repository/archiveCore'
+import { buildCreateArchiveRequest, describeDriveDetails, type DriveDetailsView } from '@/repository/archiveCore'
 import { useRepositoryClients, useRepositorySession } from '@/repository/clients'
 import { enumLabel } from '@/repository/formatCore'
 import { evidenceView, type EvidenceView } from '@/repository/linksCore'
@@ -524,6 +600,7 @@ const ownerKinds = [
 // Drives
 const drivesScope = useCallScope()
 const createDriveScope = useCallScope()
+const inspectDriveScope = useCallScope()
 const drives = ref<Drive[]>([])
 const drivesNext = ref('')
 const drivesLoading = ref(false)
@@ -532,6 +609,40 @@ const showCreateDrive = ref(false)
 const creatingDrive = ref(false)
 const createDriveInputError = ref<string | null>(null)
 const createDriveFailure = ref<RpcFailure | null>(null)
+const inspectedDrive = shallowRef<DriveDetailsView | null>(null)
+const inspectingDriveName = ref('')
+const driveInspectorLoading = ref(false)
+const driveInspectorFailure = ref<RpcFailure | null>(null)
+const archivesForInspectedDrive = computed(() =>
+  inspectedDrive.value ? archives.value.filter((a) => a.driveName === inspectedDrive.value!.name) : [],
+)
+
+async function inspectDrive(name: string) {
+  if (inspectedDrive.value?.name === name) {
+    inspectedDrive.value = null
+    return
+  }
+  const signal = inspectDriveScope.next()
+  inspectingDriveName.value = name
+  driveInspectorLoading.value = true
+  driveInspectorFailure.value = null
+  try {
+    const answer = await clients.drives.getDrive(
+      create(GetDriveRequestSchema, {
+        accountId: accountId.value,
+        coordinate: { case: 'name', value: name },
+      }),
+      { signal },
+    )
+    if (signal.aborted) return
+    if (!answer.drive) throw new Error('GetDrive answered without a drive.')
+    inspectedDrive.value = describeDriveDetails(answer.drive)
+  } catch (error) {
+    if (!isOwnCancellation(error, signal)) driveInspectorFailure.value = rpcFailure(error)
+  } finally {
+    if (!signal.aborted) driveInspectorLoading.value = false
+  }
+}
 const driveTypeItems = [
   { title: 'INTAKE (staged source material)', value: DriveType.INTAKE },
   { title: 'PIPELINE (claim-check bodies)', value: DriveType.PIPELINE },
@@ -930,6 +1041,8 @@ watch(
       listed.value = false
       drives.value = []
       drivesNext.value = ''
+      inspectedDrive.value = null
+      driveInspectorFailure.value = null
       loadAll()
       return
     }

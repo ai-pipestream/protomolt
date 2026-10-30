@@ -36,6 +36,7 @@ import {
   BridgeEntryRequestSchema,
   ClassifyEntryRequestSchema,
   CreateArchiveRequestSchema,
+  PutEntryRequestSchema,
   ReadRenditionRequestSchema,
   UploadRenditionResponseSchema,
   type ArchiveService,
@@ -43,11 +44,15 @@ import {
   type BridgeEntryResponse,
   type ClassifyEntryRequest,
   type CreateArchiveRequest,
+  type PutEntryRequest,
+  type PutEntryResponse,
   type RenditionReadHeader,
   type UploadRenditionResponse,
 } from '@/gen/ai/protomolt/proto/repo/archive/v1/archive_service_pb'
 import {
   EntryAddressSchema,
+  RenditionContentSchema,
+  RenditionDescriptorSchema,
   RenditionStateSchema,
   WriteAttributionSchema,
   type EntryAddress,
@@ -55,8 +60,11 @@ import {
   type RenditionDescriptor,
   type VersionManifest,
 } from '@/gen/ai/protomolt/proto/repo/archive/v1/entry_pb'
+import { NodeAddressSchema, type NodeAddress } from '@/gen/ai/protomolt/proto/repo/v1/address_pb'
+import { DriveStatusSchema, DriveTypeSchema, type Drive } from '@/gen/ai/protomolt/proto/repo/v1/drive_pb'
 import { ItemErrorSchema } from '@/gen/ai/protomolt/proto/repo/v2/errors_pb'
 import { linkedController, type BlobRange } from './blobReadCore'
+import type { CallNumber } from './documentCore'
 import { enumLabel, instant } from './formatCore'
 import { codeName, type RpcFailure } from './rpcErrorCore'
 import { Sha256 } from './sha256'
@@ -721,4 +729,206 @@ export async function readRendition(
     throw new RenditionStreamError(`The received bytes hash to ${actual}, but the manifest attests ${header.sha256}.`)
   }
   return { header, receivedBytes: received, verification: { kind: 'verified', sha256: actual } }
+}
+
+const PATH_SAFE_SLUG = /^[A-Za-z0-9._-]+$/
+
+/** One inline rendition draft in the PutEntry workbench (#694). */
+export interface InlineRenditionDraft {
+  name: string
+  subKey: string
+  mediaType: string
+  schemaSubject: string
+  text: string
+}
+
+/** Form state for atomic PutEntry metadata + inline renditions commit (#694). */
+export interface PutEntryForm {
+  title: string
+  filename: string
+  contentType: string
+  sourceUri: string
+  expectedVersion: bigint
+  producingModule: string
+  metadata: { key: string; value: string }[]
+  renditions: InlineRenditionDraft[]
+}
+
+/** Builds a validated PutEntryRequest from the console workbench form (#694). */
+export function buildPutEntryRequest(address: EntryAddress, form: PutEntryForm, operationId = ''): PutEntryRequest {
+  if (form.expectedVersion < 0n) {
+    throw new UploadInputError('Expected version', 'must be zero or a positive version number')
+  }
+  const metadata: Record<string, string> = {}
+  for (let i = 0; i < form.metadata.length; i++) {
+    const rawKey = form.metadata[i].key
+    const rawVal = form.metadata[i].value
+    if (rawKey.trim() === '' && rawVal.trim() === '') continue
+    const key = rawKey.trim()
+    if (key === '') throw new UploadInputError(`Metadata key ${i + 1}`, 'is blank')
+    if (key.startsWith('archive.')) {
+      throw new UploadInputError(`Metadata key "${key}"`, 'keys starting with "archive." are reserved by the archive service')
+    }
+    if (Object.prototype.hasOwnProperty.call(metadata, key)) {
+      throw new UploadInputError(`Metadata key "${key}"`, 'is listed more than once')
+    }
+    metadata[key] = rawVal
+  }
+  const encoder = new TextEncoder()
+  const seenSlots = new Set<string>()
+  const renditions = form.renditions.map((draft, idx) => {
+    const name = draft.name.trim()
+    if (name === '') throw new UploadInputError(`Rendition ${idx + 1} name`, 'is blank')
+    if (!PATH_SAFE_SLUG.test(name)) {
+      throw new UploadInputError(`Rendition "${name}"`, 'must contain only letters, digits, dots, underscores, or hyphens')
+    }
+    const subKey = draft.subKey.trim()
+    if (subKey !== '' && !PATH_SAFE_SLUG.test(subKey)) {
+      throw new UploadInputError(`Rendition "${name}" sub-key`, 'must contain only letters, digits, dots, underscores, or hyphens')
+    }
+    if (name === 'parsed' && subKey !== '') {
+      throw new UploadInputError('Rendition "parsed"', 'cannot carry a sub-key')
+    }
+    const slot = `${name}\u0000${subKey}`
+    if (seenSlots.has(slot)) {
+      throw new UploadInputError(`Rendition "${subKey === '' ? name : `${name}/${subKey}`}"`, 'is listed more than once')
+    }
+    seenSlots.add(slot)
+    const mediaType = draft.mediaType.trim() || 'text/plain; charset=utf-8'
+    return create(RenditionContentSchema, {
+      rendition: create(RenditionDescriptorSchema, {
+        name,
+        subKey,
+        mediaType,
+        schemaSubject: draft.schemaSubject.trim(),
+      }),
+      data: encoder.encode(draft.text),
+    })
+  })
+  const module = form.producingModule.trim()
+  return create(PutEntryRequestSchema, {
+    address,
+    title: form.title.trim(),
+    filename: form.filename.trim(),
+    contentType: form.contentType.trim(),
+    sourceUri: form.sourceUri.trim(),
+    expectedVersion: form.expectedVersion,
+    writtenBy: module === '' ? undefined : create(WriteAttributionSchema, { module }),
+    operationId: operationId.trim(),
+    metadata,
+    renditions,
+  })
+}
+
+export interface PutEntryOutcomeSummary {
+  version: bigint
+  rootChecksum: string
+  totalBytes: bigint
+  deduplicated: boolean
+  replayed: boolean
+  operationId: string
+  statusLabel: 'CREATED' | 'DEDUPLICATED' | 'REPLAYED'
+  headline: string
+}
+
+/** Summarizes a PutEntryResponse for operator display (#694). */
+export function describePutEntryOutcome(response: PutEntryResponse): PutEntryOutcomeSummary {
+  const statusLabel: PutEntryOutcomeSummary['statusLabel'] = response.replayed
+    ? 'REPLAYED'
+    : response.deduplicated
+      ? 'DEDUPLICATED'
+      : 'CREATED'
+  const headline = response.replayed
+    ? `Replayed existing outcome at version ${response.version} (no new write).`
+    : response.deduplicated
+      ? `Unchanged: root checksum matched version ${response.version} (deduplicated).`
+      : `Committed new version ${response.version}.`
+  return {
+    version: response.version,
+    rootChecksum: response.rootChecksum,
+    totalBytes: response.totalBytes,
+    deduplicated: response.deduplicated,
+    replayed: response.replayed,
+    operationId: response.operationId,
+    statusLabel,
+    headline,
+  }
+}
+
+/** Maps an archive EntryAddress to its underlying v2 DocumentService CallNumber (#696). */
+export function entryCallNumber(address: EntryAddress): CallNumber {
+  return {
+    accountId: address.accountId,
+    graphId: `archive:${address.accountId}`,
+    graphAddressId: address.archive,
+    docId: address.entryId,
+  }
+}
+
+/** Maps an archive EntryAddress to its underlying v2 DocumentService NodeAddress (#696). */
+export function entryNodeAddress(address: EntryAddress): NodeAddress {
+  const call = entryCallNumber(address)
+  return create(NodeAddressSchema, call)
+}
+
+/** Detailed view of a Drive returned by DriveService.GetDrive (#696). */
+export interface DriveDetailsView {
+  driveId: string
+  name: string
+  accountId: string
+  driveType: string
+  status: string
+  provider: string
+  bucket: string
+  prefix: string
+  location: string
+  region: string
+  credentialsRef: string
+  createdAt: string | null
+  providerSummary: string
+  providerOptions: { key: string; value: string }[]
+  metadata: { key: string; value: string }[]
+}
+
+/** Formats a Drive message into a structured inspector view (#696). */
+export function describeDriveDetails(drive: Drive): DriveDetailsView {
+  const location = drive.prefix === '' ? drive.bucket : `${drive.bucket}/${drive.prefix}`
+  let providerSummary = 'Default provider settings'
+  const cfg = drive.providerConfig?.config
+  if (cfg?.case === 's3') {
+    const parts: string[] = ['S3']
+    if (cfg.value.endpointOverride !== '') parts.push(`endpoint ${cfg.value.endpointOverride}`)
+    parts.push(cfg.value.forcePathStyle ? 'path-style=true' : 'path-style=false')
+    providerSummary = parts.join(' · ')
+  } else if (cfg?.case === 'redis') {
+    const parts: string[] = [`Redis (${cfg.value.uri || 'default URI'})`]
+    if (cfg.value.keyPrefix !== '') parts.push(`keyPrefix=${cfg.value.keyPrefix}`)
+    if (cfg.value.ttlSeconds > 0) parts.push(`ttl=${cfg.value.ttlSeconds}s`)
+    providerSummary = parts.join(' · ')
+  } else if (cfg?.case === 'remote') {
+    providerSummary = `Remote (${cfg.value.target} / drive ${cfg.value.driveName})`
+  }
+  const providerOptions = Object.entries(drive.providerConfig?.options ?? {})
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([key, value]) => ({ key, value }))
+  const metadata = Object.entries(drive.metadata)
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([key, value]) => ({ key, value }))
+  return {
+    driveId: drive.driveId,
+    name: drive.name,
+    accountId: drive.accountId,
+    driveType: enumLabel(DriveTypeSchema, drive.driveType),
+    status: enumLabel(DriveStatusSchema, drive.status),
+    provider: drive.provider,
+    bucket: drive.bucket,
+    prefix: drive.prefix,
+    location,
+    region: drive.region || '(default)',
+    credentialsRef: drive.credentialsRef || '(service default chain)',
+    createdAt: instant(drive.createdAt),
+    providerSummary,
+    providerOptions,
+    metadata,
+  }
 }

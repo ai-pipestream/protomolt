@@ -1,7 +1,99 @@
 <template>
   <div data-testid="links">
+    <v-card v-if="!tombstone && (links.length > 0 || backlinks.length > 0)" class="mb-4" data-testid="link-neighborhood-card">
+      <v-card-title class="text-subtitle-2 d-flex align-center flex-wrap ga-2">
+        <span>1-hop link neighborhood</span>
+        <span class="text-caption text-medium-emphasis">
+          {{ backlinks.length }} inbound · {{ links.length }} outbound
+        </span>
+        <v-spacer />
+        <v-btn
+          v-if="hasDynamicLinks"
+          size="x-small"
+          variant="tonal"
+          color="primary"
+          prepend-icon="mdi-sync"
+          :loading="resolvingAll"
+          data-testid="resolve-all-dynamic-links"
+          @click="resolveAllDynamic"
+        >
+          Resolve all dynamic links
+        </v-btn>
+      </v-card-title>
+      <v-card-text>
+        <div class="link-graph-wrapper" role="region" aria-label="1-hop document link neighborhood graph">
+          <svg
+            :viewBox="`0 0 ${neighborhoodGraph.width} ${neighborhoodGraph.height}`"
+            class="link-graph-svg"
+            data-testid="link-neighborhood-graph"
+          >
+            <defs>
+              <marker id="link-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+                <path d="M 0 1 L 10 5 L 0 9 z" fill="#78909c" />
+              </marker>
+            </defs>
+            <text x="125" y="18" text-anchor="middle" class="graph-col-header">INBOUND BACKLINKS</text>
+            <text x="380" y="18" text-anchor="middle" class="graph-col-header">CURRENT DOCUMENT</text>
+            <text x="635" y="18" text-anchor="middle" class="graph-col-header">OUTBOUND TARGETS</text>
+
+            <g v-for="edge in neighborhoodGraph.edges" :key="edge.id" :data-testid="`graph-edge-${edge.id}`">
+              <line
+                :x1="edge.x1"
+                :y1="edge.y1"
+                :x2="edge.x2"
+                :y2="edge.y2"
+                stroke="#78909c"
+                stroke-width="1.5"
+                :stroke-dasharray="edge.dashed ? '4 3' : undefined"
+                marker-end="url(#link-arrow)"
+              />
+              <text :x="edge.labelX" :y="edge.labelY" text-anchor="middle" class="graph-edge-label">
+                {{ edge.relation }}
+              </text>
+            </g>
+
+            <g
+              v-for="node in neighborhoodGraph.nodes"
+              :key="node.id"
+              :transform="`translate(${node.x - 92}, ${node.y - 22})`"
+              :class="{ 'graph-node-clickable': node.call !== null && node.column !== 'current' }"
+              :data-testid="`graph-node-${node.docId}`"
+              @click="onGraphNodeClick(node)"
+            >
+              <rect
+                width="184"
+                height="44"
+                rx="6"
+                :fill="graphNodeFill(node.status)"
+                :stroke="graphNodeStroke(node.status)"
+                stroke-width="1.5"
+              />
+              <text x="92" y="18" text-anchor="middle" class="graph-node-title">
+                {{ truncateGraphText(node.docId, 23) }}
+              </text>
+              <text x="92" y="34" text-anchor="middle" class="graph-node-sub">
+                {{ truncateGraphText(node.subtitle, 26) }}
+              </text>
+            </g>
+          </svg>
+        </div>
+      </v-card-text>
+    </v-card>
+
     <v-card class="mb-4">
-      <v-card-title class="text-subtitle-2">Outbound links</v-card-title>
+      <v-card-title class="text-subtitle-2 d-flex align-center flex-wrap ga-2">
+        <span>Outbound links</span>
+        <v-spacer />
+        <v-btn
+          v-if="hasDynamicLinks && backlinks.length === 0 && links.length === 0"
+          size="x-small"
+          variant="tonal"
+          :loading="resolvingAll"
+          @click="resolveAllDynamic"
+        >
+          Resolve all dynamic links
+        </v-btn>
+      </v-card-title>
       <v-card-text>
         <div v-if="tombstone" class="text-body-2 text-medium-emphasis">A tombstone revision holds no links.</div>
         <template v-else>
@@ -47,6 +139,15 @@
                   <td>
                     <v-chip v-if="row.target.kind === 'static'" size="x-small" variant="tonal" :color="statusColor(row.target.status)"
                             :data-testid="`link-status-${row.fieldPath}-${row.ordinal}`">{{ row.target.status }}</v-chip>
+                    <v-chip
+                      v-else
+                      size="x-small"
+                      variant="tonal"
+                      :color="dynamicStatusColor(row.key)"
+                      :data-testid="`link-status-${row.fieldPath}-${row.ordinal}`"
+                    >
+                      {{ dynamicStatusLabel(row.key) }}
+                    </v-chip>
                   </td>
                   <td>
                     <v-btn v-if="row.target.kind === 'static' && row.target.status !== 'UNAVAILABLE'" size="x-small" variant="tonal"
@@ -143,15 +244,16 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref, shallowRef, watch } from 'vue'
+import { computed, onMounted, ref, shallowRef, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import ConceptEvidence from './ConceptEvidence.vue'
 import RpcFailureAlert from './RpcFailureAlert.vue'
 import type { NodeAddress } from '@/gen/ai/protomolt/proto/repo/v1/address_pb'
 import { useRepositoryClients } from '@/repository/clients'
-import type { CallNumber } from '@/repository/documentCore'
+import { callNumberOf, type CallNumber } from '@/repository/documentCore'
 import {
   backlinkRow,
+  buildLinkNeighborhoodGraph,
   documentRoute,
   evidenceView,
   linkRows,
@@ -160,6 +262,7 @@ import {
   resolveLinkRequest,
   type BacklinkRow,
   type EvidenceView,
+  type LinkGraphNode,
   type LinkRow,
   type TargetStatus,
 } from '@/repository/linksCore'
@@ -178,6 +281,8 @@ const backlinksScope = useCallScope()
 const links = shallowRef<LinkRow[]>([])
 const linksLoaded = ref(false)
 const linksFailure = ref<RpcFailure | null>(null)
+const resolvedDynamicMap = ref<Record<string, DocumentRow[]>>({})
+const resolvingAll = ref(false)
 
 /** The one dynamic link whose targets are open, with the pages read so far. */
 const resolving = shallowRef<{
@@ -195,14 +300,58 @@ const backlinksLoaded = ref(false)
 const backlinksLoading = ref(false)
 const backlinksFailure = ref<RpcFailure | null>(null)
 
+const hasDynamicLinks = computed(() => links.value.some((r) => r.target.kind === 'dynamic'))
+const neighborhoodGraph = computed(() =>
+  buildLinkNeighborhoodGraph(callNumberOf(props.address), props.revision, links.value, backlinks.value, resolvedDynamicMap.value),
+)
+
 function statusColor(status: TargetStatus): string {
   return status === 'RESOLVED' ? 'success' : status === 'TOMBSTONED' ? 'warning' : 'error'
+}
+
+function dynamicStatusColor(key: string): string {
+  const rows = resolvedDynamicMap.value[key]
+  if (rows === undefined) return 'default'
+  return rows.length > 0 ? 'success' : 'warning'
+}
+
+function dynamicStatusLabel(key: string): string {
+  const rows = resolvedDynamicMap.value[key]
+  if (rows === undefined) return 'DYNAMIC'
+  return rows.length > 0 ? `RESOLVED (${rows.length})` : 'EMPTY (0)'
+}
+
+function graphNodeFill(status: LinkGraphNode['status']): string {
+  if (status === 'CURRENT') return 'rgba(245, 166, 35, 0.16)'
+  if (status === 'RESOLVED') return 'rgba(46, 125, 50, 0.15)'
+  if (status === 'TOMBSTONED') return 'rgba(237, 108, 2, 0.15)'
+  if (status === 'UNAVAILABLE') return 'rgba(211, 47, 47, 0.15)'
+  return 'rgba(120, 144, 156, 0.14)'
+}
+
+function graphNodeStroke(status: LinkGraphNode['status']): string {
+  if (status === 'CURRENT') return '#f5a623'
+  if (status === 'RESOLVED') return '#4caf50'
+  if (status === 'TOMBSTONED') return '#ff9800'
+  if (status === 'UNAVAILABLE') return '#ef5350'
+  return '#78909c'
+}
+
+function truncateGraphText(value: string, max: number): string {
+  return value.length <= max ? value : `${value.slice(0, max - 1)}…`
+}
+
+function onGraphNodeClick(node: LinkGraphNode) {
+  if (node.call !== null && node.column !== 'current') {
+    openCall(node.call, node.revision)
+  }
 }
 
 async function loadLinks() {
   const signal = linksScope.next()
   resolveScope.next()
   resolving.value = null
+  resolvedDynamicMap.value = {}
   links.value = []
   linksLoaded.value = false
   linksFailure.value = null
@@ -230,17 +379,37 @@ async function resolve(row: LinkRow, first: boolean) {
       { signal },
     )
     if (signal.aborted) return
+    const nextRows = [...(earlier?.rows ?? []), ...page.documents.map(documentRow)]
     resolving.value = {
       key: row.key,
-      rows: [...(earlier?.rows ?? []), ...page.documents.map(documentRow)],
+      rows: nextRows,
       nextToken: page.nextPageToken,
       evidence: evidenceView(page.conceptEvidence) ?? earlier?.evidence ?? null,
       loading: false,
       failure: null,
     }
+    resolvedDynamicMap.value = { ...resolvedDynamicMap.value, [row.key]: nextRows }
   } catch (error) {
     if (isOwnCancellation(error, signal)) return
     resolving.value = { ...resolving.value!, nextToken: earlier?.nextToken ?? '', loading: false, failure: rpcFailure(error) }
+  }
+}
+
+async function resolveAllDynamic() {
+  const signal = resolveScope.next()
+  resolvingAll.value = true
+  try {
+    const dynRows = links.value.filter((r) => r.target.kind === 'dynamic')
+    for (const row of dynRows) {
+      const page = await clients.documents.resolveLink(resolveLinkRequest(props.address, props.revision, row, ''), { signal })
+      if (signal.aborted) return
+      const rows = page.documents.map(documentRow)
+      resolvedDynamicMap.value = { ...resolvedDynamicMap.value, [row.key]: rows }
+    }
+  } catch (error) {
+    if (!isOwnCancellation(error, signal)) linksFailure.value = rpcFailure(error)
+  } finally {
+    if (!signal.aborted) resolvingAll.value = false
   }
 }
 
@@ -284,3 +453,49 @@ watch(() => [props.address, props.revision], () => {
   void loadBacklinks(true)
 })
 </script>
+
+<style scoped>
+.link-graph-wrapper {
+  overflow-x: auto;
+  border: 1px solid rgba(120, 144, 156, 0.25);
+  border-radius: 6px;
+  padding: 8px;
+}
+
+.link-graph-svg {
+  width: 100%;
+  min-width: 640px;
+  height: auto;
+  display: block;
+}
+
+.graph-col-header {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  fill: rgba(255, 255, 255, 0.55);
+}
+
+.graph-edge-label {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 10px;
+  fill: #90a4ae;
+}
+
+.graph-node-title {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 11px;
+  font-weight: 600;
+  fill: currentColor;
+}
+
+.graph-node-sub {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 10px;
+  fill: rgba(255, 255, 255, 0.68);
+}
+
+.graph-node-clickable {
+  cursor: pointer;
+}
+</style>
