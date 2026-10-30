@@ -330,18 +330,24 @@ The design of record is [docs/design/archive.md](../docs/design/archive.md).
   manifest, and a missing body fails `FAILED_PRECONDITION` by name.
 - `ListEntries` / `ListVersions` — paginated listings.
 - `ArchiveMutation` on `ArchiveMutationService` — an operation UUID plus one
-  delete-entry, delete-rendition, or prune-versions command. The transaction removes
-  logical references and records exact cleanup targets. Rendition removal leaves
-  tombstones with size, hash, and reason. Pruning keeps the newest N versions.
-- `GetArchiveMutation` — inspect the durable receipt: logical counts, pending
-  objects, confirmed absence, and retry state. Retry the same command with the
-  same UUID; a different command under that UUID conflicts. These operations
-  require explicit authenticated authority and a qualified managed-storage host.
-  Legacy unbound content requires verified identity migration before deletion.
-- `GetArchiveStats` — exact ledger-maintained counters (entries, versions,
-  retained/current bytes, per-rendition breakdown), adjusted in the same
-  transaction as the mutations they describe, plus exact per-state
-  classification counts.
+  delete-entry, delete-rendition, or prune-versions command. `DeleteEntry`
+  commits a v2 tombstone revision through `DocumentService.DeleteDocument`
+  (leaving stored object bytes intact under keep-forever retention).
+  `DeleteRendition` and `PruneVersions` are refused by name with
+  `FAILED_PRECONDITION` under keep-forever retention and record their refusal
+  under the operation UUID.
+- `GetArchiveMutation` — reads the account's recorded `DocumentService`
+  operation outcome (`GetOperationOutcome`) for the operation UUID: a committed
+  `DeleteEntry` tombstone projects to a completed `ArchiveMutationReceipt`, a
+  recorded mutation refusal replays its refusal status, and an unknown or
+  non-mutation operation ID returns `NOT_FOUND`. Retry the same command with
+  the same UUID to replay the recorded receipt or refusal; reusing the UUID for
+  a different command fails with `ALREADY_EXISTS`.
+- `GetArchiveStats` — exact per-archive counters (entries, versions,
+  retained/current bytes, per-rendition breakdown, and per-state
+  classification counts) computed by `DocumentArchive.getArchiveStats` over
+  live v2 documents in `archive:<account_id>` and their projected revision
+  manifests.
 - `ClassifyEntry` — declare (or re-declare) the entry's format and have
   characterization re-read the primary rendition's bytes; returns the
   state machine's resolution.

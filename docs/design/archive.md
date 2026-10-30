@@ -9,10 +9,11 @@ The archive is the repository family's generic document store: named
 collections of entries, each entry a set of independently addressable
 **renditions** — the raw file, a parsed protobuf, markdown, NDJSON, parquet,
 anything — with attached metadata, retained version history, and three ways
-in (gRPC unary, gRPC client-streaming, HTTP POST). It runs on the same
-engine as the pipeline document store — drives, blob stores, the Postgres
-ledger, the transactional outbox — and is served by the same
-`protomolt-repo-service` binary, standalone or embedded.
+in (gRPC unary, gRPC client-streaming, HTTP POST). It is backed by v2
+documents through `DocumentService` — served by `DocumentArchive`
+(`DocumentArchiveGrpcService`) and `DocumentArchiveMutation`
+(`DocumentArchiveMutationGrpcService`) over the same drives, blob stores,
+and `protomolt-repo-service` binary, standalone or embedded.
 
 The design premise: when you have a single document you tend to grow it.
 A source file arrives; a parse produces a protobuf; a conversion produces
@@ -33,12 +34,13 @@ addressed by a caller-chosen `entry_id`. A **version** is one immutable
 stored state of an entry. A **rendition** is one named byte object (or
 sub-keyed object family) inside a version.
 
-The entry's storage identity is a deterministic name-based UUID over
-`(account_id, archive, entry_id)`. It is simultaneously the ledger primary
-key, the object-key prefix, and the natural event partition key. Identity is
-never random: re-saves are idempotent by construction, retries converge on
-the same row and the same keys, and the same coordinate can never mint two
-entries.
+The entry's storage identity is its v2 document call number (`NodeAddress`:
+`account_id`, `graph_id = "archive:" + account_id`,
+`graph_address_id = archive`, `doc_id = entry_id`). Stack object keys are
+server-allocated by `DocumentService`, and the legacy `entry_uuid` field is
+reserved (§1 below). Identity is never random: re-saves are idempotent by
+construction, retries converge on the same document and operation outcome,
+and the same coordinate can never mint two entries.
 
 There is no node tree, no path hierarchy, no second document model, and no
 search syntax in the contract. Hierarchy, when a consumer wants one, is a
@@ -91,36 +93,32 @@ Versioning is a **per-archive policy**, declared at archive creation:
   rewritten.
 
 The mechanism that makes retained versioning cheap is **entry-local content
-addressing**. A rendition object's key is derived from its own content
-hash, scoped under the entry:
-
-    <drive.prefix>/archive/<accountId>/<archive>/<entryUuid>/<rendition>[/<subKey>]/<sha256>
-
-A version's manifest references objects by these keys. When a new version
-changes one rendition out of five, the four unchanged renditions have
-unchanged hashes, therefore unchanged keys, therefore the new manifest
-simply re-references the existing objects — no copy, no new bytes. When the
-bytes did change, the new object lands beside the old one and both versions
+addressing and blob-level carry-forward**. Each rendition maps onto the entry's
+v2 document `BLOBS` part (`blob_id = name` or `name + "/" + sub_key`) or
+`PARSED` part (`parsed`), with stack object keys server-allocated by
+`DocumentService` (§1–§2 below). When a new version changes one rendition out
+of five, the four unchanged renditions keep their `sha256` and server-allocated
+storage reference via v2 blob-level carry-forward — no copy, no new bytes. When
+the bytes do change, the new object lands beside the old one and both versions
 stay fully readable.
 
-Content addressing is deliberately **entry-local**, not store-global.
+Content sharing is deliberately **entry-local**, not store-global.
 Global content-addressed stores need reference-counted garbage collection —
-a coordination protocol with its own failure modes. Entry-local sharing
-bounds every deletion question to one entry's own version manifests: prune
-version N by deleting the keys in N's manifest that no other retained
-manifest of the same entry references. That is a scan over one entry's
-rows, not a store-wide GC.
+a coordination protocol with its own failure modes. Entry-local carry-forward
+bounds every version's references to that entry's own v2 revision manifests.
 
 A save whose root checksum (SHA-256 over the ordered rendition hashes)
 matches the entry's current version is elided entirely and answers
-`deduplicated=true` with the existing coordinates.
+`unchanged` (`created = false` on `PutEntry`, `replayed` or `unchanged` on
+`UploadRendition`) with the existing coordinates.
 
 ## The manifest is the contract
 
-Each version's manifest is the authoritative list of that version's
-objects: rendition descriptors, states, sizes, hashes, exact object keys,
-provenance. It lives in the ledger (a JSONB column beside the version row)
-because it must be transactionally consistent with the version's existence.
+Each version's `VersionManifest` is the authoritative list of that version's
+objects: rendition descriptors, states, sizes, hashes, storage references,
+provenance. Under v2 it is deterministically projected from the document
+revision's `RevisionManifest` and stored `CORE` / `BLOBS` / `PARSED` parts
+(§3 below), so it is always transactionally consistent with the revision.
 
 Everything operational derives from the manifest's exact key list, never
 from prefix listing: deletion deletes the manifest's keys, reconciliation
@@ -160,10 +158,12 @@ body is the bytes, identity rides query parameters or headers (query wins) —
 `account_id`, `archive`, `entry_id`, `rendition` (default `original`),
 `filename`, `Content-Type`, optional `X-Content-Sha256`. `Content-Length`
 is required (411 without it); the body streams through a digest straight to
-storage with no buffering; a checksum mismatch is a 400 and the landed
-object is best-effort deleted. Success returns a JSON receipt: entry UUID,
-version, rendition, size, SHA-256, object key. A producer that must know
-nothing about protomolt uses this door and still gets every guarantee.
+`DocumentService.UploadDocument` with no full-body buffering; a checksum
+mismatch is a 400. Success returns a binary `UploadRenditionResponse` (or JSON
+when negotiated via `Accept: application/json`; default `application/protobuf`)
+carrying the committed `version`, `rendition`, `size_bytes`, `sha256`,
+`operation_id`, and `replayed` flag (`entry_uuid` is reserved). A producer that
+must know nothing about protomolt uses this door and still gets every guarantee.
 
 ## Reads
 
@@ -197,18 +197,16 @@ labels; renditions are for data.
 
 ## Events
 
-Archive mutation events are a deliberate future extension, designed here
-and absent from the contract until built (rule 7). They ride the engine's
-transactional-outbox pattern: the outbox row commits in the same
-transaction as the ledger mutation, a relay publishes to Kafka through the
-protomolt serde, delivery is at-least-once with event-id dedupe, and
-events carry identifiers and state transitions, never bodies — a consumer
-that needs bytes calls back through the API, because events that carry
-whole documents race their own truth. The vocabulary: `EntrySaved` (with
-the new version and root checksum), `RenditionDeleted` (the tombstone,
-with its reason), `EntryDeleted`, `VersionPruned`. What stands between
-the design and the door is generalizing the relay, which is typed to the
-document store's event message today.
+Archive-specific mutation events remain a deliberate future extension, designed
+here and absent from the archive contract until built (rule 7). Because archive
+entries are stored as v2 documents under `archive:<account_id>` graphs, every
+archive write and tombstone commits through `DocumentService` and records its
+v2 document outcome and outbox transition in the v2 catalog transaction. A
+dedicated archive event stream (`EntrySaved`, `RenditionDeleted`,
+`EntryDeleted`, `VersionPruned`) will project from those v2 document transitions
+and carry identifiers and state transitions, never bodies — a consumer that
+needs bytes calls back through the API, because events that carry whole
+documents race their own truth.
 
 ## Stats
 
@@ -261,42 +259,43 @@ over the live v2 documents in the `archive:<account_id>` graph (`graph_address_i
 
 ## Durable deletion and recovery
 
-ArchiveMutationService accepts an operation UUID and one delete-entry,
-delete-rendition, or prune-versions command. It commits the logical changes,
-counters, immutable command identity, and exact cleanup targets in one SQL
-transaction. Physical cleanup follows outside that transaction at each object's
-original backend identity. A provider failure records a retryable observation;
-it cannot roll back the logical admission or report physical completion.
+`DocumentArchiveMutation` (`DocumentArchiveMutationGrpcService`) implements
+`ArchiveMutationService` over v2 `DocumentService` outcomes (§7 below):
 
-The receipt separates logical removal from pending and confirmed-absent objects.
-Repeating the same operation and command returns its original logical outcome
-with the current durable observation, even after the entry address is recreated.
-Reusing the UUID for another command conflicts. GetArchiveMutation permits lookup
-after a lost response. COMPLETED describes recorded confirmation, not a fresh
-provider probe; reconciliation handles late writes using retained cleanup state.
-
-Publication pins and cleanup claims fence each other. An object selected for
-cleanup cannot acquire a new retained reference. Legacy content without verified
-immutable storage bindings is refused, never resolved through today's drive.
-The earlier object-first RPCs and SQL helpers have been removed. Their request
-payload messages remain inputs to the identified mutation contract.
-
-Managed composition and explicit caller authority are required. Scoped ownership
-checks are still pending. Generic blob mutations reserve the exact `archive`
-path segment, protecting both earlier and current archive layouts from overwrite
-or deletion through that API, including drive aliases. Administrative reads
-remain available. Direct provider SPI access stays trusted; the guard is a
-repository API boundary, not a storage-provider permission system.
+- **`DeleteEntry` -> `DeleteDocument` (tombstone).** `DeleteEntry` checks
+  `DocumentService.GetOperationOutcome` first for an idempotent replay of
+  `operation_id` and otherwise delegates to `DocumentService.DeleteDocument` at
+  the entry's current revision (or `expected_version`). Under keep-forever
+  retention, logical deletion commits a tombstone revision and removes no
+  physical object bytes, returning `ArchiveMutationReceipt` with
+  `kind = ARCHIVE_MUTATION_KIND_DELETE_ENTRY`,
+  `state = ARCHIVE_MUTATION_STATE_COMPLETED`, `entry_deleted = true`, and zero
+  physical object counters.
+- **`DeleteRendition` and `PruneVersions` refused by name with
+  `FAILED_PRECONDITION`.** Under v2 keep-forever retention, destructive byte
+  removal across versions (`DeleteRendition`) and version pruning
+  (`PruneVersions`) are not supported until per-blob purge or §13 retention
+  lands. After validating the request, `operation_id`, and target archive/entry
+  existence, both record a refusal outcome in `DocumentService` under
+  `(account_id, operation_id)` and refuse with `FAILED_PRECONDITION`.
+- **`GetArchiveMutation` -> `GetOperationOutcome`.** `GetArchiveMutation` reads
+  the account's recorded `DocumentService` outcome for `operation_id`: a
+  committed `DeleteEntry` tombstone projects to the completed
+  `ArchiveMutationReceipt`, a recorded archive mutation refusal replays its
+  refusal status, and an unknown or non-mutation operation ID returns
+  `NOT_FOUND`. Repeating the same command with the same `operation_id` replays
+  the recorded receipt or refusal; reusing the UUID for a different command
+  fails with `ALREADY_EXISTS`.
 
 ## The archive over v2 documents (specification, #535)
 
 This section answers requirements §16 question 1 and is the design of record
 for the archive's storage. `ArchiveService` stays its own service with its own
 read budget and contract. Its entries, renditions and versions are stored as
-v2 documents through `DocumentService`; the `ArchiveLedger` storage model, its
-migrations and its separate backup and purge paths are retired once the
-implementation passes the requirements' §15 acceptance on archive traffic.
-Until then the sections above describe the running service. Provider object
+v2 documents through `DocumentService`, served by `DocumentArchive` and
+`DocumentArchiveMutation`. The cutover (#632) retired the `ArchiveLedger`
+storage model and dropped the `archives` and `archive_*` tables in Flyway
+migration `V121`, so this v2 mapping is the running service. Provider object
 versioning is never used: stack keys are write-once (requirements §6).
 
 The archive keeps three layers apart:
