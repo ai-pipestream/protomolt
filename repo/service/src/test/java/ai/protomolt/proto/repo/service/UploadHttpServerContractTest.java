@@ -3,6 +3,8 @@ package ai.protomolt.proto.repo.service;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
@@ -14,6 +16,8 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -175,6 +179,42 @@ class UploadHttpServerContractTest {
             byte[] statusLine = new byte["HTTP/1.1 401".length()];
             int read = socket.getInputStream().readNBytes(statusLine, 0, statusLine.length);
             assertThat(new String(statusLine, 0, read, StandardCharsets.US_ASCII)).isEqualTo("HTTP/1.1 401");
+        }
+    }
+
+    @ParameterizedTest
+    @ValueSource(ints = {0, 1})
+    void refusedUploadClosesWithinTheDrainDeadlineWhenSenderStalls(int bodyBytes) throws Exception {
+        AtomicReference<Thread> handler = new AtomicReference<>();
+        server.close();
+        server = UploadHttpServer.withArchive(null, null, "synthetic-http-operator-key",
+                UploadHttpServerCredentialTest.unimplementedArchive(),
+                RepositoryConsole.notConfigured(), Map.of(), null,
+                headers -> {
+                    handler.set(Thread.currentThread());
+                    return Optional.empty();
+                }, caller -> { throw new AssertionError("unauthenticated caller cannot bind"); });
+        server.start(0);
+        try (Socket socket = new Socket("127.0.0.1", server.port())) {
+            socket.setSoTimeout(5_000);
+            String head = "POST " + UploadHttpServer.ARCHIVE_UPLOAD_PATH
+                    + "?account_id=a&archive=ar&entry_id=e HTTP/1.1\r\n"
+                    + "Host: 127.0.0.1\r\n"
+                    + "Content-Length: 16777216\r\n\r\n";
+            socket.getOutputStream().write(head.getBytes(StandardCharsets.US_ASCII));
+            socket.getOutputStream().write(new byte[bodyBytes]);
+            socket.getOutputStream().flush();
+            long started = System.nanoTime();
+            // Leave the request open. EOF must come from the server's deadline,
+            // not a client disconnect or an additional body byte.
+            byte[] response = socket.getInputStream().readAllBytes();
+            assertThat(new String(response, StandardCharsets.ISO_8859_1))
+                    .startsWith("HTTP/1.1 401");
+            assertThat(handler.get()).isNotNull();
+            assertThat(handler.get().join(Duration.ofSeconds(1)))
+                    .as("refused request handler terminated, not just its socket").isTrue();
+            assertThat(Duration.ofNanos(System.nanoTime() - started))
+                    .isLessThan(Duration.ofSeconds(5));
         }
     }
 

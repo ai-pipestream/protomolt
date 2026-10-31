@@ -45,6 +45,8 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.ScheduledThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Function;
 import java.util.function.Supplier;
@@ -870,10 +872,49 @@ public final class UploadHttpServer implements AutoCloseable {
             com.google.protobuf.MessageLite response) throws IOException {
         exchange.getResponseHeaders().set("Content-Type", "application/protobuf");
         exchange.sendResponseHeaders(status, response.getSerializedSize());
+        DrainDeadline deadline = null;
         try (OutputStream body = exchange.getResponseBody()) {
             response.writeTo(body);
             body.flush();
+            deadline = new DrainDeadline();
             discardUnreadBody(exchange);
+        } finally {
+            if (deadline != null) {
+                deadline.close();
+            }
+        }
+    }
+
+    /** Bounds both explicit draining and the JDK's implicit drain on stream close. */
+    private static final class DrainDeadline implements AutoCloseable {
+        private static final ScheduledThreadPoolExecutor TIMER = timer();
+        private final Thread handler = Thread.currentThread();
+        private final ScheduledFuture<?> timeout;
+        private boolean active = true;
+
+        private DrainDeadline() {
+            timeout = TIMER.schedule(this::expire, LINGER_NANOS, TimeUnit.NANOSECONDS);
+        }
+
+        private static ScheduledThreadPoolExecutor timer() {
+            var timer = new ScheduledThreadPoolExecutor(1,
+                    Thread.ofPlatform().daemon().name("archive-refusal-deadline").factory());
+            timer.setRemoveOnCancelPolicy(true);
+            return timer;
+        }
+
+        private synchronized void expire() {
+            if (active) {
+                // HttpServer uses a blocking SocketChannel. Interrupting its per-request
+                // virtual thread closes that channel, including a stalled read/close.
+                handler.interrupt();
+            }
+        }
+
+        @Override
+        public synchronized void close() {
+            active = false;
+            timeout.cancel(false);
         }
     }
 
@@ -883,8 +924,8 @@ public final class UploadHttpServer implements AutoCloseable {
      * server reads at most 64 KiB of a leftover body itself; closing with more unread
      * resets the connection under a client that is still sending, and the JDK HttpClient
      * then fails the exchange without the response. Bounded by {@link #LINGER_MAX_BYTES}
-     * and {@link #LINGER_NANOS}, checked between reads; past either bound the connection
-     * closes as before.
+     * and {@link #LINGER_NANOS}. The surrounding deadline interrupts blocked reads
+     * and stream-close draining rather than waiting for another client byte.
      */
     private static void discardUnreadBody(HttpExchange exchange) {
         byte[] buffer = new byte[STREAM_CHUNK_BYTES];
@@ -894,7 +935,8 @@ public final class UploadHttpServer implements AutoCloseable {
             InputStream body = exchange.getRequestBody();
             int read;
             while (discarded < LINGER_MAX_BYTES && System.nanoTime() - deadline < 0
-                    && (read = body.read(buffer)) != -1) {
+                    && (read = body.read(buffer, 0,
+                            (int) Math.min(buffer.length, LINGER_MAX_BYTES - discarded))) != -1) {
                 discarded += read;
             }
         } catch (IOException closedOrReset) {
