@@ -91,6 +91,18 @@ jobs:
           if-no-files-found: warn
           retention-days: 3
 
+      # Every module's integrationTest results: the assertion messages and captured
+      # output the console log leaves out.
+      - name: Save integration test results
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: integration-test-results-jdk-${{ matrix.test-jdk }}-${{ github.run_attempt }}
+          path: |
+            **/build/test-results/integrationTest/*.xml
+          if-no-files-found: warn
+          retention-days: 7
+
       # Excluded from `build` because these tests fork an agent JVM and shell out to
       # protoc, which is slower than anything the default test task runs. The lane keeps
       # the coverage (the agent driven exactly as an IDE drives it) without slowing the
