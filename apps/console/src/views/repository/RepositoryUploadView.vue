@@ -96,7 +96,7 @@
           <div class="d-flex align-center flex-wrap ga-2">
             <v-icon size="small" color="primary">mdi-cloud-upload-outline</v-icon>
             <span class="text-caption text-medium-emphasis">Drag &amp; drop one or more files here, or choose from disk:</span>
-            <input ref="fileInput" type="file" multiple data-testid="up-file" @change="pickFile" />
+            <input ref="fileInput" type="file" multiple :disabled="busy || batchBusy" data-testid="up-file" @change="pickFile" />
           </div>
           <div v-if="file && batchQueue.length <= 1" class="d-flex align-center flex-wrap ga-2 text-caption text-mono mt-1">
             <span>{{ file.name }} · {{ byteSize(file.size) }} · {{ file.type || 'no type' }}</span>
@@ -120,7 +120,7 @@
               size="small"
               color="primary"
               :loading="batchBusy"
-              :disabled="busy || batchBusy"
+              :disabled="busy || batchBusy || batchQueue.every((item) => item.status === 'SAVED')"
               data-testid="batch-upload-submit"
               @click="startBatchUpload"
             >
@@ -144,6 +144,7 @@
                 <td>
                   <v-text-field
                     v-model="item.docId"
+                    :disabled="batchBusy || item.plan !== null"
                     density="compact"
                     hide-details
                     variant="underlined"
@@ -169,7 +170,7 @@
                     <span v-if="item.message" class="text-mono">{{ item.message }}</span>
                     <router-link
                       v-if="item.operationId"
-                      :to="{ name: 'repository-lookup', query: { account: form.accountId, op: item.operationId } }"
+                      :to="{ name: 'repository-lookup', query: { account: item.plan?.accountId, op: item.operationId } }"
                       class="text-mono text-caption"
                       :data-testid="`batch-op-${idx}`"
                     >
@@ -196,7 +197,7 @@
           {{ inputError }}
         </v-alert>
         <div class="d-flex ga-2 mt-3">
-          <v-btn color="primary" size="small" :disabled="busy" data-testid="up-start" @click="start">Upload</v-btn>
+          <v-btn color="primary" size="small" :disabled="busy || batchBusy" data-testid="up-start" @click="start">Upload</v-btn>
           <v-btn v-if="busy" size="small" variant="text" data-testid="up-cancel" @click="cancel">Cancel</v-btn>
         </div>
       </v-card-text>
@@ -340,8 +341,9 @@ const file = shallowRef<File | null>(null)
 export interface BatchQueueItem {
   file: File
   docId: string
-  status: 'READY' | 'HASHING' | 'UPLOADING' | 'SAVED' | 'FAILED'
+  status: 'READY' | 'HASHING' | 'UPLOADING' | 'SAVED' | 'FAILED' | 'UNSETTLED'
   operationId: string | null
+  plan: UploadPlan | null
   message: string
   address: NodeAddress | null
   revision: bigint | null
@@ -368,6 +370,7 @@ const sentPercent = computed(() =>
 )
 
 function stageSelectedFiles(selected: File[]) {
+  if (busy.value || batchBusy.value) return
   file.value = selected.length > 0 ? selected[0] : null
   if (selected.length > 1) {
     batchQueue.value = selected.map((f) => ({
@@ -375,6 +378,7 @@ function stageSelectedFiles(selected: File[]) {
       docId: deriveDocIdFromFilename(pathPrefix.value, f.name),
       status: 'READY',
       operationId: null,
+      plan: null,
       message: '',
       address: null,
       revision: null,
@@ -403,7 +407,7 @@ watch(pathPrefix, (nextPrefix, prevPrefix) => {
     }
   }
   for (const item of batchQueue.value) {
-    if (item.status === 'READY') {
+    if (item.status === 'READY' && !batchBusy.value) {
       const prevDerived = deriveDocIdFromFilename(prevPrefix ?? '', item.file.name)
       if (item.docId === prevDerived || item.docId.trim() === '') {
         item.docId = deriveDocIdFromFilename(nextPrefix, item.file.name)
@@ -434,11 +438,19 @@ function dropFiles(event: DragEvent) {
 
 async function startBatchUpload() {
   inputError.value = null
-  if (batchQueue.value.length === 0) return
-  // Validate common fields first using the first item.
-  const firstItem = batchQueue.value[0]
+  if (busy.value || batchBusy.value || batchQueue.value.length === 0) return
+  // Capture every destination before hashing or sending any file. Retried rows
+  // keep their original plan, even when the draft form has since changed.
+  const pending = batchQueue.value.filter((item) => item.status !== 'SAVED').map((item) => ({
+    item,
+    form: { ...form, docId: item.docId, expectedRevision: '' },
+  }))
   try {
-    planUpload({ ...form, docId: firstItem.docId, expectedRevision: '' }, firstItem.file, newOperationId(), '0'.repeat(64))
+    for (const submitted of pending) {
+      if (submitted.item.plan === null) {
+        planUpload(submitted.form, submitted.item.file, '', '0'.repeat(64))
+      }
+    }
   } catch (error) {
     if (error instanceof UploadInputError) {
       inputError.value = error.message
@@ -449,29 +461,31 @@ async function startBatchUpload() {
   const signal = batchScope.next()
   batchBusy.value = true
   try {
-    for (const item of batchQueue.value) {
+    for (const { item, form: submittedForm } of pending) {
       if (signal.aborted) return
       item.status = 'HASHING'
       item.message = ''
-      const opId = newOperationId()
-      item.operationId = opId
       try {
-        const sha256 = await fileSha256(item.file, signal)
-        if (signal.aborted) return
-        const itemPlan = planUpload({ ...form, docId: item.docId, expectedRevision: '' }, item.file, opId, sha256)
+        if (item.plan === null) {
+          const sha256 = await fileSha256(item.file, signal)
+          if (signal.aborted) return
+          item.plan = planUpload(submittedForm, item.file, newOperationId(), sha256)
+          item.operationId = item.plan.operationId
+        }
+        const itemPlan = item.plan
         item.status = 'UPLOADING'
         const sendResult = await sendUpload(itemPlan, newRequest, () => {}, signal)
         if (signal.aborted) return
         if (sendResult.kind === 'saved') {
           const saved = sendResult.response.answer.case === 'saved' ? sendResult.response.answer.value : undefined
           const accession = saved?.accession
-          item.status = 'SAVED'
+          item.status = accession ? 'SAVED' : 'UNSETTLED'
           item.address = accession?.address ?? null
           item.revision = accession?.revision ?? null
-          item.message = accession ? `rev ${accession.revision}` : 'saved'
+          item.message = accession ? `rev ${accession.revision}` : 'The response has no saved accession; look up the operation before retrying.'
         } else if (sendResult.kind === 'unsettled') {
-          item.status = 'FAILED'
-          item.message = sendResult.reason
+          item.status = 'UNSETTLED'
+          item.message = `${sendResult.reason} The save may have committed; look up the operation or retry with the same operation ID.`
         } else {
           item.status = 'FAILED'
           item.message = `${sendResult.failure.code}: ${sendResult.failure.message}`
@@ -499,6 +513,8 @@ function revisionRoute(address: NodeAddress, revision: bigint) {
 }
 
 async function start() {
+  if (busy.value || batchBusy.value) return
+  const submittedForm = { ...form }
   inputError.value = null
   failure.value = null
   result.value = null
@@ -514,7 +530,7 @@ async function start() {
   const operationId = newOperationId()
   try {
     // Validate before hashing, so a blank field is named at once.
-    planUpload(form, chosen, operationId, '0'.repeat(64))
+    planUpload(submittedForm, chosen, operationId, '0'.repeat(64))
   } catch (error) {
     if (error instanceof UploadInputError) {
       inputError.value = error.message
@@ -528,7 +544,7 @@ async function start() {
   try {
     const sha256 = await fileSha256(chosen, signal, (n) => (hashed.value = n))
     if (signal.aborted) return
-    plan.value = planUpload(form, chosen, operationId, sha256)
+    plan.value = planUpload(submittedForm, chosen, operationId, sha256)
   } catch (error) {
     if (!signal.aborted) {
       phase.value = 'idle'
