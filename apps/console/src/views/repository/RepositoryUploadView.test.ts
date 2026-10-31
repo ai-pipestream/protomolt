@@ -275,6 +275,81 @@ describe('RepositoryUploadView', () => {
     wrapper.unmount()
   })
 
+  it('captures a single upload destination before asynchronous hashing', async () => {
+    const { wrapper } = await mountUpload([saved])
+    const input = wrapper.get('[data-testid="up-file"]').element as HTMLInputElement
+    let finishHash!: (bytes: ArrayBuffer) => void
+    const bytes = new Promise<ArrayBuffer>((resolve) => { finishHash = resolve })
+    vi.spyOn(input.files![0], 'slice').mockReturnValue({ arrayBuffer: () => bytes } as Blob)
+    await wrapper.get('[data-testid="up-start"]').trigger('click')
+    await wrapper.get('[data-testid="up-account"] input').setValue('acct-b')
+    await wrapper.get('[data-testid="up-datasource"] input').setValue('ds-other')
+    await wrapper.get('[data-testid="up-drive"] input').setValue('other-drive')
+    finishHash(BYTES.buffer)
+    await settle()
+    expect(FakeUploadRequest.sent).toHaveLength(1)
+    expect(Object.fromEntries(FakeUploadRequest.sent[0].params())).toMatchObject({
+      account_id: 'acct-a', datasource_id: 'ds-files', drive: 'intake', sha256: SHA,
+    })
+    wrapper.unmount()
+  })
+
+  it('retains batch destinations and retries only unfinished rows with their original operation identity', async () => {
+    const answers: Answer[] = [() => 'hang', () => 'network-error', atCapacity, saved, saved]
+    const { wrapper } = await mountRepositoryView(
+      RepositoryUploadView,
+      { name: 'repository-upload', query: { account: 'acct-a', datasource: 'ds-files' } },
+      repository([]),
+      { [REPOSITORY_UPLOAD_REQUEST as symbol]: () => new FakeUploadRequest((r) => answers.shift()!(r)) },
+    )
+    ;(wrapper.vm as unknown as { form: { drive: string } }).form.drive = 'intake'
+    const files = ['alpha', 'beta', 'gamma'].map((name) => new File(['abc'], name))
+    let finishHash!: (bytes: ArrayBuffer) => void
+    const bytes = new Promise<ArrayBuffer>((resolve) => { finishHash = resolve })
+    vi.spyOn(files[0], 'slice').mockReturnValue({ arrayBuffer: () => bytes } as Blob)
+    const input = wrapper.get('[data-testid="up-file"]').element as HTMLInputElement
+    Object.defineProperty(input, 'files', { value: files, configurable: true })
+    await wrapper.get('[data-testid="up-file"]').trigger('change')
+    await wrapper.get('[data-testid="batch-upload-submit"]').trigger('click')
+    await wrapper.get('[data-testid="up-account"] input').setValue('acct-b')
+    finishHash(new TextEncoder().encode('abc').buffer)
+    await settle()
+    expect(FakeUploadRequest.sent).toHaveLength(1)
+    await wrapper.get('[data-testid="up-account"] input').setValue('acct-c')
+    await wrapper.get('[data-testid="up-drive"] input').setValue('other-drive')
+    expect(wrapper.get('[data-testid="up-start"]').attributes('disabled')).toBeDefined()
+    expect(wrapper.get('[data-testid="batch-doc-id-1"] input').attributes('disabled')).toBeDefined()
+    // A drop during the send must not replace the visible active queue.
+    await wrapper.get('[data-testid="upload-dropzone"]').trigger('drop', { dataTransfer: { files: [new File(['replacement'], 'replacement')] } })
+    const first = FakeUploadRequest.sent[0]
+    first.status = 200
+    first.responseHeaders = { 'content-type': 'application/proto' }
+    first.response = savedBody(first.params().get('operation_id')!).buffer
+    first.onload?.()
+    await settle()
+    expect(FakeUploadRequest.sent).toHaveLength(3)
+    for (const request of FakeUploadRequest.sent) {
+      expect(Object.fromEntries(request.params())).toMatchObject({ account_id: 'acct-a', drive: 'intake' })
+    }
+    expect(wrapper.get('[data-testid="batch-status-0"]').text()).toBe('SAVED')
+    expect(wrapper.get('[data-testid="batch-status-1"]').text()).toBe('UNSETTLED')
+    expect(wrapper.get('[data-testid="batch-status-2"]').text()).toBe('FAILED')
+    for (let i = 0; i < 3; i++) {
+      expect(wrapper.get(`[data-testid="batch-op-${i}"]`).attributes('href')).toContain('account=acct-a')
+    }
+    const originalUrls = FakeUploadRequest.sent.map((request) => request.url)
+    // Even invalid draft fields cannot alter or block replay of a retained plan.
+    await wrapper.get('[data-testid="up-account"] input').setValue('')
+    await wrapper.get('[data-testid="batch-upload-submit"]').trigger('click')
+    await settle()
+    expect(FakeUploadRequest.sent).toHaveLength(5)
+    expect(FakeUploadRequest.sent[3].url).toBe(originalUrls[1])
+    expect(FakeUploadRequest.sent[4].url).toBe(originalUrls[2])
+    expect(FakeUploadRequest.sent[3].body).toBe(files[1])
+    expect(wrapper.get('[data-testid="batch-upload-submit"]').attributes('disabled')).toBeDefined()
+    wrapper.unmount()
+  })
+
   it('auto-fills docId from path prefix + filename and uploads a multi-file batch queue', async () => {
     const outcomes: GetOperationOutcomeRequest[] = []
     const mounted = await mountRepositoryView(
