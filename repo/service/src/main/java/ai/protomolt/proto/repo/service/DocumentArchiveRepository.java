@@ -388,15 +388,15 @@ final class DocumentArchiveRepository implements ArchiveRepository, ArchiveMutat
 
     @Override
     public ArchiveMutationReceipt mutateArchive(RepositoryCaller caller, ArchiveMutationRequest request) {
-        requireProcessAuthority(caller);
         Objects.requireNonNull(request, "request");
+        requireMutationAuthority(caller, request);
         return callAsCaller(caller, () -> archive.archiveMutation(request).getReceipt());
     }
 
     @Override
     public ArchiveMutationReceipt getArchiveMutation(RepositoryCaller caller, GetArchiveMutationRequest request) {
-        requireProcessAuthority(caller);
         Objects.requireNonNull(request, "request");
+        requireMutationAuthority(caller, request);
         return callAsCaller(caller, () -> archive.getArchiveMutation(request).getReceipt());
     }
 
@@ -406,6 +406,43 @@ final class DocumentArchiveRepository implements ArchiveRepository, ArchiveMutat
             throw new RepositoryException(
                     RepositoryException.Code.PERMISSION_DENIED,
                     "Repository account policy is not configured for this principal");
+        }
+    }
+
+    /**
+     * The console-session door into {@code ArchiveMutationService} (docs/design/archive.md,
+     * section 7). Process authority may do anything. A scoped caller may {@code DeleteEntry}
+     * and read back a receipt with {@code GetArchiveMutation}, in an account it is bound to;
+     * the tombstone itself is still committed by {@code DocumentService.DeleteDocument} as that
+     * caller, so document ACLs and writer authority apply as they do on the direct path.
+     * {@code DeleteRendition} and {@code PruneVersions} remain process authority only.
+     */
+    static boolean consoleSessionMutation(Object message) {
+        if (message instanceof ArchiveMutationRequest request) {
+            return request.getMutationCase() == ArchiveMutationRequest.MutationCase.DELETE_ENTRY;
+        }
+        return message instanceof GetArchiveMutationRequest;
+    }
+
+    private static void requireMutationAuthority(RepositoryCaller caller, Object request) {
+        Objects.requireNonNull(caller, "caller");
+        if (caller.processAuthority()) {
+            return;
+        }
+        if (!consoleSessionMutation(request)) {
+            throw new RepositoryException(
+                    RepositoryException.Code.PERMISSION_DENIED,
+                    "Repository account policy is not configured for this principal");
+        }
+        if (caller.accountIds().isEmpty()) {
+            throw new RepositoryException(
+                    RepositoryException.Code.PERMISSION_DENIED, "The caller is bound to no account");
+        }
+        String accountId = extractAccountId(request);
+        if (accountId == null || accountId.trim().isEmpty() || !caller.accountIds().contains(accountId)) {
+            throw new RepositoryException(
+                    RepositoryException.Code.PERMISSION_DENIED,
+                    "The caller is not bound to account '" + accountId + "'");
         }
     }
 
@@ -513,8 +550,9 @@ final class DocumentArchiveRepository implements ArchiveRepository, ArchiveMutat
 
                 RepositoryCaller caller = callerBindings.current();
 
-                boolean isWrite = isMutationService
-                        || "CreateArchive".equals(methodName)
+                // Mutation calls are gated per message below, so a scoped caller can reach
+                // the console-session door (DeleteEntry, GetArchiveMutation) in its own account.
+                boolean isWrite = "CreateArchive".equals(methodName)
                         || "PutEntry".equals(methodName)
                         || "UploadRendition".equals(methodName)
                         || "ClassifyEntry".equals(methodName)
@@ -535,8 +573,16 @@ final class DocumentArchiveRepository implements ArchiveRepository, ArchiveMutat
                     return new ServerCall.Listener<>() {};
                 }
 
-                Context callerContext = Context.current().withValue(
+                // A scoped caller whose binding lists intake writers resolves with the writer
+                // credential the host keeps for it. Hand that same authentication across the
+                // DocumentService hop, so the accession side sees the credential the binding did.
+                AuthenticatedCaller authentication = CallerContexts.authentication()
+                        .map(callerBindings::withBindingWriter).orElse(null);
+                Context withCaller = Context.current().withValue(
                         ArchiveCallerHandoff.REPOSITORY_CALLER, caller);
+                Context callerContext = authentication == null
+                        ? withCaller
+                        : withCaller.withValue(CallerContexts.AUTHENTICATED_CALLER, authentication);
                 ServerCall.Listener<ReqT> delegate =
                         Contexts.interceptCall(callerContext, call, headers, next);
 
@@ -558,6 +604,14 @@ final class DocumentArchiveRepository implements ArchiveRepository, ArchiveMutat
                             return;
                         }
                         if (!isWrite && !caller.processAuthority()) {
+                            if (isMutationService && !consoleSessionMutation(message)) {
+                                closed = true;
+                                call.close(
+                                        Status.PERMISSION_DENIED.withDescription(
+                                                "Repository account policy is not configured for this principal"),
+                                        new Metadata());
+                                return;
+                            }
                             String accountId = extractAccountId(message);
                             if (accountId != null && !accountId.trim().isEmpty()
                                     && !caller.accountIds().contains(accountId)) {
@@ -651,6 +705,17 @@ final class DocumentArchiveRepository implements ArchiveRepository, ArchiveMutat
         }
         if (message instanceof ReadRenditionRequest req) {
             return req.getAddress().getAccountId();
+        }
+        if (message instanceof ArchiveMutationRequest req) {
+            return switch (req.getMutationCase()) {
+                case DELETE_ENTRY -> req.getDeleteEntry().getAddress().getAccountId();
+                case DELETE_RENDITION -> req.getDeleteRendition().getAddress().getAccountId();
+                case PRUNE_VERSIONS -> req.getPruneVersions().getAddress().getAccountId();
+                case MUTATION_NOT_SET -> null;
+            };
+        }
+        if (message instanceof GetArchiveMutationRequest req) {
+            return req.getAccountId();
         }
         return null;
     }
