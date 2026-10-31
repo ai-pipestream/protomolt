@@ -877,6 +877,19 @@ const info = shallowRef<EntryInfo | null>(null)
 const manifest = shallowRef<VersionManifest | null>(null)
 const manifestFailure = ref<RpcFailure | null>(null)
 const selected = ref<RenditionRow | null>(null)
+let pendingInspection: { address: EntryAddress; version: bigint; rendition: string } | null = null
+
+function sameEntry(left: EntryAddress | null, right: EntryAddress): boolean {
+  return left !== null && left.accountId === right.accountId
+    && left.archive === right.archive && left.entryId === right.entryId
+}
+
+function selectPendingInspection() {
+  const pending = pendingInspection
+  if (!pending || !sameEntry(address.value, pending.address) || pinned.value !== pending.version) return
+  selected.value = renditions.value.find(r => r.name === pending.rendition && r.readable) ?? null
+  pendingInspection = null
+}
 const versions = shallowRef<VersionRow[]>([])
 const versionsNext = ref('')
 const versionsFailure = ref<RpcFailure | null>(null)
@@ -1117,14 +1130,13 @@ async function submitBridgeEntry() {
 }
 
 async function inspectBridgedRendition(renditionName: string, version: bigint) {
-  if (requested.value !== null && requested.value !== version) {
+  if (!address.value) return
+  pendingInspection = { address: address.value, version, rendition: renditionName }
+  if (requested.value !== version) {
     openVersion(version)
     return
   }
-  const match = renditions.value.find((r) => r.name === renditionName && r.readable)
-  if (match) {
-    selected.value = match
-  }
+  selectPendingInspection()
 }
 
 const comparedRenditions = computed(() => {
@@ -1268,6 +1280,7 @@ async function loadCompareVersion(target: EntryAddress, baseVersion: bigint) {
 }
 
 async function load() {
+  const previousAddress = address.value
   const signal = readScope.next()
   versionsScope.next()
   compareScope.next()
@@ -1289,9 +1302,21 @@ async function load() {
     requested.value = parseVersion(queryText('version'))
     compareVersion.value = parseVersion(queryText('compare'))
   } catch (error) {
+    pendingInspection = null
+    bridgeScope.next()
+    bridgeResponse.value = null
     compareVersion.value = null
     routeError.value = (error as Error).message
     return
+  }
+  if (previousAddress !== null && !sameEntry(previousAddress, target)) {
+    bridgeScope.next()
+    bridgeResponse.value = null
+    bridgeBusy.value = false
+  }
+  if (pendingInspection && (!sameEntry(target, pendingInspection.address)
+      || requested.value !== pendingInspection.version)) {
+    pendingInspection = null
   }
   address.value = target
   try {
@@ -1308,6 +1333,7 @@ async function load() {
     manifest.value = answer.manifest
     // Rendition reads pin the version this manifest describes.
     pinned.value = answer.manifest.version
+    selectPendingInspection()
   } catch (error) {
     if (!signal.aborted) manifestFailure.value = rpcFailure(error)
     return

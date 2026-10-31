@@ -379,6 +379,56 @@ describe('RepositoryArchiveEntryView', () => {
     wrapper.unmount()
   })
 
+  it.each(['historical', 'current'])('inspects the bridge result at its exact version from %s and clears it on entry navigation', async (mode) => {
+    const requests: bigint[] = []
+    let head = 2n
+    const { wrapper, router } = await mountRepositoryView(
+      RepositoryArchiveEntryView,
+      { ...ENTRY, query: { ...ENTRY.query, ...(mode === 'historical' ? { version: '1' } : {}) } },
+      (r) => {
+        archives(seen())(r)
+        r.service(ArchiveService, {
+          getEntryManifest(request) {
+            requests.push(request.version)
+            return create(GetEntryManifestResponseSchema, {
+              info: create(EntryInfoSchema, { address: request.address, currentVersion: head }),
+              manifest: manifest(request.version || head),
+            })
+          },
+          bridgeEntry() {
+            head = 4n // Another writer advances current before inspection.
+            return create(BridgeEntryResponseSchema, {
+              version: 3n,
+              outcomes: [create(BridgeOutcomeSchema, {
+                bridge: BridgeKind.DOCUMENT_TEXT, status: BridgeStatus.PRODUCED, rendition: 'original',
+              })],
+            })
+          },
+        })
+      },
+    )
+    try {
+      await wrapper.get('[data-testid="toggle-classify-bridge"]').trigger('click')
+      ;(wrapper.vm as unknown as { selectedBridges: BridgeKind[] }).selectedBridges = [BridgeKind.DOCUMENT_TEXT]
+      await settle()
+      await wrapper.get('[data-testid="bridge-submit"]').trigger('click')
+      await settle()
+      await wrapper.get('[data-testid="bridge-inspect-original"]').trigger('click')
+      await settle()
+      expect(router.currentRoute.value.query.version).toBe('3')
+      expect(requests.at(-1)).toBe(3n)
+      const state = wrapper.vm as unknown as { selected: { name: string } | null; pinned: bigint | null }
+      expect(state.pinned).toBe(3n)
+      expect(state.selected?.name).toBe('original')
+      await router.push({ ...ENTRY, query: { ...ENTRY.query, entry: 'e-2', version: '3' } })
+      await settle()
+      expect(state.selected).toBeNull()
+      expect(wrapper.find('[data-testid="bridge-inspect-original"]').exists()).toBe(false)
+    } finally {
+      wrapper.unmount()
+    }
+  })
+
   it('syncs archive classification and text filters with the URL query and clears them via active filter chips', async () => {
     const s = seen()
     const { wrapper, router } = await mountRepositoryView(
