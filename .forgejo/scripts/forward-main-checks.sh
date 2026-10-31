@@ -37,10 +37,14 @@ required_contexts() {
   if ! printf '%s' "$rules_body" | jq -e '
     all(.[]; type == "object")
     and all(.[] | select(.type == "required_status_checks");
-      (.parameters | type == "object")
-      and ((.parameters.required_status_checks // []) | type == "array"
-        and all(.[]; type == "object" and (.context | type == "string")))
-      and ((.parameters.contexts // []) | type == "array" and all(.[]; type == "string")))
+      (.parameters | type == "object"
+        and (if has("required_status_checks") then
+          (.required_status_checks | type == "array"
+            and all(.[]; type == "object" and (.context | type == "string")))
+          else true end)
+        and (if has("contexts") then
+          (.contexts | type == "array" and all(.[]; type == "string"))
+          else true end)))
   ' >/dev/null; then
     echo "GitHub branch rules status-check list is malformed. GitHub main was not moved." >&2
     return 1
@@ -48,9 +52,13 @@ required_contexts() {
   if [ "$protection_status" = 200 ]; then
     if ! printf '%s' "$protection_body" | jq -e '
       type == "object" and (has("contexts") or has("checks"))
-      and ((.contexts // []) | type == "array" and all(.[]; type == "string"))
-      and ((.checks // []) | type == "array"
-        and all(.[]; type == "object" and (.context | type == "string")))
+      and (if has("contexts") then
+        (.contexts | type == "array" and all(.[]; type == "string"))
+        else true end)
+      and (if has("checks") then
+        (.checks | type == "array"
+          and all(.[]; type == "object" and (.context | type == "string")))
+        else true end)
     ' >/dev/null; then
       echo "GitHub branch protection status-check list is malformed. GitHub main was not moved." >&2
       return 1

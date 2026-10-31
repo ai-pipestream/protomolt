@@ -399,15 +399,27 @@ Shared database indexes, connections and storage still contend, and are measured
   outcome; the same operation ID commits on a host with room for the content.
 - Raw files of any size are stored as bytes behind claim checks and never decoded.
 - A 600 MB raw file must stream in and out with bounded memory.
-- Uploads stream through gRPC client streaming and through the HTTP upload route. Both
+- Uploads stream through the gRPC UploadDocument stream and through the HTTP upload route. Both
   are surfaces onto the same upload operation, with the same claim check, validation and
   accession behaviour.
 - Stack limits, such as Redis's value cap, never become platform limits.
 
-A single UploadDocument stream supplies one raw blob or one encoded codec fragment:
-exactly one header, ordered data, then client half-close. The server derives the
-fragment schema from the part layout. Reject duplicate headers, mismatched digest/
-length, and incomplete uploads. Other PUTs use the inline Document. Sequential uploads
+A single UploadDocument stream supplies one raw blob or one encoded codec fragment.
+It is bidirectional and answers before any byte is staged. The first frame is the
+header, and every admission check (authentication, ownership, owner match, writer
+authority, conflict) runs on it. A header whose frame fits the host's maximum message
+size may carry the bytes inline with a finished CORE; it commits in that round trip
+and is answered saved. Otherwise the header declares a streamed body and is answered
+accepted, after which ordered data frames follow, or replayed, when the header alone
+fixes an intent already recorded under its operation ID, and no data is sent. A
+streamed body may announce a trailer carrying the finished CORE (for example a
+classification computed from the bytes); the trailer may change CORE content only,
+and ownership derivation, owner match and writer authority run again on it before
+the one commit. Client half-close ends the stream and is answered saved. Identity
+comes only from the transport credential, never from fields in the request;
+anonymous uploads are refused in the first answer. The server derives the fragment
+schema from the part layout. Reject duplicate headers, data before a streamed header,
+trailers the header did not announce, mismatched digest/length, and incomplete uploads. Other PUTs use the inline Document. Sequential uploads
 and SaveDocuments are separate accessions, not atomic multi-payload streaming.
 ReadDocument emits a manifest, verified part frames, and a completion frame. A prefix
 is not success. Full blob success requires verified bytes and successful RPC completion;

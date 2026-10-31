@@ -1,14 +1,15 @@
 package ai.protomolt.proto.validate.cel;
 
 import ai.protomolt.proto.cel.CelEnvironmentFactory;
+import ai.protomolt.proto.cel.CelEvaluationException;
 import ai.protomolt.proto.cel.CelEvaluator;
 import dev.cel.common.types.SimpleType;
 import org.junit.jupiter.api.Test;
 
-import java.util.List;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
  * Verifies the format standard-library functions are usable as member calls in a CEL environment
@@ -58,22 +59,31 @@ class ValidationCelFunctionsTest {
         assertThat(eval("d.isInf(-1)", Map.of("d", Double.NEGATIVE_INFINITY))).isTrue();
     }
 
+    /**
+     * {@code format} comes from CEL's own {@code strings} extension (cel-java 0.15.0+), not from
+     * this class, so it is exercised through the compiled environment the way a rule would use it.
+     */
     @Test
     void formatSubstitutesDirectivesInOrder() {
-        assertThat(ValidationCelFunctions.formatString("%s = %d", List.of("count", 3L)))
+        assertThat(EVAL.evaluateValue("'%s = %d'.format(['count', 3])", Map.of()))
                 .isEqualTo("count = 3");
-        assertThat(ValidationCelFunctions.formatString("100%% of %s", List.of("it")))
+        assertThat(EVAL.evaluateValue("'100%% of %s'.format(['it'])", Map.of()))
                 .isEqualTo("100% of it");
+        assertThat(EVAL.evaluateValue("'must be %x'.format([b'\\x01\\xff'])", Map.of()))
+                .isEqualTo("must be 01ff");
+        assertThat(EVAL.evaluateValue("'in %s'.format([['a', 'b']])", Map.of()))
+                .isEqualTo("in [a, b]");
     }
 
     /**
-     * An unknown verb is passed through literally. It must not consume an argument, or every
-     * directive after it renders the wrong element of the list.
+     * The CEL spec rejects an unknown verb instead of copying it through (the pre-0.15.0 custom
+     * implementation here used to pass {@code %q} along literally).
      */
     @Test
-    void unknownFormatVerbDoesNotConsumeAnArgument() {
-        assertThat(ValidationCelFunctions.formatString("%q %s", List.of("kept")))
-                .isEqualTo("%q kept");
+    void unknownFormatVerbIsAnEvaluationError() {
+        assertThatThrownBy(() -> EVAL.evaluateValue("'%q %s'.format(['kept'])", Map.of()))
+                .isInstanceOf(CelEvaluationException.class)
+                .hasStackTraceContaining("unrecognized formatting clause");
     }
 
     @Test

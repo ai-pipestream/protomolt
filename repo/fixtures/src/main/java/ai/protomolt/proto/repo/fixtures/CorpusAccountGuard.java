@@ -2,6 +2,7 @@ package ai.protomolt.proto.repo.fixtures;
 
 import ai.protomolt.proto.repo.accession.RepositoryCorpus;
 import ai.protomolt.proto.repo.v1.NodeAddress;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 import java.util.TreeSet;
@@ -56,15 +57,15 @@ public final class CorpusAccountGuard {
      * @throws ForeignDocuments when the account holds a document the corpus does not write
      */
     public static Decision check(RepositoryCorpus corpus, String accountId, List<NodeAddress> existing) {
-        Set<String> owned = Set.copyOf(corpus.documentIds(accountId));
+        Set<NodeAddress> owned = Set.copyOf(CorpusSeeder.addresses(corpus, accountId));
         var foreign = new TreeSet<String>();
-        var seeded = new TreeSet<String>();
+        var seeded = new HashSet<NodeAddress>();
         for (var address : existing) {
             if (!address.getAccountId().equals(accountId)) {
                 throw new IllegalArgumentException("Listing of " + accountId + " holds a document of " + address.getAccountId());
             }
             var id = address.getDocId();
-            if (owned.contains(id) && address.getGraphId().equals("intake:" + accountId)) seeded.add(id);
+            if (owned.contains(address)) seeded.add(address);
             else foreign.add(address.getGraphId() + "/" + address.getGraphAddressId() + "/" + id);
         }
         if (!foreign.isEmpty()) throw new ForeignDocuments(accountId, List.copyOf(foreign));

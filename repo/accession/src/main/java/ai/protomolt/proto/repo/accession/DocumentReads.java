@@ -914,7 +914,7 @@ public final class DocumentReads {
                                 throw new IllegalArgumentException("aggregate payload depth exceeds limit");
                             links.add(new DocumentLinks.Link(
                                     path, field.isRepeated() ? i : 0, field.isRepeated(),
-                                    declared, parseLinkValue(field, value)));
+                                    declared, DocumentLinks.value(field, value)));
                         } else {
                             walkCorePayload(value, field.isRepeated() ? path + "[" + i + "]" : path,
                                     at, depth + 1, underMap, state, links);
@@ -1006,36 +1006,6 @@ public final class DocumentReads {
             default -> throw new IllegalArgumentException("unsupported map key type");
         }
         return result.build();
-    }
-
-    /** Decodes a dynamic {@link DocumentLink} message and verifies that it carries no unknown fields. */
-    private static DocumentLink parseLinkValue(Descriptors.FieldDescriptor field, Message value) {
-        if (hasUnknownFields(value))
-            throw new IllegalArgumentException(field.getFullName() + ": the link value carries fields this server does not know");
-        if (value instanceof DocumentLink typed) return typed;
-        final DocumentLink link;
-        try {
-            link = DocumentLink.parseFrom(value.toByteString());
-        } catch (InvalidProtocolBufferException unreadable) {
-            throw new IllegalArgumentException(field.getFullName() + ": the link value does not decode as " + DocumentLinks.LINK_TYPE, unreadable);
-        }
-        if (hasUnknownFields(link))
-            throw new IllegalArgumentException(field.getFullName() + ": the link value carries fields this server does not know");
-        return link;
-    }
-
-    /** Returns {@code true} if {@code message} or any nested sub-message carries unknown fields. */
-    private static boolean hasUnknownFields(Message message) {
-        if (!message.getUnknownFields().asMap().isEmpty()) return true;
-        for (var value : message.getAllFields().values()) {
-            if (value instanceof Message nested && hasUnknownFields(nested)) return true;
-            if (value instanceof List<?> list) {
-                for (var element : list) {
-                    if (element instanceof Message nested && hasUnknownFields(nested)) return true;
-                }
-            }
-        }
-        return false;
     }
 
     /** Builds a {@link Status.Code#DATA_LOSS} {@link AccessionException}. */

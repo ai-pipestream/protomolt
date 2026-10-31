@@ -215,15 +215,15 @@ class ArchiveClassificationIT {
     void theHttpDoorIdentifiesWithoutAnyDeclaration() throws Exception {
         byte[] pdf = "%PDF-1.4 minimal".getBytes(StandardCharsets.ISO_8859_1);
         HttpClient client = HttpClient.newHttpClient();
-        HttpResponse<String> response = client.send(HttpRequest.newBuilder(URI.create(
+        HttpResponse<byte[]> response = client.send(HttpRequest.newBuilder(URI.create(
                         "http://127.0.0.1:" + http.port() + UploadHttpServer.ARCHIVE_UPLOAD_PATH
                                 + "?account_id=" + ACCOUNT + "&archive=classified"
-                                + "&entry_id=scan&rendition=original&filename=scan.pdf"))
+                                + "&entry_id=scan&rendition=original&operation_id=http-scan-1"))
                         .header("Content-Type", "application/pdf")
                         .header("api_token", "synthetic-http-operator-key")
                         .POST(HttpRequest.BodyPublishers.ofByteArray(pdf))
                         .build(),
-                HttpResponse.BodyHandlers.ofString());
+                HttpResponse.BodyHandlers.ofByteArray());
         assertThat(response.statusCode()).isEqualTo(200);
 
         Classification c = archives.getEntryManifest(GetEntryManifestRequest.newBuilder()
@@ -231,7 +231,6 @@ class ArchiveClassificationIT {
                 .getInfo().getClassification();
         assertThat(c.getState()).isEqualTo(ClassificationState.CLASSIFICATION_STATE_IDENTIFIED);
         assertThat(c.getIdentified().getFormatCase()).isEqualTo(FormatFact.FormatCase.PDF);
-        assertThat(c.getIdentified().getPdf().getFilename()).isEqualTo("scan.pdf");
         assertThat(c.hasDeclared()).isFalse();
     }
 
@@ -244,7 +243,7 @@ class ArchiveClassificationIT {
         byte[] sealed = new byte[TOO_BIG_FOR_THE_HEAD_WINDOW];
         System.arraycopy(PARQUET_MAGIC, 0, sealed, 0, 4);
         System.arraycopy(PARQUET_MAGIC, 0, sealed, sealed.length - 4, 4);
-        Classification whole = uploadOverHttp("sealed", "part-0.parquet", sealed);
+        Classification whole = uploadOverHttp("sealed", sealed);
         assertThat(whole.getIdentified().getFormatCase())
                 .isEqualTo(FormatFact.FormatCase.PARQUET);
         assertThat(observations(whole)).anyMatch(o -> o.contains("footer magic seals"));
@@ -254,7 +253,7 @@ class ArchiveClassificationIT {
     void aHeaderWithoutItsFooterIsStillParquetAndSaysWhatIsWrong() throws Exception {
         byte[] truncated = new byte[TOO_BIG_FOR_THE_HEAD_WINDOW];
         System.arraycopy(PARQUET_MAGIC, 0, truncated, 0, 4);
-        Classification c = uploadOverHttp("truncated", "part-1.parquet", truncated);
+        Classification c = uploadOverHttp("truncated", truncated);
         // The format is not in doubt; the content's readability is. Naming
         // the format and recording the damage beats refusing to do either.
         assertThat(c.getIdentified().getFormatCase()).isEqualTo(FormatFact.FormatCase.PARQUET);
@@ -271,19 +270,19 @@ class ArchiveClassificationIT {
     private static final int TOO_BIG_FOR_THE_HEAD_WINDOW = 4 * ByteWindows.DEFAULT_HEAD_BYTES;
 
     /** Posts through the streaming door and reads back what it concluded. */
-    private static Classification uploadOverHttp(String entryId, String filename, byte[] body)
+    private static Classification uploadOverHttp(String entryId, byte[] body)
             throws Exception {
-        HttpResponse<String> response = HttpClient.newHttpClient().send(
+        HttpResponse<byte[]> response = HttpClient.newHttpClient().send(
                 HttpRequest.newBuilder(URI.create(
                                 "http://127.0.0.1:" + http.port()
                                         + UploadHttpServer.ARCHIVE_UPLOAD_PATH
                                         + "?account_id=" + ACCOUNT + "&archive=classified"
                                         + "&entry_id=" + entryId
-                                        + "&rendition=original&filename=" + filename))
+                                        + "&rendition=original&operation_id=http-" + entryId))
                         .header("api_token", "synthetic-http-operator-key")
                         .POST(HttpRequest.BodyPublishers.ofByteArray(body))
                         .build(),
-                HttpResponse.BodyHandlers.ofString());
+                HttpResponse.BodyHandlers.ofByteArray());
         assertThat(response.statusCode()).isEqualTo(200);
         return archives.getEntryManifest(GetEntryManifestRequest.newBuilder()
                         .setAddress(address(entryId)).build())
@@ -322,8 +321,11 @@ class ArchiveClassificationIT {
         var retained = archives.getEntryManifest(GetEntryManifestRequest.newBuilder()
                 .setAddress(address("late")).build());
         assertThat(retained.getInfo().getClassification()).isEqualTo(after);
-        assertThat(retained.getManifest().getMetadataSnapshot()).isEqualTo(saved.getManifest().getMetadataSnapshot());
-        assertThat(retained.getManifest().getMetadataSnapshot().getClassification()).isEqualTo(before);
+        assertThat(retained.getManifest().getMetadataSnapshot().getClassification()).isEqualTo(after);
+        var v1Manifest = archives.getEntryManifest(GetEntryManifestRequest.newBuilder()
+                .setAddress(address("late")).setVersion(1).build());
+        assertThat(v1Manifest.getManifest().getMetadataSnapshot()).isEqualTo(saved.getManifest().getMetadataSnapshot());
+        assertThat(v1Manifest.getManifest().getMetadataSnapshot().getClassification()).isEqualTo(before);
     }
 
     @Test

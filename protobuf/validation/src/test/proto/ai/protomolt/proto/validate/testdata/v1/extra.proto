@@ -267,4 +267,11 @@ message CelShapeGauntlet {
       expression: "this <= 10 ? '' : '%d widgets is too many'.format([this])"
     }
   }];
+  // Bytes reach format() as the proto ByteString the validator binds; %x must hex-encode them.
+  optional bytes tag = 3 [(ai.protomolt.proto.validate.v1.field) = {
+    cel: {
+      id: "tag.hex"
+      expression: "this.size() <= 2 ? '' : 'tag %x is longer than two bytes'.format([this])"
+    }
+  }];
 }

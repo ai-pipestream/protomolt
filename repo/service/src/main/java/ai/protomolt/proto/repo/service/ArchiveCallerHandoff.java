@@ -4,14 +4,17 @@ import ai.protomolt.proto.actions.Caller;
 import ai.protomolt.proto.authz.AuthenticatedCaller;
 import ai.protomolt.proto.authz.CredentialBinding;
 import ai.protomolt.proto.authz.grpc.CallerContexts;
-import ai.protomolt.proto.repo.archive.DocumentArchiveBindings;
 import ai.protomolt.proto.repo.spi.RepositoryCaller;
 import ai.protomolt.proto.repo.v1.Access;
 import ai.protomolt.proto.repo.v1.AccessRule;
 import ai.protomolt.proto.repo.v1.DocumentSecurity;
 import ai.protomolt.proto.repo.v1.Principal;
+import ai.protomolt.proto.repo.v2.DocumentPart;
+import ai.protomolt.proto.repo.v2.GetDocumentRequest;
+import ai.protomolt.proto.repo.v2.ListDocumentsRequest;
 import ai.protomolt.proto.repo.v2.SaveDocumentRequest;
 import ai.protomolt.proto.repo.v2.UploadDocumentRequest;
+import ai.protomolt.proto.repo.v2.WriteAction;
 import io.grpc.CallOptions;
 import io.grpc.Channel;
 import io.grpc.ClientCall;
@@ -51,8 +54,9 @@ final class ArchiveCallerHandoff {
 
     private static final Metadata.Key<String> CALL_KEY =
             Metadata.Key.of("protomolt-archive-call", Metadata.ASCII_STRING_MARSHALLER);
-    private static final String PUBLIC_IDENTITY = "public";
-    private static final ConcurrentMap<String, AuthenticatedCaller> HANDOFFS =
+    private record Handoff(AuthenticatedCaller authentication, RepositoryCaller repositoryCaller) {}
+    private static final Context.Key<Handoff> TRUSTED_HANDOFF = Context.key("protomolt-trusted-archive-handoff");
+    private static final ConcurrentMap<String, Handoff> HANDOFFS =
             new ConcurrentHashMap<>();
 
     private ArchiveCallerHandoff() {
@@ -88,6 +92,18 @@ final class ArchiveCallerHandoff {
         } finally {
             context.detach(previous);
         }
+    }
+
+    /** Preserves an embedding host's resolved caller over the private in-process hop. */
+    static RepositoryCaller bindCaller(AuthenticatedCaller authentication,
+            java.util.function.Function<AuthenticatedCaller, RepositoryCaller> fallback) {
+        Handoff handoff = TRUSTED_HANDOFF.get();
+        if (handoff != null && handoff.repositoryCaller() != null
+                && !handoff.repositoryCaller().processAuthority()
+                && handoff.authentication().equals(authentication)) {
+            return handoff.repositoryCaller();
+        }
+        return fallback.apply(authentication);
     }
 
     private static AuthenticatedCaller synthesizeAuthenticated(RepositoryCaller caller) {
@@ -136,6 +152,120 @@ final class ArchiveCallerHandoff {
     }
 
     /**
+     * Wraps {@code channel} for {@link ai.protomolt.proto.repo.archive.DocumentArchiveBindings}:
+     * routes archive-definition saves onto the archive's own drive, enforces account binding
+     * and process-authority write checks against the caller on the current {@link Context},
+     * and executes authorized archive-definition reads with operator authority so internal
+     * {@code archive-def:} documents need no public ACL rules.
+     *
+     * @param channel the in-process {@code DocumentService} channel
+     * @param callerBindings the host's caller binding resolver
+     * @return the intercepted bindings channel
+     */
+    static Channel interceptBindingsChannel(Channel channel, RepoCallerBindings callerBindings) {
+        Objects.requireNonNull(channel, "channel");
+        Objects.requireNonNull(callerBindings, "callerBindings");
+        return ClientInterceptors.intercept(channel, new ClientInterceptor() {
+            @Override
+            public <ReqT, RespT> ClientCall<ReqT, RespT> interceptCall(
+                    MethodDescriptor<ReqT, RespT> method,
+                    CallOptions callOptions,
+                    Channel next) {
+                RepositoryCaller repoCaller = REPOSITORY_CALLER.get();
+                if (repoCaller == null) {
+                    AuthenticatedCaller auth = CallerContexts.AUTHENTICATED_CALLER.get();
+                    if (auth != null) {
+                        repoCaller = callerBindings.bind(auth);
+                    } else if (CallerContexts.CALLER.get() != null) {
+                        repoCaller = callerBindings.bind(
+                                AuthenticatedCaller.unbound(CallerContexts.CALLER.get()));
+                    }
+                }
+                RepositoryCaller effectiveCaller = repoCaller;
+                AuthenticatedCaller operator = AuthenticatedCaller.unbound(Caller.operator());
+                return new ForwardingClientCall.SimpleForwardingClientCall<>(
+                        next.newCall(method, callOptions)) {
+                    private String handoffId;
+
+                    @Override
+                    public void start(Listener<RespT> responseListener, Metadata headers) {
+                        if (!headers.containsKey(CALL_KEY)) {
+                            handoffId = UUID.randomUUID().toString();
+                            HANDOFFS.put(handoffId, new Handoff(operator, null));
+                            headers.put(CALL_KEY, handoffId);
+                        }
+                        super.start(
+                                new ForwardingClientCallListener.SimpleForwardingClientCallListener<>(
+                                        responseListener) {
+                                    @Override
+                                    public void onClose(Status status, Metadata trailers) {
+                                        if (handoffId != null) {
+                                            HANDOFFS.remove(handoffId);
+                                        }
+                                        super.onClose(status, trailers);
+                                    }
+                                },
+                                headers);
+                    }
+
+                    @Override
+                    @SuppressWarnings("unchecked")
+                    public void sendMessage(ReqT message) {
+                        if (message instanceof SaveDocumentRequest saveReq) {
+                            if (effectiveCaller != null && !effectiveCaller.processAuthority()) {
+                                cancel("permission denied", null);
+                                throw Status.PERMISSION_DENIED
+                                        .withDescription("Repository account policy is not configured for this principal")
+                                        .asRuntimeException();
+                            }
+                            if (saveReq.getDrive().isEmpty()) {
+                                String archiveDrive = saveReq.getDocument().getSearchMetadata()
+                                        .getMetadataOrDefault("archive.drive_name", "");
+                                if (!archiveDrive.isEmpty()) {
+                                    super.sendMessage((ReqT) saveReq.toBuilder().setDrive(archiveDrive).build());
+                                    return;
+                                }
+                            }
+                        } else if (message instanceof GetDocumentRequest getReq) {
+                            checkAccountAccess(effectiveCaller, getReq.getAddress().getAccountId());
+                        } else if (message instanceof ListDocumentsRequest listReq) {
+                            checkAccountAccess(effectiveCaller, listReq.getAccountId());
+                        }
+                        super.sendMessage(message);
+                    }
+
+                    private void checkAccountAccess(RepositoryCaller caller, String accountId) {
+                        if (caller == null || caller.processAuthority()) {
+                            return;
+                        }
+                        if (caller.accountIds().isEmpty()) {
+                            cancel("permission denied", null);
+                            throw Status.PERMISSION_DENIED
+                                    .withDescription("The caller is bound to no account")
+                                    .asRuntimeException();
+                        }
+                        if (accountId != null && !accountId.trim().isEmpty()
+                                && !caller.accountIds().contains(accountId)) {
+                            cancel("permission denied", null);
+                            throw Status.PERMISSION_DENIED
+                                    .withDescription("The caller is not bound to account '" + accountId + "'")
+                                    .asRuntimeException();
+                        }
+                    }
+
+                    @Override
+                    public void cancel(String message, Throwable cause) {
+                        if (handoffId != null) {
+                            HANDOFFS.remove(handoffId);
+                        }
+                        super.cancel(message, cause);
+                    }
+                };
+            }
+        });
+    }
+
+    /**
      * Client interceptor that forwards the active {@link CallerContexts} identity to the
      * in-process {@code DocumentService} server and stamps account-scoped access rules
      * when a non-process-authority caller uploads an archive entry.
@@ -166,12 +296,12 @@ final class ArchiveCallerHandoff {
                     public void start(Listener<RespT> responseListener, Metadata headers) {
                         if (handedOff != null && !headers.containsKey(CALL_KEY)) {
                             handoffId = UUID.randomUUID().toString();
-                            HANDOFFS.put(handoffId, handedOff);
+                            HANDOFFS.put(handoffId, new Handoff(handedOff, repoCaller));
                             headers.put(CALL_KEY, handoffId);
                         }
                         super.start(
                                 new ForwardingClientCallListener.SimpleForwardingClientCallListener<>(
-                                        responseListener) {
+                                         responseListener) {
                                     @Override
                                     public void onClose(Status status, Metadata trailers) {
                                         if (handoffId != null) {
@@ -186,21 +316,34 @@ final class ArchiveCallerHandoff {
                     @Override
                     @SuppressWarnings("unchecked")
                     public void sendMessage(ReqT message) {
-                        if (message instanceof SaveDocumentRequest saveReq
-                                && saveReq.getTarget().getAddress().getGraphId()
-                                        .startsWith(DocumentArchiveBindings.DEFINITION_GRAPH_PREFIX)
-                                && saveReq.getExpected().getNone()
-                                && !saveReq.getDocument().getOwnership().hasSecurity()) {
-                            SaveDocumentRequest updated = withDefinitionSecurity(saveReq);
+                        if (message instanceof UploadDocumentRequest uploadReq
+                                && uploadReq.hasHeader()
+                                && writesCore(uploadReq.getHeader().getSave())
+                                && !uploadReq.getHeader().getSave().getDocument().getOwnership().hasSecurity()) {
+                            if (repoCaller != null && !repoCaller.processAuthority()) {
+                                UploadDocumentRequest updated = withUploaderSecurity(uploadReq, repoCaller);
+                                super.sendMessage((ReqT) updated);
+                                return;
+                            }
+                            UploadDocumentRequest updated = withInternalStepSecurity(uploadReq);
                             super.sendMessage((ReqT) updated);
                             return;
                         }
+                        // The trailer must keep the ownership its header was stamped with.
                         if (message instanceof UploadDocumentRequest uploadReq
-                                && uploadReq.hasHeader()
-                                && repoCaller != null
-                                && !repoCaller.processAuthority()
-                                && !uploadReq.getHeader().getSave().getDocument().getOwnership().hasSecurity()) {
-                            UploadDocumentRequest updated = withUploaderSecurity(uploadReq, repoCaller);
+                                && uploadReq.hasTrailer()
+                                && !uploadReq.getTrailer().getDocument().getOwnership().hasSecurity()) {
+                            UploadDocumentRequest updated = repoCaller != null && !repoCaller.processAuthority()
+                                    ? withUploaderSecurity(uploadReq, repoCaller)
+                                    : withInternalStepSecurity(uploadReq);
+                            super.sendMessage((ReqT) updated);
+                            return;
+                        }
+                        if (message instanceof SaveDocumentRequest saveReq
+                                && (repoCaller == null || repoCaller.processAuthority())
+                                && writesCore(saveReq)
+                                && !saveReq.getDocument().getOwnership().hasSecurity()) {
+                            SaveDocumentRequest updated = withInternalStepSecurity(saveReq);
                             super.sendMessage((ReqT) updated);
                             return;
                         }
@@ -236,38 +379,29 @@ final class ArchiveCallerHandoff {
                 if (id == null) {
                     return next.startCall(call, headers);
                 }
-                AuthenticatedCaller caller = HANDOFFS.remove(id);
-                if (caller == null) {
+                Handoff handoff = HANDOFFS.remove(id);
+                if (handoff == null) {
                     call.close(
                             Status.UNAUTHENTICATED.withDescription("no caller was resolved for this archive call"),
                             new Metadata());
                     return new ServerCall.Listener<>() {
                     };
                 }
+                AuthenticatedCaller caller = handoff.authentication();
                 Context context = Context.current().withValues(
                         CallerContexts.CALLER, caller.caller(),
-                        CallerContexts.AUTHENTICATED_CALLER, caller);
+                        CallerContexts.AUTHENTICATED_CALLER, caller,
+                        TRUSTED_HANDOFF, handoff);
                 return Contexts.interceptCall(context, call, headers, next);
             }
         };
     }
 
-    private static SaveDocumentRequest withDefinitionSecurity(SaveDocumentRequest request) {
-        var security = DocumentSecurity.newBuilder()
-                .addPermissions(AccessRule.newBuilder()
-                        .setIdentityType(PUBLIC_IDENTITY)
-                        .setIdentity(PUBLIC_IDENTITY)
-                        .setAccess(Access.ACCESS_READ))
-                .build();
-        var document = request.getDocument().toBuilder();
-        document.getOwnershipBuilder().setSecurity(security);
-        return request.toBuilder().setDocument(document).build();
-    }
-
     /**
      * Stamps READ and WRITE access rules for each ACL identity presented by a scoped
-     * caller, matching {@code UploadHttpHandler.uploadSecurity}. A scoped caller that
-     * presents no ACL identities writes no rules.
+     * caller, matching {@code UploadHttpHandler.uploadSecurity}, on the upload header's
+     * document and on the trailer's, so the trailer keeps the ownership the header was
+     * accepted with. A scoped caller that presents no ACL identities writes no rules.
      */
     private static UploadDocumentRequest withUploaderSecurity(
             UploadDocumentRequest request, RepositoryCaller caller) {
@@ -286,8 +420,48 @@ final class ArchiveCallerHandoff {
                                 .setAccess(access));
                     }
                 });
+        if (request.hasTrailer()) {
+            var trailer = request.getTrailer().toBuilder();
+            trailer.getDocumentBuilder().getOwnershipBuilder().setSecurity(security);
+            return request.toBuilder().setTrailer(trailer).build();
+        }
         var header = request.getHeader().toBuilder();
         header.getSaveBuilder().getDocumentBuilder().getOwnershipBuilder().setSecurity(security);
         return request.toBuilder().setHeader(header).build();
+    }
+
+    private static boolean writesCore(SaveDocumentRequest save) {
+        return save.getWritesList().stream().anyMatch(w ->
+                w.getAction() == WriteAction.WRITE_ACTION_PUT
+                        && w.getSelector().getPart() == DocumentPart.DOCUMENT_PART_CORE);
+    }
+
+    private static DocumentSecurity internalStepSecurity() {
+        var security = DocumentSecurity.newBuilder();
+        for (Access access : new Access[] {Access.ACCESS_READ, Access.ACCESS_WRITE}) {
+            security.addPermissions(AccessRule.newBuilder()
+                    .setIdentityType("service")
+                    .setIdentity("internal-step-writer")
+                    .setDisplayName("internal-step-writer")
+                    .setAccess(access));
+        }
+        return security.build();
+    }
+
+    private static UploadDocumentRequest withInternalStepSecurity(UploadDocumentRequest request) {
+        if (request.hasTrailer()) {
+            var trailer = request.getTrailer().toBuilder();
+            trailer.getDocumentBuilder().getOwnershipBuilder().setSecurity(internalStepSecurity());
+            return request.toBuilder().setTrailer(trailer).build();
+        }
+        var header = request.getHeader().toBuilder();
+        header.getSaveBuilder().getDocumentBuilder().getOwnershipBuilder().setSecurity(internalStepSecurity());
+        return request.toBuilder().setHeader(header).build();
+    }
+
+    private static SaveDocumentRequest withInternalStepSecurity(SaveDocumentRequest request) {
+        var updated = request.toBuilder();
+        updated.getDocumentBuilder().getOwnershipBuilder().setSecurity(internalStepSecurity());
+        return updated.build();
     }
 }

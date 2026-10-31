@@ -5,37 +5,35 @@ import ai.protomolt.proto.repo.blob.spi.BlobCapability;
 import ai.protomolt.proto.repo.blob.spi.BlobStore;
 import ai.protomolt.proto.repo.blob.spi.BlobStores;
 import ai.protomolt.proto.repo.blob.spi.NamespaceProvisioner;
-import ai.protomolt.proto.repo.container.archive.ArchiveLedger;
 import ai.protomolt.proto.repo.container.ledger.ManagedBackendLedger;
+import ai.protomolt.proto.repo.container.ledger.ReaderRegistration;
 import ai.protomolt.proto.repo.container.ledger.Tx;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.UUID;
 
 /**
  * Builds the storage backing: the blob-provider selection (S3, Redis, or S3
- * with a Redis cache), the namespace provisioner, the archive ledger and,
- * under qualified managed storage, the managed archive services. A builder
- * only: every opened provider registers with the caller's
- * {@link OwnedResources} in the same order as before, and the caller keeps
- * ownership of construction-failure cleanup and the close order.
+ * with a Redis cache), the namespace provisioner and, under qualified managed
+ * storage, the backend generation profile binding. A builder only: every
+ * opened provider registers with the caller's {@link OwnedResources} in the
+ * same order as before, and the caller keeps ownership of construction-failure
+ * cleanup and the close order.
  */
 final class RepoStorageWiring {
 
     private RepoStorageWiring() {
     }
 
-    /** What the storage selection produced; {@code managedArchive} is null when unqualified. */
-    record Wired(BlobStore blobStore, NamespaceProvisioner namespaces,
-            ArchiveLedger archiveLedger, ManagedArchiveServices managedArchive) {
+    /** What the storage selection produced. */
+    record Wired(BlobStore blobStore, NamespaceProvisioner namespaces, UUID readerIncarnation) {
     }
 
     /**
-     * Selects and opens the blob backing, then wires managed archive services
-     * when the configuration is retention-qualified. The
-     * {@link ManagedArchiveServices} construction is the last step, so a
-     * failure anywhere in here never leaves an unreachable started reader.
+     * Selects and opens the blob backing, then binds the managed backend profile
+     * and reader incarnation when the configuration is retention-qualified.
      */
     static Wired wire(RepoServiceConfig config, BlobStores providers, boolean bounded,
             OwnedResources owned, Tx tx, ReaderHostOptions readerHost) {
@@ -73,8 +71,7 @@ final class RepoStorageWiring {
         }
         String generation = config.managedStorage().retentionQualified()
                 ? config.managedStorage().backendGeneration() : null;
-        var archiveLedger = new ArchiveLedger(tx);
-        ManagedArchiveServices managedArchive = null;
+        UUID readerIncarnation = null;
         if (generation != null) {
             var backing = Objects.requireNonNull(selectedBacking, "Managed storage requires a selected backing");
             var managedCapabilities = backing.handle().capabilities();
@@ -87,12 +84,14 @@ final class RepoStorageWiring {
             var profile = new ManagedBackendLedger.Profile(
                     backing.requireManagedIdentity(), config.managedStorage().storageRealm());
             profiles.bind(generation, profile);
-            var reclaimer = backing.reclaimer();
-            managedArchive = new ManagedArchiveServices(tx, archiveLedger, blobStore,
-                    managedCapabilities, generation, profile, reclaimer,
-                    readerHost == null ? null : readerHost.execution());
+            readerIncarnation = UUID.randomUUID();
+            if (readerHost == null) {
+                ReaderRegistration.register(tx, readerIncarnation);
+            } else {
+                ReaderRegistration.register(tx, readerIncarnation, readerHost.execution());
+            }
         }
-        return new Wired(blobStore, namespaces, archiveLedger, managedArchive);
+        return new Wired(blobStore, namespaces, readerIncarnation);
     }
 
     private static Map<String, String> redisOptions(RepoServiceConfig config, boolean bounded) {

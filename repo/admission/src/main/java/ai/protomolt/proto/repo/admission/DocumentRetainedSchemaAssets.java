@@ -65,6 +65,7 @@ final class DocumentRetainedSchemaAssets {
     private final Reader reader;
     private final Limits limits;
     private final DocumentAdmissionReservations reservations;
+    private final DocumentSchemaTypeCache types;
     private final Map<DocumentPayloadCheck.SchemaKey, DocumentSchemaAssetBinding> bindings = new HashMap<>();
     private final Map<String, ByteString> artifacts = new HashMap<>();
     private long retainedBytes;
@@ -75,9 +76,16 @@ final class DocumentRetainedSchemaAssets {
 
     /** Optional canonical scratch accounting; the reader still owns supplied artifact bytes. */
     DocumentRetainedSchemaAssets(Reader reader, Limits limits, DocumentAdmissionReservations reservations) {
+        this(reader, limits, reservations, DocumentSchemaTypeCache.SHARED);
+    }
+
+    /** As the other constructors, linking descriptors through {@code types}. */
+    DocumentRetainedSchemaAssets(Reader reader, Limits limits, DocumentAdmissionReservations reservations,
+            DocumentSchemaTypeCache types) {
         this.reader = Objects.requireNonNull(reader, "reader");
         this.limits = Objects.requireNonNull(limits, "limits");
         this.reservations = reservations;
+        this.types = Objects.requireNonNull(types, "types");
     }
 
     /**
@@ -154,7 +162,7 @@ final class DocumentRetainedSchemaAssets {
         requireHash(metadata.getArtifactSha256());
         var bytes = load(key.artifactSha256(), limits.descriptorLimits().maxBytes(), true, batch, control);
         try {
-            return DocumentSchemaAssetBinding.bind(metadata, bytes, limits.descriptorLimits(), reservations, guarded(control));
+            return DocumentSchemaAssetBinding.bind(metadata, bytes, limits.descriptorLimits(), reservations, guarded(control), types);
         } catch (ControlFailure failure) {
             throw failure.original;
         } catch (ClosedDescriptorSet.LimitExceededException failure) {
