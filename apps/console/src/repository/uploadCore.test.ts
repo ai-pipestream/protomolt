@@ -45,10 +45,13 @@ function itemError(status: number, code: Code, message: string, detail?: ItemErr
 const saved = toBinary(
   UploadDocumentResponseSchema,
   create(UploadDocumentResponseSchema, {
-    saved: create(SaveDocumentResponseSchema, {
-      operationId: 'op-1',
-      accession: create(AccessionSchema, { address: testAddress(), revision: 1n }),
-    }),
+    answer: {
+      case: 'saved',
+      value: create(SaveDocumentResponseSchema, {
+        operationId: 'op-1',
+        accession: create(AccessionSchema, { address: testAddress(), revision: 1n }),
+      }),
+    },
   }),
 )
 
@@ -128,7 +131,7 @@ describe('sendUpload', () => {
     const answer = await result
     expect(answer.kind).toBe('saved')
     if (answer.kind !== 'saved') throw new Error('unreachable')
-    expect(answer.response.saved?.accession?.revision).toBe(1n)
+    expect(answer.response.answer.case === 'saved' ? answer.response.answer.value.accession?.revision : undefined).toBe(1n)
     const r = request()
     expect(r.method).toBe('POST')
     expect(r.withCredentials).toBe(true)

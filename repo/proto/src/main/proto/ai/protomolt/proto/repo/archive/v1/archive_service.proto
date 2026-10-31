@@ -266,6 +266,12 @@ message UploadRenditionHeader {
       int64: {gte: 0}
     }
   ];
+  // Original filename. Allowed only when uploading the original rendition.
+  // Blank preserves an existing filename. It participates in retry identity.
+  string filename = 10 [(ai.protomolt.proto.validate.v1.field) = {
+    string: {max_len: 500}
+    ignore_if_zero: true
+  }];
 }
 
 // One frame of an UploadRendition stream: the header first, then chunks.

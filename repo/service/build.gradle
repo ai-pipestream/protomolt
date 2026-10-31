@@ -94,23 +94,79 @@ distributions {
     }
 }
 
-// The process-host and benchmark suites are integration suites (*IT), so their
+// The process-host suites are integration suites (*IT), so their
 // settings belong to the integrationTest task.
 tasks.named('integrationTest') {
     // Separate-JVM host tests need the complete test runtime, not Gradle's worker bootstrap classpath.
     doFirst { systemProperty 'protomolt.test.runtimeClasspath', sourceSets.test.runtimeClasspath.asPath }
-    def replicaBenchmark = providers.environmentVariable('PROTOMOLT_REPLICA_BENCHMARK').map { it == 'true' }.orElse(false)
-    def archiveReadBenchmark = providers.environmentVariable('PROTOMOLT_ARCHIVE_READ_BENCHMARK').map { it == 'true' }.orElse(false)
-    inputs.property('replicaBenchmark', replicaBenchmark)
-    inputs.property('archiveReadBenchmark', archiveReadBenchmark)
-    doFirst {
-        // Benchmark classes must not compete with each other in separate test forks.
-        if (replicaBenchmark.get() || archiveReadBenchmark.get()) maxParallelForks = 1
-    }
-    outputs.upToDateWhen { !replicaBenchmark.get() && !archiveReadBenchmark.get() }
-    outputs.cacheIf { !replicaBenchmark.get() && !archiveReadBenchmark.get() }
 }
 
-// Opt-in suites (root build.gradle optInSuite): left out of the plain test task unless their environment is set.
-optInSuite('**/ArchiveReadBenchmarkIT*', ['PROTOMOLT_ARCHIVE_READ_BENCHMARK=true'])
-optInSuite('**/RepositoryScaleBenchmarkIT*', ['PROTOMOLT_REPLICA_BENCHMARK=true'])
+tasks.register('checkRuntimeBoundaries') {
+    group = 'verification'
+    description = 'Reject retired ledger archive types in protomolt-repo-service sources'
+    def mainSources = fileTree('src/main/java') { include '**/*.java' }
+    inputs.files(mainSources)
+    doLast {
+        def forbidden = ['ArchiveLedger', 'PostgresArchiveLedger', 'ArchiveOperations', 'ArchiveMutationOperations']
+        def violations = []
+        mainSources.files.sort().each { file ->
+            def text = file.getText('UTF-8')
+            forbidden.each { symbol ->
+                if (text.contains(symbol)) {
+                    violations << "${projectDir.toPath().relativize(file.toPath())}: references retired ${symbol}"
+                }
+            }
+        }
+        if (!violations.isEmpty()) {
+            throw new GradleException(project.name + ' references retired ledger archive symbols:\n  ' + violations.join('\n  '))
+        }
+    }
+}
+
+tasks.named('check') { dependsOn tasks.named('checkRuntimeBoundaries') }
+tasks.named('test') { dependsOn tasks.named('checkRuntimeBoundaries') }
+
+// The release evaluation: the production entry point (RepoServiceMain) booted
+// in a child JVM from environment variables against Postgres, RustFS (the
+// deployment's object store, not LocalStack) and a Kafka-API broker, then one
+// document and one archive entry followed through their whole life over the
+// wire, the Kafka events read back off the topic, and a SIGTERM restart. It is
+// its own source set and task, reachable only by name: test, integrationTest,
+// check and build never run it, so a release job adds it as one extra line.
+sourceSets {
+    eval {
+        compileClasspath += sourceSets.main.output
+        runtimeClasspath += sourceSets.main.output
+    }
+}
+configurations {
+    evalImplementation.extendsFrom implementation
+    evalRuntimeOnly.extendsFrom runtimeOnly
+}
+dependencies {
+    evalImplementation platform(libs.junit.bom)
+    evalImplementation libs.junit.jupiter
+    evalImplementation libs.assertj.core
+    evalRuntimeOnly libs.junit.platform.launcher
+    evalImplementation libs.testcontainers.postgresql
+    evalImplementation libs.testcontainers.redpanda
+    evalImplementation libs.testcontainers.junit.jupiter
+    // The event key and the archive entry's node address are computed, not guessed.
+    evalImplementation project(':protomolt-repo-catalog')
+    // Objects are checked in the store itself, with the same SDK the service uses.
+    evalImplementation platform(libs.awssdk.bom)
+    evalImplementation libs.awssdk.s3
+    evalImplementation libs.awssdk.url.connection.client
+}
+tasks.register('repoEval', Test) {
+    group = 'verification'
+    description = 'Release evaluation of the production repo host over Postgres, RustFS and Kafka (opt-in, never part of check or build)'
+    testClassesDirs = sourceSets.eval.output.classesDirs
+    classpath = sourceSets.eval.runtimeClasspath
+    // One ordered walk through the host; the steps build on each other.
+    maxParallelForks = 1
+    // An evaluation is a fresh run every time it is asked for.
+    outputs.upToDateWhen { false }
+    // The child JVM needs the complete runtime, not Gradle's worker bootstrap classpath.
+    doFirst { systemProperty 'protomolt.eval.runtimeClasspath', sourceSets.eval.runtimeClasspath.asPath }
+}

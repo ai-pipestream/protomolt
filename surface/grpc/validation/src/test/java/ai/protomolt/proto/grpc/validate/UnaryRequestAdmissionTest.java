@@ -200,6 +200,39 @@ class UnaryRequestAdmissionTest {
     }
 
     @Test
+    void codeHoldingTheAdmissionsMonitorCannotStallAdmissionOrDrain() throws Exception {
+        try (var f = new Fixture(true)) {
+            var held = new CountDownLatch(1);
+            var letGo = new CountDownLatch(1);
+            var holder = new Thread(() -> {
+                synchronized (f.admission) {
+                    held.countDown();
+                    try {
+                        letGo.await();
+                    } catch (InterruptedException interrupted) {
+                        Thread.currentThread().interrupt();
+                    }
+                }
+            });
+            holder.start();
+            try {
+                assertThat(held.await(5, TimeUnit.SECONDS)).isTrue();
+                var pending = ClientCalls.futureUnaryCall(
+                        f.channel.newCall(f.method, CallOptions.DEFAULT), VALUE);
+                assertThat(f.entered.await(5, TimeUnit.SECONDS)).isTrue();
+                assertThat(f.admission.activeCalls()).isEqualTo(1);
+                f.release.countDown();
+                assertThat(pending.get(5, TimeUnit.SECONDS)).isEqualTo(VALUE);
+                assertThat(f.admission.awaitIdle(Duration.ofSeconds(5))).isTrue();
+                assertThat(f.admission.reservedBytes()).isZero();
+            } finally {
+                letGo.countDown();
+                holder.join(5_000);
+            }
+        }
+    }
+
+    @Test
     void cancellationBeforeHalfCloseDrainsReservationWithoutDecoding() throws Exception {
         try (var f = new Fixture(false)) {
             var call = f.channel.newCall(f.method, CallOptions.DEFAULT);

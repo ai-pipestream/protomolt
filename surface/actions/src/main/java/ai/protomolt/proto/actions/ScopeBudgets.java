@@ -58,9 +58,7 @@ public final class ScopeBudgets {
             return Optional.empty();
         }
         if (budget.maxPayloadBytes() > 0 && payloadBytes > budget.maxPayloadBytes()) {
-            return Optional.of("caller '" + caller.name() + "' payload of " + payloadBytes
-                    + " bytes exceeds its " + budget.maxPayloadBytes()
-                    + "-byte budget for '" + scope + "'");
+            return Optional.of(payloadRefusal(caller, scope, String.valueOf(payloadBytes), budget));
         }
         int limit = budget.requestsPerMinute();
         if (limit == 0) {
@@ -86,6 +84,30 @@ public final class ScopeBudgets {
         }
         pruneExpired(now);
         return Optional.empty();
+    }
+
+    /**
+     * Refuses a payload that a surface stopped reading once it passed {@code scope}'s
+     * cap, so only a lower bound on its size is known. Like a payload-cap refusal from
+     * {@link #refuse}, it spends nothing.
+     *
+     * @param caller the resolved caller
+     * @param scope the scope the operation requires
+     * @return the refusal message, or empty when {@code scope} has no payload cap for
+     *         {@code caller}
+     */
+    public Optional<String> refuseOverCap(Caller caller, String scope) {
+        Budget budget = caller.budgets().get(scope);
+        if (budget == null || budget.maxPayloadBytes() <= 0) {
+            return Optional.empty();
+        }
+        return Optional.of(payloadRefusal(caller, scope, "more than " + budget.maxPayloadBytes(), budget));
+    }
+
+    private static String payloadRefusal(Caller caller, String scope, String size, Budget budget) {
+        return "caller '" + caller.name() + "' payload of " + size
+                + " bytes exceeds its " + budget.maxPayloadBytes()
+                + "-byte budget for '" + scope + "'";
     }
 
     private void pruneExpired(long now) {

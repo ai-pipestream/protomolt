@@ -2,6 +2,7 @@ package ai.protomolt.proto.repo.service;
 
 import ai.protomolt.proto.repo.accession.DocumentUploads;
 import ai.protomolt.proto.repo.accession.UploadHttpHandler;
+import ai.protomolt.proto.actions.Caller;
 import ai.protomolt.proto.authz.AuthenticatedCaller;
 import ai.protomolt.proto.authz.RequestCallerResolver;
 import ai.protomolt.proto.authz.RequestHeaders;
@@ -14,7 +15,6 @@ import ai.protomolt.proto.repo.archive.v1.UploadRenditionHeader;
 import ai.protomolt.proto.repo.archive.v1.UploadRenditionRequest;
 import ai.protomolt.proto.repo.archive.v1.UploadRenditionResponse;
 import ai.protomolt.proto.repo.archive.v1.WriteAttribution;
-import ai.protomolt.proto.repo.spi.ArchiveRepository;
 import ai.protomolt.proto.repo.spi.RepositoryCaller;
 
 import com.google.protobuf.ByteString;
@@ -46,7 +46,6 @@ import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
-import java.util.function.BiPredicate;
 import java.util.function.Function;
 import java.util.function.Supplier;
 
@@ -81,9 +80,7 @@ public final class UploadHttpServer implements AutoCloseable {
     private final HttpHandler documentUploads;
     private final byte[] expectedToken;
     private final Supplier<RepositoryCaller> callers;
-    private final ArchiveRepository archiveOperations;
     private final RenditionUploads v2ArchiveUploads;
-    private final BiPredicate<String, String> legacyArchiveExists;
     private final RepositoryConsole console;
     private final Map<String, HttpHandler> routes;
     private final ConnectGateway gateway;
@@ -96,28 +93,27 @@ public final class UploadHttpServer implements AutoCloseable {
     /**
      * Serves {@link #UPLOAD_PATH} through the parts-based {@link UploadHttpHandler}
      * over {@code uploads}; its receipts, status mapping and credential check are the
-     * handler's own. {@link #ARCHIVE_UPLOAD_PATH} keeps routing to
-     * {@code archiveOperations} when one is wired. Both routes demand the same
-     * operator credential. {@link RepositoryConsole#PATH} serves {@code console}'s
-     * static bundle without a credential.
+     * handler's own. {@link #ARCHIVE_UPLOAD_PATH} routes to {@code archive} when one is
+     * wired. Both routes demand the same operator credential. {@link RepositoryConsole#PATH}
+     * serves {@code console}'s static bundle without a credential.
      *
      * @param uploads the parts-based streaming upload coordinator, or null to leave
      *        the document route unmounted (archive-only host)
      * @param callers supplies the caller a request acts as once its credential matches
      * @param apiToken the operator credential both routes require
-     * @param archiveOperations the archive rendition upload port, or null to leave
-     *        that route unmounted
+     * @param archive the v2 document archive rendition port, or null to leave
+     *        {@link #ARCHIVE_UPLOAD_PATH} unmounted
      * @param console the console bundle served at {@link RepositoryConsole#PATH};
      *        {@link RepositoryConsole#notConfigured()} answers that route with 503
      */
     public UploadHttpServer(DocumentUploads uploads, Supplier<RepositoryCaller> callers,
-            String apiToken, ArchiveRepository archiveOperations, RepositoryConsole console) {
-        this(uploads, callers, apiToken, archiveOperations, console, Map.of());
+            String apiToken, DocumentArchive archive, RepositoryConsole console) {
+        this(uploads, callers, apiToken, archive, console, Map.of());
     }
 
     /**
      * Serves the routes of
-     * {@link #UploadHttpServer(DocumentUploads, Supplier, String, ArchiveRepository, RepositoryConsole)}
+     * {@link #UploadHttpServer(DocumentUploads, Supplier, String, DocumentArchive, RepositoryConsole)}
      * plus {@code routes}, each mounted as its own context before the server starts. The
      * server matches the longest context path, so a route such as {@code /console/session}
      * takes precedence over the console bundle below it. A route owns its own credential
@@ -127,22 +123,22 @@ public final class UploadHttpServer implements AutoCloseable {
      *        the document route unmounted (archive-only host)
      * @param callers supplies the caller a request acts as once its credential matches
      * @param apiToken the operator credential both upload routes require
-     * @param archiveOperations the archive rendition upload port, or null to leave
-     *        that route unmounted
+     * @param archive the v2 document archive rendition port, or null to leave
+     *        {@link #ARCHIVE_UPLOAD_PATH} unmounted
      * @param console the console bundle served at {@link RepositoryConsole#PATH}
      * @param routes extra context path to handler; a path must start with {@code /}, must
      *        not be {@code /}, a built-in route, {@link #CONNECT_PATH} or under it
      * @throws IllegalArgumentException when a route path is refused
      */
     public UploadHttpServer(DocumentUploads uploads, Supplier<RepositoryCaller> callers,
-            String apiToken, ArchiveRepository archiveOperations, RepositoryConsole console,
+            String apiToken, DocumentArchive archive, RepositoryConsole console,
             Map<String, HttpHandler> routes) {
-        this(uploads, callers, apiToken, archiveOperations, console, routes, null, null, null);
+        this(uploads, callers, apiToken, archive, console, routes, null, null, null);
     }
 
     /**
      * Serves the routes of
-     * {@link #UploadHttpServer(DocumentUploads, Supplier, String, ArchiveRepository, RepositoryConsole, Map)}
+     * {@link #UploadHttpServer(DocumentUploads, Supplier, String, DocumentArchive, RepositoryConsole, Map)}
      * plus {@code gateway} at {@link #CONNECT_PATH}, the console's Connect calls on the same
      * origin as the bundle. The server owns the gateway from here on and closes it with
      * itself; {@code requestCallers} is the resolver the gateway was built with, kept so the
@@ -152,8 +148,8 @@ public final class UploadHttpServer implements AutoCloseable {
      *        the document route unmounted (archive-only host)
      * @param callers supplies the caller a request acts as once its credential matches
      * @param apiToken the operator credential both upload routes require
-     * @param archiveOperations the archive rendition upload port, or null to leave
-     *        that route unmounted
+     * @param archive the v2 document archive rendition port, or null to leave
+     *        {@link #ARCHIVE_UPLOAD_PATH} unmounted
      * @param console the console bundle served at {@link RepositoryConsole#PATH}
      * @param routes extra context path to handler, refused as in the six-argument form
      * @param gateway the Connect gateway mounted at {@link #CONNECT_PATH}
@@ -165,12 +161,12 @@ public final class UploadHttpServer implements AutoCloseable {
      *        host's one binding from principal to accounts; required with a gateway
      */
     public UploadHttpServer(DocumentUploads uploads, Supplier<RepositoryCaller> callers,
-            String apiToken, ArchiveRepository archiveOperations, RepositoryConsole console,
+            String apiToken, DocumentArchive archive, RepositoryConsole console,
             Map<String, HttpHandler> routes, ConnectGateway gateway,
             RequestCallerResolver requestCallers, Function<AuthenticatedCaller, RepositoryCaller> bindCaller) {
-        this(uploads, callers, apiToken, null, archiveOperations, null,
+        this(uploads, callers, apiToken, archive,
                 console, routes, requirePairedGateway(gateway, requestCallers),
-                requestCallers, bindCaller);
+                requestCallers, bindCaller, true);
     }
 
     private static ConnectGateway requirePairedGateway(
@@ -196,8 +192,8 @@ public final class UploadHttpServer implements AutoCloseable {
      */
     public UploadHttpServer(DocumentUploads uploads, Supplier<RepositoryCaller> callers,
             String apiToken, DocumentArchive archive) {
-        this(uploads, callers, apiToken, archive, null, null,
-                RepositoryConsole.notConfigured(), Map.of(), null, null, null);
+        this(uploads, callers, apiToken, archive,
+                RepositoryConsole.notConfigured(), Map.of(), null, null, null, false);
     }
 
     /**
@@ -219,10 +215,10 @@ public final class UploadHttpServer implements AutoCloseable {
             RequestCallerResolver requestCallers,
             Function<AuthenticatedCaller, RepositoryCaller> bindCaller,
             DocumentArchive archive, RepositoryConsole console) {
-        this(uploads, null, apiToken, archive, null, null,
+        this(uploads, null, apiToken, archive,
                 console, Map.of(), null,
                 Objects.requireNonNull(requestCallers, "requestCallers"),
-                Objects.requireNonNull(bindCaller, "bindCaller"));
+                Objects.requireNonNull(bindCaller, "bindCaller"), false);
     }
 
     /**
@@ -241,8 +237,8 @@ public final class UploadHttpServer implements AutoCloseable {
     public static UploadHttpServer withArchive(DocumentUploads uploads,
             Supplier<RepositoryCaller> callers, String apiToken,
             DocumentArchive archive, RepositoryConsole console) {
-        return new UploadHttpServer(uploads, callers, apiToken, archive, null, null,
-                console, Map.of(), null, null, null);
+        return new UploadHttpServer(uploads, callers, apiToken, archive,
+                console, Map.of(), null, null, null, false);
     }
 
     /**
@@ -269,17 +265,16 @@ public final class UploadHttpServer implements AutoCloseable {
             Map<String, HttpHandler> routes, ConnectGateway gateway,
             RequestCallerResolver requestCallers,
             Function<AuthenticatedCaller, RepositoryCaller> bindCaller) {
-        return new UploadHttpServer(uploads, callers, apiToken, archive, null, null,
-                console, routes, gateway, requestCallers, bindCaller);
+        return new UploadHttpServer(uploads, callers, apiToken, archive,
+                console, routes, gateway, requestCallers, bindCaller, false);
     }
 
-    UploadHttpServer(DocumentUploads uploads, Supplier<RepositoryCaller> callers,
+    private UploadHttpServer(DocumentUploads uploads, Supplier<RepositoryCaller> callers,
             String apiToken, DocumentArchive v2Archive,
-            ArchiveRepository archiveOperations,
-            BiPredicate<String, String> legacyArchiveExists,
             RepositoryConsole console, Map<String, HttpHandler> routes,
             ConnectGateway gateway, RequestCallerResolver requestCallers,
-            Function<AuthenticatedCaller, RepositoryCaller> bindCaller) {
+            Function<AuthenticatedCaller, RepositoryCaller> bindCaller,
+            boolean unusedDisambiguator) {
         if (gateway != null && requestCallers == null) {
             throw new IllegalArgumentException("a Connect gateway and its request resolver come together");
         }
@@ -294,7 +289,6 @@ public final class UploadHttpServer implements AutoCloseable {
                                 headers -> requestCallers.resolve(RequestHeaders.of(headers)).map(bindCaller));
         this.expectedToken = token.getBytes(StandardCharsets.UTF_8);
         this.callers = callers;
-        this.archiveOperations = archiveOperations;
         if (v2Archive == null) {
             this.v2ArchiveUploads = null;
         } else {
@@ -303,7 +297,6 @@ public final class UploadHttpServer implements AutoCloseable {
                     v2Archive,
                     ArchiveCallerHandoff.interceptChannel(baseUploads.channel()));
         }
-        this.legacyArchiveExists = legacyArchiveExists;
         this.console = Objects.requireNonNull(console, "console");
         this.routes = extraRoutes(routes);
         this.gateway = gateway;
@@ -319,7 +312,7 @@ public final class UploadHttpServer implements AutoCloseable {
      * @throws IllegalStateException when this server mounts no gateway
      */
     public RequestCallerResolver callers() {
-        if (requestCallers == null) {
+        if (gateway == null) {
             throw new IllegalStateException("this repository HTTP port mounts no Connect gateway");
         }
         return requestCallers;
@@ -393,7 +386,7 @@ public final class UploadHttpServer implements AutoCloseable {
             if (documentUploads != null) {
                 created.createContext(UPLOAD_PATH, documentUploads);
             }
-            if (archiveOperations != null || v2ArchiveUploads != null) {
+            if (v2ArchiveUploads != null) {
                 created.createContext(ARCHIVE_UPLOAD_PATH, this::handleArchive);
             }
             created.createContext(RepositoryConsole.PATH, console.handler());
@@ -411,7 +404,7 @@ public final class UploadHttpServer implements AutoCloseable {
         int bound = created.getAddress().getPort();
         LOG.info("repository HTTP port {} serving {}{}{}{}{}", bound,
                 documentUploads != null ? UPLOAD_PATH + " " : "",
-                (archiveOperations != null || v2ArchiveUploads != null) ? ARCHIVE_UPLOAD_PATH + " " : "",
+                v2ArchiveUploads != null ? ARCHIVE_UPLOAD_PATH + " " : "",
                 console.configured() ? RepositoryConsole.PATH : RepositoryConsole.PATH + " (not configured)",
                 routes.isEmpty() ? "" : " " + String.join(" ", routes.keySet()),
                 gateway != null ? " " + CONNECT_PATH + " (" + gateway.procedures().size() + " procedures)" : "");
@@ -481,9 +474,10 @@ public final class UploadHttpServer implements AutoCloseable {
             return new ResolvedCaller(caller, authenticated);
         }
         requireCredential(exchange);
+        // The operator credential just matched; without a supplier it names the operator.
         RepositoryCaller caller = callers != null
                 ? Objects.requireNonNull(callers.get(), "caller")
-                : new RepositoryCaller("http-upload", true);
+                : new RepositoryCaller(Caller.operator().name(), true);
         return new ResolvedCaller(caller, null);
     }
 
@@ -535,14 +529,13 @@ public final class UploadHttpServer implements AutoCloseable {
      * identity rides query parameters or headers (query wins) — {@code account_id},
      * {@code archive}, {@code entry_id}, {@code rendition} (default {@code original}),
      * {@code sub_key}, {@code schema_subject}, {@code module}, {@code operation_id},
-     * {@code expected_version}, {@code Content-Type}, optional {@code X-Content-Sha256}
-     * ({@code expected_sha256}), and (on the legacy {@link ArchiveRepository} path only)
-     * {@code filename} — streamed through the same verified, content-addressed landing
-     * as the gRPC streaming door, one new entry version per upload.
+     * {@code expected_version}, {@code Content-Type}, and optional {@code X-Content-Sha256}
+     * ({@code expected_sha256}) — streamed through the same verified, content-addressed
+     * landing as the gRPC streaming door, one new entry version per upload.
      *
-     * <p>When routed through the v2 {@link DocumentArchive}, the response is the binary
-     * protobuf {@link UploadRenditionResponse} ({@code Content-Type: application/protobuf})
-     * with {@code X-Operation-Id} and {@code X-Replayed} response headers.
+     * <p>The response is the binary protobuf {@link UploadRenditionResponse}
+     * ({@code Content-Type: application/protobuf}) with {@code X-Operation-Id} and
+     * {@code X-Replayed} response headers.
      */
     private void archiveUpload(HttpExchange exchange, ResolvedCaller resolved) throws IOException {
         Map<String, String> query = parseQuery(exchange.getRequestURI().getRawQuery());
@@ -582,29 +575,14 @@ public final class UploadHttpServer implements AutoCloseable {
         }
         RenditionDescriptor descriptor = descriptorBuilder.build();
 
-        if (v2ArchiveUploads != null && (archiveOperations == null
-                || legacyArchiveExists == null
-                || !legacyArchiveExists.test(accountId, archive))) {
-            if (identity(exchange, query, "filename", "x-filename") != null
-                    || identity(exchange, query, "title", "x-title") != null
-                    || identity(exchange, query, "source_uri", "x-source-uri") != null) {
-                throw new HttpError(400, "filename, title and source_uri are not supported by v2 archive upload; "
-                        + "set entry metadata through PutEntry");
-            }
-            writeProto(exchange, 200, uploadV2Archive(exchange, resolved, address, descriptor,
-                    contentLength, declaredSha, module, operationId, expectedVersion));
-            return;
+        if (identity(exchange, query, "filename", "x-filename") != null
+                || identity(exchange, query, "title", "x-title") != null
+                || identity(exchange, query, "source_uri", "x-source-uri") != null) {
+            throw new HttpError(400, "filename, title and source_uri are not supported by v2 archive upload; "
+                    + "set entry metadata through PutEntry");
         }
-
-        String filename = identity(exchange, query, "filename", "x-filename");
-        ArchiveRepository.UploadResult result = archiveOperations.uploadStream(
-                resolved.caller(), address, descriptor, contentLength,
-                declaredSha == null ? "" : declaredSha,
-                null, filename, null, null, exchange.getRequestBody());
-        writeProto(exchange, 200, UploadRenditionResponse.newBuilder()
-                .setEntryUuid(result.entryUuid()).setVersion(result.version())
-                .setSha256(result.sha256()).setSizeBytes(result.sizeBytes())
-                .setObjectKey(result.objectKey()).setRootChecksum(result.rootChecksum()).build());
+        writeProto(exchange, 200, uploadV2Archive(exchange, resolved, address, descriptor,
+                contentLength, declaredSha, module, operationId, expectedVersion));
     }
 
     private UploadRenditionResponse uploadV2Archive(HttpExchange exchange, ResolvedCaller resolved,
@@ -665,6 +643,16 @@ public final class UploadHttpServer implements AutoCloseable {
                         stream.onNext(UploadRenditionRequest.newBuilder()
                                 .setHeader(header.build())
                                 .build());
+                        if (!responseFuture.isDone()
+                                && !resolved.caller().processAuthority()
+                                && resolved.caller().credentialBinding().isEmpty()) {
+                            exchange.getResponseHeaders().set("Connection", "close");
+                            StatusRuntimeException denied = Status.PERMISSION_DENIED
+                                    .withDescription("Saving requires a credential-bound caller or process authority")
+                                    .asRuntimeException();
+                            stream.onError(denied);
+                            throw denied;
+                        }
                         byte[] buffer = new byte[STREAM_CHUNK_BYTES];
                         while (bytesRead < contentLength && !responseFuture.isDone()) {
                             if (!stream.awaitReady(UPLOAD_READY_TIMEOUT_NANOS)) {

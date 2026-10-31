@@ -19,6 +19,7 @@ import ai.protomolt.proto.repo.v2.PartSelector;
 import ai.protomolt.proto.repo.v2.PartWrite;
 import ai.protomolt.proto.repo.v2.SaveDocumentRequest;
 import ai.protomolt.proto.repo.v2.SaveOwner;
+import ai.protomolt.proto.repo.v2.StreamedBody;
 import ai.protomolt.proto.repo.v2.UploadDocumentResponse;
 import ai.protomolt.proto.repo.v2.UploadHeader;
 import ai.protomolt.proto.repo.v2.WriteAction;
@@ -450,6 +451,7 @@ public final class UploadHttpHandler implements HttpHandler {
                 .build();
 
         var header = UploadHeader.newBuilder()
+                .setStreamed(StreamedBody.getDefaultInstance())
                 .setSave(save)
                 .setBlobId(blobId)
                 .setDeclaredLength(contentLength);
