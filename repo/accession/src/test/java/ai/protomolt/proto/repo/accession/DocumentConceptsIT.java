@@ -375,7 +375,12 @@ class DocumentConceptsIT {
             assertThat(f.catalog.current(doc).orElseThrow().revision()).isEqualTo(2);
             var biology = SemanticPartsIT.rejected(() -> saves.save(processAuthority(), parsedWith(doc, 2, "biology")),
                     Status.Code.INVALID_ARGUMENT, RejectionReason.REJECTION_REASON_VALIDATION_FAILED);
-            assertThat(biology.getViolationsList()).extracting(FieldViolation::getRuleId).containsExactly("concept.member");
+            assertThat(biology.getViolationsList())
+                    .extracting(v -> v.getPart().getPart(), FieldViolation::getFieldPath, FieldViolation::getRuleId)
+                    .containsExactly(tuple(
+                            DocumentPart.DOCUMENT_PART_PARSED,
+                            "parser_results[\"tagger\"].document.shape.subject",
+                            "concept.member"));
             assertThat(f.catalog.current(doc).orElseThrow().revision()).isEqualTo(2);
 
             // Only CORE's tags are catalogued: the PARSED tag is stored with PARSED and filters do not see it.
@@ -395,6 +400,57 @@ class DocumentConceptsIT {
             execute(f, "DELETE FROM catalog_document_concepts");
             new CatalogEntryRebuild(f.catalog, f.reads).rebuild(ACCOUNT);
             assertThat(f.catalog.concepts(doc)).isEqualTo(core);
+        }
+    }
+
+    @Test void aTagInParsedAboveTheCatalogPathBoundSavesWhileCoreIsRefused() throws Exception {
+        var source = new Source();
+        mountAll(source);
+        try (var f = new AccessionFixture(); var config = DistributedConfig.over(source)) {
+            var mounts = follow(config);
+            var saves = saves(f, mounts);
+
+            // In CORE, a tag whose field path exceeds 1024 UTF-8 bytes is refused with concept-catalog-storable.
+            var unstorableCore = SemanticPartsIT.rejected(
+                    () -> saves.save(processAuthority(), save("long-core", address(ACCOUNT, "long-core"),
+                            document("long-core", paper(p -> p.setField(PAPER.findFieldByName(LONG_NAME),
+                                    ref("subject", "physics")))))),
+                    Status.Code.INVALID_ARGUMENT, RejectionReason.REJECTION_REASON_VALIDATION_FAILED);
+            assertThat(unstorableCore.getViolationsList())
+                    .extracting(v -> v.getPart().getPart(), FieldViolation::getFieldPath, FieldViolation::getRuleId)
+                    .containsExactly(tuple(
+                            DocumentPart.DOCUMENT_PART_CORE,
+                            "structured_data." + LONG_NAME,
+                            "concept-catalog-storable"));
+            assertThat(f.catalog.current(address(ACCOUNT, "long-core"))).isEmpty();
+
+            // In PARSED, tags are not catalogued, so the same > 1024-byte field path commits cleanly.
+            var doc = saveTagged(saves, "long-parsed", p -> p.setField(PAPER.findFieldByName("subject"), ref("subject", "physics")));
+            var core = f.catalog.concepts(doc);
+            var shape = Any.newBuilder()
+                    .setTypeUrl(PAPER_URL)
+                    .setValue(paper(p -> p.setField(PAPER.findFieldByName(LONG_NAME), ref("subject", "chemistry"))).toByteString())
+                    .build();
+            var parsed = Document.newBuilder().putParserResults("tagger", ai.protomolt.proto.repo.v1.ParserResult.newBuilder()
+                    .setParserName("tagger").setParserVersion("1").setStatus(ai.protomolt.proto.repo.v1.ParseStatus.PARSE_STATUS_OK)
+                    .setDocument(ai.protomolt.proto.repo.v1.ParserDocument.newBuilder().setShape(shape)).build()).build();
+            saves.save(processAuthority(), SaveDocumentRequest.newBuilder()
+                    .setOperationId("long-parsed-2")
+                    .setTarget(DocumentTarget.newBuilder().setAddress(doc))
+                    .setExpected(at(1))
+                    .setOwner(intakeOwner())
+                    .setDocument(parsed)
+                    .addWrites(put(DocumentPart.DOCUMENT_PART_PARSED))
+                    .build());
+            assertThat(f.catalog.current(doc).orElseThrow().revision()).isEqualTo(2);
+            assertThat(f.catalog.concepts(doc)).isEqualTo(core);
+
+            var read = f.reads.getDocument(processAuthority(), GetDocumentRequest.newBuilder().setAddress(doc)
+                    .setSelection(PartSelection.newBuilder().addSelectors(PartSelector.newBuilder()
+                            .setPart(DocumentPart.DOCUMENT_PART_PARSED))).build());
+            var storedShape = read.getDocument().getParserResultsOrThrow("tagger").getDocument().getShape();
+            var stored = (Message) DynamicMessage.parseFrom(PAPER, storedShape.getValue()).getField(PAPER.findFieldByName(LONG_NAME));
+            assertThat(ConceptRef.parseFrom(stored.toByteString())).isEqualTo(cref("subject", "chemistry"));
         }
     }
 

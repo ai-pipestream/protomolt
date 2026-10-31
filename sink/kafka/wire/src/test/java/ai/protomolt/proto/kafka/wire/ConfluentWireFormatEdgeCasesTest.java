@@ -5,7 +5,7 @@ import ai.protomolt.proto.sources.ProtoSourceCompiler;
 import ai.protomolt.proto.sources.ProtoSourceSet;
 import com.google.protobuf.Descriptors.Descriptor;
 import com.google.protobuf.Descriptors.FileDescriptor;
-import org.apache.kafka.common.utils.ByteUtils;
+import org.apache.kafka.common.utils.internals.ByteUtils;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 

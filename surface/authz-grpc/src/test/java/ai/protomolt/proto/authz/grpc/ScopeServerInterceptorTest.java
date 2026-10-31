@@ -9,11 +9,16 @@ import ai.protomolt.proto.authz.CallerResolver;
 import io.grpc.Attributes;
 import io.grpc.CallOptions;
 import io.grpc.ClientCall;
+import io.grpc.Codec;
+import io.grpc.CompressorRegistry;
 import io.grpc.Context;
+import io.grpc.Decompressor;
+import io.grpc.DecompressorRegistry;
 import io.grpc.ManagedChannel;
 import io.grpc.Metadata;
 import io.grpc.MethodDescriptor;
 import io.grpc.Server;
+import io.grpc.ServerBuilder;
 import io.grpc.ServerCall;
 import io.grpc.ServerInterceptor;
 import io.grpc.ServerServiceDefinition;
@@ -31,7 +36,11 @@ import io.grpc.protobuf.services.HealthStatusManager;
 import io.grpc.protobuf.services.ProtoReflectionServiceV1;
 import io.grpc.stub.MetadataUtils;
 import io.grpc.stub.ServerCalls;
+import java.io.IOException;
 import java.io.InputStream;
+import java.io.OutputStream;
+import java.lang.reflect.Field;
+import java.lang.reflect.Method;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
@@ -91,6 +100,43 @@ class ScopeServerInterceptorTest {
         }
         return HealthGrpc.newBlockingStub(channel)
                 .withInterceptors(MetadataUtils.newAttachHeadersInterceptor(headers));
+    }
+
+    @Test
+    void anOverCapCompressedMessageStopsInflatingOneBytePastTheCap() throws Exception {
+        var compressed = new java.io.ByteArrayOutputStream();
+        try (var gzip = new java.util.zip.GZIPOutputStream(compressed)) {
+            gzip.write(new byte[1024 * 1024]);
+        }
+        AtomicInteger inflated = new AtomicInteger();
+        InputStream counting = new java.io.FilterInputStream(new java.util.zip.GZIPInputStream(
+                new java.io.ByteArrayInputStream(compressed.toByteArray()))) {
+            @Override
+            public int read() throws java.io.IOException {
+                int value = super.read();
+                if (value >= 0) {
+                    inflated.incrementAndGet();
+                }
+                return value;
+            }
+
+            @Override
+            public int read(byte[] buffer, int offset, int length) throws java.io.IOException {
+                int read = super.read(buffer, offset, length);
+                if (read > 0) {
+                    inflated.addAndGet(read);
+                }
+                return read;
+            }
+        };
+        assertThat(ScopeServerInterceptor.readWithinCap(counting, 1)).isNull();
+        assertThat(inflated.get()).isEqualTo(2);
+
+        byte[] exact = "abcd".getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        assertThat(ScopeServerInterceptor.readWithinCap(new java.io.ByteArrayInputStream(exact), 4))
+                .isEqualTo(exact);
+        assertThat(ScopeServerInterceptor.readWithinCap(new java.io.ByteArrayInputStream(exact), 3)).isNull();
+        assertThat(ScopeServerInterceptor.readWithinCap(InputStream.nullInputStream(), 1)).isEmpty();
     }
 
     @Test
@@ -464,7 +510,7 @@ class ScopeServerInterceptorTest {
             assertThat(closed.await(5, TimeUnit.SECONDS)).isTrue();
             assertThat(closeStatus.get().getCode()).isEqualTo(Status.Code.RESOURCE_EXHAUSTED);
             assertThat(closeStatus.get().getDescription())
-                    .contains("capped").contains("1027 bytes").contains("100-byte");
+                    .contains("capped").contains("more than 100 bytes").contains("100-byte");
             assertThat(parses.get()).isZero();
         } finally {
             nettyChannel.shutdownNow();
@@ -548,7 +594,7 @@ class ScopeServerInterceptorTest {
             assertThat(closed.await(5, TimeUnit.SECONDS)).isTrue();
             assertThat(closeStatus.get().getCode()).isEqualTo(Status.Code.RESOURCE_EXHAUSTED);
             assertThat(closeStatus.get().getDescription())
-                    .contains("capped").contains("1027 bytes").contains("100-byte");
+                    .contains("capped").contains("more than 100 bytes").contains("100-byte");
             assertThat(parses.get()).isZero();
 
             HealthCheckRequest small = HealthCheckRequest.newBuilder().setService("a").build();
@@ -620,7 +666,7 @@ class ScopeServerInterceptorTest {
             assertThat(closed.await(5, TimeUnit.SECONDS)).isTrue();
             assertThat(closeStatus.get().getCode()).isEqualTo(Status.Code.RESOURCE_EXHAUSTED);
             assertThat(closeStatus.get().getDescription())
-                    .contains("capped").contains("1027 bytes").contains("100-byte");
+                    .contains("capped").contains("more than 100 bytes").contains("100-byte");
             assertThat(parses.get()).isZero();
             assertThat(wrappedCalls.get()).isEqualTo(1);
 
@@ -711,6 +757,261 @@ class ScopeServerInterceptorTest {
                 .contains("100-byte cap");
     }
 
+    @Test
+    void grpcCoreInternalLayoutAndDeframerHookAttachCleanly() throws Exception {
+        Class<?> serverCallImpl = Class.forName("io.grpc.internal.ServerCallImpl");
+        Field streamField = serverCallImpl.getDeclaredField("stream");
+        assertThat(streamField)
+                .as("grpc-core ServerCallImpl.stream field required for compressed frame cap hook")
+                .isNotNull();
+
+        Class<?> abstractServerStream = Class.forName("io.grpc.internal.AbstractServerStream");
+        Method transportStateMethod = abstractServerStream.getDeclaredMethod("transportState");
+        assertThat(transportStateMethod)
+                .as("grpc-core AbstractServerStream.transportState() required for compressed frame cap hook")
+                .isNotNull();
+
+        Class<?> abstractStreamTransportState =
+                Class.forName("io.grpc.internal.AbstractStream$TransportState");
+        Field rawDeframerField = abstractStreamTransportState.getDeclaredField("rawDeframer");
+        assertThat(rawDeframerField)
+                .as("grpc-core AbstractStream.TransportState.rawDeframer field required for compressed frame cap hook")
+                .isNotNull();
+
+        Class<?> messageDeframer = Class.forName("io.grpc.internal.MessageDeframer");
+        Field listenerField = messageDeframer.getDeclaredField("listener");
+        assertThat(listenerField.getType().isInterface())
+                .as("grpc-core MessageDeframer.listener must be an interface so a dynamic proxy can wrap it")
+                .isTrue();
+
+        Method messagesAvailable = null;
+        for (Method method : listenerField.getType().getMethods()) {
+            if ("messagesAvailable".equals(method.getName()) && method.getParameterCount() == 1) {
+                messagesAvailable = method;
+                break;
+            }
+        }
+        assertThat(messagesAvailable)
+                .as("grpc-core MessageDeframer.Listener.messagesAvailable(MessageProducer) must exist")
+                .isNotNull();
+        Method nextMethod = messagesAvailable.getParameterTypes()[0].getMethod("next");
+        assertThat(nextMethod.getReturnType())
+                .as("grpc-core StreamListener.MessageProducer.next() must return InputStream")
+                .isEqualTo(InputStream.class);
+
+        AtomicReference<Object> observedDeframer = new AtomicReference<>();
+        AtomicReference<ServerCall<?, ?>> observedCall = new AtomicReference<>();
+        CallerResolver resolver = credential -> "capped-credential".equals(credential)
+                ? Optional.of(Caller.scoped("capped",
+                        Set.of(Scopes.METRICS_QUERY),
+                        Map.of(Scopes.METRICS_QUERY, new Caller.Budget(2, 100))))
+                : Optional.empty();
+        ScopeServerInterceptor scopes = new ScopeServerInterceptor(
+                Map.of(HEALTH, Scopes.METRICS_QUERY), Map.of(), Set.of());
+        NettyServerBuilder builder = NettyServerBuilder.forPort(0)
+                .addService(countingHealthService(new AtomicInteger()));
+        scopes.configure(builder);
+        builder.intercept(new ServerInterceptor() {
+            @Override
+            public <ReqT, RespT> ServerCall.Listener<ReqT> interceptCall(
+                    ServerCall<ReqT, RespT> call,
+                    Metadata headers,
+                    io.grpc.ServerCallHandler<ReqT, RespT> next) {
+                observedCall.set(call);
+                observedDeframer.set(ScopeServerInterceptor.rawDeframerOf(call));
+                return next.startCall(call, headers);
+            }
+        });
+        builder.intercept(new ApiTokenServerInterceptor(OPERATOR, resolver));
+        Server nettyServer = builder.build().start();
+        ManagedChannel nettyChannel = NettyChannelBuilder
+                .forAddress("localhost", nettyServer.getPort())
+                .usePlaintext()
+                .build();
+        try {
+            HealthCheckRequest small = HealthCheckRequest.newBuilder().setService("a").build();
+            HealthCheckResponse response = stubOn(nettyChannel, "capped-credential")
+                    .withCompression("gzip")
+                    .check(small);
+            assertThat(response.getStatus())
+                    .isEqualTo(HealthCheckResponse.ServingStatus.SERVING);
+            assertThat(observedDeframer.get())
+                    .as("rawDeframerOf(call) must resolve the live MessageDeframer on the pinned grpc-core version")
+                    .isNotNull();
+            assertThat(ScopeServerInterceptor.hasDeframerListenerHook(observedCall.get()))
+                    .as("DeframerListenerHandler proxy must attach to MessageDeframer.listener on compressed calls")
+                    .isTrue();
+        } finally {
+            nettyChannel.shutdownNow();
+            nettyServer.shutdownNow();
+        }
+    }
+
+    @Test
+    void configurePreservesCustomDecompressorsAndEnforcesPayloadCapBeforeHalfClose()
+            throws Exception {
+        checkCustomCodec(false);
+    }
+
+    private void checkCustomCodec(boolean opaqueBuilder) throws Exception {
+        Codec customCodec = new Codec() {
+            private final Codec delegate = new Codec.Gzip();
+
+            @Override
+            public String getMessageEncoding() {
+                return "x-custom-gzip";
+            }
+
+            @Override
+            public OutputStream compress(OutputStream os) throws IOException {
+                return delegate.compress(os);
+            }
+
+            @Override
+            public InputStream decompress(InputStream is) throws IOException {
+                return delegate.decompress(is);
+            }
+        };
+        Decompressor customDecompressor = customCodec;
+        DecompressorRegistry customRegistry = DecompressorRegistry.getDefaultInstance()
+                .with(customDecompressor, true);
+        CompressorRegistry clientCompressors = CompressorRegistry.newEmptyInstance();
+        clientCompressors.register(new Codec.Gzip());
+        clientCompressors.register(customCodec);
+
+        AtomicInteger parses = new AtomicInteger();
+        CallerResolver resolver = credential -> "capped-credential".equals(credential)
+                ? Optional.of(Caller.scoped("capped",
+                        Set.of(Scopes.METRICS_QUERY),
+                        Map.of(Scopes.METRICS_QUERY, new Caller.Budget(2, 100))))
+                : Optional.empty();
+        ScopeServerInterceptor scopes = new ScopeServerInterceptor(
+                Map.of(HEALTH, Scopes.METRICS_QUERY), Map.of(), Set.of());
+        NettyServerBuilder builder = NettyServerBuilder.forPort(0)
+                .decompressorRegistry(customRegistry)
+                .addService(countingHealthService(parses));
+        assertThat(ScopeServerInterceptor.decompressorRegistryOf(builder))
+                .as("decompressorRegistryOf(builder) must read the custom DecompressorRegistry set on builder")
+                .isSameAs(customRegistry);
+        io.grpc.ServerBuilder<?> configured = builder;
+        if (opaqueBuilder) {
+            configured = new OpaqueRegistryBuilder(builder);
+            var opaque = configured;
+            assertThatThrownBy(() -> scopes.configure(opaque))
+                    .isInstanceOf(IllegalStateException.class)
+                    .hasMessageContaining("configure(ServerBuilder, DecompressorRegistry)");
+            assertThat(ScopeServerInterceptor.decompressorRegistryOf(builder)).isSameAs(customRegistry);
+            scopes.configure(configured, customRegistry);
+        } else {
+            scopes.configure(configured);
+        }
+        configured.intercept(new ApiTokenServerInterceptor(OPERATOR, resolver));
+        Server nettyServer = builder.build().start();
+        ManagedChannel nettyChannel = NettyChannelBuilder
+                .forAddress("localhost", nettyServer.getPort())
+                .compressorRegistry(clientCompressors)
+                .usePlaintext()
+                .build();
+        try {
+            CountDownLatch closed = new CountDownLatch(1);
+            AtomicReference<Status> closeStatus = new AtomicReference<>();
+            ClientCall<HealthCheckRequest, HealthCheckResponse> call =
+                    nettyChannel.newCall(
+                            HealthGrpc.getCheckMethod(),
+                            CallOptions.DEFAULT.withCompression("x-custom-gzip"));
+            Metadata headers = new Metadata();
+            headers.put(Metadata.Key.of("api_token", Metadata.ASCII_STRING_MARSHALLER),
+                    "capped-credential");
+            call.start(new ClientCall.Listener<>() {
+                @Override
+                public void onClose(Status status, Metadata trailers) {
+                    closeStatus.set(status);
+                    closed.countDown();
+                }
+            }, headers);
+            call.request(1);
+            call.sendMessage(HealthCheckRequest.newBuilder()
+                    .setService("x".repeat(1024))
+                    .build());
+            assertThat(closed.await(5, TimeUnit.SECONDS)).isTrue();
+            assertThat(closeStatus.get().getCode()).isEqualTo(Status.Code.RESOURCE_EXHAUSTED);
+            assertThat(closeStatus.get().getDescription())
+                    .contains("capped").contains("more than 100 bytes").contains("100-byte");
+            assertThat(parses.get()).isZero();
+
+            HealthCheckRequest small = HealthCheckRequest.newBuilder().setService("a").build();
+            HealthCheckResponse response = stubOn(nettyChannel, "capped-credential")
+                    .withCompression("x-custom-gzip")
+                    .check(small);
+            assertThat(response.getStatus())
+                    .isEqualTo(HealthCheckResponse.ServingStatus.SERVING);
+            assertThat(parses.get()).isEqualTo(1);
+        } finally {
+            nettyChannel.shutdownNow();
+            nettyServer.shutdownNow();
+        }
+    }
+
+    @Test
+    void configureRefusesABuilderWhoseDecompressorRegistryItCannotRead() {
+        ScopeServerInterceptor scopes = new ScopeServerInterceptor(
+                Map.of(HEALTH, Scopes.METRICS_QUERY), Map.of(), Set.of());
+        ServerBuilder<?> opaque = new OpaqueServerBuilder();
+
+        assertThatThrownBy(() -> scopes.configure(opaque))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining(OpaqueServerBuilder.class.getName())
+                .hasMessageContaining("configure(ServerBuilder, DecompressorRegistry)");
+    }
+
+    /** A builder with no registry field and no builder it forwards to that the walk can see. */
+    private static final class OpaqueServerBuilder extends ServerBuilder<OpaqueServerBuilder> {
+        @Override
+        public OpaqueServerBuilder directExecutor() {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public OpaqueServerBuilder executor(java.util.concurrent.Executor executor) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public OpaqueServerBuilder addService(ServerServiceDefinition service) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public OpaqueServerBuilder addService(io.grpc.BindableService bindableService) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public OpaqueServerBuilder fallbackHandlerRegistry(io.grpc.HandlerRegistry fallbackRegistry) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public OpaqueServerBuilder useTransportSecurity(java.io.File certChain, java.io.File privateKey) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public OpaqueServerBuilder decompressorRegistry(DecompressorRegistry registry) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public OpaqueServerBuilder compressorRegistry(CompressorRegistry registry) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public Server build() {
+            throw new UnsupportedOperationException();
+        }
+    }
+
     private static final class NonForwardingServerCall<ReqT, RespT>
             extends ServerCall<ReqT, RespT> {
         private final ServerCall<ReqT, RespT> underlying;
@@ -779,4 +1080,26 @@ class ScopeServerInterceptorTest {
             underlying.triggerEvent(event);
         }
     }
+    @Test
+    void opaqueBuilderUsesExplicitRegistryWithoutLosingItsCustomCodec() throws Exception {
+        checkCustomCodec(true);
+    }
+
+    private static final class OpaqueRegistryBuilder extends io.grpc.ServerBuilder<OpaqueRegistryBuilder> {
+        private final java.util.function.Supplier<io.grpc.ServerBuilder<?>> hidden;
+        OpaqueRegistryBuilder(io.grpc.ServerBuilder<?> builder) { hidden = () -> builder; }
+        @Override public OpaqueRegistryBuilder directExecutor() { hidden.get().directExecutor(); return this; }
+        @Override public OpaqueRegistryBuilder executor(java.util.concurrent.Executor e) { hidden.get().executor(e); return this; }
+        @Override public OpaqueRegistryBuilder addService(io.grpc.ServerServiceDefinition s) { hidden.get().addService(s); return this; }
+        @Override public OpaqueRegistryBuilder addService(io.grpc.BindableService s) { hidden.get().addService(s); return this; }
+        @Override public OpaqueRegistryBuilder fallbackHandlerRegistry(io.grpc.HandlerRegistry h) { hidden.get().fallbackHandlerRegistry(h); return this; }
+        @Override public OpaqueRegistryBuilder useTransportSecurity(java.io.File c, java.io.File k) { hidden.get().useTransportSecurity(c,k); return this; }
+        @Override public OpaqueRegistryBuilder decompressorRegistry(DecompressorRegistry d) { hidden.get().decompressorRegistry(d); return this; }
+        @Override public OpaqueRegistryBuilder compressorRegistry(CompressorRegistry c) { hidden.get().compressorRegistry(c); return this; }
+        @Override public OpaqueRegistryBuilder intercept(ServerInterceptor i) { hidden.get().intercept(i); return this; }
+        @Override public OpaqueRegistryBuilder addStreamTracerFactory(io.grpc.ServerStreamTracer.Factory f) { hidden.get().addStreamTracerFactory(f); return this; }
+        @Override public Server build() { return hidden.get().build(); }
+    }
+
+
 }

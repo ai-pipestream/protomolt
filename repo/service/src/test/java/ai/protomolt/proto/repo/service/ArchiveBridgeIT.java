@@ -482,7 +482,6 @@ class ArchiveBridgeIT {
         byte[] tar = tar("inner.txt", "inner");
         archives.putEntry(PutEntryRequest.newBuilder()
                 .setAddress(address("oddly-named"))
-                .setFilename("oddly-named.tar")
                 .setDeclared(tarClaim("oddly-named.tar"))
                 .addRenditions(RenditionContent.newBuilder()
                         .setRendition(RenditionDescriptor.newBuilder().setName("zip-file"))

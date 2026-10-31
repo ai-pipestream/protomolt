@@ -1,6 +1,5 @@
 package ai.protomolt.proto.repo.container.ledger;
 
-import ai.protomolt.proto.repo.container.archive.ArchiveReadLedger;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -30,7 +29,7 @@ class ReaderRegistrationIT {
                     Map.of("hibernate.connection.datasource", source, "hibernate.hbm2ddl.auto", "validate"))) {
                 var id = UUID.randomUUID();
                 armed.set(true);
-                assertThatThrownBy(() -> new ArchiveReadLedger(new Tx(emf), id))
+                assertThatThrownBy(() -> ReaderRegistration.register(new Tx(emf), id))
                         .hasStackTraceContaining("Reader registration acknowledgment lost");
                 assertThat(armed).isFalse();
                 assertThat(state(c.tx(), id)).isEqualTo("QUIESCED");
@@ -54,7 +53,7 @@ class ReaderRegistrationIT {
             try (var emf = jakarta.persistence.Persistence.createEntityManagerFactory("document-ledger",
                     Map.of("hibernate.connection.datasource", source, "hibernate.hbm2ddl.auto", "validate"))) {
                 faults.set(2);
-                failure = catchThrowableOfType(ReaderRegistration.Failure.class, () -> new ArchiveReadLedger(new Tx(emf), id));
+                failure = catchThrowableOfType(ReaderRegistration.Failure.class, () -> ReaderRegistration.register(new Tx(emf), id));
                 assertThat(failure).isNotNull();
                 assertThat(failure.cleanup()).isEqualTo(ReaderRegistration.Cleanup.PENDING);
                 assertThat(failure.incarnation()).isEqualTo(id);
@@ -79,10 +78,10 @@ class ReaderRegistrationIT {
                     Map.of("hibernate.connection.datasource", source, "hibernate.hbm2ddl.auto", "validate"))) {
                 var id = UUID.randomUUID();
                 armed.set(true);
-                var failed = catchThrowableOfType(ReaderRegistration.Failure.class, () -> new ArchiveReadLedger(new Tx(emf), id));
+                var failed = catchThrowableOfType(ReaderRegistration.Failure.class, () -> ReaderRegistration.register(new Tx(emf), id));
                 assertThat(failed.cleanup()).isEqualTo(ReaderRegistration.Cleanup.QUIESCED);
                 assertThat(state(c.tx(), id)).isEqualTo("QUIESCED");
-                var duplicate = catchThrowableOfType(ReaderRegistration.Failure.class, () -> new ArchiveReadLedger(c.tx(), id));
+                var duplicate = catchThrowableOfType(ReaderRegistration.Failure.class, () -> ReaderRegistration.register(c.tx(), id));
                 assertThat(duplicate.cleanup()).isEqualTo(ReaderRegistration.Cleanup.FOREIGN_IDENTITY);
                 assertThat(state(c.tx(), id)).isEqualTo("QUIESCED");
             }
@@ -106,7 +105,7 @@ class ReaderRegistrationIT {
             try (var emf = jakarta.persistence.Persistence.createEntityManagerFactory("document-ledger",
                     Map.of("hibernate.connection.datasource", source, "hibernate.hbm2ddl.auto", "validate"))) {
                 armed.set(true);
-                failed = catchThrowableOfType(ReaderRegistration.Failure.class, () -> new ArchiveReadLedger(new Tx(emf), id));
+                failed = catchThrowableOfType(ReaderRegistration.Failure.class, () -> ReaderRegistration.register(new Tx(emf), id));
                 assertThat(failed).hasStackTraceContaining("Original registration acknowledgment lost")
                         .hasStackTraceContaining("Cleanup database unavailable before commit");
                 assertThat(failed.cleanup()).isEqualTo(ReaderRegistration.Cleanup.PENDING);
@@ -128,18 +127,18 @@ class ReaderRegistrationIT {
                     // Deterministic real-transaction interleaving: release the first
                     // insertion, let a different owner register, then report failure.
                     connection.rollback();
-                    new ArchiveReadLedger(c.tx(), id);
+                    ReaderRegistration.register(c.tx(), id);
                     throw new java.sql.SQLException("Original registration rolled back and another owner won");
                 }
             });
             try (var emf = jakarta.persistence.Persistence.createEntityManagerFactory("document-ledger",
                     Map.of("hibernate.connection.datasource", source, "hibernate.hbm2ddl.auto", "validate"))) {
                 armed.set(true);
-                var failure = catchThrowableOfType(ReaderRegistration.Failure.class, () -> new ArchiveReadLedger(new Tx(emf), id));
+                var failure = catchThrowableOfType(ReaderRegistration.Failure.class, () -> ReaderRegistration.register(new Tx(emf), id));
                 assertThat(failure.cleanup()).isEqualTo(ReaderRegistration.Cleanup.FOREIGN_IDENTITY);
                 assertThat(failure.retryCleanup(c.tx())).isEqualTo(ReaderRegistration.Cleanup.FOREIGN_IDENTITY);
                 assertThat(state(c.tx(), id)).isEqualTo("ACTIVE");
-                var duplicate = catchThrowableOfType(ReaderRegistration.Failure.class, () -> new ArchiveReadLedger(c.tx(), id));
+                var duplicate = catchThrowableOfType(ReaderRegistration.Failure.class, () -> ReaderRegistration.register(c.tx(), id));
                 assertThat(duplicate.cleanup()).isEqualTo(ReaderRegistration.Cleanup.FOREIGN_IDENTITY);
                 assertThat(state(c.tx(), id)).isEqualTo("ACTIVE");
             }
@@ -184,7 +183,7 @@ class ReaderRegistrationIT {
             try (var emf = jakarta.persistence.Persistence.createEntityManagerFactory("document-ledger",
                     Map.of("hibernate.connection.datasource", source, "hibernate.hbm2ddl.auto", "validate"))) {
                 armed.set(true);
-                failed = catchThrowableOfType(ReaderRegistration.Failure.class, () -> new ArchiveReadLedger(new Tx(emf), id));
+                failed = catchThrowableOfType(ReaderRegistration.Failure.class, () -> ReaderRegistration.register(new Tx(emf), id));
                 assertThat(failed.cleanup()).isEqualTo(ReaderRegistration.Cleanup.PENDING);
             }
             try (var connection = c.pool().getConnection();

@@ -46,7 +46,7 @@ services:
       retries: 30
 
   schema-registry:
-    image: confluentinc/cp-schema-registry:8.3.2
+    image: confluentinc/cp-schema-registry:8.4.0
     depends_on:
       kafka:
         condition: service_healthy

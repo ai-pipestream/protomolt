@@ -104,7 +104,8 @@ public final class CorpusLoader {
 
     private static SaveDocumentResponse upload(DocumentSaves saves, RepositoryCaller caller, RepositoryCorpus.Save save) {
         var streamed = save.streamed().orElseThrow();
-        var header = UploadHeader.newBuilder().setSave(save.request()).setBlobId(streamed.blobId())
+        var header = UploadHeader.newBuilder()
+                .setStreamed(ai.protomolt.proto.repo.v2.StreamedBody.getDefaultInstance()).setSave(save.request()).setBlobId(streamed.blobId())
                 .setDeclaredLength(streamed.length()).setExpectedSha256(streamed.sha256()).build();
         try (var body = streamed.body().get()) {
             return saves.upload(caller, header, body).getSaved();

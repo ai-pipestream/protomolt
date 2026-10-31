@@ -59,6 +59,12 @@ assert_fail "protection check context number" required_contexts 200 '{"contexts"
 assert_fail "rules checks string" required_contexts 200 '{"contexts":[],"checks":[]}' 200 '[{"type":"required_status_checks","parameters":{"required_status_checks":"must-pass"}}]'
 assert_fail "rules contexts object" required_contexts 200 '{"contexts":[],"checks":[]}' 200 '[{"type":"required_status_checks","parameters":{"contexts":{"name":"lint"}}}]'
 assert_fail "rules parameters missing" required_contexts 404 '{"message":"Required status checks not enabled"}' 200 '[{"type":"required_status_checks"}]'
+for invalid_list in false null; do
+  assert_fail "protection contexts ${invalid_list}" required_contexts 200 "{\"contexts\":${invalid_list},\"checks\":[]}" 200 '[]'
+  assert_fail "protection checks ${invalid_list}" required_contexts 200 "{\"contexts\":[],\"checks\":${invalid_list}}" 200 '[]'
+  assert_fail "rules checks ${invalid_list}" required_contexts 404 '{}' 200 "[{\"type\":\"required_status_checks\",\"parameters\":{\"required_status_checks\":${invalid_list}}}]"
+  assert_fail "rules contexts ${invalid_list}" required_contexts 404 '{}' 200 "[{\"type\":\"required_status_checks\",\"parameters\":{\"contexts\":${invalid_list}}}]"
+done
 
 empty_rule=$(required_contexts 200 '{"contexts":[],"checks":[]}' 200 '[{"type":"required_status_checks","parameters":{}},{"type":"deletion","parameters":{"weird":1}}]')
 assert_eq "other rule types and empty parameters add nothing" "$documented" "$empty_rule"

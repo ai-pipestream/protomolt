@@ -63,6 +63,22 @@ class ScopeBudgetsTest {
     }
 
     @Test
+    void aPayloadKnownOnlyToPassTheCapRefusesWithoutSpendingTheRate() {
+        ScopeBudgets budgets = new ScopeBudgets(() -> 0);
+        assertThat(budgets.refuseOverCap(BUDGETED, Scopes.SCHEMA_READ).orElseThrow())
+                .contains("meterme").contains("more than 100 bytes").contains("100-byte")
+                .contains(Scopes.SCHEMA_READ);
+        assertThat(budgets.refuseOverCap(BUDGETED, Scopes.SEARCH_QUERY)).isEmpty();
+        assertThat(budgets.refuseOverCap(Caller.operator(), Scopes.SCHEMA_READ)).isEmpty();
+        assertThat(budgets.refuseOverCap(Caller.scoped("rate-only", Set.of(Scopes.SCHEMA_READ),
+                Map.of(Scopes.SCHEMA_READ, new Budget(1, 0))), Scopes.SCHEMA_READ)).isEmpty();
+        // Two admissions remain: the refusal did not count.
+        assertThat(budgets.refuse(BUDGETED, Scopes.SCHEMA_READ, 100)).isEmpty();
+        assertThat(budgets.refuse(BUDGETED, Scopes.SCHEMA_READ, -1)).isEmpty();
+        assertThat(budgets.refuse(BUDGETED, Scopes.SCHEMA_READ, 10)).isPresent();
+    }
+
+    @Test
     void aPayloadOnlyBudgetNeverRateLimits() {
         Caller capped = Caller.scoped("capped", Set.of(Scopes.SCHEMA_READ),
                 Map.of(Scopes.SCHEMA_READ, new Budget(0, 50)));
