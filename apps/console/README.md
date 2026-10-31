@@ -28,6 +28,14 @@ build bundles it, with the same-origin API bridges provided by the server
 (`/api/protomolt` to the in-process registry, `/api/serve` to the verbs).
 Any reverse proxy that mirrors those paths works too.
 
+### Fix evidence run (opt-in)
+
+`npm run test:evidence-browser` drives the real repository views in Chromium
+for specific console fixes (`evidence/`) and writes screenshots to
+`evidence-screens/<label>/`. It is not part of the default PR checks. Set
+`EVIDENCE_LABEL=before` and run it on a pre-fix tree to capture the defect:
+each spec screenshots the state under test before it asserts.
+
 ## Layout
 
 The application is a standalone Vue app that talks only to `protomolt-serve`.

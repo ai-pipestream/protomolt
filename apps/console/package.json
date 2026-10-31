@@ -13,7 +13,8 @@
     "test:watch": "vitest",
     "typecheck": "vue-tsc --noEmit",
     "test:browser": "playwright test",
-    "test:preview-browser": "playwright test --config playwright.preview.config.ts"
+    "test:preview-browser": "playwright test --config playwright.preview.config.ts",
+    "test:evidence-browser": "playwright test --config playwright.evidence.config.ts"
   },
   "dependencies": {
     "@bufbuild/protobuf": "^2.9.0",

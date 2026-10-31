@@ -7,7 +7,9 @@
     "playwright.config.ts",
     "e2e/**/*.ts",
     "browser/**/*.ts",
-    "playwright.preview.config.ts"
+    "playwright.preview.config.ts",
+    "evidence/**/*.ts",
+    "playwright.evidence.config.ts"
   ],
   "compilerOptions": {
     "baseUrl": ".",
