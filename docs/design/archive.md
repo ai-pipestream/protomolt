@@ -159,9 +159,9 @@ body is the bytes, identity rides query parameters or headers (query wins) —
 `filename`, `Content-Type`, optional `X-Content-Sha256`. `Content-Length`
 is required (411 without it); the body streams through a digest straight to
 `DocumentService.UploadDocument` with no full-body buffering; a checksum
-mismatch is a 400. Success returns a binary `UploadRenditionResponse` (or JSON
-when negotiated via `Accept: application/json`; default `application/protobuf`)
-carrying the committed `version`, `rendition`, `size_bytes`, `sha256`,
+mismatch is a 400. Success returns a binary `UploadRenditionResponse` with
+`Content-Type: application/protobuf`; the route does not negotiate JSON via `Accept`.
+The receipt carries the committed `version`, `rendition`, `size_bytes`, `sha256`,
 `operation_id`, and `replayed` flag (`entry_uuid` is reserved). A producer that
 must know nothing about protomolt uses this door and still gets every guarantee.
 
