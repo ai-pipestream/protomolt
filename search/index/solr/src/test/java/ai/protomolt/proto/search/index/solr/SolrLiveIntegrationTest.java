@@ -49,10 +49,15 @@ import static org.assertj.core.api.Assertions.assertThat;
 @TestMethodOrder(MethodOrderer.OrderAnnotation.class)
 class SolrLiveIntegrationTest {
 
-    // The module has no no-arg constructor and no default tag; solr:10 matches the version
-    // the compose lane pins (DenseVectorField and the knn parser need the 9.x line).
+    // Exact tag, same as docker-compose.integration.yml: the floating solr:10 tag moved to
+    // 10.1, which rejects the bare -DzkRun that Testcontainers passes in its default
+    // SolrCloud mode, so the container died while Jetty still answered (issue #724).
+    // Standalone mode matches the compose lane (solr-precreate) and creates the core
+    // with `solr create -c` instead of the Collections API, so no embedded ZooKeeper is
+    // involved. DenseVectorField and the knn parser are schema features, available either way.
     @Container
-    static final SolrContainer SOLR = new SolrContainer(DockerImageName.parse("solr:10"))
+    static final SolrContainer SOLR = new SolrContainer(DockerImageName.parse("solr:10.1.0"))
+            .withZookeeper(false)
             .withCollection("protomolt");
 
     private static final ObjectMapper JSON = new ObjectMapper();
