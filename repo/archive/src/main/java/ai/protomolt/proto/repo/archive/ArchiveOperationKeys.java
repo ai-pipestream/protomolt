@@ -1,8 +1,11 @@
 package ai.protomolt.proto.repo.archive;
 
+import ai.protomolt.proto.asset.v1.Classification;
 import ai.protomolt.proto.descriptors.MessageFingerprints;
 import ai.protomolt.proto.repo.archive.v1.ArchiveMutationRequest;
 import ai.protomolt.proto.repo.archive.v1.ArchiveOperationKey;
+import ai.protomolt.proto.repo.archive.v1.BridgeEntryRequest;
+import ai.protomolt.proto.repo.archive.v1.ClassifyEntryRequest;
 import ai.protomolt.proto.repo.archive.v1.DeleteEntryRequest;
 import ai.protomolt.proto.repo.archive.v1.DeleteRenditionRequest;
 import ai.protomolt.proto.repo.archive.v1.EntryAddress;
@@ -10,6 +13,7 @@ import ai.protomolt.proto.repo.archive.v1.PruneVersionsRequest;
 import ai.protomolt.proto.repo.archive.v1.PutEntryRequest;
 import ai.protomolt.proto.repo.archive.v1.RenditionContent;
 import ai.protomolt.proto.repo.archive.v1.UploadRenditionHeader;
+import ai.protomolt.proto.repo.v1.Blob;
 import com.google.protobuf.CodedOutputStream;
 import com.google.protobuf.WireFormat;
 import java.io.ByteArrayOutputStream;
@@ -41,6 +45,12 @@ public final class ArchiveOperationKeys {
 
     /** The {@code operation_kind} of an {@code UploadRendition}. */
     public static final String UPLOAD_RENDITION = "archive.upload-rendition";
+
+    /** The {@code operation_kind} of a {@code ClassifyEntry}. */
+    public static final String CLASSIFY_ENTRY = "archive.classify-entry";
+
+    /** The {@code operation_kind} of a {@code BridgeEntry}. */
+    public static final String BRIDGE_ENTRY = "archive.bridge-entry";
 
     /** The {@code operation_kind} of a {@code DeleteEntry}. */
     public static final String DELETE_ENTRY = "archive.delete-entry";
@@ -79,6 +89,18 @@ public final class ArchiveOperationKeys {
     /** The key of an {@code UploadRendition}: the header's requested {@code expected_version}, 0 for last write wins. */
     public static ArchiveOperationKey uploadKey(UploadRenditionHeader header, String contentSha256) {
         return key(UPLOAD_RENDITION, header.getAddress(), header.getExpectedVersion(), contentSha256);
+    }
+
+    /** The key of a {@code ClassifyEntry} against {@code expectedVersion}. */
+    public static ArchiveOperationKey classifyEntryKey(
+            ClassifyEntryRequest request, long expectedVersion, String contentSha256) {
+        return key(CLASSIFY_ENTRY, request.getAddress(), expectedVersion, contentSha256);
+    }
+
+    /** The key of a {@code BridgeEntry} against {@code expectedVersion}. */
+    public static ArchiveOperationKey bridgeEntryKey(
+            BridgeEntryRequest request, long expectedVersion, String contentSha256) {
+        return key(BRIDGE_ENTRY, request.getAddress(), expectedVersion, contentSha256);
     }
 
     /**
@@ -287,6 +309,46 @@ public final class ArchiveOperationKeys {
                     "an upload with no operation_id must declare expected_sha256 so its ID can be derived");
         }
         return derive(uploadKey(header, contentSha256)).toString();
+    }
+
+    /**
+     * The content digest of a {@code ClassifyEntry}: SHA-256 of the deterministic
+     * encoding of the request and the resolved {@link Classification} (with
+     * {@code classified_at} cleared).
+     */
+    public static String classifyEntryContentSha256(
+            ClassifyEntryRequest request, Classification classification) {
+        MessageDigest sha256 = digest("SHA-256");
+        sha256.update(MessageFingerprints.deterministicBytes(request));
+        sha256.update(MessageFingerprints.deterministicBytes(
+                classification.toBuilder().clearClassifiedAt().build()));
+        return HexFormat.of().formatHex(sha256.digest());
+    }
+
+    /** The deterministic operation ID of a {@code ClassifyEntry} save. */
+    public static String classifyOperationId(
+            ClassifyEntryRequest request, long expectedVersion, String contentSha256) {
+        return derive(classifyEntryKey(request, expectedVersion, contentSha256)).toString();
+    }
+
+    /**
+     * The content digest of a {@code BridgeEntry}: SHA-256 of the deterministic
+     * encoding of the request and each derived {@link Blob}.
+     */
+    public static String bridgeEntryContentSha256(
+            BridgeEntryRequest request, List<Blob> derivedBlobs) {
+        MessageDigest sha256 = digest("SHA-256");
+        sha256.update(MessageFingerprints.deterministicBytes(request));
+        for (Blob blob : derivedBlobs) {
+            sha256.update(MessageFingerprints.deterministicBytes(blob));
+        }
+        return HexFormat.of().formatHex(sha256.digest());
+    }
+
+    /** The deterministic operation ID of a {@code BridgeEntry} save. */
+    public static String bridgeOperationId(
+            BridgeEntryRequest request, long expectedVersion, String contentSha256) {
+        return derive(bridgeEntryKey(request, expectedVersion, contentSha256)).toString();
     }
 
     private static byte[] metadataEntry(String key, String value) {

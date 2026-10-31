@@ -46,6 +46,9 @@ jobs:
           # Match coordination-contract.sh: bundled well-known descriptors vary by CLI version.
           version: '1.70.0'
 
+      - name: Main forwarding check policy
+        run: bash .forgejo/scripts/forward-main-checks-test.sh
+
       - name: Build and test
         env:
           PROTOMOLT_APICURIO_TEST_DIAGNOSTIC_PATH: ${{ runner.temp }}/apicurio-test-diagnostics/registry.log

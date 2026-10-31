@@ -3,7 +3,9 @@ package ai.protomolt.proto.asset.characterize;
 import java.io.FilterInputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.nio.ByteBuffer;
 import java.util.Arrays;
+import java.util.Objects;
 
 /**
  * Captures the leading and trailing windows of a stream as it passes,
@@ -28,6 +30,14 @@ public final class WindowCapture extends FilterInputStream {
     private int headCaptured;
     private int ringCursor;
     private long total;
+
+    /**
+     * Captures windows of the default sizes from chunks pushed via
+     * {@link #update(ByteBuffer)} or {@link #update(byte[], int, int)}.
+     */
+    public WindowCapture() {
+        this(InputStream.nullInputStream(), ByteWindows.DEFAULT_HEAD_BYTES, ByteWindows.DEFAULT_TAIL_BYTES);
+    }
 
     /**
      * Captures windows of the default sizes.
@@ -96,6 +106,43 @@ public final class WindowCapture extends FilterInputStream {
             capture(buffer, offset, n);
         }
         return n;
+    }
+
+    /**
+     * Feeds {@code length} bytes from {@code buffer} starting at {@code offset}
+     * into the leading and trailing windows.
+     *
+     * @param buffer the source byte array
+     * @param offset the starting offset in {@code buffer}
+     * @param length the number of bytes to capture
+     */
+    public void update(byte[] buffer, int offset, int length) {
+        Objects.checkFromIndexSize(offset, length, Objects.requireNonNull(buffer, "buffer").length);
+        if (length > 0) {
+            capture(buffer, offset, length);
+        }
+    }
+
+    /**
+     * Feeds the remaining bytes of {@code buffer} into the leading and trailing
+     * windows, advancing {@code buffer}'s position to its limit.
+     *
+     * @param buffer the byte buffer to capture
+     */
+    public void update(ByteBuffer buffer) {
+        Objects.requireNonNull(buffer, "buffer");
+        int length = buffer.remaining();
+        if (length <= 0) {
+            return;
+        }
+        if (buffer.hasArray()) {
+            capture(buffer.array(), buffer.arrayOffset() + buffer.position(), length);
+            buffer.position(buffer.limit());
+            return;
+        }
+        while (buffer.hasRemaining()) {
+            capture(buffer.get());
+        }
     }
 
     private void capture(byte value) {

@@ -3,6 +3,14 @@ package ai.protomolt.proto.repo.archive;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import ai.protomolt.proto.asset.v1.Classification;
+import ai.protomolt.proto.asset.v1.ClassificationState;
+import ai.protomolt.proto.asset.v1.ContentClass;
+import ai.protomolt.proto.asset.v1.ContentProfile;
+import ai.protomolt.proto.asset.v1.FormatFact;
+import ai.protomolt.proto.asset.v1.PdfDocument;
+import ai.protomolt.proto.asset.v1.QualityDimension;
+import ai.protomolt.proto.asset.v1.QualityScore;
 import ai.protomolt.proto.repo.archive.v1.EntryAddress;
 import ai.protomolt.proto.repo.archive.v1.EntryInfo;
 import ai.protomolt.proto.repo.archive.v1.RenditionDescriptor;
@@ -33,7 +41,9 @@ import ai.protomolt.proto.repo.v2.RevisionSummary;
 import ai.protomolt.proto.repo.v2.RevisionValidation;
 import ai.protomolt.proto.repo.v2.SaveOwner;
 import ai.protomolt.proto.repo.v2.ValidationStatus;
+import com.google.protobuf.Struct;
 import com.google.protobuf.Timestamp;
+import com.google.protobuf.Value;
 import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
 import org.junit.jupiter.api.Test;
@@ -264,5 +274,140 @@ class ArchiveViewsTest {
                 .setOwner(intake()).setTombstone(true).build();
         assertThat(views.summary(tombstone)).isEqualTo(VersionSummary.newBuilder()
                 .setVersion(3).setPreviousVersion(2).setCreatedAt(REVISION_2_AT).setDeleted(true).build());
+    }
+
+    @Test
+    void entryInfoProjectsClassificationAndStripsReservedArchiveMetadataKeys() {
+        Classification classification = Classification.newBuilder()
+                .setState(ClassificationState.CLASSIFICATION_STATE_IDENTIFIED)
+                .setIdentified(FormatFact.newBuilder().setPdf(PdfDocument.newBuilder().setFilename("q3.pdf")))
+                .setClassifiedAt(REVISION_2_AT)
+                .build();
+        String encoded = ArchiveClassifications.encodeClassification(classification);
+        GetDocumentResponse read = revisionTwo();
+        SearchMetadata searchWithClassification = read.getDocument().getSearchMetadata().toBuilder()
+                .putMetadata(ArchiveClassifications.CLASSIFICATION_METADATA_KEY, encoded)
+                .putMetadata(
+                        ArchiveClassifications.CLASSIFICATION_STATE_METADATA_KEY,
+                        ClassificationState.CLASSIFICATION_STATE_IDENTIFIED.name())
+                .build();
+        GetDocumentResponse classifiedRead = read.toBuilder()
+                .setDocument(read.getDocument().toBuilder().setSearchMetadata(searchWithClassification))
+                .build();
+
+        EntryInfo fromManifest = views.manifest(classifiedRead).getMetadataSnapshot();
+        assertThat(fromManifest.getClassification()).isEqualTo(classification);
+        assertThat(fromManifest.getMetadataMap()).containsExactlyEntriesOf(java.util.Map.of("team", "finance"));
+
+        DocumentSummary row = DocumentSummary.newBuilder()
+                .setAddress(address())
+                .setRevision(2)
+                .setCommittedAt(REVISION_2_AT)
+                .setLookup(DocumentLookup.newBuilder()
+                        .setTitle("Q3 report")
+                        .setCreationDate(REVISION_1_AT)
+                        .putMetadata("team", "finance")
+                        .putMetadata(ArchiveClassifications.CLASSIFICATION_METADATA_KEY, encoded)
+                        .putMetadata(
+                                ArchiveClassifications.CLASSIFICATION_STATE_METADATA_KEY,
+                                ClassificationState.CLASSIFICATION_STATE_IDENTIFIED.name()))
+                .build();
+        EntryInfo fromSummary = views.entryInfo(row);
+        assertThat(fromSummary.getClassification()).isEqualTo(classification);
+        assertThat(fromSummary.getMetadataMap()).containsExactlyEntriesOf(java.util.Map.of("team", "finance"));
+    }
+
+    @Test
+    void manifestProjectsRenditionContentProfileAndEmptyStateForZeroByteBlob() {
+        String emptySha = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+        ContentProfile silentProfile = ContentProfile.newBuilder()
+                .setContentClass(ContentClass.CONTENT_CLASS_INFORMATIONAL_TEXT)
+                .build();
+        ContentProfile ocrProfile = ContentProfile.newBuilder()
+                .setContentClass(ContentClass.CONTENT_CLASS_OCR_TEXT)
+                .setQuality(QualityScore.newBuilder()
+                        .setScore(0.95)
+                        .addDimensions(QualityDimension.newBuilder()
+                                .setName("character-confidence")
+                                .setScore(0.95)
+                                .setWeight(1.0)))
+                .build();
+        Blob silentDocText = Blob.newBuilder()
+                .setBlobId("document-text")
+                .setMimeType("text/plain")
+                .setSizeBytes(0)
+                .setChecksum(emptySha)
+                .setChecksumType(ChecksumType.CHECKSUM_TYPE_SHA256)
+                .setMetadata(Struct.newBuilder().putFields(
+                        ArchiveClassifications.CONTENT_PROFILE_FIELD,
+                        ArchiveClassifications.encodeContentProfile(silentProfile)))
+                .setWritten(BlobWrite.newBuilder().setRevision(2).setCommittedAt(REVISION_2_AT))
+                .build();
+        Blob ocrText = Blob.newBuilder()
+                .setBlobId("ocr-text")
+                .setMimeType("text/plain")
+                .setSizeBytes(42)
+                .setChecksum(SHA_PAGE)
+                .setChecksumType(ChecksumType.CHECKSUM_TYPE_SHA256)
+                .setMetadata(Struct.newBuilder().putFields(
+                        ArchiveClassifications.CONTENT_PROFILE_FIELD,
+                        ArchiveClassifications.encodeContentProfile(ocrProfile)))
+                .setWritten(BlobWrite.newBuilder().setRevision(2).setCommittedAt(REVISION_2_AT))
+                .build();
+        GetDocumentResponse read = revisionTwo();
+        GetDocumentResponse bridged = read.toBuilder()
+                .setDocument(read.getDocument().toBuilder().setBlobBag(BlobBag.newBuilder()
+                        .setBlobs(Blobs.newBuilder().addBlob(silentDocText).addBlob(ocrText))))
+                .setManifest(read.getManifest().toBuilder().removeParts(2))
+                .build();
+
+        VersionManifest manifest = views.manifest(bridged);
+        assertThat(manifest.getTotalBytes()).isEqualTo(42);
+        assertThat(manifest.getRenditionsList()).containsExactly(
+                RenditionManifestEntry.newBuilder()
+                        .setRendition(RenditionDescriptor.newBuilder()
+                                .setName("document-text").setMediaType("text/plain"))
+                        .setState(RenditionState.RENDITION_STATE_EMPTY)
+                        .setSizeBytes(0)
+                        .setWrittenAt(REVISION_2_AT)
+                        .setWrittenBy(WriteAttribution.getDefaultInstance())
+                        .setContentProfile(silentProfile)
+                        .build(),
+                RenditionManifestEntry.newBuilder()
+                        .setRendition(RenditionDescriptor.newBuilder()
+                                .setName("ocr-text").setMediaType("text/plain"))
+                        .setState(RenditionState.RENDITION_STATE_PRESENT)
+                        .setSizeBytes(42)
+                        .setSha256(SHA_PAGE)
+                        .setWrittenAt(REVISION_2_AT)
+                        .setWrittenBy(WriteAttribution.getDefaultInstance())
+                        .setContentProfile(ocrProfile)
+                        .build());
+    }
+
+    @Test
+    void corruptStoredClassificationOrContentProfileIsDataLoss() {
+        GetDocumentResponse read = revisionTwo();
+        GetDocumentResponse badClassification = read.toBuilder()
+                .setDocument(read.getDocument().toBuilder().setSearchMetadata(
+                        read.getDocument().getSearchMetadata().toBuilder()
+                                .putMetadata(ArchiveClassifications.CLASSIFICATION_METADATA_KEY, "!!!not-base64!!!")))
+                .build();
+        assertThatThrownBy(() -> views.manifest(badClassification))
+                .isInstanceOfSatisfying(StatusRuntimeException.class,
+                        failure -> assertThat(failure.getStatus().getCode()).isEqualTo(Status.Code.DATA_LOSS));
+
+        Blob badProfileBlob = read.getDocument().getBlobBag().getBlobs().getBlob(0).toBuilder()
+                .setMetadata(Struct.newBuilder().putFields(
+                        ArchiveClassifications.CONTENT_PROFILE_FIELD,
+                        Value.newBuilder().setNumberValue(123).build()))
+                .build();
+        GetDocumentResponse badProfile = read.toBuilder()
+                .setDocument(read.getDocument().toBuilder().setBlobBag(BlobBag.newBuilder().setBlobs(
+                        read.getDocument().getBlobBag().getBlobs().toBuilder().setBlob(0, badProfileBlob))))
+                .build();
+        assertThatThrownBy(() -> views.manifest(badProfile))
+                .isInstanceOfSatisfying(StatusRuntimeException.class,
+                        failure -> assertThat(failure.getStatus().getCode()).isEqualTo(Status.Code.DATA_LOSS));
     }
 }

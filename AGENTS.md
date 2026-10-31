@@ -186,8 +186,12 @@ Renovate runs on the Forgejo instance and opens its PRs there, but Forgejo
 runs no build CI for this repo, so a renovate PR is never merged in place.
 The flow: cherry-pick the renovate branches onto one rollup branch cut from
 current main, verify locally (full build plus the console lockfile check),
-open a GitHub PR (the build of record), merge on green, sync Forgejo main,
-then close the Forgejo renovate PRs with a comment pointing at the rollup.
+open a Forgejo rollup PR and a GitHub CI-only companion (the build of record),
+then merge the Forgejo PR after the GitHub checks pass. Let the main-forward
+workflow check and fast-forward the resulting Forgejo main commit to GitHub;
+never merge the GitHub companion or forward PR. Once both mains contain all
+updates from the current Renovate head, close the Forgejo Renovate PRs with a
+comment pointing at the rollup.
 Renovate detects the updated dependencies on its next run either way.
 
 ## Vocabulary (ADR-001)

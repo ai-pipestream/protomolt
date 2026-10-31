@@ -124,6 +124,7 @@ class SaveReservationIT {
                 .setOwner(intakeOwner())
                 .build();
         var header = ai.protomolt.proto.repo.v2.UploadHeader.newBuilder()
+                .setStreamed(ai.protomolt.proto.repo.v2.StreamedBody.getDefaultInstance())
                 .setSave(save)
                 .setEncodedPart(ai.protomolt.proto.repo.v2.StreamedPart.newBuilder()
                         .setSelector(ai.protomolt.proto.repo.v2.PartSelector.newBuilder()

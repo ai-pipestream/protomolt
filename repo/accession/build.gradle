@@ -42,6 +42,7 @@ dependencies {
     testImplementation libs.awssdk.s3
     testImplementation libs.awssdk.url.connection.client
     testImplementation libs.grpc.inprocess
+    testImplementation libs.grpc.netty.shaded
     testImplementation libs.kafka.clients
     testImplementation libs.testcontainers.postgresql
     testImplementation libs.testcontainers.localstack

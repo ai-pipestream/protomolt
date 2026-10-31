@@ -4,8 +4,25 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.Assertions.catchThrowableOfType;
 
+import ai.protomolt.proto.asset.bridge.Bridge;
+import ai.protomolt.proto.asset.bridge.BridgeEngine;
+import ai.protomolt.proto.asset.v1.BridgeKind;
+import ai.protomolt.proto.asset.v1.BridgeStatus;
+import ai.protomolt.proto.asset.v1.CharacterizationEvidence;
+import ai.protomolt.proto.asset.v1.Classification;
 import ai.protomolt.proto.asset.v1.ClassificationState;
+import ai.protomolt.proto.asset.v1.ContentClass;
+import ai.protomolt.proto.asset.v1.ContentProfile;
+import ai.protomolt.proto.asset.v1.DelimitedTable;
+import ai.protomolt.proto.asset.v1.FormatFact;
+import ai.protomolt.proto.asset.v1.HeaderPresence;
 import ai.protomolt.proto.asset.v1.ObjectStoreOrigin;
+import ai.protomolt.proto.asset.v1.ParquetDataset;
+import ai.protomolt.proto.asset.v1.PdfDocument;
+import ai.protomolt.proto.asset.v1.QualityDimension;
+import ai.protomolt.proto.asset.v1.QualityScore;
+import ai.protomolt.proto.asset.v1.TarArchive;
+import ai.protomolt.proto.asset.v1.ZipArchive;
 import ai.protomolt.proto.repo.accession.V2RepositoryFixture;
 import ai.protomolt.proto.repo.admission.BuiltinDocumentSchema;
 import ai.protomolt.proto.repo.archive.v1.Archive;
@@ -17,6 +34,12 @@ import ai.protomolt.proto.repo.archive.v1.ArchiveMutationServiceGrpc;
 import ai.protomolt.proto.repo.archive.v1.ArchiveMutationState;
 import ai.protomolt.proto.repo.archive.v1.ArchiveServiceGrpc;
 import ai.protomolt.proto.repo.archive.v1.ArchiveStats;
+import ai.protomolt.proto.repo.archive.v1.BridgeEntryRequest;
+import ai.protomolt.proto.repo.archive.v1.BridgeEntryResponse;
+import ai.protomolt.proto.repo.archive.v1.BridgeOutcome;
+import ai.protomolt.proto.repo.archive.v1.ClassificationStateCount;
+import ai.protomolt.proto.repo.archive.v1.ClassifyEntryRequest;
+import ai.protomolt.proto.repo.archive.v1.ClassifyEntryResponse;
 import ai.protomolt.proto.repo.archive.v1.CreateArchiveRequest;
 import ai.protomolt.proto.repo.archive.v1.DeleteEntryRequest;
 import ai.protomolt.proto.repo.archive.v1.DeleteRenditionRequest;
@@ -77,6 +100,8 @@ import io.grpc.inprocess.InProcessChannelBuilder;
 import io.grpc.inprocess.InProcessServerBuilder;
 import io.grpc.protobuf.StatusProto;
 import io.grpc.stub.StreamObserver;
+import java.io.ByteArrayOutputStream;
+import java.nio.charset.StandardCharsets;
 import java.time.Clock;
 import java.util.ArrayList;
 import java.util.List;
@@ -92,6 +117,8 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipOutputStream;
 import org.assertj.core.api.ThrowableAssert.ThrowingCallable;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
@@ -897,9 +924,11 @@ class DocumentArchiveIT {
         assertThat(code(() -> archive.putEntry(PutEntryRequest.newBuilder().setAddress(unknown).build())))
                 .isEqualTo(Status.Code.NOT_FOUND);
 
-        assertThat(code(() -> archive.listEntries(ListEntriesRequest.newBuilder().setAccountId(ACCOUNT)
-                .setArchive(RETAINED).setClassificationState(ClassificationState.CLASSIFICATION_STATE_IDENTIFIED)
-                .build()))).isEqualTo(Status.Code.UNIMPLEMENTED);
+        PutEntryRequest reservedMeta = PutEntryRequest.newBuilder().setAddress(address)
+                .putMetadata("archive.classification", "smuggled").build();
+        assertThat(code(() -> archive.putEntry(reservedMeta))).isEqualTo(Status.Code.INVALID_ARGUMENT);
+        assertThat(description(() -> archive.putEntry(reservedMeta))).contains("archive.");
+
         assertThat(code(() -> archive.getArchiveStats(GetArchiveStatsRequest.newBuilder()
                 .setAccountId(ACCOUNT).setArchive("no-such-archive").build()))).isEqualTo(Status.Code.NOT_FOUND);
         assertThat(revisions(address)).isZero();
@@ -1494,6 +1523,401 @@ class DocumentArchiveIT {
     }
 
     @Test
+    void classificationCharacterizationUploadTrailerClassifyEntryFilterAndStatsWorkEndToEnd() throws Exception {
+        String account = "acct-classify-" + UUID.randomUUID();
+        archive.createArchive(CreateArchiveRequest.newBuilder()
+                .setArchive(Archive.newBuilder()
+                        .setAccountId(account)
+                        .setName("assets")
+                        .setDriveName("intake")
+                        .setVersioning(VersioningPolicy.VERSIONING_POLICY_RETAINED))
+                .build());
+
+        // 1. PutEntry with PDF magic bytes and no declaration -> IDENTIFIED (pdf).
+        EntryAddress pdfEntry = EntryAddress.newBuilder()
+                .setAccountId(account).setArchive("assets").setEntryId("identified.pdf").build();
+        PutEntryResponse pdfPut = archive.putEntry(PutEntryRequest.newBuilder()
+                .setAddress(pdfEntry)
+                .setFilename("identified.pdf")
+                .addRenditions(rendition("original", "", "application/pdf", PDF))
+                .build());
+        Classification pdfClass = pdfPut.getManifest().getMetadataSnapshot().getClassification();
+        assertThat(pdfClass.getState()).isEqualTo(ClassificationState.CLASSIFICATION_STATE_IDENTIFIED);
+        assertThat(pdfClass.getIdentified().getFormatCase()).isEqualTo(FormatFact.FormatCase.PDF);
+
+        // 2. PutEntry with CSV bytes and .csv filename, no declaration -> UNCLASSIFIED, then ClassifyEntry -> DECLARED.
+        EntryAddress csvEntry = EntryAddress.newBuilder()
+                .setAccountId(account).setArchive("assets").setEntryId("users.csv").build();
+        ByteString csvBytes = ByteString.copyFromUtf8("id,name\n1,Ada\n2,Grace\n");
+        PutEntryResponse csvPut = archive.putEntry(PutEntryRequest.newBuilder()
+                .setAddress(csvEntry)
+                .setFilename("users.csv")
+                .addRenditions(rendition("original", "", "text/csv", csvBytes))
+                .build());
+        assertThat(csvPut.getManifest().getMetadataSnapshot().getClassification().getState())
+                .isEqualTo(ClassificationState.CLASSIFICATION_STATE_UNCLASSIFIED);
+
+        ClassifyEntryResponse csvClassified = archive.classifyEntry(ClassifyEntryRequest.newBuilder()
+                .setAddress(csvEntry)
+                .setDeclared(FormatFact.newBuilder().setDelimited(DelimitedTable.newBuilder()
+                        .setFilename("users.csv")
+                        .setDelimiter(",")
+                        .setHeader(HeaderPresence.HEADER_PRESENCE_PRESENT)))
+                .build());
+        assertThat(csvClassified.getClassification().getState())
+                .isEqualTo(ClassificationState.CLASSIFICATION_STATE_DECLARED);
+        assertThat(archive.getEntry(GetEntryRequest.newBuilder().setAddress(csvEntry).build())
+                .getInfo().getClassification().getState())
+                .isEqualTo(ClassificationState.CLASSIFICATION_STATE_DECLARED);
+
+        // 3. PutEntry with PDF magic bytes + matching PdfDocument declaration -> VERIFIED.
+        EntryAddress verifiedEntry = EntryAddress.newBuilder()
+                .setAccountId(account).setArchive("assets").setEntryId("verified.pdf").build();
+        PutEntryResponse verifiedPut = archive.putEntry(PutEntryRequest.newBuilder()
+                .setAddress(verifiedEntry)
+                .setFilename("verified.pdf")
+                .setDeclared(FormatFact.newBuilder().setPdf(PdfDocument.newBuilder().setFilename("verified.pdf")))
+                .addRenditions(rendition("original", "", "application/pdf", PDF))
+                .build());
+        assertThat(verifiedPut.getManifest().getMetadataSnapshot().getClassification().getState())
+                .isEqualTo(ClassificationState.CLASSIFICATION_STATE_VERIFIED);
+
+        // 4. PutEntry with PDF magic bytes + contradicting ZipArchive declaration -> CONFLICTED.
+        EntryAddress conflictedEntry = EntryAddress.newBuilder()
+                .setAccountId(account).setArchive("assets").setEntryId("conflicted.zip").build();
+        PutEntryResponse conflictedPut = archive.putEntry(PutEntryRequest.newBuilder()
+                .setAddress(conflictedEntry)
+                .setFilename("conflicted.zip")
+                .setDeclared(FormatFact.newBuilder().setZip(ZipArchive.newBuilder().setFilename("conflicted.zip")))
+                .addRenditions(rendition("original", "", "application/pdf", PDF))
+                .build());
+        assertThat(conflictedPut.getManifest().getMetadataSnapshot().getClassification().getState())
+                .isEqualTo(ClassificationState.CLASSIFICATION_STATE_CONFLICTED);
+
+        // 5. UploadRendition of 2 MiB Parquet file (> 1 MiB characterization buffer, PAR1 header + PAR1 footer)
+        // -> IDENTIFIED with sealed footer evidence on version 1.
+        EntryAddress parquetEntry = EntryAddress.newBuilder()
+                .setAccountId(account).setArchive("assets").setEntryId("events.parquet").build();
+        byte[] parquetRaw = new byte[2 * 1024 * 1024];
+        System.arraycopy("PAR1".getBytes(StandardCharsets.US_ASCII), 0, parquetRaw, 0, 4);
+        System.arraycopy("PAR1".getBytes(StandardCharsets.US_ASCII), 0, parquetRaw, parquetRaw.length - 4, 4);
+        ByteString parquetBytes = ByteString.copyFrom(parquetRaw);
+        UploadRenditionResponse uploadedParquet = upload(UploadRenditionHeader.newBuilder()
+                .setAddress(parquetEntry)
+                .setRendition(RenditionDescriptor.newBuilder()
+                        .setName("original")
+                        .setMediaType("application/vnd.apache.parquet"))
+                .setSizeBytes(parquetBytes.size())
+                .setExpectedSha256(RenditionReads.sha256Hex(parquetBytes))
+                .build(), parquetBytes, 32 * 1024);
+        assertThat(uploadedParquet.getVersion()).isEqualTo(1L);
+        Classification parquetClass = archive.getEntry(GetEntryRequest.newBuilder()
+                .setAddress(parquetEntry).addRenditions("none").build()).getInfo().getClassification();
+        assertThat(parquetClass.getState()).isEqualTo(ClassificationState.CLASSIFICATION_STATE_IDENTIFIED);
+        assertThat(parquetClass.getIdentified().getFormatCase()).isEqualTo(FormatFact.FormatCase.PARQUET);
+        assertThat(parquetClass.getEvidenceList())
+                .extracting(CharacterizationEvidence::getObservation)
+                .anySatisfy(obs -> assertThat(obs).contains("footer magic seals the content"));
+
+        // 6. PutEntry with opaque binary bytes -> stays UNCLASSIFIED.
+        EntryAddress unclassifiedEntry = EntryAddress.newBuilder()
+                .setAccountId(account).setArchive("assets").setEntryId("mystery.bin").build();
+        archive.putEntry(PutEntryRequest.newBuilder()
+                .setAddress(unclassifiedEntry)
+                .addRenditions(rendition("original", "", "application/octet-stream",
+                        ByteString.copyFrom(new byte[] {0x00, 0x01, 0x02, 0x03})))
+                .build());
+
+        // 7. ListEntries filtered by each ClassificationState returns exact matching entries.
+        assertThat(archive.listEntries(ListEntriesRequest.newBuilder()
+                .setAccountId(account)
+                .setArchive("assets")
+                .setClassificationState(ClassificationState.CLASSIFICATION_STATE_IDENTIFIED)
+                .build()).getEntriesList())
+                .extracting(e -> e.getAddress().getEntryId())
+                .containsExactly("events.parquet", "identified.pdf");
+
+        assertThat(archive.listEntries(ListEntriesRequest.newBuilder()
+                .setAccountId(account)
+                .setArchive("assets")
+                .setClassificationState(ClassificationState.CLASSIFICATION_STATE_DECLARED)
+                .build()).getEntriesList())
+                .extracting(e -> e.getAddress().getEntryId())
+                .containsExactly("users.csv");
+
+        assertThat(archive.listEntries(ListEntriesRequest.newBuilder()
+                .setAccountId(account)
+                .setArchive("assets")
+                .setClassificationState(ClassificationState.CLASSIFICATION_STATE_VERIFIED)
+                .build()).getEntriesList())
+                .extracting(e -> e.getAddress().getEntryId())
+                .containsExactly("verified.pdf");
+
+        assertThat(archive.listEntries(ListEntriesRequest.newBuilder()
+                .setAccountId(account)
+                .setArchive("assets")
+                .setClassificationState(ClassificationState.CLASSIFICATION_STATE_CONFLICTED)
+                .build()).getEntriesList())
+                .extracting(e -> e.getAddress().getEntryId())
+                .containsExactly("conflicted.zip");
+
+        assertThat(archive.listEntries(ListEntriesRequest.newBuilder()
+                .setAccountId(account)
+                .setArchive("assets")
+                .setClassificationState(ClassificationState.CLASSIFICATION_STATE_UNCLASSIFIED)
+                .build()).getEntriesList())
+                .extracting(e -> e.getAddress().getEntryId())
+                .containsExactly("mystery.bin");
+
+        // 8. GetArchiveStats reports exact classification_states counts.
+        ArchiveStats stats = archive.getArchiveStats(GetArchiveStatsRequest.newBuilder()
+                .setAccountId(account).setArchive("assets").build()).getStats();
+        assertThat(stats.getClassificationStatesList()).containsExactly(
+                ClassificationStateCount.newBuilder()
+                        .setState(ClassificationState.CLASSIFICATION_STATE_UNCLASSIFIED).setCount(1).build(),
+                ClassificationStateCount.newBuilder()
+                        .setState(ClassificationState.CLASSIFICATION_STATE_DECLARED).setCount(1).build(),
+                ClassificationStateCount.newBuilder()
+                        .setState(ClassificationState.CLASSIFICATION_STATE_IDENTIFIED).setCount(2).build(),
+                ClassificationStateCount.newBuilder()
+                        .setState(ClassificationState.CLASSIFICATION_STATE_VERIFIED).setCount(1).build(),
+                ClassificationStateCount.newBuilder()
+                        .setState(ClassificationState.CLASSIFICATION_STATE_CONFLICTED).setCount(1).build());
+
+        // 9. Replacing the primary rendition with an empty rendition reverts classification to UNCLASSIFIED.
+        PutEntryResponse emptiedPut = archive.putEntry(PutEntryRequest.newBuilder()
+                .setAddress(pdfEntry)
+                .addRenditions(rendition("original", "", "application/octet-stream", ByteString.EMPTY))
+                .build());
+        assertThat(emptiedPut.getVersion()).isEqualTo(2L);
+        assertThat(emptiedPut.getManifest().getMetadataSnapshot().getClassification().getState())
+                .isEqualTo(ClassificationState.CLASSIFICATION_STATE_UNCLASSIFIED);
+        GetEntryResponse emptiedGet = archive.getEntry(GetEntryRequest.newBuilder()
+                .setAddress(pdfEntry).build());
+        assertThat(emptiedGet.getManifest().getRenditions(0).getState())
+                .isEqualTo(ai.protomolt.proto.repo.archive.v1.RenditionState.RENDITION_STATE_EMPTY);
+        assertThat(emptiedGet.getInfo().getClassification().getState())
+                .isEqualTo(ClassificationState.CLASSIFICATION_STATE_UNCLASSIFIED);
+    }
+
+    @Test
+    void bridgeEntryExecutesDefersEscalatesToOcrDeduplicatesAndRefusesInvalidStatesEndToEnd() throws Exception {
+        String account = "acct-bridge-" + UUID.randomUUID();
+        archive.createArchive(CreateArchiveRequest.newBuilder()
+                .setArchive(Archive.newBuilder()
+                        .setAccountId(account)
+                        .setName("bridged")
+                        .setDriveName("intake")
+                        .setVersioning(VersioningPolicy.VERSIONING_POLICY_RETAINED))
+                .build());
+
+        // 1. Bridge a valid ZIP archive -> CONTAINER_MEMBERS PRODUCED; second run -> UNCHANGED.
+        EntryAddress zipEntry = EntryAddress.newBuilder()
+                .setAccountId(account).setArchive("bridged").setEntryId("bundle.zip").build();
+        ByteString zipBytes = zipArchiveBytes("readme.txt", "hello world\n");
+        archive.putEntry(PutEntryRequest.newBuilder()
+                .setAddress(zipEntry)
+                .setFilename("bundle.zip")
+                .addRenditions(rendition("original", "", "application/zip", zipBytes))
+                .build());
+
+        BridgeEntryResponse firstZipBridge = archive.bridgeEntry(BridgeEntryRequest.newBuilder()
+                .setAddress(zipEntry)
+                .build());
+        assertThat(firstZipBridge.getVersion()).isEqualTo(2);
+        assertThat(firstZipBridge.getOutcomesList()).containsExactly(
+                BridgeOutcome.newBuilder()
+                        .setBridge(BridgeKind.BRIDGE_KIND_CONTAINER_MEMBERS)
+                        .setRendition("members")
+                        .setStatus(BridgeStatus.BRIDGE_STATUS_PRODUCED)
+                        .build());
+        ByteString membersNdjson = data(read(ReadRenditionRequest.newBuilder()
+                .setAddress(zipEntry).setRendition("members").build()));
+        assertThat(membersNdjson.toStringUtf8()).contains("readme.txt");
+
+        BridgeEntryResponse secondZipBridge = archive.bridgeEntry(BridgeEntryRequest.newBuilder()
+                .setAddress(zipEntry)
+                .build());
+        assertThat(secondZipBridge.getVersion()).isEqualTo(2);
+        assertThat(secondZipBridge.getOutcomesList()).containsExactly(
+                BridgeOutcome.newBuilder()
+                        .setBridge(BridgeKind.BRIDGE_KIND_CONTAINER_MEMBERS)
+                        .setRendition("members")
+                        .setStatus(BridgeStatus.BRIDGE_STATUS_UNCHANGED)
+                        .build());
+
+        // Re-classifying an entry with a derived rendition keeps original as primary.
+        ClassifyEntryResponse reclassifiedZip = archive.classifyEntry(ClassifyEntryRequest.newBuilder()
+                .setAddress(zipEntry)
+                .build());
+        assertThat(reclassifiedZip.getClassification().getIdentified().getFormatCase())
+                .isEqualTo(FormatFact.FormatCase.ZIP);
+
+        // 2. Bridge a Parquet entry -> DATASET_SCHEMA DEFERRED (no new version).
+        EntryAddress parquetEntry = EntryAddress.newBuilder()
+                .setAccountId(account).setArchive("bridged").setEntryId("table.parquet").build();
+        ByteString parquetBytes = ByteString.copyFrom("PAR1____PAR1".getBytes(StandardCharsets.US_ASCII));
+        archive.putEntry(PutEntryRequest.newBuilder()
+                .setAddress(parquetEntry)
+                .setFilename("table.parquet")
+                .setDeclared(FormatFact.newBuilder().setParquet(
+                        ParquetDataset.newBuilder().setFilename("table.parquet")))
+                .addRenditions(rendition("original", "", "application/vnd.apache.parquet", parquetBytes))
+                .build());
+        BridgeEntryResponse parquetBridge = archive.bridgeEntry(BridgeEntryRequest.newBuilder()
+                .setAddress(parquetEntry)
+                .build());
+        assertThat(parquetBridge.getVersion()).isEqualTo(1);
+        assertThat(parquetBridge.getOutcomesList()).singleElement().satisfies(outcome -> {
+            assertThat(outcome.getBridge()).isEqualTo(BridgeKind.BRIDGE_KIND_DATASET_SCHEMA);
+            assertThat(outcome.getStatus()).isEqualTo(BridgeStatus.BRIDGE_STATUS_DEFERRED);
+            assertThat(outcome.getDetail()).contains("Parquet");
+        });
+
+        // 3. Corrupt tar.gz with declared TarArchive -> CONTAINER_MEMBERS FAILED (no new version landed).
+        EntryAddress corruptTar = EntryAddress.newBuilder()
+                .setAccountId(account).setArchive("bridged").setEntryId("corrupt.tar.gz").build();
+        archive.putEntry(PutEntryRequest.newBuilder()
+                .setAddress(corruptTar)
+                .setFilename("corrupt.tar.gz")
+                .setDeclared(FormatFact.newBuilder().setTar(TarArchive.newBuilder().setFilename("corrupt.tar.gz")))
+                .addRenditions(rendition("original", "", "application/gzip",
+                        ByteString.copyFrom(new byte[] {0x1F, (byte) 0x8B, 0x00, 0x00})))
+                .build());
+        BridgeEntryResponse failedBridge = archive.bridgeEntry(BridgeEntryRequest.newBuilder()
+                .setAddress(corruptTar)
+                .build());
+        assertThat(failedBridge.getVersion()).isEqualTo(1);
+        assertThat(failedBridge.getOutcomesList()).singleElement().satisfies(outcome -> {
+            assertThat(outcome.getBridge()).isEqualTo(BridgeKind.BRIDGE_KIND_CONTAINER_MEMBERS);
+            assertThat(outcome.getStatus()).isEqualTo(BridgeStatus.BRIDGE_STATUS_FAILED);
+            assertThat(outcome.getDetail()).isNotBlank();
+        });
+        assertThat(revisions(corruptTar)).isEqualTo(1);
+
+        // 4. Refuses UNCLASSIFIED entry with FAILED_PRECONDITION and inapplicable BridgeKind with INVALID_ARGUMENT.
+        EntryAddress unclassified = EntryAddress.newBuilder()
+                .setAccountId(account).setArchive("bridged").setEntryId("raw.bin").build();
+        archive.putEntry(PutEntryRequest.newBuilder()
+                .setAddress(unclassified)
+                .addRenditions(rendition("original", "", "application/octet-stream",
+                        ByteString.copyFrom(new byte[] {0x00, 0x01, 0x02, 0x03})))
+                .build());
+        assertThat(code(() -> archive.bridgeEntry(BridgeEntryRequest.newBuilder()
+                .setAddress(unclassified).build()))).isEqualTo(Status.Code.FAILED_PRECONDITION);
+        assertThat(description(() -> archive.bridgeEntry(BridgeEntryRequest.newBuilder()
+                .setAddress(unclassified).build()))).contains("UNCLASSIFIED");
+
+        assertThat(code(() -> archive.bridgeEntry(BridgeEntryRequest.newBuilder()
+                .setAddress(zipEntry)
+                .addBridges(BridgeKind.BRIDGE_KIND_OCR_TEXT)
+                .build()))).isEqualTo(Status.Code.INVALID_ARGUMENT);
+        assertThat(description(() -> archive.bridgeEntry(BridgeEntryRequest.newBuilder()
+                .setAddress(zipEntry)
+                .addBridges(BridgeKind.BRIDGE_KIND_OCR_TEXT)
+                .build()))).contains("does not apply to a zip asset");
+
+        // 5. Silent prose DOCUMENT_TEXT escalates to OCR_TEXT, recording ContentProfile and QualityScore on manifest rows.
+        ContentProfile silentProseProfile = ContentProfile.newBuilder()
+                .setContentClass(ContentClass.CONTENT_CLASS_INFORMATIONAL_TEXT)
+                .build();
+        ContentProfile ocrContentProfile = ContentProfile.newBuilder()
+                .setContentClass(ContentClass.CONTENT_CLASS_OCR_TEXT)
+                .setQuality(QualityScore.newBuilder()
+                        .setScore(0.92)
+                        .addDimensions(QualityDimension.newBuilder()
+                                .setName("character-confidence")
+                                .setScore(0.92)
+                                .setWeight(1.0)))
+                .build();
+        Bridge silentDocTextBridge = new Bridge() {
+            @Override
+            public BridgeKind kind() {
+                return BridgeKind.BRIDGE_KIND_DOCUMENT_TEXT;
+            }
+
+            @Override
+            public boolean handles(FormatFact format) {
+                return format.hasPdf();
+            }
+
+            @Override
+            public Derivation derive(java.io.InputStream content, Context context) {
+                return new Derivation(new byte[0], silentProseProfile, List.of("scanned PDF without text layer"));
+            }
+        };
+        Bridge ocrBridge = new Bridge() {
+            @Override
+            public BridgeKind kind() {
+                return BridgeKind.BRIDGE_KIND_OCR_TEXT;
+            }
+
+            @Override
+            public boolean handles(FormatFact format) {
+                return format.hasPdf();
+            }
+
+            @Override
+            public Derivation derive(java.io.InputStream content, Context context) {
+                return new Derivation(
+                        "Scanned contract text".getBytes(StandardCharsets.UTF_8),
+                        ocrContentProfile,
+                        List.of());
+            }
+        };
+        DocumentArchive ocrCapableArchive = new DocumentArchive(
+                documentsChannel,
+                ArchiveBindings.overDocuments(documentsChannel, DATASOURCE, (acct, drive) -> true),
+                Clock.systemUTC(),
+                new BridgeEngine(List.of(silentDocTextBridge, ocrBridge)));
+
+        EntryAddress scannedPdf = EntryAddress.newBuilder()
+                .setAccountId(account).setArchive("bridged").setEntryId("scan.pdf").build();
+        ocrCapableArchive.putEntry(PutEntryRequest.newBuilder()
+                .setAddress(scannedPdf)
+                .setFilename("scan.pdf")
+                .addRenditions(rendition("original", "", "application/pdf", PDF))
+                .build());
+
+        BridgeEntryResponse escalated = ocrCapableArchive.bridgeEntry(BridgeEntryRequest.newBuilder()
+                .setAddress(scannedPdf)
+                .build());
+        assertThat(escalated.getVersion()).isEqualTo(2);
+        assertThat(escalated.getOutcomesList()).containsExactly(
+                BridgeOutcome.newBuilder()
+                        .setBridge(BridgeKind.BRIDGE_KIND_DOCUMENT_TEXT)
+                        .setRendition("text")
+                        .setStatus(BridgeStatus.BRIDGE_STATUS_PRODUCED)
+                        .setDetail("scanned PDF without text layer")
+                        .build(),
+                BridgeOutcome.newBuilder()
+                        .setBridge(BridgeKind.BRIDGE_KIND_OCR_TEXT)
+                        .setRendition("ocr-text")
+                        .setStatus(BridgeStatus.BRIDGE_STATUS_PRODUCED)
+                        .build());
+
+        VersionManifest scannedManifest = ocrCapableArchive.getEntryManifest(GetEntryManifestRequest.newBuilder()
+                .setAddress(scannedPdf).build()).getManifest();
+        RenditionManifestEntry docTextRow = row(scannedManifest, "text", "");
+        assertThat(docTextRow.getState()).isEqualTo(RenditionState.RENDITION_STATE_EMPTY);
+        assertThat(docTextRow.getContentProfile()).isEqualTo(silentProseProfile);
+
+        RenditionManifestEntry ocrTextRow = row(scannedManifest, "ocr-text", "");
+        assertThat(ocrTextRow.getState()).isEqualTo(RenditionState.RENDITION_STATE_PRESENT);
+        assertThat(ocrTextRow.getContentProfile()).isEqualTo(ocrContentProfile);
+    }
+
+    private static ByteString zipArchiveBytes(String entryName, String content) throws Exception {
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        try (ZipOutputStream zip = new ZipOutputStream(out, StandardCharsets.UTF_8)) {
+            zip.putNextEntry(new ZipEntry(entryName));
+            zip.write(content.getBytes(StandardCharsets.UTF_8));
+            zip.closeEntry();
+        }
+        return ByteString.copyFrom(out.toByteArray());
+    }
+
+    @Test
     void deleteEntryCommitsTombstoneHidesEntryFromGetAndListReplaysByOperationIdAndServesGetArchiveMutation() {
         String account = "acct-mut-" + UUID.randomUUID();
         archive.createArchive(CreateArchiveRequest.newBuilder()
@@ -1810,5 +2234,176 @@ class DocumentArchiveIT {
                         .setAddress(address)
                         .setKeepLatest(2))
                 .build()))).isEqualTo(Status.Code.ALREADY_EXISTS);
+    }
+
+    @Test
+    void oneAccountsArchiveMutationCommandsCannotTouchAnotherAccountsEntries() {
+        String accountA = "acct-mut-iso-a-" + UUID.randomUUID();
+        String accountB = "acct-mut-iso-b-" + UUID.randomUUID();
+        archive.createArchive(CreateArchiveRequest.newBuilder()
+                .setArchive(Archive.newBuilder()
+                        .setAccountId(accountA)
+                        .setName("shared")
+                        .setDriveName("intake")
+                        .setVersioning(VersioningPolicy.VERSIONING_POLICY_RETAINED))
+                .build());
+        archive.createArchive(CreateArchiveRequest.newBuilder()
+                .setArchive(Archive.newBuilder()
+                        .setAccountId(accountA)
+                        .setName("only-a")
+                        .setDriveName("intake")
+                        .setVersioning(VersioningPolicy.VERSIONING_POLICY_RETAINED))
+                .build());
+        archive.createArchive(CreateArchiveRequest.newBuilder()
+                .setArchive(Archive.newBuilder()
+                        .setAccountId(accountB)
+                        .setName("shared")
+                        .setDriveName("intake")
+                        .setVersioning(VersioningPolicy.VERSIONING_POLICY_RETAINED))
+                .build());
+
+        EntryAddress inA = EntryAddress.newBuilder()
+                .setAccountId(accountA)
+                .setArchive("shared")
+                .setEntryId("doc-1")
+                .build();
+        EntryAddress sameInB = inA.toBuilder().setAccountId(accountB).build();
+
+        archive.putEntry(firstPut(inA).build());
+        archive.putEntry(PutEntryRequest.newBuilder()
+                .setAddress(inA)
+                .setTitle("Quarterly report v2")
+                .addRenditions(rendition("markdown", "", "text/markdown", MARKDOWN))
+                .build());
+
+        GetEntryResponse entryABefore = archive.getEntry(
+                GetEntryRequest.newBuilder().setAddress(inA).build());
+        GetEntryManifestResponse v1ManifestABefore = archive.getEntryManifest(
+                GetEntryManifestRequest.newBuilder().setAddress(inA).setVersion(1).build());
+        List<VersionSummary> versionsABefore = archive.listVersions(
+                ListVersionsRequest.newBuilder().setAddress(inA).build()).getSummariesList();
+        ArchiveStats statsABefore = archive.getArchiveStats(
+                GetArchiveStatsRequest.newBuilder()
+                        .setAccountId(accountA)
+                        .setArchive("shared")
+                        .build()).getStats();
+
+        // 1. DeleteEntry, DeleteRendition, and PruneVersions addressed to B's shared/doc-1 all return NOT_FOUND
+        // and leave no recorded mutation outcome in either account.
+        String bDeleteOpId = UUID.randomUUID().toString();
+        assertThat(code(() -> mutations.archiveMutation(ArchiveMutationRequest.newBuilder()
+                .setOperationId(bDeleteOpId)
+                .setDeleteEntry(DeleteEntryRequest.newBuilder().setAddress(sameInB))
+                .build()))).isEqualTo(Status.Code.NOT_FOUND);
+
+        String bDeleteRenditionOpId = UUID.randomUUID().toString();
+        assertThat(code(() -> mutations.archiveMutation(ArchiveMutationRequest.newBuilder()
+                .setOperationId(bDeleteRenditionOpId)
+                .setDeleteRendition(DeleteRenditionRequest.newBuilder()
+                        .setAddress(sameInB)
+                        .setRendition("original")
+                        .setReason("cross-account attempt"))
+                .build()))).isEqualTo(Status.Code.NOT_FOUND);
+
+        String bPruneVersionsOpId = UUID.randomUUID().toString();
+        assertThat(code(() -> mutations.archiveMutation(ArchiveMutationRequest.newBuilder()
+                .setOperationId(bPruneVersionsOpId)
+                .setPruneVersions(PruneVersionsRequest.newBuilder()
+                        .setAddress(sameInB)
+                        .setKeepLatest(1))
+                .build()))).isEqualTo(Status.Code.NOT_FOUND);
+
+        for (String opId : List.of(bDeleteOpId, bDeleteRenditionOpId, bPruneVersionsOpId)) {
+            assertThat(code(() -> mutations.getArchiveMutation(GetArchiveMutationRequest.newBuilder()
+                    .setAccountId(accountA)
+                    .setOperationId(opId)
+                    .build()))).isEqualTo(Status.Code.NOT_FOUND);
+            assertThat(code(() -> mutations.getArchiveMutation(GetArchiveMutationRequest.newBuilder()
+                    .setAccountId(accountB)
+                    .setOperationId(opId)
+                    .build()))).isEqualTo(Status.Code.NOT_FOUND);
+        }
+
+        // 2. Mutations addressed to an archive that exists only in A ("only-a") under account B also return NOT_FOUND.
+        EntryAddress onlyAInB = EntryAddress.newBuilder()
+                .setAccountId(accountB)
+                .setArchive("only-a")
+                .setEntryId("doc-1")
+                .build();
+        assertThat(code(() -> mutations.archiveMutation(ArchiveMutationRequest.newBuilder()
+                .setOperationId(UUID.randomUUID().toString())
+                .setDeleteEntry(DeleteEntryRequest.newBuilder().setAddress(onlyAInB))
+                .build()))).isEqualTo(Status.Code.NOT_FOUND);
+        assertThat(code(() -> mutations.archiveMutation(ArchiveMutationRequest.newBuilder()
+                .setOperationId(UUID.randomUUID().toString())
+                .setDeleteRendition(DeleteRenditionRequest.newBuilder()
+                        .setAddress(onlyAInB)
+                        .setRendition("original")
+                        .setReason("unknown archive attempt"))
+                .build()))).isEqualTo(Status.Code.NOT_FOUND);
+        assertThat(code(() -> mutations.archiveMutation(ArchiveMutationRequest.newBuilder()
+                .setOperationId(UUID.randomUUID().toString())
+                .setPruneVersions(PruneVersionsRequest.newBuilder()
+                        .setAddress(onlyAInB)
+                        .setKeepLatest(1))
+                .build()))).isEqualTo(Status.Code.NOT_FOUND);
+
+        // 3. A's entry, renditions, versions, and archive stats are completely untouched.
+        assertThat(archive.getEntry(GetEntryRequest.newBuilder().setAddress(inA).build()))
+                .isEqualTo(entryABefore);
+        assertThat(archive.getEntryManifest(
+                        GetEntryManifestRequest.newBuilder().setAddress(inA).setVersion(1).build()))
+                .isEqualTo(v1ManifestABefore);
+        assertThat(archive.listVersions(ListVersionsRequest.newBuilder().setAddress(inA).build())
+                .getSummariesList()).isEqualTo(versionsABefore);
+        assertThat(data(read(ReadRenditionRequest.newBuilder()
+                .setAddress(inA).setRendition("original").build()))).isEqualTo(PDF);
+        assertThat(data(read(ReadRenditionRequest.newBuilder()
+                .setAddress(inA).setRendition("markdown").build()))).isEqualTo(MARKDOWN);
+        assertThat(archive.getArchiveStats(GetArchiveStatsRequest.newBuilder()
+                .setAccountId(accountA).setArchive("shared").build()).getStats()).isEqualTo(statsABefore);
+
+        // 4. Operation IDs are account-scoped: B deleting its own shared/doc-1 with sharedOpId does not touch A,
+        // is invisible to A's GetArchiveMutation, and does not collide when A uses the same operation_id.
+        archive.putEntry(firstPut(sameInB).setTitle("B's own doc-1").build());
+        String sharedOpId = UUID.randomUUID().toString();
+        ArchiveMutationReceipt bReceipt = mutations.archiveMutation(ArchiveMutationRequest.newBuilder()
+                .setOperationId(sharedOpId)
+                .setDeleteEntry(DeleteEntryRequest.newBuilder().setAddress(sameInB))
+                .build()).getReceipt();
+        assertThat(bReceipt.getAddress()).isEqualTo(sameInB);
+        assertThat(bReceipt.getEntryDeleted()).isTrue();
+        assertThat(mutations.getArchiveMutation(GetArchiveMutationRequest.newBuilder()
+                .setAccountId(accountB)
+                .setOperationId(sharedOpId)
+                .build()).getReceipt()).isEqualTo(bReceipt);
+        assertThat(code(() -> mutations.getArchiveMutation(GetArchiveMutationRequest.newBuilder()
+                .setAccountId(accountA)
+                .setOperationId(sharedOpId)
+                .build()))).isEqualTo(Status.Code.NOT_FOUND);
+
+        // A's shared/doc-1 is still live and identical after B's delete of B's shared/doc-1.
+        assertThat(archive.getEntry(GetEntryRequest.newBuilder().setAddress(inA).build()))
+                .isEqualTo(entryABefore);
+        assertThat(archive.getArchiveStats(GetArchiveStatsRequest.newBuilder()
+                .setAccountId(accountA).setArchive("shared").build()).getStats()).isEqualTo(statsABefore);
+
+        // A can independently use sharedOpId in account A (for instance, on a refused DeleteRendition on A's entry)
+        // without colliding with B's recorded delete receipt.
+        assertThat(code(() -> mutations.archiveMutation(ArchiveMutationRequest.newBuilder()
+                .setOperationId(sharedOpId)
+                .setDeleteRendition(DeleteRenditionRequest.newBuilder()
+                        .setAddress(inA)
+                        .setRendition("original")
+                        .setReason("A's independent operation"))
+                .build()))).isEqualTo(Status.Code.FAILED_PRECONDITION);
+        assertThat(code(() -> mutations.getArchiveMutation(GetArchiveMutationRequest.newBuilder()
+                .setAccountId(accountA)
+                .setOperationId(sharedOpId)
+                .build()))).isEqualTo(Status.Code.FAILED_PRECONDITION);
+        assertThat(mutations.getArchiveMutation(GetArchiveMutationRequest.newBuilder()
+                .setAccountId(accountB)
+                .setOperationId(sharedOpId)
+                .build()).getReceipt()).isEqualTo(bReceipt);
     }
 }
