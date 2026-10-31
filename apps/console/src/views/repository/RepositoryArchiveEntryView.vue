@@ -920,17 +920,6 @@ function togglePutEntry() {
     putForm.metadata = Object.entries(info.value.metadata ?? {})
       .sort(([a], [b]) => a.localeCompare(b))
       .map(([key, value]) => ({ key, value }))
-    if (putForm.renditions.length === 0) {
-      putForm.renditions = [
-        {
-          name: 'markdown',
-          subKey: '',
-          mediaType: 'text/markdown; charset=utf-8',
-          schemaSubject: '',
-          text: '',
-        },
-      ]
-    }
   }
 }
 

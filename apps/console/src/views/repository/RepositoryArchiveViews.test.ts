@@ -398,6 +398,49 @@ describe('RepositoryArchiveEntryView', () => {
     wrapper.unmount()
   })
 
+  it.each([false, true])('metadata edits preserve markdown unless an empty replacement is explicitly added (%s)', async (replace) => {
+    const calls: PutEntryRequest[] = []
+    const { wrapper } = await mountRepositoryView(RepositoryArchiveEntryView, ENTRY, (r) => {
+      archives(seen())(r)
+      r.service(ArchiveService, {
+        getEntryManifest: () => {
+          const stored = manifest(3n)
+          stored.renditions.push(create(RenditionManifestEntrySchema, {
+            rendition: create(RenditionDescriptorSchema, { name: 'markdown', mediaType: 'text/markdown' }),
+            state: RenditionState.PRESENT, sizeBytes: 42n, sha256: 'a'.repeat(64),
+          }))
+          return create(GetEntryManifestResponseSchema, {
+            info: create(EntryInfoSchema, { address: address('e-1'), currentVersion: 3n, title: 'Original' }),
+            manifest: stored,
+          })
+        },
+        putEntry: (request) => {
+          calls.push(request)
+          return create(PutEntryResponseSchema, { version: 4n, operationId: request.operationId })
+        },
+      })
+    })
+    try {
+      await wrapper.get('[data-testid="toggle-put-entry"]').trigger('click')
+      await wrapper.get('[data-testid="put-entry-title"] input').setValue('Updated title')
+      if (replace) {
+        await wrapper.get('[data-testid="put-entry-add-rendition"]').trigger('click')
+        await wrapper.get('[data-testid="put-rendition-name-0"] input').setValue('markdown')
+      }
+      await wrapper.get('[data-testid="put-entry-submit"]').trigger('click')
+      await settle()
+      expect(calls).toHaveLength(1)
+      expect(calls[0].title).toBe('Updated title')
+      expect(calls[0].renditions).toHaveLength(replace ? 1 : 0)
+      if (replace) {
+        expect(calls[0].renditions[0].rendition?.name).toBe('markdown')
+        expect(calls[0].renditions[0].data).toEqual(new Uint8Array())
+      }
+    } finally {
+      wrapper.unmount()
+    }
+  })
+
   it('commits atomic metadata and inline renditions via ArchiveService.PutEntry and bridges to the v2 document view (#694, #696)', async () => {
     const s = seen()
     const putCalls: PutEntryRequest[] = []
@@ -434,6 +477,7 @@ describe('RepositoryArchiveEntryView', () => {
     await wrapper.get('[data-testid="put-entry-meta-key-0"] input').setValue('reviewer')
     await wrapper.get('[data-testid="put-entry-meta-val-0"] input').setValue('ada')
 
+    await wrapper.get('[data-testid="put-entry-add-rendition"]').trigger('click')
     await wrapper.get('[data-testid="put-rendition-name-0"] input').setValue('notes')
     await wrapper.get('[data-testid="put-rendition-subkey-0"] input').setValue('v1')
     await wrapper.get('[data-testid="put-rendition-text-0"] textarea').setValue('Verified inline notes')

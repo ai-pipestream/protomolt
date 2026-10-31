@@ -389,6 +389,7 @@ test('Ticket #694: commits atomic entry metadata and inline renditions via Archi
   await page.getByTestId('put-entry-meta-key-3').locator('input').fill('reviewedBy')
   await page.getByTestId('put-entry-meta-val-3').locator('input').fill('general-counsel')
 
+  await page.getByTestId('put-entry-add-rendition').click()
   await page.getByTestId('put-rendition-name-0').locator('input').fill('markdown')
   await page.getByTestId('put-rendition-subkey-0').locator('input').fill('exec-summary')
   await page
