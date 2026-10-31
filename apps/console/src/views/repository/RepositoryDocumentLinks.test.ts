@@ -77,7 +77,7 @@ function repository(seen: Seen, links = [
   staticLink('structured_data.replaces', 'doc-old', 'replaces', { tombstoned: true }),
   staticLink('structured_data.hidden', 'doc-secret', 'requires', { unavailable: true }),
   DYNAMIC,
-]) {
+], holdResolve?: Promise<void>) {
   return (router: ConnectRouter) =>
     router.service(DocumentService, {
       getManifest(request) {
@@ -94,8 +94,9 @@ function repository(seen: Seen, links = [
         const s = request.revision?.selector
         return create(ListLinksResponseSchema, { revision: s?.case === 'revision' ? s.value : 3n, links })
       },
-      resolveLink(request) {
+      async resolveLink(request) {
         seen.resolves.push(request)
+        if (holdResolve !== undefined && seen.resolves.length === 1) await holdResolve
         const first = request.pageToken === ''
         return create(ResolveLinkResponseSchema, {
           documents: [
@@ -133,8 +134,8 @@ function repository(seen: Seen, links = [
     })
 }
 
-async function openLinks(seen: Seen, location = DOC, links?: Parameters<typeof repository>[1]) {
-  const mounted = await mountRepositoryView(RepositoryDocumentView, location, repository(seen, links))
+async function openLinks(seen: Seen, location = DOC, links?: Parameters<typeof repository>[1], holdResolve?: Promise<void>) {
+  const mounted = await mountRepositoryView(RepositoryDocumentView, location, repository(seen, links, holdResolve))
   await mounted.wrapper.get('[data-testid="tab-links"]').trigger('click')
   await settle()
   return mounted
@@ -288,6 +289,29 @@ describe('RepositoryDocumentView links', () => {
     await wrapper.get('[data-testid="graph-node-citing"]').trigger('click')
     await settle()
     expect(router.currentRoute.value.query).toMatchObject({ doc: 'citing', revision: '7' })
+    wrapper.unmount()
+  })
+
+  it('stops showing Resolve all as loading once a single resolve supersedes it', async () => {
+    const seen = fresh()
+    let release = () => {}
+    const held = new Promise<void>((resolve) => { release = resolve })
+    const { wrapper } = await openLinks(seen, DOC, undefined, held)
+    const resolveAll = () => wrapper.get('[data-testid="resolve-all-dynamic-links"]')
+
+    await resolveAll().trigger('click')
+    await settle()
+    expect(resolveAll().classes()).toContain('v-btn--loading')
+
+    await wrapper.get('[data-testid="resolve-link-structured_data.related-0"]').trigger('click')
+    await settle()
+    expect(resolveAll().classes()).not.toContain('v-btn--loading')
+    expect(seen.resolves).toHaveLength(2)
+    expect(wrapper.get('[data-testid="link-status-structured_data.related-0"]').text()).toBe('RESOLVED (1)')
+
+    release()
+    await settle()
+    expect(resolveAll().classes()).not.toContain('v-btn--loading')
     wrapper.unmount()
   })
 })

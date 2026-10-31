@@ -283,6 +283,8 @@ const linksLoaded = ref(false)
 const linksFailure = ref<RpcFailure | null>(null)
 const resolvedDynamicMap = ref<Record<string, DocumentRow[]>>({})
 const resolvingAll = ref(false)
+// The resolve-all call that owns `resolvingAll`; any newer resolve or reload supersedes it.
+let resolvingAllSignal: AbortSignal | null = null
 
 /** The one dynamic link whose targets are open, with the pages read so far. */
 const resolving = shallowRef<{
@@ -352,6 +354,8 @@ async function loadLinks() {
   resolveScope.next()
   resolving.value = null
   resolvedDynamicMap.value = {}
+  resolvingAll.value = false
+  resolvingAllSignal = null
   links.value = []
   linksLoaded.value = false
   linksFailure.value = null
@@ -371,6 +375,8 @@ async function loadLinks() {
 
 async function resolve(row: LinkRow, first: boolean) {
   const signal = resolveScope.next()
+  resolvingAll.value = false
+  resolvingAllSignal = null
   const earlier = first || resolving.value?.key !== row.key ? null : resolving.value
   resolving.value = { key: row.key, rows: earlier?.rows ?? [], nextToken: '', evidence: earlier?.evidence ?? null, loading: true, failure: null }
   try {
@@ -398,6 +404,7 @@ async function resolve(row: LinkRow, first: boolean) {
 async function resolveAllDynamic() {
   const signal = resolveScope.next()
   resolvingAll.value = true
+  resolvingAllSignal = signal
   try {
     const dynRows = links.value.filter((r) => r.target.kind === 'dynamic')
     for (const row of dynRows) {
@@ -409,7 +416,10 @@ async function resolveAllDynamic() {
   } catch (error) {
     if (!isOwnCancellation(error, signal)) linksFailure.value = rpcFailure(error)
   } finally {
-    if (!signal.aborted) resolvingAll.value = false
+    if (resolvingAllSignal === signal) {
+      resolvingAll.value = false
+      resolvingAllSignal = null
+    }
   }
 }
 
