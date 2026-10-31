@@ -6,15 +6,16 @@ cel = "0.14.0"
 junit = "6.1.3"
 assertj = "3.27.7"
 slf4j = "2.0.20"
-kafka = "4.3.2"
+kafka = "4.4.0"
 # Floor: 8.0 is the first line compiled against protobuf-java 4.x (7.9.x's ProtobufSchema
 # bytecode references GeneratedMessageV3, removed in protobuf 4). The former 8.0.x ceiling
 # is lifted: 8.1+ reference org.apache.kafka.common.metrics.Monitorable (KIP-877), which
 # the kafka-clients 4.x line above supplies, so the interop tests compile and pass again.
-# Note: kafka-clients 4.4.0 removes org.apache.kafka.common.utils.ByteUtils, which Confluent
-# 8.3.2's SchemaId serializer still calls at runtime.
+# Confluent and Kafka move together: kafka-clients 4.4.0 relocates ByteUtils to
+# org.apache.kafka.common.utils.internals, and Confluent 8.4.0 is compiled for that
+# layout (8.3.x for the old one), so bumping only one of them breaks the interop tests.
 # Test-scoped interop only.
-confluent = "8.3.2"
+confluent = "8.4.0"
 testcontainers = "2.0.5"
 opensearch-testcontainers = "4.1.0"
 micrometer = "1.17.2"
