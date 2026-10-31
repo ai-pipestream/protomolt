@@ -122,8 +122,10 @@ import io.grpc.Context;
 import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
 import io.grpc.protobuf.StatusProto;
+import java.io.FilterInputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.OutputStream;
 import java.time.Clock;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -1027,7 +1029,19 @@ public final class DocumentArchive {
             }
             Bridge.Derivation derivation;
             try (InputStream stream = openBlobStream(address, currentRevision, primary.getBlobId())) {
-                derivation = bridge.get().derive(stream, new Bridge.Context(format, filename.isEmpty() ? null : filename));
+                // A decoder may stop at a format terminator and close its input
+                // before ReadBlob reaches EOF. Keep ownership here so a successful
+                // derivation cannot bypass the stack's final length/SHA-256 check
+                // or the RPC's terminal status.
+                InputStream bridgeInput = new FilterInputStream(stream) {
+                    @Override
+                    public void close() {
+                        // The enclosing scope owns the pinned repository read.
+                    }
+                };
+                derivation = bridge.get().derive(
+                        bridgeInput, new Bridge.Context(format, filename.isEmpty() ? null : filename));
+                stream.transferTo(OutputStream.nullOutputStream());
             } catch (StatusRuntimeException storageFailure) {
                 throw storageFailure;
             } catch (IOException | RuntimeException e) {

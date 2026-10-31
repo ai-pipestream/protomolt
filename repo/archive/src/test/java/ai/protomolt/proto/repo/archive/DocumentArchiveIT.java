@@ -123,6 +123,8 @@ import org.assertj.core.api.ThrowableAssert.ThrowingCallable;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.localstack.LocalStackContainer;
@@ -1905,6 +1907,53 @@ class DocumentArchiveIT {
         RenditionManifestEntry ocrTextRow = row(scannedManifest, "ocr-text", "");
         assertThat(ocrTextRow.getState()).isEqualTo(RenditionState.RENDITION_STATE_PRESENT);
         assertThat(ocrTextRow.getContentProfile()).isEqualTo(ocrContentProfile);
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void bridgeEntryRequiresVerifiedSourceCompletionBeforeCommittingDerivedContent(boolean truncate) throws Exception {
+        EntryAddress address = entry(RETAINED);
+        // ZipInputStream stops at the central directory. The suffix ensures the raw
+        // object is still streaming when the standard container bridge closes it.
+        byte[] source = new byte[2 * 1024 * 1024];
+        byte[] zip = zipArchiveBytes("readme.txt", "verified source\n").toByteArray();
+        System.arraycopy(zip, 0, source, 0, zip.length);
+        archive.putEntry(PutEntryRequest.newBuilder()
+                .setAddress(address)
+                .setFilename("source.zip")
+                .addRenditions(rendition("original", "", "application/zip", ByteString.copyFrom(source)))
+                .build());
+        var stored = repo.catalog.manifest(ArchiveCoordinates.address(address), 1L).orElseThrow();
+        var sourceRef = stored.getPartsList().stream()
+                .flatMap(part -> part.getBlobRefsList().stream())
+                .filter(blob -> blob.getBlobId().equals("original"))
+                .findFirst().orElseThrow().getRef();
+        byte[] corrupt = java.util.Arrays.copyOf(source, source.length - (truncate ? 1 : 0));
+        if (!truncate) {
+            corrupt[corrupt.length - 1] ^= 1;
+        }
+        repo.client.putObject(
+                software.amazon.awssdk.services.s3.model.PutObjectRequest.builder()
+                        .bucket("archive-v2-it").key(sourceRef.getKey()).build(),
+                software.amazon.awssdk.core.sync.RequestBody.fromBytes(corrupt));
+        BridgeEntryRequest request = BridgeEntryRequest.newBuilder().setAddress(address).build();
+        try {
+            assertThat(code(() -> archive.bridgeEntry(request))).isEqualTo(Status.Code.DATA_LOSS);
+            VersionManifest unchanged = archive.getEntryManifest(GetEntryManifestRequest.newBuilder()
+                    .setAddress(address).build()).getManifest();
+            assertThat(unchanged.getVersion()).isEqualTo(1L);
+            assertThat(unchanged.getRenditionsList()).extracting(row -> row.getRendition().getName())
+                    .containsExactly("original");
+        } finally {
+            repo.client.putObject(
+                    software.amazon.awssdk.services.s3.model.PutObjectRequest.builder()
+                            .bucket("archive-v2-it").key(sourceRef.getKey()).build(),
+                    software.amazon.awssdk.core.sync.RequestBody.fromBytes(source));
+        }
+        BridgeEntryResponse recovered = archive.bridgeEntry(request);
+        assertThat(recovered.getVersion()).isEqualTo(2L);
+        assertThat(recovered.getOutcomesList()).extracting(BridgeOutcome::getStatus)
+                .containsExactly(BridgeStatus.BRIDGE_STATUS_PRODUCED);
     }
 
     private static ByteString zipArchiveBytes(String entryName, String content) throws Exception {
