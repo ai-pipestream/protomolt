@@ -62,6 +62,10 @@ export default defineConfig({
         target: repository,
         changeOrigin: false,
       },
+      '/v1/archive:upload': {
+        target: repository,
+        changeOrigin: false,
+      },
     },
   },
   test: {

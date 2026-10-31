@@ -3,19 +3,27 @@ import { createHash } from 'node:crypto'
 import { create } from '@bufbuild/protobuf'
 import { Code, ConnectError, type ConnectRouter } from '@connectrpc/connect'
 import { afterEach, describe, expect, it } from 'vitest'
-import { ClassificationState } from '@/gen/ai/protomolt/proto/asset/v1/classification_pb'
+import { CharacterizationEvidenceSchema, ClassificationSchema, ClassificationState } from '@/gen/ai/protomolt/proto/asset/v1/classification_pb'
+import { BridgeKind, BridgeStatus } from '@/gen/ai/protomolt/proto/asset/v1/bridge_pb'
+import { ContentClass, ContentProfileSchema, QualityScoreSchema } from '@/gen/ai/protomolt/proto/asset/v1/content_pb'
+import { FormatFactSchema, PdfDocumentSchema } from '@/gen/ai/protomolt/proto/asset/v1/format_pb'
 import { ArchiveSchema, ArchiveStatsSchema, RenditionStatsSchema, VersioningPolicy } from '@/gen/ai/protomolt/proto/repo/archive/v1/archive_pb'
 import {
   ArchiveService,
+  BridgeEntryResponseSchema,
+  BridgeOutcomeSchema,
+  ClassifyEntryResponseSchema,
   GetArchiveResponseSchema,
   GetArchiveStatsResponseSchema,
   GetEntryManifestResponseSchema,
   ListEntriesResponseSchema,
   ListVersionsResponseSchema,
+  PutEntryResponseSchema,
   ReadRenditionResponseSchema,
   RenditionReadHeaderSchema,
   type GetEntryManifestRequest,
   type ListEntriesRequest,
+  type PutEntryRequest,
   type ReadRenditionRequest,
 } from '@/gen/ai/protomolt/proto/repo/archive/v1/archive_service_pb'
 import {
@@ -26,6 +34,13 @@ import {
   RenditionState,
   VersionManifestSchema,
 } from '@/gen/ai/protomolt/proto/repo/archive/v1/entry_pb'
+import {
+  DeleteDocumentResponseSchema,
+  DocumentService,
+  PurgeDocumentResponseSchema,
+  type DeleteDocumentRequest,
+} from '@/gen/ai/protomolt/proto/repo/v2/document_service_pb'
+import { AccessionSchema } from '@/gen/ai/protomolt/proto/repo/v2/manifest_pb'
 import { at } from '@/repository/repositoryTestKit'
 import { mountRepositoryView, settle } from '@/repository/repositoryViewKit'
 import RepositoryArchiveEntryView from './RepositoryArchiveEntryView.vue'
@@ -43,8 +58,23 @@ function manifest(version: bigint) {
     totalBytes: BigInt(PDF.length),
     createdAt: at(`2026-10-0${version}T00:00:00Z`),
     renditions: [
-      create(RenditionManifestEntrySchema, { rendition: original, state: RenditionState.PRESENT, sizeBytes: BigInt(PDF.length), sha256: PDF_SHA }),
-      create(RenditionManifestEntrySchema, { rendition: create(RenditionDescriptorSchema, { name: 'ocr' }), state: RenditionState.DELETED, deletedReason: 'RETENTION' }),
+      create(RenditionManifestEntrySchema, {
+        rendition: original,
+        state: RenditionState.PRESENT,
+        sizeBytes: BigInt(PDF.length),
+        sha256: PDF_SHA,
+        contentProfile: create(ContentProfileSchema, {
+          contentClass: ContentClass.OCR_TEXT,
+          quality: create(QualityScoreSchema, { score: 0.91 }),
+        }),
+      }),
+      create(RenditionManifestEntrySchema, {
+        rendition: create(RenditionDescriptorSchema, { name: 'ocr' }),
+        state: version === 1n ? RenditionState.PRESENT : RenditionState.DELETED,
+        sizeBytes: version === 1n ? 512n : 0n,
+        sha256: version === 1n ? 'f'.repeat(64) : '',
+        deletedReason: version === 1n ? '' : 'RETENTION',
+      }),
     ],
   })
 }
@@ -259,6 +289,327 @@ describe('RepositoryArchiveEntryView', () => {
     const { wrapper } = await mountRepositoryView(RepositoryArchiveEntryView, { ...ENTRY, query: { ...ENTRY.query, version: '9' } }, archives(seen()))
     expect(wrapper.get('[data-testid="rpc-failure"]').text()).toContain('NOT_FOUND')
     expect(wrapper.find('[data-testid="rendition-table"]').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('displays rendition content profiles, compares two versions side by side, and toggles the upload panel', async () => {
+    const s = seen()
+    const { wrapper } = await mountRepositoryView(RepositoryArchiveEntryView, ENTRY, archives(s))
+    expect(wrapper.get('[data-testid="rendition-profile-original"]').text()).toContain('OCR_TEXT · quality 0.91')
+
+    await wrapper.get('[data-testid="compare-version-1"]').trigger('click')
+    await settle()
+    expect(wrapper.find('[data-testid="version-compare"]').exists()).toBe(true)
+    const compareText = wrapper.get('[data-testid="version-compare-table"]').text()
+    expect(compareText).toContain('ocr')
+    expect(compareText).toContain('original')
+
+    await wrapper.get('[data-testid="version-compare-changed-only"] input').setValue(true)
+    await settle()
+    expect(wrapper.get('[data-testid="version-compare-table"]').text()).toContain('ocr')
+    expect(wrapper.get('[data-testid="version-compare-table"]').text()).not.toContain('unchanged')
+
+    await wrapper.get('[data-testid="version-compare-close"]').trigger('click')
+    await settle()
+    expect(wrapper.find('[data-testid="version-compare"]').exists()).toBe(false)
+
+    await wrapper.get('[data-testid="toggle-rendition-upload"]').trigger('click')
+    await settle()
+    expect(wrapper.find('[data-testid="rendition-upload-panel"]').exists()).toBe(true)
+    wrapper.unmount()
+  })
+
+  it('invokes ClassifyEntry and BridgeEntry from the characterization workbench and inspects produced renditions', async () => {
+    const s = seen()
+    let classifiedDeclared: string | undefined
+    let bridgedKinds: BridgeKind[] = []
+    const { wrapper } = await mountRepositoryView(RepositoryArchiveEntryView, ENTRY, (router) => {
+      archives(s)(router)
+      router.service(ArchiveService, {
+        getEntryManifest: (r) =>
+          create(GetEntryManifestResponseSchema, {
+            info: create(EntryInfoSchema, { address: address('e-1'), currentVersion: 3n, title: 'Paper 1', filename: 'p1.pdf', contentType: 'application/pdf' }),
+            manifest: manifest(r.version === 0n ? 3n : r.version),
+          }),
+        listVersions: () => create(ListVersionsResponseSchema, { versions: [manifest(3n)] }),
+        classifyEntry(request) {
+          classifiedDeclared = request.declared?.format.case
+          return create(ClassifyEntryResponseSchema, {
+            classification: create(ClassificationSchema, {
+              state: ClassificationState.VERIFIED,
+              declared: request.declared,
+              identified: create(FormatFactSchema, { format: { case: 'pdf', value: create(PdfDocumentSchema, { filename: 'p1.pdf' }) } }),
+              evidence: [create(CharacterizationEvidenceSchema, { signal: 'magic-bytes', observation: '%PDF-1.7 header' })],
+            }),
+          })
+        },
+        bridgeEntry(request) {
+          bridgedKinds = [...request.bridges]
+          return create(BridgeEntryResponseSchema, {
+            version: 3n,
+            outcomes: [
+              create(BridgeOutcomeSchema, {
+                bridge: BridgeKind.DOCUMENT_TEXT,
+                status: BridgeStatus.PRODUCED,
+                rendition: 'original',
+                detail: 'extracted 8 pages',
+              }),
+            ],
+          })
+        },
+      })
+    })
+
+    await wrapper.get('[data-testid="toggle-classify-bridge"]').trigger('click')
+    await settle()
+    expect(wrapper.find('[data-testid="classify-bridge-panel"]').exists()).toBe(true)
+
+    ;(wrapper.vm as unknown as { classifyForm: { formatCase: string; filename: string } }).classifyForm.formatCase = 'pdf'
+    ;(wrapper.vm as unknown as { classifyForm: { formatCase: string; filename: string } }).classifyForm.filename = 'p1.pdf'
+    await settle()
+    await wrapper.get('[data-testid="classify-submit"]').trigger('click')
+    await settle()
+    expect(classifiedDeclared).toBe('pdf')
+    expect(wrapper.get('[data-testid="classify-result"]').text()).toContain('VERIFIED')
+    expect(wrapper.get('[data-testid="classify-result"]').text()).toContain('%PDF-1.7 header')
+
+    ;(wrapper.vm as unknown as { selectedBridges: BridgeKind[] }).selectedBridges = [BridgeKind.DOCUMENT_TEXT]
+    await settle()
+    await wrapper.get('[data-testid="bridge-submit"]').trigger('click')
+    await settle()
+    expect(bridgedKinds).toEqual([BridgeKind.DOCUMENT_TEXT])
+    expect(wrapper.get('[data-testid="bridge-outcomes-table"]').text()).toContain('DOCUMENT_TEXT')
+    expect(wrapper.get('[data-testid="bridge-outcomes-table"]').text()).toContain('PRODUCED')
+    await wrapper.get('[data-testid="bridge-inspect-original"]').trigger('click')
+    await settle()
+    expect((wrapper.vm as unknown as { selected: { name: string } | null }).selected?.name).toBe('original')
+    wrapper.unmount()
+  })
+
+  it.each(['historical', 'current'])('inspects the bridge result at its exact version from %s and clears it on entry navigation', async (mode) => {
+    const requests: bigint[] = []
+    let head = 2n
+    const { wrapper, router } = await mountRepositoryView(
+      RepositoryArchiveEntryView,
+      { ...ENTRY, query: { ...ENTRY.query, ...(mode === 'historical' ? { version: '1' } : {}) } },
+      (r) => {
+        archives(seen())(r)
+        r.service(ArchiveService, {
+          getEntryManifest(request) {
+            requests.push(request.version)
+            return create(GetEntryManifestResponseSchema, {
+              info: create(EntryInfoSchema, { address: request.address, currentVersion: head }),
+              manifest: manifest(request.version || head),
+            })
+          },
+          bridgeEntry() {
+            head = 4n // Another writer advances current before inspection.
+            return create(BridgeEntryResponseSchema, {
+              version: 3n,
+              outcomes: [create(BridgeOutcomeSchema, {
+                bridge: BridgeKind.DOCUMENT_TEXT, status: BridgeStatus.PRODUCED, rendition: 'original',
+              })],
+            })
+          },
+        })
+      },
+    )
+    try {
+      await wrapper.get('[data-testid="toggle-classify-bridge"]').trigger('click')
+      ;(wrapper.vm as unknown as { selectedBridges: BridgeKind[] }).selectedBridges = [BridgeKind.DOCUMENT_TEXT]
+      await settle()
+      await wrapper.get('[data-testid="bridge-submit"]').trigger('click')
+      await settle()
+      await wrapper.get('[data-testid="bridge-inspect-original"]').trigger('click')
+      await settle()
+      expect(router.currentRoute.value.query.version).toBe('3')
+      expect(requests.at(-1)).toBe(3n)
+      const state = wrapper.vm as unknown as { selected: { name: string } | null; pinned: bigint | null }
+      expect(state.pinned).toBe(3n)
+      expect(state.selected?.name).toBe('original')
+      await router.push({ ...ENTRY, query: { ...ENTRY.query, entry: 'e-2', version: '3' } })
+      await settle()
+      expect(state.selected).toBeNull()
+      expect(wrapper.find('[data-testid="bridge-inspect-original"]').exists()).toBe(false)
+    } finally {
+      wrapper.unmount()
+    }
+  })
+
+  it('syncs archive classification and text filters with the URL query and clears them via active filter chips', async () => {
+    const s = seen()
+    const { wrapper, router } = await mountRepositoryView(
+      RepositoryArchiveView,
+      { name: 'repository-archive', query: { account: 'acct-a', archive: 'papers', classification: 'VERIFIED', q: 'Paper 1' } },
+      archives(s),
+    )
+    expect(s.entries[0].classificationState).toBe(ClassificationState.VERIFIED)
+    expect(wrapper.find('[data-testid="archive-active-filters"]').exists()).toBe(true)
+    expect(wrapper.get('[data-testid="archive-filter-classification"]').text()).toContain('VERIFIED')
+    expect(wrapper.get('[data-testid="archive-filter-q"]').text()).toContain('Paper 1')
+
+    await wrapper.get('[data-testid="archive-clear-filters"]').trigger('click')
+    await settle()
+    expect(router.currentRoute.value.query).toEqual({ account: 'acct-a', archive: 'papers' })
+    expect(wrapper.find('[data-testid="archive-active-filters"]').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
+  it.each([false, true])('metadata edits preserve markdown unless an empty replacement is explicitly added (%s)', async (replace) => {
+    const calls: PutEntryRequest[] = []
+    const { wrapper } = await mountRepositoryView(RepositoryArchiveEntryView, ENTRY, (r) => {
+      archives(seen())(r)
+      r.service(ArchiveService, {
+        getEntryManifest: () => {
+          const stored = manifest(3n)
+          stored.renditions.push(create(RenditionManifestEntrySchema, {
+            rendition: create(RenditionDescriptorSchema, { name: 'markdown', mediaType: 'text/markdown' }),
+            state: RenditionState.PRESENT, sizeBytes: 42n, sha256: 'a'.repeat(64),
+          }))
+          return create(GetEntryManifestResponseSchema, {
+            info: create(EntryInfoSchema, { address: address('e-1'), currentVersion: 3n, title: 'Original' }),
+            manifest: stored,
+          })
+        },
+        putEntry: (request) => {
+          calls.push(request)
+          return create(PutEntryResponseSchema, { version: 4n, operationId: request.operationId })
+        },
+      })
+    })
+    try {
+      await wrapper.get('[data-testid="toggle-put-entry"]').trigger('click')
+      await wrapper.get('[data-testid="put-entry-title"] input').setValue('Updated title')
+      if (replace) {
+        await wrapper.get('[data-testid="put-entry-add-rendition"]').trigger('click')
+        await wrapper.get('[data-testid="put-rendition-name-0"] input').setValue('markdown')
+      }
+      await wrapper.get('[data-testid="put-entry-submit"]').trigger('click')
+      await settle()
+      expect(calls).toHaveLength(1)
+      expect(calls[0].title).toBe('Updated title')
+      expect(calls[0].renditions).toHaveLength(replace ? 1 : 0)
+      if (replace) {
+        expect(calls[0].renditions[0].rendition?.name).toBe('markdown')
+        expect(calls[0].renditions[0].data).toEqual(new Uint8Array())
+      }
+    } finally {
+      wrapper.unmount()
+    }
+  })
+
+  it('commits atomic metadata and inline renditions via ArchiveService.PutEntry and bridges to the v2 document view (#694, #696)', async () => {
+    const s = seen()
+    const putCalls: PutEntryRequest[] = []
+    const { wrapper, router } = await mountRepositoryView(RepositoryArchiveEntryView, ENTRY, (r) => {
+      archives(s)(r)
+      r.service(ArchiveService, {
+        getEntryManifest: (req) =>
+          create(GetEntryManifestResponseSchema, {
+            info: create(EntryInfoSchema, { address: address('e-1'), currentVersion: 3n, title: 'Paper 1', filename: 'p1.pdf', contentType: 'application/pdf' }),
+            manifest: manifest(req.version === 0n ? 3n : req.version),
+          }),
+        listVersions: () => create(ListVersionsResponseSchema, { versions: [manifest(3n)] }),
+        putEntry(request) {
+          putCalls.push(request)
+          return create(PutEntryResponseSchema, {
+            version: 4n,
+            rootChecksum: 'd4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5',
+            totalBytes: 150_512n,
+            deduplicated: false,
+            replayed: false,
+            operationId: request.operationId || '018f4063-7d4b-7000-8000-000000000111',
+          })
+        },
+      })
+    })
+
+    await wrapper.get('[data-testid="toggle-put-entry"]').trigger('click')
+    await settle()
+    expect(wrapper.find('[data-testid="put-entry-panel"]').exists()).toBe(true)
+
+    await wrapper.get('[data-testid="put-entry-title"] input').setValue('Paper 1 — Annotated')
+    await wrapper.get('[data-testid="put-entry-add-meta"]').trigger('click')
+    await settle()
+    await wrapper.get('[data-testid="put-entry-meta-key-0"] input').setValue('reviewer')
+    await wrapper.get('[data-testid="put-entry-meta-val-0"] input').setValue('ada')
+
+    await wrapper.get('[data-testid="put-entry-add-rendition"]').trigger('click')
+    await wrapper.get('[data-testid="put-rendition-name-0"] input').setValue('notes')
+    await wrapper.get('[data-testid="put-rendition-subkey-0"] input').setValue('v1')
+    await wrapper.get('[data-testid="put-rendition-text-0"] textarea').setValue('Verified inline notes')
+
+    await wrapper.get('[data-testid="put-entry-submit"]').trigger('click')
+    await settle()
+
+    expect(putCalls).toHaveLength(1)
+    expect(putCalls[0].title).toBe('Paper 1 — Annotated')
+    expect(putCalls[0].metadata).toEqual({ reviewer: 'ada' })
+    expect(putCalls[0].renditions).toHaveLength(1)
+    expect(putCalls[0].renditions[0].rendition?.name).toBe('notes')
+    expect(wrapper.get('[data-testid="put-entry-outcome"]').text()).toContain('Committed new version 4')
+    expect(wrapper.get('[data-testid="put-entry-status-chip"]').text()).toBe('CREATED')
+
+    await wrapper.get('[data-testid="open-entry-v2-document"]').trigger('click')
+    await settle()
+    expect(router.currentRoute.value.query).toEqual({
+      account: 'acct-a',
+      graph: 'archive:acct-a',
+      node: 'papers',
+      doc: 'e-1',
+      revision: '3',
+    })
+    wrapper.unmount()
+  })
+
+  it("tombstones the current version through the entry's v2 call number and never purges (#696, #531)", async () => {
+    const s = seen()
+    const deletes: DeleteDocumentRequest[] = []
+    let purges = 0
+    const { wrapper, router } = await mountRepositoryView(RepositoryArchiveEntryView, ENTRY, (r) => {
+      archives(s)(r)
+      r.service(DocumentService, {
+        deleteDocument(request) {
+          deletes.push(request)
+          return create(DeleteDocumentResponseSchema, {
+            operationId: request.operationId,
+            accession: create(AccessionSchema, { address: request.address, revision: 4n, previousRevision: 3n, tombstone: true }),
+          })
+        },
+        purgeDocument() {
+          purges++
+          return create(PurgeDocumentResponseSchema)
+        },
+      })
+    })
+    const dialog = () => document.body.querySelector('[data-testid="delete-dialog"]') as HTMLElement | null
+
+    await wrapper.get('[data-testid="delete-archive-entry"]').trigger('click')
+    await settle()
+    expect(dialog()!.querySelector('[data-testid="delete-call-number"]')!.textContent).toBe('acct-a / archive:acct-a / papers / e-1')
+    expect(dialog()!.querySelector('[data-testid="delete-revision"]')!.textContent).toBe('3')
+    expect(dialog()!.textContent!.toLowerCase()).not.toContain('purge')
+
+    ;(document.body.querySelector('[data-testid="delete-confirm"]') as HTMLElement).click()
+    await settle()
+    expect(deletes).toHaveLength(1)
+    expect(deletes[0].address).toMatchObject({ accountId: 'acct-a', graphId: 'archive:acct-a', graphAddressId: 'papers', docId: 'e-1' })
+    expect(deletes[0].expected?.expected).toEqual({ case: 'revision', value: 3n })
+    expect(purges).toBe(0)
+    expect(router.currentRoute.value.name).toBe('repository-document')
+    expect(router.currentRoute.value.query).toMatchObject({ graph: 'archive:acct-a', node: 'papers', doc: 'e-1', revision: '4' })
+    wrapper.unmount()
+  })
+
+  it('offers Delete entry only on the current version', async () => {
+    const { wrapper } = await mountRepositoryView(
+      RepositoryArchiveEntryView,
+      { name: 'repository-archive-entry', query: { account: 'acct-a', archive: 'papers', entry: 'e-1', version: '2' } },
+      archives(seen()),
+    )
+    await settle()
+    expect(wrapper.find('[data-testid="version-chip"]').text()).toContain('version 2')
+    expect(wrapper.find('[data-testid="delete-archive-entry"]').exists()).toBe(false)
     wrapper.unmount()
   })
 })

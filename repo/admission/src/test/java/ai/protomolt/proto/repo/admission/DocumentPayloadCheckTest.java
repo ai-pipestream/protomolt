@@ -53,7 +53,8 @@ class DocumentPayloadCheckTest {
             try { return java.util.Optional.of(ByteString.copyFrom(java.nio.file.Files.readAllBytes(directory.resolve(hash + ".fds")))); }
             catch (java.io.IOException failure) { throw new java.io.UncheckedIOException(failure); }
         }, new DocumentRetainedSchemaAssets.Limits(3, 12_000_000,
-                new ClosedDescriptorSet.Limits(4_000_000, 100, 1000, 100)));
+                new ClosedDescriptorSet.Limits(4_000_000, 100, 1000, 100)), null,
+                new DocumentSchemaTypeCache(new DocumentSchemaTypeCache.Limits(8, 12_000_000)));
         var restored = new java.util.ArrayList<DocumentSchemaAssetBinding>();
         for (var path : recordedPaths) {
             var encoded = DocumentSchemaOccurrenceCodec.encode(path, () -> {});

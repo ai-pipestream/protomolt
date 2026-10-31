@@ -1,16 +1,30 @@
 import { createHash } from 'node:crypto'
-import { create } from '@bufbuild/protobuf'
+import { create, toBinary } from '@bufbuild/protobuf'
 import { Code, ConnectError } from '@connectrpc/connect'
 import { describe, expect, it } from 'vitest'
-import { ClassificationSchema, ClassificationState } from '@/gen/ai/protomolt/proto/asset/v1/classification_pb'
-import { FormatFactSchema, PdfDocumentSchema } from '@/gen/ai/protomolt/proto/asset/v1/format_pb'
+import { CharacterizationEvidenceSchema, ClassificationSchema, ClassificationState } from '@/gen/ai/protomolt/proto/asset/v1/classification_pb'
+import { BridgeKind, BridgeStatus } from '@/gen/ai/protomolt/proto/asset/v1/bridge_pb'
+import { ContentClass, ContentProfileSchema, QualityDimensionSchema, QualityScoreSchema } from '@/gen/ai/protomolt/proto/asset/v1/content_pb'
+import { FormatFactSchema, HeaderPresence, PdfDocumentSchema } from '@/gen/ai/protomolt/proto/asset/v1/format_pb'
+import { VersioningPolicy } from '@/gen/ai/protomolt/proto/repo/archive/v1/archive_pb'
 import {
   ArchiveService,
+  BridgeEntryResponseSchema,
+  BridgeOutcomeSchema,
+  PutEntryResponseSchema,
   ReadRenditionResponseSchema,
   RenditionReadHeaderSchema,
+  UploadRenditionResponseSchema,
   type ReadRenditionRequest,
   type ReadRenditionResponse,
 } from '@/gen/ai/protomolt/proto/repo/archive/v1/archive_service_pb'
+import {
+  DriveProviderConfigSchema,
+  DriveSchema,
+  DriveStatus,
+  DriveType,
+  S3DriveConfigSchema,
+} from '@/gen/ai/protomolt/proto/repo/v1/drive_pb'
 import {
   EntryAddressSchema,
   EntryInfoSchema,
@@ -23,12 +37,28 @@ import {
 import { collector } from './blobReadCore'
 import {
   RenditionStreamError,
+  bridgeOutcomeRows,
+  buildBridgeEntryRequest,
+  buildClassifyEntryRequest,
+  buildCreateArchiveRequest,
+  buildDeclaredFormatFact,
+  buildPutEntryRequest,
+  classificationEvidenceRows,
   classificationLabel,
+  contentProfileLabel,
+  describeDriveDetails,
+  describePutEntryOutcome,
   entryAddress,
+  entryCallNumber,
+  entryNodeAddress,
   entryRow,
   parseVersion,
+  planRenditionUpload,
   readRendition,
+  renditionDiff,
   renditionRows,
+  sendRenditionUpload,
+  suggestEntryIdFromFilename,
   versionRow,
 } from './archiveCore'
 import { at, routerClients } from './repositoryTestKit'
@@ -175,5 +205,343 @@ describe('rows and labels', () => {
     expect(parseVersion('')).toBeNull()
     expect(parseVersion('4')).toBe(4n)
     expect(() => parseVersion('0')).toThrow('greater than zero')
+  })
+
+  it('formats content profiles and diffs two version manifests by rendition key', () => {
+    const profile = create(ContentProfileSchema, {
+      contentClass: ContentClass.OCR_TEXT,
+      quality: create(QualityScoreSchema, {
+        score: 0.94,
+        dimensions: [create(QualityDimensionSchema, { name: 'character-confidence', score: 0.98, weight: 1.0 })],
+      }),
+    })
+    expect(contentProfileLabel(profile)).toBe('OCR_TEXT · quality 0.94 (character-confidence: 0.98)')
+
+    const v1 = create(VersionManifestSchema, {
+      address: ADDRESS,
+      version: 1n,
+      renditions: [
+        create(RenditionManifestEntrySchema, {
+          rendition,
+          state: RenditionState.PRESENT,
+          sizeBytes: 100n,
+          sha256: 'a'.repeat(64),
+        }),
+        create(RenditionManifestEntrySchema, {
+          rendition: create(RenditionDescriptorSchema, { name: 'legacy' }),
+          state: RenditionState.PRESENT,
+          sizeBytes: 50n,
+          sha256: 'b'.repeat(64),
+        }),
+      ],
+    })
+    const v2 = create(VersionManifestSchema, {
+      address: ADDRESS,
+      version: 2n,
+      renditions: [
+        create(RenditionManifestEntrySchema, {
+          rendition,
+          state: RenditionState.PRESENT,
+          sizeBytes: 100n,
+          sha256: 'a'.repeat(64),
+        }),
+        create(RenditionManifestEntrySchema, {
+          rendition: create(RenditionDescriptorSchema, { name: 'ocr', subKey: 'p1', mediaType: 'text/plain' }),
+          state: RenditionState.PRESENT,
+          sizeBytes: 240n,
+          sha256: 'c'.repeat(64),
+          contentProfile: profile,
+        }),
+      ],
+    })
+    const diff = renditionDiff(v1, v2)
+    expect(diff.map((d) => ({ label: d.label, change: d.change }))).toEqual([
+      { label: 'original', change: 'unchanged' },
+      { label: 'ocr / p1', change: 'added' },
+      { label: 'legacy', change: 'removed' },
+    ])
+  })
+
+  it('plans and sends a streaming rendition upload to /v1/archive:upload', async () => {
+    const body = new TextEncoder().encode('rendition payload')
+    const sha = createHash('sha256').update(body).digest('hex')
+    const file = new File([body], 'ocr-p1.txt', { type: 'text/plain' })
+    const plan = planRenditionUpload(
+      {
+        accountId: 'acct-a',
+        archive: 'papers',
+        entryId: 'e-1',
+        rendition: 'ocr',
+        subKey: 'page-1',
+        contentType: 'text/plain',
+        module: 'grparse',
+        expectedVersion: '3',
+      },
+      file,
+      '018f4063-7d4b-7000-8000-000000000099',
+      sha,
+    )
+    expect(plan.url).toContain('/v1/archive:upload?account_id=acct-a&archive=papers&entry_id=e-1&rendition=ocr')
+    expect(plan.url).toContain('sub_key=page-1')
+    expect(plan.url).toContain('expected_version=3')
+    expect(plan.url).toContain(`expected_sha256=${sha}`)
+    expect(plan.url).toContain('operation_id=018f4063-7d4b-7000-8000-000000000099')
+
+    const wire = toBinary(
+      UploadRenditionResponseSchema,
+      create(UploadRenditionResponseSchema, {
+        operationId: '018f4063-7d4b-7000-8000-000000000099',
+        entryUuid: '00000000-0000-5000-8000-000000000001',
+        version: 4n,
+        sha256: sha,
+        replayed: false,
+      }),
+    )
+    const outcome = await sendRenditionUpload(
+      plan,
+      () => {
+        const req = {
+          upload: { onprogress: null as ((e: ProgressEvent) => void) | null },
+          onload: null as ((this: XMLHttpRequest, ev: ProgressEvent) => unknown) | null,
+          onerror: null as ((this: XMLHttpRequest, ev: ProgressEvent) => unknown) | null,
+          onabort: null as ((this: XMLHttpRequest, ev: ProgressEvent) => unknown) | null,
+          withCredentials: false,
+          status: 200,
+          responseType: 'arraybuffer' as XMLHttpRequestResponseType,
+          response: wire.buffer.slice(wire.byteOffset, wire.byteOffset + wire.byteLength),
+          open: () => {},
+          setRequestHeader: () => {},
+          getResponseHeader: () => 'application/protobuf',
+          send: () => {
+            req.onload?.call(req as unknown as XMLHttpRequest, {} as ProgressEvent)
+          },
+          abort: () => {},
+        }
+        return req
+      },
+      () => {},
+      signal(),
+    )
+    expect(outcome.kind).toBe('saved')
+    if (outcome.kind === 'saved') {
+      expect(outcome.response.version).toBe(4n)
+      expect(outcome.response.operationId).toBe('018f4063-7d4b-7000-8000-000000000099')
+    }
+  })
+
+  it('builds ClassifyEntry, BridgeEntry, and CreateArchive requests and formats outcomes', () => {
+    const fact = buildDeclaredFormatFact({
+      formatCase: 'delimited',
+      filename: 'metrics.tsv',
+      delimiter: '\\t',
+      header: HeaderPresence.PRESENT,
+      mediaType: '',
+      module: 'console',
+    })
+    expect(fact?.format.case).toBe('delimited')
+    if (fact?.format.case === 'delimited') {
+      expect(fact.format.value.delimiter).toBe('\t')
+      expect(fact.format.value.header).toBe(HeaderPresence.PRESENT)
+    }
+
+    const classifyReq = buildClassifyEntryRequest(ADDRESS, {
+      formatCase: 'pdf',
+      filename: 'paper.pdf',
+      delimiter: ',',
+      header: HeaderPresence.PRESENT,
+      mediaType: '',
+      module: 'grparse',
+    })
+    expect(classifyReq.address).toEqual(ADDRESS)
+    expect(classifyReq.declared?.format.case).toBe('pdf')
+    expect(classifyReq.classifiedBy?.module).toBe('grparse')
+
+    const evidence = classificationEvidenceRows(
+      create(ClassificationSchema, {
+        state: ClassificationState.VERIFIED,
+        declared: create(FormatFactSchema, { format: { case: 'pdf', value: create(PdfDocumentSchema, { filename: 'paper.pdf' }) } }),
+        identified: create(FormatFactSchema, { format: { case: 'pdf', value: create(PdfDocumentSchema, { filename: 'paper.pdf' }) } }),
+        evidence: [
+          create(CharacterizationEvidenceSchema, { signal: 'magic-bytes', observation: '%PDF-1.7 header at offset 0' }),
+        ],
+      }),
+    )
+    expect(evidence).toEqual([
+      { signal: 'magic-bytes', observation: '%PDF-1.7 header at offset 0' },
+    ])
+
+    const bridgeReq = buildBridgeEntryRequest(ADDRESS, [BridgeKind.DOCUMENT_TEXT, BridgeKind.OCR_TEXT], 'bridge-worker')
+    expect(bridgeReq.bridges).toEqual([BridgeKind.DOCUMENT_TEXT, BridgeKind.OCR_TEXT])
+    expect(bridgeReq.bridgedBy?.module).toBe('bridge-worker')
+
+    const outcomes = bridgeOutcomeRows(
+      create(BridgeEntryResponseSchema, {
+        outcomes: [
+          create(BridgeOutcomeSchema, {
+            bridge: BridgeKind.DOCUMENT_TEXT,
+            status: BridgeStatus.PRODUCED,
+            rendition: 'parsed',
+            detail: 'extracted 12 pages',
+          }),
+        ],
+      }),
+    )
+    expect(outcomes).toEqual([
+      {
+        bridge: 'DOCUMENT_TEXT',
+        status: 'PRODUCED',
+        rendition: 'parsed',
+        detail: 'extracted 12 pages',
+        inspectable: true,
+      },
+    ])
+
+    const createArch = buildCreateArchiveRequest({
+      accountId: 'acct-a',
+      name: 'papers-2026',
+      driveName: 'intake',
+      description: '2026 corpus',
+      versioning: VersioningPolicy.RETAINED,
+    })
+    expect(createArch.archive).toMatchObject({
+      accountId: 'acct-a',
+      name: 'papers-2026',
+      driveName: 'intake',
+      description: '2026 corpus',
+      versioning: VersioningPolicy.RETAINED,
+    })
+    expect(suggestEntryIdFromFilename('Quarterly Report (Final).pdf')).toBe('quarterly-report-final')
+  })
+
+  it('builds PutEntry requests with metadata validation and inline renditions, and summarizes outcomes (#694, #696)', () => {
+    const req = buildPutEntryRequest(
+      ADDRESS,
+      {
+        title: 'Paper 1 (Revised)',
+        filename: 'p1-rev.pdf',
+        contentType: 'application/pdf',
+        sourceUri: 's3://corpus/p1.pdf',
+        expectedVersion: 3n,
+        producingModule: 'console-editor',
+        metadata: [
+          { key: 'department', value: 'research' },
+          { key: ' ', value: ' ' },
+        ],
+        renditions: [
+          {
+            name: 'notes',
+            subKey: 'summary',
+            mediaType: 'text/markdown',
+            schemaSubject: '',
+            text: '# Executive Summary\nVerified.',
+          },
+        ],
+      },
+      '018f4063-7d4b-7000-8000-000000000111',
+    )
+    expect(req.title).toBe('Paper 1 (Revised)')
+    expect(req.expectedVersion).toBe(3n)
+    expect(req.metadata).toEqual({ department: 'research' })
+    expect(req.renditions).toHaveLength(1)
+    expect(req.renditions[0].rendition).toMatchObject({
+      name: 'notes',
+      subKey: 'summary',
+      mediaType: 'text/markdown',
+    })
+    expect(new TextDecoder().decode(req.renditions[0].data)).toBe('# Executive Summary\nVerified.')
+
+    expect(() =>
+      buildPutEntryRequest(ADDRESS, {
+        title: 'T',
+        filename: '',
+        contentType: '',
+        sourceUri: '',
+        expectedVersion: 0n,
+        producingModule: '',
+        metadata: [{ key: 'archive.internal', value: 'x' }],
+        renditions: [],
+      }),
+    ).toThrow('reserved by the archive service')
+
+    expect(() =>
+      buildPutEntryRequest(ADDRESS, {
+        title: 'T',
+        filename: '',
+        contentType: '',
+        sourceUri: '',
+        expectedVersion: 0n,
+        producingModule: '',
+        metadata: [],
+        renditions: [{ name: 'parsed', subKey: 'p1', mediaType: '', schemaSubject: '', text: 'hi' }],
+      }),
+    ).toThrow('cannot carry a sub-key')
+
+    const created = describePutEntryOutcome(
+      create(PutEntryResponseSchema, {
+        version: 4n,
+        rootChecksum: 'abc123',
+        totalBytes: 512n,
+        deduplicated: false,
+        replayed: false,
+        operationId: 'op-4',
+      }),
+    )
+    expect(created).toMatchObject({ statusLabel: 'CREATED', version: 4n, operationId: 'op-4' })
+
+    const dedup = describePutEntryOutcome(
+      create(PutEntryResponseSchema, {
+        version: 3n,
+        rootChecksum: 'abc123',
+        totalBytes: 512n,
+        deduplicated: true,
+        replayed: false,
+      }),
+    )
+    expect(dedup.statusLabel).toBe('DEDUPLICATED')
+
+    expect(entryCallNumber(ADDRESS)).toEqual({
+      accountId: 'acct-a',
+      graphId: 'archive:acct-a',
+      graphAddressId: 'papers',
+      docId: 'e-1',
+    })
+    expect(entryNodeAddress(ADDRESS)).toMatchObject({
+      accountId: 'acct-a',
+      graphId: 'archive:acct-a',
+      graphAddressId: 'papers',
+      docId: 'e-1',
+    })
+
+    const driveView = describeDriveDetails(
+      create(DriveSchema, {
+        driveId: 'drv-1',
+        name: 'intake',
+        accountId: 'acct-a',
+        driveType: DriveType.INTAKE,
+        status: DriveStatus.ACTIVE,
+        provider: 's3',
+        bucket: 'corpus-bucket',
+        prefix: 'acct-a/raw',
+        region: 'us-east-1',
+        providerConfig: create(DriveProviderConfigSchema, {
+          config: {
+            case: 's3',
+            value: create(S3DriveConfigSchema, {
+              endpointOverride: 'http://minio:9000',
+              forcePathStyle: true,
+            }),
+          },
+          options: { 'multipart.threshold': '16MB' },
+        }),
+        metadata: { tier: 'hot' },
+      }),
+    )
+    expect(driveView).toMatchObject({
+      name: 'intake',
+      location: 'corpus-bucket/acct-a/raw',
+      providerSummary: 'S3 · endpoint http://minio:9000 · path-style=true',
+      providerOptions: [{ key: 'multipart.threshold', value: '16MB' }],
+      metadata: [{ key: 'tier', value: 'hot' }],
+    })
   })
 })

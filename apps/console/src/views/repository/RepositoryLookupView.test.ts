@@ -89,6 +89,21 @@ describe('RepositoryLookupView, by operation ID', () => {
     expect(wrapper.get('[data-testid="rpc-failure"]').text()).toContain('PERMISSION_DENIED')
     wrapper.unmount()
   })
+
+  it('auto-executes GetOperationOutcome when deep-linked with ?account=...&op=... and syncs op into the URL', async () => {
+    const { wrapper, router } = await mountRepositoryView(
+      RepositoryLookupView,
+      { name: 'repository-lookup', query: { account: 'acct-a', op: 'op-done' } },
+      (r) => r.service(DocumentService, { getOperationOutcome: (req) => outcomes[req.operationId]() }),
+    )
+    expect(wrapper.get('[data-testid="outcome-committed"]').text()).toContain('Revision 4 of doc-1')
+    await wrapper.get('[data-testid="op-id"] input').setValue('op-rejected')
+    await wrapper.get('[data-testid="lookup-op"]').trigger('click')
+    await settle()
+    expect(router.currentRoute.value.query).toMatchObject({ account: 'acct-a', op: 'op-rejected' })
+    expect(wrapper.get('[data-testid="outcome-rejected"]').text()).toContain('SCHEMA_MISSING')
+    wrapper.unmount()
+  })
 })
 
 describe('RepositoryLookupView, by call number', () => {
@@ -154,6 +169,10 @@ describe('RepositoryLookupView, by call number', () => {
 
     expect(wrapper.get('[data-testid="concept-doc-row-doc-99"]').text()).toContain('Wind Farm')
     expect(wrapper.get('[data-testid="mounted-scheme-chip-topics"]').text()).toContain('topics@v5')
+
+    await wrapper.get('[data-testid="lookup-pick-intake-graph"]').trigger('click')
+    await settle()
+    expect((wrapper.get('[data-testid="call-graph"] input').element as HTMLInputElement).value).toBe('intake:acct-b')
     wrapper.unmount()
   })
 })

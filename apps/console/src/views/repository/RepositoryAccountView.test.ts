@@ -2,7 +2,19 @@
 import { create } from '@bufbuild/protobuf'
 import { Code, ConnectError } from '@connectrpc/connect'
 import { describe, expect, it } from 'vitest'
-import { DriveSchema, DriveService, DriveStatus, DriveType, ListDrivesResponseSchema } from '@/gen/ai/protomolt/proto/repo/v1/drive_pb'
+import { ArchiveSchema, VersioningPolicy } from '@/gen/ai/protomolt/proto/repo/archive/v1/archive_pb'
+import { ArchiveService, CreateArchiveResponseSchema, ListArchivesResponseSchema } from '@/gen/ai/protomolt/proto/repo/archive/v1/archive_service_pb'
+import {
+  CreateDriveResponseSchema,
+  DriveProviderConfigSchema,
+  DriveSchema,
+  DriveService,
+  DriveStatus,
+  DriveType,
+  GetDriveResponseSchema,
+  ListDrivesResponseSchema,
+  S3DriveConfigSchema,
+} from '@/gen/ai/protomolt/proto/repo/v1/drive_pb'
 import { ConceptRefSchema } from '@/gen/ai/protomolt/proto/types/v1/concepts_pb'
 import {
   ConceptFilterEvidenceSchema,
@@ -18,7 +30,6 @@ import {
   type GetOperationOutcomeRequest,
   type ListDocumentsRequest,
 } from '@/gen/ai/protomolt/proto/repo/v2/document_service_pb'
-import { ArchiveService } from '@/gen/ai/protomolt/proto/repo/archive/v1/archive_service_pb'
 import RepositoryAccountView from '@/views/repository/RepositoryAccountView.vue'
 import { at, testAddress } from '@/repository/repositoryTestKit'
 import { mountRepositoryView, settle } from '@/repository/repositoryViewKit'
@@ -402,6 +413,206 @@ describe('RepositoryAccountView', () => {
     expect(calls).toBe(0)
     expect(wrapper.get('[data-testid="input-error"]').text()).toContain('Concept ID: is blank; a scheme alone names no concept')
     expect(router.currentRoute.value.query).toEqual({ sort: 'size' })
+    wrapper.unmount()
+  })
+
+  it('populates scope quick-picks and toggles the inline SKOS concept picker', async () => {
+    const seen: ListDocumentsRequest[] = []
+    const { wrapper } = await mountRepositoryView(RepositoryAccountView, '/repository/accounts/acct-a', (router) => {
+      drives()(router)
+      router.service(DocumentService, {
+        listDocuments(request) {
+          seen.push(request)
+          return create(ListDocumentsResponseSchema, {
+            documents: [summary('doc-1', 'Doc 1')],
+          })
+        },
+      })
+    })
+    await wrapper.get('[data-testid="quick-scope-intake"]').trigger('click')
+    await settle()
+    expect((wrapper.get('[data-testid="scope-graph-id"] input').element as HTMLInputElement).value).toBe('intake:acct-a')
+
+    await wrapper.get('[data-testid="quick-scope-pair-intake:acct-a-ds-files"]').trigger('click')
+    await settle()
+    expect((wrapper.get('[data-testid="scope-node-id"] input').element as HTMLInputElement).value).toBe('ds-files')
+
+    expect(wrapper.find('[data-testid="inline-concept-browser"]').exists()).toBe(false)
+    await wrapper.get('[data-testid="toggle-inline-concept-browser"]').trigger('click')
+    await settle()
+    expect(wrapper.find('[data-testid="inline-concept-browser"]').exists()).toBe(true)
+    wrapper.unmount()
+  })
+
+  it('provisions a drive, creates an archive, and shows active URL filter chips', async () => {
+    let createdDriveName = ''
+    let createdArchiveName = ''
+    const { wrapper } = await mountRepositoryView(
+      RepositoryAccountView,
+      '/repository/accounts/acct-a?f.title=Report&sort=title',
+      (r) => {
+        r.service(DriveService, {
+          listDrives(request) {
+            return create(ListDrivesResponseSchema, {
+              drives: [
+                create(DriveSchema, {
+                  driveId: 'drv-1',
+                  name: 'intake',
+                  accountId: request.accountId,
+                  driveType: DriveType.INTAKE,
+                  status: DriveStatus.ACTIVE,
+                }),
+                ...(createdDriveName
+                  ? [
+                      create(DriveSchema, {
+                        driveId: 'drv-2',
+                        name: createdDriveName,
+                        accountId: request.accountId,
+                        driveType: DriveType.INTAKE,
+                        status: DriveStatus.ACTIVE,
+                      }),
+                    ]
+                  : []),
+              ],
+            })
+          },
+          createDrive(request) {
+            createdDriveName = request.name
+            return create(CreateDriveResponseSchema, {
+              drive: create(DriveSchema, {
+                driveId: 'drv-2',
+                name: request.name,
+                accountId: request.accountId,
+                driveType: request.driveType,
+                status: DriveStatus.ACTIVE,
+              }),
+            })
+          },
+        })
+        r.service(ArchiveService, {
+          listArchives() {
+            return create(ListArchivesResponseSchema, {
+              archives: createdArchiveName
+                ? [create(ArchiveSchema, { name: createdArchiveName, accountId: 'acct-a', driveName: 'intake' })]
+                : [],
+            })
+          },
+          createArchive(request) {
+            createdArchiveName = request.archive?.name ?? ''
+            return create(CreateArchiveResponseSchema, {
+              archive: create(ArchiveSchema, {
+                name: createdArchiveName,
+                accountId: 'acct-a',
+                driveName: request.archive?.driveName ?? 'intake',
+                versioning: request.archive?.versioning ?? VersioningPolicy.RETAINED,
+              }),
+            })
+          },
+        })
+        r.service(DocumentService, {
+          listDocuments() {
+            return create(ListDocumentsResponseSchema, { documents: [summary('doc-1', 'Report')] })
+          },
+        })
+      },
+    )
+
+    expect(wrapper.find('[data-testid="account-active-filters"]').exists()).toBe(true)
+    expect(wrapper.get('[data-testid="active-filter-title"]').text()).toContain('Report')
+    expect(wrapper.get('[data-testid="active-filter-sort"]').text()).toContain('Title')
+
+    await wrapper.get('[data-testid="toggle-create-drive"]').trigger('click')
+    await settle()
+    await wrapper.get('[data-testid="create-drive-name"] input').setValue('archive-store')
+    await wrapper.get('[data-testid="create-drive-submit"]').trigger('click')
+    await settle()
+    expect(createdDriveName).toBe('archive-store')
+    expect(wrapper.get('[data-testid="drive-table"]').text()).toContain('archive-store')
+
+    await wrapper.get('[data-testid="toggle-create-archive"]').trigger('click')
+    await settle()
+    await wrapper.get('[data-testid="create-archive-name"] input').setValue('papers-2026')
+    await wrapper.get('[data-testid="pick-archive-drive-intake"]').trigger('click')
+    await settle()
+    await wrapper.get('[data-testid="create-archive-submit"]').trigger('click')
+    await settle()
+    expect(createdArchiveName).toBe('papers-2026')
+    expect(wrapper.get('[data-testid="archive-list"]').text()).toContain('papers-2026')
+    wrapper.unmount()
+  })
+
+  it('inspects a drive via DriveService.GetDrive and displays its provider config, metadata, and archives (#696)', async () => {
+    const inspectedNames: string[] = []
+    const { wrapper } = await mountRepositoryView(RepositoryAccountView, '/repository/accounts/acct-a', (r) => {
+      r.service(DriveService, {
+        listDrives(request) {
+          return create(ListDrivesResponseSchema, {
+            drives: [
+              create(DriveSchema, {
+                driveId: 'drv-1',
+                name: 'intake',
+                accountId: request.accountId,
+                driveType: DriveType.INTAKE,
+                status: DriveStatus.ACTIVE,
+                provider: 's3',
+                bucket: 'corpus-bucket',
+                prefix: 'acct-a',
+              }),
+            ],
+          })
+        },
+        getDrive(request) {
+          const name = request.coordinate.case === 'name' ? request.coordinate.value : 'intake'
+          inspectedNames.push(name)
+          return create(GetDriveResponseSchema, {
+            drive: create(DriveSchema, {
+              driveId: 'drv-1',
+              name,
+              accountId: request.accountId,
+              driveType: DriveType.INTAKE,
+              status: DriveStatus.ACTIVE,
+              provider: 's3',
+              bucket: 'corpus-bucket',
+              prefix: 'acct-a',
+              region: 'us-east-1',
+              credentialsRef: 'vault:s3/intake',
+              providerConfig: create(DriveProviderConfigSchema, {
+                config: {
+                  case: 's3',
+                  value: create(S3DriveConfigSchema, {
+                    endpointOverride: 'http://minio:9000',
+                    forcePathStyle: true,
+                  }),
+                },
+                options: { 'multipart.threshold': '16MB' },
+              }),
+              metadata: { retention: '7y' },
+            }),
+          })
+        },
+      })
+      r.service(ArchiveService, {
+        listArchives() {
+          return create(ListArchivesResponseSchema, {
+            archives: [create(ArchiveSchema, { name: 'contracts', accountId: 'acct-a', driveName: 'intake' })],
+          })
+        },
+      })
+      r.service(DocumentService, {
+        listDocuments() {
+          return create(ListDocumentsResponseSchema, { documents: [] })
+        },
+      })
+    })
+
+    await wrapper.get('[data-testid="inspect-drive-intake"]').trigger('click')
+    await settle()
+    expect(inspectedNames).toEqual(['intake'])
+    expect(wrapper.find('[data-testid="drive-inspector-panel"]').exists()).toBe(true)
+    expect(wrapper.get('[data-testid="drive-inspector-name"]').text()).toBe('intake')
+    expect(wrapper.get('[data-testid="drive-inspector-provider-summary"]').text()).toContain('http://minio:9000')
+    expect(wrapper.get('[data-testid="drive-inspector-metadata"]').text()).toContain('retention=7y')
+    expect(wrapper.get('[data-testid="drive-inspector-archives"]').text()).toContain('contracts')
     wrapper.unmount()
   })
 })

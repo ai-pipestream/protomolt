@@ -1,5 +1,6 @@
 package ai.protomolt.proto.repo.archive;
 
+import ai.protomolt.proto.asset.bridge.BridgeEngine;
 import ai.protomolt.proto.repo.archive.v1.ArchiveServiceGrpc;
 import ai.protomolt.proto.repo.archive.v1.BridgeEntryRequest;
 import ai.protomolt.proto.repo.archive.v1.BridgeEntryResponse;
@@ -34,13 +35,9 @@ import java.time.Clock;
 import java.util.function.Supplier;
 
 /**
- * {@code ArchiveService} over v2 documents: the archive-definition, stats, and
- * entry reads and writes of {@link DocumentArchive}, {@link RenditionReads}
- * and {@link RenditionUploads}.
- *
- * <p>The classification and bridging calls are not yet stored as v2 documents;
- * each is {@code UNIMPLEMENTED} naming its open follow-up under #535. Hosts
- * keep serving those from the ledger until then.</p>
+ * {@code ArchiveService} over v2 documents: the archive-definition, stats,
+ * classification, bridging, and entry reads and writes of
+ * {@link DocumentArchive}, {@link RenditionReads}, and {@link RenditionUploads}.
  */
 public final class DocumentArchiveGrpcService extends ArchiveServiceGrpc.ArchiveServiceImplBase {
 
@@ -50,19 +47,33 @@ public final class DocumentArchiveGrpcService extends ArchiveServiceGrpc.Archive
 
     /**
      * Constructs a {@link DocumentArchiveGrpcService} with
-     * {@link DocumentArchive#DEFAULT_MAX_UNARY_GET_BYTES}.
+     * {@link DocumentArchive#DEFAULT_MAX_UNARY_GET_BYTES} and {@link BridgeEngine#standard()}.
      *
      * @param documents the channel to the v2 document service the archive is stored through
      * @param bindings the archive definitions
      * @param clock stamps {@code created_at} on an entry's creating save
      */
     public DocumentArchiveGrpcService(Channel documents, ArchiveBindings bindings, Clock clock) {
-        this(documents, bindings, clock, DocumentArchive.DEFAULT_MAX_UNARY_GET_BYTES);
+        this(documents, bindings, clock, DocumentArchive.DEFAULT_MAX_UNARY_GET_BYTES, BridgeEngine.standard());
+    }
+
+    /**
+     * Constructs a {@link DocumentArchiveGrpcService} with an explicit {@link BridgeEngine}
+     * and {@link DocumentArchive#DEFAULT_MAX_UNARY_GET_BYTES}.
+     *
+     * @param documents the channel to the v2 document service the archive is stored through
+     * @param bindings the archive definitions
+     * @param clock stamps {@code created_at} on an entry's creating save
+     * @param bridgeEngine the bridge engine used by {@code BridgeEntry}
+     */
+    public DocumentArchiveGrpcService(
+            Channel documents, ArchiveBindings bindings, Clock clock, BridgeEngine bridgeEngine) {
+        this(documents, bindings, clock, DocumentArchive.DEFAULT_MAX_UNARY_GET_BYTES, bridgeEngine);
     }
 
     /**
      * Constructs a {@link DocumentArchiveGrpcService} with an explicit unary {@code GetEntry}
-     * byte limit.
+     * byte limit and {@link BridgeEngine#standard()}.
      *
      * @param documents the channel to the v2 document service the archive is stored through
      * @param bindings the archive definitions
@@ -71,7 +82,26 @@ public final class DocumentArchiveGrpcService extends ArchiveServiceGrpc.Archive
      */
     public DocumentArchiveGrpcService(
             Channel documents, ArchiveBindings bindings, Clock clock, long maxUnaryGetBytes) {
-        this.archive = new DocumentArchive(documents, bindings, clock, maxUnaryGetBytes);
+        this(documents, bindings, clock, maxUnaryGetBytes, BridgeEngine.standard());
+    }
+
+    /**
+     * Constructs a {@link DocumentArchiveGrpcService} with an explicit unary {@code GetEntry}
+     * byte limit and {@link BridgeEngine}.
+     *
+     * @param documents the channel to the v2 document service the archive is stored through
+     * @param bindings the archive definitions
+     * @param clock stamps {@code created_at} on an entry's creating save
+     * @param maxUnaryGetBytes maximum total rendition bytes assembled in one unary {@code GetEntry}
+     * @param bridgeEngine the bridge engine used by {@code BridgeEntry}
+     */
+    public DocumentArchiveGrpcService(
+            Channel documents,
+            ArchiveBindings bindings,
+            Clock clock,
+            long maxUnaryGetBytes,
+            BridgeEngine bridgeEngine) {
+        this.archive = new DocumentArchive(documents, bindings, clock, maxUnaryGetBytes, bridgeEngine);
         this.reads = new RenditionReads(archive);
         this.uploads = new RenditionUploads(archive, documents);
     }
@@ -142,17 +172,12 @@ public final class DocumentArchiveGrpcService extends ArchiveServiceGrpc.Archive
 
     @Override
     public void classifyEntry(ClassifyEntryRequest request, StreamObserver<ClassifyEntryResponse> responses) {
-        responses.onError(open("ClassifyEntry", "classification over renditions read through v2 documents"));
+        unary(() -> archive.classifyEntry(request), responses);
     }
 
     @Override
     public void bridgeEntry(BridgeEntryRequest request, StreamObserver<BridgeEntryResponse> responses) {
-        responses.onError(open("BridgeEntry", "bridging over renditions read through v2 documents"));
-    }
-
-    private static StatusRuntimeException open(String call, String followUp) {
-        return ArchiveErrors.unimplemented(call + " is not served by the archive over v2 documents yet; it waits on "
-                + followUp + " (#535)");
+        unary(() -> archive.bridgeEntry(request), responses);
     }
 
     private static <T> void unary(Supplier<T> call, StreamObserver<T> responses) {

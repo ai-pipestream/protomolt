@@ -63,7 +63,13 @@ class UploadHttpServerBackpressureTest {
                 var control = (ServerCallStreamObserver<UploadDocumentResponse>) r;
                 control.disableAutoRequest(); control.request(1); downstream.set(r);
                 return new StreamObserver<>() {
-                    @Override public void onNext(UploadDocumentRequest q) { if (q.hasHeader()) headerReceived.countDown(); }
+                    @Override public void onNext(UploadDocumentRequest q) {
+                        if (!q.hasHeader()) return;
+                        // Accept the header so data may flow; then stop requesting frames.
+                        r.onNext(UploadDocumentResponse.newBuilder()
+                                .setAccepted(ai.protomolt.proto.repo.v2.UploadAccepted.getDefaultInstance()).build());
+                        headerReceived.countDown();
+                    }
                     @Override public void onError(Throwable t) {}
                     @Override public void onCompleted() {}
                 };

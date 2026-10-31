@@ -236,6 +236,7 @@ describe('RepositoryDocumentView', () => {
     expect(history).toContain('op-2')
     expect(history).toContain('ADDED CORE')
     expect(history).toContain('REPLACED CORE')
+    expect(wrapper.get('[data-testid="revision-op-2"]').attributes('href')).toContain('op=op-2')
     await wrapper.get('[data-testid="open-revision-2"]').trigger('click')
     await settle()
     expect(router.currentRoute.value.query.revision).toBe('2')
@@ -380,6 +381,41 @@ describe('RepositoryDocumentView', () => {
     await wrapper.get('[data-testid="download"]').trigger('click')
     await settle()
     expect(wrapper.get('[data-testid="rpc-failure"]').text()).toContain('not allowed here')
+    wrapper.unmount()
+  })
+
+  it('opens directly on the tab named in the route query, updates the query on tab switches, inspects a retained schema descriptor, and jumps to its part', async () => {
+    const seen = seenCalls()
+    const { wrapper, router } = await mountRepositoryView(
+      RepositoryDocumentView,
+      { ...DOC, query: { ...DOC.query, tab: 'validation' } },
+      repository(seen),
+    )
+    expect(wrapper.get('[data-testid="validation-view"]').text()).toContain('TYPED_VALID')
+    expect(router.currentRoute.value.query.tab).toBe('validation')
+
+    await wrapper.get('[data-testid="inspect-schema-0"]').trigger('click')
+    await settle()
+    const descriptorView = wrapper.get('[data-testid="validation-descriptor-view"]')
+    expect(descriptorView.text()).toContain('Retained descriptor: CORE fragment')
+    expect(descriptorView.text()).toContain('ai.protomolt.proto.repo.v1.Document')
+    expect(descriptorView.get('[data-testid="validation-descriptor-verified"]').text()).toContain('SHA-256 verified')
+
+    await wrapper.get('[data-testid="open-schema-part-0"]').trigger('click')
+    await settle()
+    expect(router.currentRoute.value.query.tab).toBeUndefined()
+    const partView = wrapper.get('[data-testid="part-view"]')
+    expect(partView.text()).toContain('"Quarterly report"')
+
+    await wrapper.get('[data-testid="part-tree-filter"] input').setValue('Quarterly')
+    await settle()
+    expect(wrapper.get('[data-testid="part-tree-match-count"]').text()).toBe('1 match')
+    expect(wrapper.get('[data-testid="part-decoded"]').text()).toContain('"Quarterly report"')
+    expect(wrapper.get('[data-testid="part-decoded"]').text()).not.toContain('"doc-1"')
+
+    await wrapper.get('[data-testid="part-tree-filter"] input').setValue('no-such-field-value')
+    await settle()
+    expect(wrapper.get('[data-testid="part-tree-no-matches"]').text()).toContain('No decoded fields or values match "no-such-field-value".')
     wrapper.unmount()
   })
 })

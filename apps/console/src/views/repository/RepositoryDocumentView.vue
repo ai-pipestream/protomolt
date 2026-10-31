@@ -53,10 +53,10 @@
     <v-progress-linear v-if="loading" indeterminate class="mb-2" />
 
     <template v-if="manifest && validation">
-      <v-tabs v-model="tab" density="compact" class="mb-2">
-        <v-tab value="parts">Parts</v-tab>
-        <v-tab value="metadata">Metadata</v-tab>
-        <v-tab value="validation">Validation</v-tab>
+      <v-tabs v-model="tab" density="compact" class="mb-2" @update:model-value="onTabSelected">
+        <v-tab value="parts" data-testid="tab-parts">Parts</v-tab>
+        <v-tab value="metadata" data-testid="tab-metadata">Metadata</v-tab>
+        <v-tab value="validation" data-testid="tab-validation">Validation</v-tab>
         <v-tab value="links" data-testid="tab-links">Links</v-tab>
         <v-tab value="history" data-testid="tab-history">History</v-tab>
         <v-tab v-if="compare !== null" value="compare" data-testid="tab-compare">Compare</v-tab>
@@ -112,6 +112,7 @@
           <v-card v-if="partView" class="mb-4" data-testid="part-view">
             <v-card-title class="text-subtitle-2 d-flex align-center flex-wrap ga-2">
               {{ partView.label }}
+              <v-btn size="x-small" variant="text" data-testid="download-part" @click="downloadPart">Download protobuf</v-btn>
               <span class="text-caption text-medium-emphasis">revision {{ partView.revision }} · {{ byteSize(partView.size) }}</span>
             </v-card-title>
             <v-card-text>
@@ -120,9 +121,46 @@
                   Decoded as {{ partView.decoded.typeUrl }} with the descriptor retained at
                   <span class="text-mono">{{ partView.decoded.descriptorSha256 }}</span>
                 </div>
-                <div class="pmv">
-                  <ProtoMessageNode v-for="(node, n) in partView.tree" :key="n" :node="node" :depth="0" />
+                <div class="d-flex align-center flex-wrap ga-2 mb-2">
+                  <v-text-field
+                    v-model="partTreeFilter"
+                    label="Filter decoded fields, types, or values"
+                    placeholder="field, type, or value"
+                    persistent-placeholder
+                    density="compact"
+                    hide-details
+                    clearable
+                    autocorrect="off"
+                    autocapitalize="off"
+                    spellcheck="false"
+                    style="min-width: 320px; max-width: 400px"
+                    data-testid="part-tree-filter"
+                  />
+                  <v-chip
+                    v-if="(partTreeFilter ?? '').trim()"
+                    size="small"
+                    variant="tonal"
+                    color="primary"
+                    data-testid="part-tree-match-count"
+                  >
+                    {{ filteredPartView.matchCount }} {{ filteredPartView.matchCount === 1 ? 'match' : 'matches' }}
+                  </v-chip>
                 </div>
+                <v-alert
+                  v-if="(partTreeFilter ?? '').trim() && filteredPartView.nodes.length === 0"
+                  type="info"
+                  variant="tonal"
+                  density="compact"
+                  class="mb-2"
+                  data-testid="part-tree-no-matches"
+                >
+                  No decoded fields or values match "{{ (partTreeFilter ?? '').trim() }}".
+                </v-alert>
+                <div v-else class="pmv" data-testid="part-decoded">
+                  <ProtoMessageNode v-for="(node, n) in filteredPartView.nodes" :key="n" :node="node" :depth="0" />
+                </div>
+                <WasmPreview :type-url="partView.decoded.typeUrl" :bytes="partView.bytes"
+                             :descriptor-set="partView.decoded.descriptorSet" :unavailable="partView.previewUnavailable" />
               </template>
               <template v-else>
                 <v-alert type="info" variant="tonal" density="compact" class="mb-2" data-testid="raw-reason">
@@ -165,25 +203,90 @@
               </v-table>
               <div class="text-subtitle-2 mb-1">Schema artifacts</div>
               <v-table v-if="validationSummary!.schemas.length > 0" density="compact" class="mb-3" data-testid="schema-table">
-                <thead><tr><th>Bound to</th><th>Type URL</th><th>Descriptor SHA-256</th><th>Metadata SHA-256</th></tr></thead>
+                <thead>
+                  <tr>
+                    <th scope="col">Bound to</th>
+                    <th scope="col">Type URL</th>
+                    <th scope="col">Descriptor SHA-256</th>
+                    <th scope="col">Metadata SHA-256</th>
+                    <th scope="col" />
+                  </tr>
+                </thead>
                 <tbody>
                   <tr v-for="(s, i) in validationSummary!.schemas" :key="i">
                     <td>{{ s.usage }}</td>
                     <td class="text-mono text-caption">{{ s.typeUrl }}</td>
                     <td class="text-mono text-caption">{{ s.descriptorSha256 }}</td>
                     <td class="text-mono text-caption">{{ s.metadataSha256 }}</td>
+                    <td class="text-right text-no-wrap">
+                      <v-btn
+                        v-if="s.descriptorSha256"
+                        size="x-small"
+                        variant="tonal"
+                        class="mr-1"
+                        :loading="schemaBusy === i"
+                        :data-testid="`inspect-schema-${i}`"
+                        @click="inspectSchemaAt(i)"
+                      >
+                        Inspect descriptor
+                      </v-btn>
+                      <v-btn
+                        v-if="presentPartIndex(s.partLabel) >= 0"
+                        size="x-small"
+                        variant="text"
+                        :data-testid="`open-schema-part-${i}`"
+                        @click="openPartFromValidation(s.partLabel)"
+                      >
+                        Read part
+                      </v-btn>
+                    </td>
                   </tr>
                 </tbody>
               </v-table>
               <div v-else class="text-body-2 text-medium-emphasis mb-3">No schema artifacts are bound.</div>
+              <RpcFailureAlert v-if="schemaFailure" :failure="schemaFailure" title="Reading the retained schema descriptor" class="mb-3" />
+              <v-card v-if="schemaView" variant="outlined" class="mb-3" data-testid="validation-descriptor-view">
+                <v-card-title class="text-subtitle-2 d-flex align-center flex-wrap ga-2">
+                  <span>Retained descriptor: {{ schemaView.usage }}</span>
+                  <span class="text-caption text-mono text-medium-emphasis">{{ schemaView.typeUrl }}</span>
+                  <v-chip size="x-small" variant="tonal" color="success" data-testid="validation-descriptor-verified">
+                    SHA-256 verified ({{ schemaView.descriptorSha256.slice(0, 12) }}…)
+                  </v-chip>
+                  <v-spacer />
+                  <v-btn size="x-small" variant="text" data-testid="close-schema-view" @click="schemaView = null">Close</v-btn>
+                </v-card-title>
+                <v-card-text>
+                  <TypeExplorerPanel :model="schemaView.model" :loading="false" error="" />
+                </v-card-text>
+              </v-card>
               <template v-if="validationSummary!.opaque.length > 0">
                 <div class="text-subtitle-2 mb-1">Opaque values</div>
                 <v-table density="compact" class="mb-3">
-                  <thead><tr><th>In</th><th>Type URL</th><th>SHA-256</th><th>Length</th><th>Owner</th></tr></thead>
+                  <thead>
+                    <tr>
+                      <th scope="col">In</th>
+                      <th scope="col">Type URL</th>
+                      <th scope="col">SHA-256</th>
+                      <th scope="col">Length</th>
+                      <th scope="col">Owner</th>
+                      <th scope="col" />
+                    </tr>
+                  </thead>
                   <tbody>
                     <tr v-for="(o, i) in validationSummary!.opaque" :key="i">
                       <td>{{ o.at }}</td><td class="text-mono text-caption">{{ o.typeUrl }}</td>
                       <td class="text-mono text-caption">{{ o.sha256 }}</td><td>{{ o.length }}</td><td>{{ o.owner }}</td>
+                      <td class="text-right">
+                        <v-btn
+                          v-if="presentPartIndex(o.at) >= 0"
+                          size="x-small"
+                          variant="text"
+                          :data-testid="`open-opaque-part-${i}`"
+                          @click="openOpaquePartFromValidation(o.at)"
+                        >
+                          Read part
+                        </v-btn>
+                      </td>
                     </tr>
                   </tbody>
                 </v-table>
@@ -230,9 +333,10 @@
 <script setup lang="ts">
 import { computed, ref, shallowRef, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { create, type DescMessage, type Message } from '@bufbuild/protobuf'
+import { create, equals, type DescMessage, type Message } from '@bufbuild/protobuf'
 import { Code, ConnectError } from '@connectrpc/connect'
 import ProtoMessageNode from '@/components/ProtoMessageNode.vue'
+import TypeExplorerPanel from '@/components/TypeExplorerPanel.vue'
 import BlobFiles from '@/components/repository/BlobFiles.vue'
 import DeleteDocumentDialog from '@/components/repository/DeleteDocumentDialog.vue'
 import DocumentLinks from '@/components/repository/DocumentLinks.vue'
@@ -253,13 +357,16 @@ import {
   type DocumentManifest,
   type RevisionValidation,
 } from '@/gen/ai/protomolt/proto/repo/v2/manifest_pb'
-import type { ViewNode } from '@/lib/message-view/messageTree'
+import { filterViewTree, type ViewNode } from '@/lib/message-view/messageTree'
 import { useRepositoryClients } from '@/repository/clients'
+import WasmPreview from '@/components/WasmPreview.vue'
+import { AnySchemas } from '@/repository/anySchemas'
 import { decodedTree } from '@/repository/decodedTreeCore'
 import {
   blobRows,
   metadataEntries,
   nodeAddress,
+  parseDocumentTab,
   parseRevision,
   partRows,
   revisionSelector,
@@ -268,15 +375,17 @@ import {
   type CallNumber,
 } from '@/repository/documentCore'
 import { byteSize, hexDump } from '@/repository/formatCore'
-import { decodePart, readPart, type DecodedPart } from '@/repository/partReadCore'
+import { decodePart, readPart, retainedDescriptorSet, type DecodedPart } from '@/repository/partReadCore'
 import { rpcFailure, type RpcFailure } from '@/repository/rpcErrorCore'
 import { useCallScope } from '@/repository/useCallScope'
+import { buildDescriptorModel, type DescriptorModel } from '@/services/descriptorModel'
 
 const clients = useRepositoryClients()
 const route = useRoute()
 const router = useRouter()
 const readScope = useCallScope()
 const partScope = useCallScope()
+const schemaScope = useCallScope()
 
 const tab = ref('parts')
 const loading = ref(false)
@@ -295,6 +404,15 @@ const blobs = ref<BlobRow[]>([])
 const documentFailure = ref<RpcFailure | null>(null)
 
 const parts = computed(() => (manifest.value ? partRows(manifest.value) : []))
+
+const schemaBusy = ref<number | null>(null)
+const schemaFailure = ref<RpcFailure | null>(null)
+const schemaView = shallowRef<{
+  usage: string
+  typeUrl: string
+  descriptorSha256: string
+  model: DescriptorModel
+} | null>(null)
 
 // Only the current revision of a live document can be tombstoned.
 const deleting = ref(false)
@@ -331,26 +449,49 @@ const validationSummary = computed(() => (validation.value ? validationView(vali
 const allowOpaque = ref(false)
 const partBusy = ref<number | null>(null)
 const partFailure = ref<RpcFailure | null>(null)
+const partTreeFilter = ref('')
 const partView = shallowRef<{
   label: string
   revision: bigint
   size: bigint
   decoded: DecodedPart
+  bytes: Uint8Array
+  previewUnavailable: string | null
   tree: ViewNode[]
   hex: string[]
 } | null>(null)
+
+const filteredPartView = computed(() =>
+  filterViewTree(partView.value?.tree ?? [], partTreeFilter.value ?? ''),
+)
 
 function queryText(name: string): string {
   const value = route.query[name]
   return typeof value === 'string' ? value : ''
 }
 
+function routeDocumentKey(): string {
+  return [
+    queryText('account'),
+    queryText('graph'),
+    queryText('node'),
+    queryText('doc'),
+    queryText('revision'),
+    queryText('compare'),
+  ].join('\u0000')
+}
+
+let loadedKey = ''
+
 async function load() {
+  loadedKey = routeDocumentKey()
   // A new route starts from nothing: earlier reads, a part read still running
   // and the previous revision's metadata and files all go.
   const signal = readScope.next()
   partScope.next()
+  schemaScope.next()
   partBusy.value = null
+  schemaBusy.value = null
   // A delete dialog belongs to the document it opened on.
   deleting.value = false
   routeError.value = null
@@ -358,6 +499,8 @@ async function load() {
   documentFailure.value = null
   partFailure.value = null
   partView.value = null
+  schemaFailure.value = null
+  schemaView.value = null
   manifest.value = null
   validation.value = null
   pinned.value = null
@@ -383,7 +526,9 @@ async function load() {
     routeError.value = (error as Error).message
     return
   }
+  const requestedTab = parseDocumentTab(queryText('tab'))
   if (compare.value !== null) tab.value = 'compare'
+  else if (requestedTab !== null) tab.value = requestedTab
   else if (tab.value === 'compare') tab.value = 'parts'
   address.value = target
   call.value = callNumber
@@ -458,6 +603,17 @@ async function findTombstone(target: NodeAddress, signal: AbortSignal) {
   }
 }
 
+function downloadPart() {
+  if (!partView.value) return
+  const blob = new Blob([Uint8Array.from(partView.value.bytes)], { type: 'application/x-protobuf' })
+  const url = URL.createObjectURL(blob)
+  const link = document.createElement('a')
+  link.href = url
+  link.download = `part-r${partView.value.revision}.pb`
+  link.click()
+  setTimeout(() => URL.revokeObjectURL(url), 1000)
+}
+
 async function readPartAt(index: number) {
   const entry = manifest.value?.parts[index]
   if (!entry?.selector || !address.value || pinned.value === null || !validation.value) return
@@ -465,22 +621,91 @@ async function readPartAt(index: number) {
   partBusy.value = index
   partFailure.value = null
   partView.value = null
+  partTreeFilter.value = ''
   try {
     const part = await readPart(clients.documents, address.value, pinned.value, entry.selector, allowOpaque.value, signal)
     const decoded = await decodePart(clients.documents, address.value, part.revision, validation.value, entry.selector, part.bytes, signal)
+    const schemas = decoded.kind === 'decoded'
+      ? await AnySchemas.load(clients.documents, address.value, part.revision, validation.value, signal, entry.selector) : AnySchemas.none()
     if (signal.aborted) return
     partView.value = {
       label: parts.value[index].label,
       revision: part.revision,
       size: BigInt(part.bytes.length),
       decoded,
-      tree: decoded.kind === 'decoded' ? decodedTree(decoded.desc as DescMessage, decoded.message as Message) : [],
+      bytes: part.bytes,
+      previewUnavailable: entry.opaque || validation.value.opaqueOccurrences.some((o) => o.occurrence?.part && equals(PartSelectorSchema, o.occurrence.part, entry.selector!))
+        ? 'Custom previews are unavailable for parts containing opaque payloads.' : null,
+      tree: decoded.kind === 'decoded' ? decodedTree(decoded.desc as DescMessage, decoded.message as Message, { schemas, location: { part: entry.selector, steps: [] } }) : [],
       hex: decoded.kind === 'raw' ? hexDump(part.bytes.subarray(0, 4096)) : [],
     }
   } catch (error) {
     if (!signal.aborted) partFailure.value = rpcFailure(error)
   } finally {
     if (!signal.aborted) partBusy.value = null
+  }
+}
+
+function presentPartIndex(label: string | null): number {
+  if (label === null) return -1
+  return parts.value.findIndex((p) => p.label === label && p.state === 'PRESENT')
+}
+
+async function inspectSchemaAt(index: number) {
+  const artifact = validationSummary.value?.schemas[index]
+  if (!artifact || !artifact.descriptorSha256 || !address.value || pinned.value === null) return
+  const signal = schemaScope.next()
+  schemaBusy.value = index
+  schemaFailure.value = null
+  schemaView.value = null
+  try {
+    const bytes = await retainedDescriptorSet(
+      clients.documents,
+      address.value,
+      pinned.value,
+      artifact.descriptorSha256,
+      signal,
+    )
+    if (signal.aborted) return
+    const model = buildDescriptorModel(bytes)
+    schemaView.value = {
+      usage: artifact.usage,
+      typeUrl: artifact.typeUrl,
+      descriptorSha256: artifact.descriptorSha256,
+      model,
+    }
+  } catch (error) {
+    if (!signal.aborted) schemaFailure.value = rpcFailure(error)
+  } finally {
+    if (!signal.aborted) schemaBusy.value = null
+  }
+}
+
+function openPartFromValidation(label: string | null) {
+  const index = presentPartIndex(label)
+  if (index < 0) return
+  tab.value = 'parts'
+  onTabSelected('parts')
+  void readPartAt(index)
+}
+
+function openOpaquePartFromValidation(label: string) {
+  const index = presentPartIndex(label)
+  if (index < 0) return
+  allowOpaque.value = true
+  tab.value = 'parts'
+  onTabSelected('parts')
+  void readPartAt(index)
+}
+
+function onTabSelected(next: unknown) {
+  const value = typeof next === 'string' ? next : ''
+  if (value === '' || routeError.value !== null) return
+  const query = { ...route.query }
+  if (value === 'parts' || value === 'compare') delete query.tab
+  else query.tab = value
+  if ((query.tab ?? '') !== queryText('tab')) {
+    void router.replace({ name: 'repository-document', query })
   }
 }
 
@@ -495,6 +720,7 @@ function parseCompare(raw: string): bigint | null {
 /** Compares the shown revision with `revision`, or ends the comparison when it is null. */
 function openCompare(revision: bigint | null) {
   const query = { ...route.query }
+  delete query.tab
   if (revision === null) delete query.compare
   else query.compare = revision.toString()
   // The shown side stays the revision on screen, so a newer save cannot slip into the comparison.
@@ -517,7 +743,21 @@ function openRevision(revision: bigint | null) {
   void router.push({ name: 'repository-document', query })
 }
 
-watch(() => route.fullPath, () => void load(), { immediate: true })
+watch(
+  () => route.fullPath,
+  () => {
+    const key = routeDocumentKey()
+    if (key !== loadedKey) {
+      void load()
+      return
+    }
+    const requestedTab = parseDocumentTab(queryText('tab'))
+    if (compare.value === null && requestedTab !== null) {
+      tab.value = requestedTab
+    }
+  },
+  { immediate: true },
+)
 </script>
 
 <style scoped>

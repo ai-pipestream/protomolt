@@ -7,6 +7,7 @@ import {
   FileDescriptorSetSchema,
   anyPack,
   AnySchema,
+  Int64ValueSchema,
   type Any,
   type FileDescriptorProto,
 } from '@bufbuild/protobuf/wkt'
@@ -33,8 +34,10 @@ import {
 } from '@/gen/ai/protomolt/proto/repo/v2/manifest_pb'
 import { FieldRulesSchema, field as fieldRules, file_ai_protomolt_proto_validate_v1_validate } from '@/gen/ai/protomolt/proto/validate/v1/validate_pb'
 import { linkRow } from './linksCore'
-import { AnySchemas, flatten, linkLines, partDiff, readSide, searchMetadataLines, sectionDiff } from './revisionDiffCore'
+import { AnySchemas, filterSectionDiff, flatten, linkLines, partDiff, readSide, searchMetadataLines, sectionDiff } from './revisionDiffCore'
 import { descriptorSetOf, routerClients, testAddress } from './repositoryTestKit'
+import { decodedTree } from './decodedTreeCore'
+import { filterViewTree, type ViewNode } from '@/lib/message-view/messageTree'
 import { Sha256 } from './sha256'
 import { ResolvedLinkSchema, StaticLinkStateSchema } from '@/gen/ai/protomolt/proto/repo/v2/document_service_pb'
 
@@ -561,5 +564,132 @@ describe('linkLines and sectionDiff', () => {
       'del structured_data.cites[0] references -> intake:acct-a/ds-files/doc-3',
       'add structured_data.cites[0] references -> intake:acct-a/ds-files/doc-4',
     ])
+  })
+})
+
+
+/** Fully expand only in tests; the screen expands branches on demand. */
+function inspected(nodes: ViewNode[]): string[] {
+  return nodes.flatMap(node => [node.label, node.display ?? '', node.detail ?? '', ...inspected(node.loadChildren?.() ?? node.children ?? [])])
+}
+
+describe('retained Any inspector', () => {
+  it('preserves exact int64 and unknown fields inside a resolved Any', async () => {
+    const root = anyContainer()
+    const set = descriptorSetOf(Int64ValueSchema.file)
+    const packed = anyPack(Int64ValueSchema, create(Int64ValueSchema, { value: 9007199254740993n }))
+    packed.value = new Uint8Array([...packed.value, 0xa0, 6, 1])
+    const { schemas } = await loadSchemas(create(RevisionValidationSchema, { resolvedOccurrences: [resolved(packed, set, [fieldStep(1)])] }), [set])
+    const tree = decodedTree(root.desc, create(root.desc, { first: packed } as never), { schemas, location: { part: part(DocumentPart.CORE), steps: [] } })
+    expect(inspected(tree)).toContain('9007199254740993')
+    expect(inspected(tree)).toContain('#100')
+  })
+
+  it('stops a very deep ordinary message at an explicit display boundary', () => {
+    const file = create(FileDescriptorProtoSchema, { name: 'deep.proto', package: 'test', syntax: 'proto3', messageType: [{ name: 'Node', field: [{ name: 'child', number: 1, type: FieldDescriptorProto_Type.MESSAGE, typeName: '.test.Node', label: FieldDescriptorProto_Label.OPTIONAL }] }] })
+    const desc = createFileRegistry(create(FileDescriptorSetSchema, { file: [file] })).getMessage('test.Node')!
+    const message = create(desc)
+    let at = message as unknown as { child?: unknown }
+    for (let i = 0; i < 10000; i++) { const child = create(desc); at.child = child; at = child as unknown as { child?: unknown } }
+    const tree = decodedTree(desc, message, { schemas: AnySchemas.none(), location: { part: part(DocumentPart.CORE), steps: [] } })
+    expect(inspected(tree).join(' ')).toContain('Inspection depth limit reached')
+  })
+
+  it('lazily expands consecutive Any envelopes and distinguishes opaque same-byte siblings', async () => {
+    const tagged = taggedSchema()
+    const root = anyContainer()
+    const packed = anyPack(tagged.desc, create(tagged.desc, { title: 'Only typed content' } as never))
+    const outer = anyPack(AnySchema, packed)
+    const anySet = descriptorSetOf(AnySchema.file)
+    const { schemas } = await loadSchemas(create(RevisionValidationSchema, {
+      resolvedOccurrences: [resolved(outer, anySet, [fieldStep(1)]), resolved(packed, tagged.set, [fieldStep(1), boundaryStep(outer, anySet)])],
+      opaqueOccurrences: [{ occurrence: { part: part(DocumentPart.CORE), steps: [fieldStep(2)] }, typeUrl: outer.typeUrl, sha256: digest(outer.value), length: BigInt(outer.value.length) }],
+    }), [anySet, tagged.set])
+    const tree = decodedTree(root.desc, create(root.desc, { first: outer, second: outer } as never), { schemas, location: { part: part(DocumentPart.CORE), steps: [] } })
+    expect(tree[0].children).toBeUndefined()
+    expect(tree[0].loadChildren).toBeTypeOf('function')
+    expect(inspected([tree[0]])).toContain('Only typed content')
+    expect(inspected([tree[1]]).join(' ')).toContain('Opaque: payload not decoded')
+    expect(inspected([tree[1]])).not.toContain('Only typed content')
+  })
+
+  it('uses repeated indices and map keys without lending schemas to neighbors', async () => {
+    const tagged = taggedSchema()
+    const root = anyContainer()
+    const packed = anyPack(tagged.desc, create(tagged.desc, { title: 'Resolved' } as never))
+    const mapKey = create(RepositorySchemaOccurrenceStepSchema, { step: { case: 'mapKey', value: { type: RepositoryOccurrenceKeyType.STRING, value: { case: 'stringValue', value: 'yes' } } } })
+    const { schemas } = await loadSchemas(create(RevisionValidationSchema, { resolvedOccurrences: [
+      resolved(packed, tagged.set, [fieldStep(3), indexStep(1)]), resolved(packed, tagged.set, [fieldStep(4), mapKey]),
+    ] }), [tagged.set])
+    const tree = decodedTree(root.desc, create(root.desc, { items: [packed, packed], entries: { no: packed, yes: packed } } as never), { schemas, location: { part: part(DocumentPart.CORE), steps: [] } })
+    const items = tree[0].loadChildren!()
+    expect(inspected([items[0]])).not.toContain('Resolved')
+    expect(inspected([items[1]])).toContain('Resolved')
+    const entries = tree[1].loadChildren!()
+    expect(inspected([entries[0]])).not.toContain('Resolved')
+    expect(inspected([entries[1]])).toContain('Resolved')
+  })
+
+  it('shows a mismatched binding and malformed typed bytes as different failures', async () => {
+    const tagged = taggedSchema()
+    const root = anyContainer()
+    const packed = create(AnySchema, { typeUrl: `type.googleapis.com/${tagged.desc.typeName}`, value: new Uint8Array([10, 255]) })
+    const changed = clone(AnySchema, packed)
+    changed.value = new Uint8Array([10, 0])
+    const { schemas } = await loadSchemas(create(RevisionValidationSchema, { resolvedOccurrences: [resolved(packed, tagged.set, [fieldStep(1)]), resolved(packed, tagged.set, [fieldStep(2)])] }), [tagged.set])
+    const tree = decodedTree(root.desc, create(root.desc, { first: packed, second: changed } as never), { schemas, location: { part: part(DocumentPart.CORE), steps: [] } })
+    expect(inspected([tree[0]])).toContain('(invalid payload)')
+    expect(inspected([tree[1]]).join(' ')).toContain('Payload differs from its retained binding')
+    expect(inspected([tree[1]])).not.toContain('(decoded payload)')
+  })
+
+  it('uses each occurrence’s own descriptor even when names and bytes match', async () => {
+    const first = taggedSchema()
+    const second = taggedSchema('category')
+    const root = anyContainer()
+    const packed = anyPack(first.desc, create(first.desc, { subject: { schemeId: 'topics', conceptId: 'wind' } } as never))
+    const { schemas } = await loadSchemas(create(RevisionValidationSchema, { resolvedOccurrences: [resolved(packed, first.set, [fieldStep(1)]), resolved(packed, second.set, [fieldStep(2)])] }), [first.set, second.set])
+    const tree = decodedTree(root.desc, create(root.desc, { first: packed, second: packed } as never), { schemas, location: { part: part(DocumentPart.CORE), steps: [] } })
+    expect(inspected([tree[0]])).toContain('subject')
+    expect(inspected([tree[0]])).not.toContain('category')
+    expect(inspected([tree[1]])).toContain('category')
+  })
+
+  it('pages large collections lazily without hiding the remaining entries', () => {
+    const root = anyContainer()
+    const tree = decodedTree(root.desc, create(root.desc, { items: Array.from({ length: 10000 }, () => create(AnySchema)) } as never), { schemas: AnySchemas.none(), location: { part: part(DocumentPart.CORE), steps: [] } })
+    expect(tree[0].children).toBeUndefined()
+    const children = tree[0].loadChildren!()
+    expect(children).toHaveLength(201)
+    expect(children[200].label).toBe('(more entries)')
+    expect(children[200].loadChildren!()[0].label).toBe('[200]')
+    expect(tree[0].loadChildren!()).toBe(children)
+  })
+
+  it('filters a decoded tree across lazy Any nodes and filters section diffs by line or changed-only', async () => {
+    const tagged = taggedSchema()
+    const root = anyContainer()
+    const packed = anyPack(tagged.desc, create(tagged.desc, { title: 'Needle in Any' } as never))
+    const { schemas } = await loadSchemas(
+      create(RevisionValidationSchema, { resolvedOccurrences: [resolved(packed, tagged.set, [fieldStep(1)])] }),
+      [tagged.set],
+    )
+    const tree = decodedTree(root.desc, create(root.desc, { first: packed } as never), {
+      schemas,
+      location: { part: part(DocumentPart.CORE), steps: [] },
+    })
+    const hit = filterViewTree(tree, 'needle')
+    expect(hit.matchCount).toBe(1)
+    expect(hit.nodes).toHaveLength(1)
+    expect(hit.nodes[0].defaultOpen).toBe(true)
+    expect(inspected(hit.nodes)).toContain('Needle in Any')
+    expect(filterViewTree(tree, 'nonexistent-value').nodes).toEqual([])
+
+    const diff = sectionDiff(['title = "Draft"', 'language = "en"'], ['title = "Final"', 'language = "en"'])
+    const changed = filterSectionDiff(diff, '', true)
+    expect(changed.lines.map((l) => l.op)).toEqual(['del', 'add'])
+    const byText = filterSectionDiff(diff, 'final', false)
+    expect(byText.lines).toHaveLength(1)
+    expect(byText.lines[0].text).toContain('Final')
   })
 })

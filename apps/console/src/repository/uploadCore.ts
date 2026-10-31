@@ -69,6 +69,28 @@ export function emptyUploadForm(accountId = ''): UploadForm {
   return { accountId, datasourceId: '', drive: '', docId: '', connectorId: '', expectedRevision: '', contentType: '' }
 }
 
+/**
+ * Derives a clean document ID from an optional path prefix and a filename
+ * (e.g. prefix `"reports/2026/"` + `"Q4 Financial Summary.pdf"` ->
+ * `"reports/2026/q4-financial-summary.pdf"`).
+ */
+export function deriveDocIdFromFilename(pathPrefix: string, filename: string): string {
+  const baseName = filename.trim().replace(/^.*[/\\]/, '')
+  const slug = baseName
+    .toLowerCase()
+    .replace(/[^a-z0-9._-]+/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/-\./g, '.')
+    .replace(/^-|-$/g, '')
+  const cleanPrefix = pathPrefix
+    .trim()
+    .replace(/^\/+/, '')
+    .replace(/\/+$/, '')
+  if (cleanPrefix === '') return slug
+  if (slug === '') return cleanPrefix
+  return `${cleanPrefix}/${slug}`
+}
+
 function required(label: string, raw: string): string {
   if (raw.trim() === '') throw new UploadInputError(label, 'is blank')
   return raw

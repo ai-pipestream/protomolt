@@ -27,6 +27,7 @@ import {
   metadataEntries,
   nodeAddress,
   ownerLabel,
+  parseDocumentTab,
   parseRevision,
   partLabel,
   partRows,
@@ -60,6 +61,15 @@ describe('call numbers and revisions', () => {
     expect(() => parseRevision('two')).toThrow('not a whole number')
     expect(revisionSelector(null).selector).toEqual({ case: 'current', value: true })
     expect(revisionSelector(5n).selector).toEqual({ case: 'revision', value: 5n })
+  })
+
+  it('parses bookmarkable document tab query values and ignores unknown ones', () => {
+    expect(parseDocumentTab(undefined)).toBeNull()
+    expect(parseDocumentTab('')).toBeNull()
+    expect(parseDocumentTab('validation')).toBe('validation')
+    expect(parseDocumentTab('links')).toBe('links')
+    expect(parseDocumentTab('files')).toBe('files')
+    expect(parseDocumentTab('unknown')).toBeNull()
   })
 })
 

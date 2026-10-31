@@ -396,7 +396,11 @@ the procedures the screens call, listed in `ConsoleProcedures` in
   request's caller with the same resolver as the gateway: the operator token
   uploads with process authority, and a console session uploads as the scoped
   caller its principal is bound as, so an account it is not bound to answers
-  403 and a request with neither credential answers 401.
+  403 and a request with neither credential answers 401. A host that starts
+  the upload routes without the gateway resolves callers the same way through
+  the same account bindings, with the operator token as its only credential:
+  the upload is recorded under the `operator` caller, and a session or any
+  other credential answers 401.
 - **Session writes.** A session uploads and deletes only as an intake owner
   its principal's account binding lists in `intake_writers` (account,
   datasource, optional connector, and whether it may create documents). For
@@ -479,3 +483,18 @@ no intake writers. Run it with:
     PROTOMOLT_CONSOLE_BROWSER_IT=1 ./gradlew :protomolt-repo-fixtures:integrationTest --tests '*ConsoleBrowserIT'
 
 A failing run leaves its report and traces in `playwright-report/`.
+
+### Retained protobuf inspection and local WASM previews
+
+The repository document's Parts view can expand nested `Any` at its exact
+retained occurrence, including repeated/map ancestors and nested envelopes.
+Opaque, missing-binding, mismatched and malformed values are distinguished.
+Branches expand lazily with explicit display limits; original part downloads
+preserve the complete binary payload.
+
+A selected local WASM module can produce a plain-text preview in a disposable
+browser worker, with protobuf input/output, bounded linear memory, a deadline
+and cancellation. This is read-only, optional, and unavailable for opaque parts.
+The [preview ABI and example](../../apps/console/examples/README.md) document
+the contract and its limitations. Server-side WASM plugin execution and native
+qualification of this preview ABI are not part of this console feature.

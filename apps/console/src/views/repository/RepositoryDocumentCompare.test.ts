@@ -239,4 +239,22 @@ describe('RepositoryDocumentView compare', () => {
     expect(failure).toContain('doc-1 has no revision 2')
     wrapper.unmount()
   })
+
+  it('filters revision comparison by changed-only and line query', async () => {
+    const seen = { manifests: [] as GetManifestRequest[] }
+    const { wrapper } = await mountRepositoryView(RepositoryDocumentView, `${DOC}&revision=3&compare=1`, repository(seen))
+    expect(wrapper.find('[data-testid="compare-concepts-same"]').exists()).toBe(true)
+
+    await wrapper.get('[data-testid="compare-changed-only"] input').setValue(true)
+    await settle()
+    expect(wrapper.find('[data-testid="compare-concepts-same"]').exists()).toBe(false)
+    expect(wrapper.get('[data-testid="compare-metadata"]').text()).not.toContain('language = "en"')
+    expect(wrapper.get('[data-testid="compare-metadata"]').text()).toContain('title = "Final"')
+
+    await wrapper.get('[data-testid="compare-line-filter"] input').setValue('category')
+    await settle()
+    expect(wrapper.get('[data-testid="compare-metadata"]').text()).toContain('category = "report"')
+    expect(wrapper.get('[data-testid="compare-metadata"]').text()).not.toContain('title = "Final"')
+    wrapper.unmount()
+  })
 })

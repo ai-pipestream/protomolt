@@ -37,10 +37,14 @@ service DocumentService {
   // out of order. One document's failure never fails the stream.
   rpc SaveDocuments(stream SaveDocumentsRequest) returns (stream SaveDocumentsResponse);
 
-  // Streamed raw-file or encoded-part upload: one header, then bytes, then
-  // client half-close. Runs the same save as SaveDocument. The HTTP upload
-  // route is a surface onto this operation.
-  rpc UploadDocument(stream UploadDocumentRequest) returns (UploadDocumentResponse);
+  // Raw-file or encoded-part upload, answered before any byte is staged. The
+  // header frame runs every admission check. An inline body commits in that
+  // round trip and is answered saved. A streamed body is answered accepted (the
+  // data frames may follow, then an optional trailer, then client half-close,
+  // answered saved) or replayed (an earlier commit of the same intent; no data
+  // is sent). A refusal ends the call before any data. Runs the same save as
+  // SaveDocument. The HTTP upload route is a surface onto this operation.
+  rpc UploadDocument(stream UploadDocumentRequest) returns (stream UploadDocumentResponse);
 
   // Tombstone. Itself an accession with a revision, an operation ID and an
   // expected revision. No bytes are removed.
@@ -336,6 +340,11 @@ message UploadHeader {
     message: "an upload carries a raw blob or an encoded part"
     expression: "has(this.blob_id) || has(this.encoded_part)"
   };
+  option (ai.protomolt.proto.validate.v1.message).cel = {
+    id: "upload-body-required"
+    message: "an upload's bytes are inline or streamed"
+    expression: "has(this.inline_data) || has(this.streamed)"
+  };
   // The save this upload commits. For a raw blob its document carries the
   // blob's metadata without data or storage_ref, and writes include BLOBS PUT;
   // the server fills the claim check.
@@ -354,6 +363,33 @@ message UploadHeader {
     ignore_if_zero: true
     string: {sha256_hex: true}
   }];
+  // How the bytes arrive. Exactly one.
+  oneof body {
+    // The whole payload, carried in this frame with a finished CORE. Only for a
+    // payload whose header frame fits the host's maximum message size; no data
+    // or trailer frame follows.
+    bytes inline_data = 6;
+    // The payload follows in data frames once the upload is accepted.
+    StreamedBody streamed = 7;
+  }
+}
+
+// A payload sent in data frames after the accepted answer.
+message StreamedBody {
+  // The header's CORE is provisional and an UploadTrailer carrying the
+  // finished document follows the last data frame. Allowed only when CORE is a
+  // PUT write that is not itself the streamed part.
+  bool core_in_trailer = 1;
+}
+
+// The last frame of a streamed upload whose header set core_in_trailer. The
+// trailer's document may differ from the header's in CORE content only: its
+// address, ownership and every other fragment must be the ones accepted. The
+// server runs ownership derivation, owner match and writer authority again on
+// it before the one commit.
+message UploadTrailer {
+  // The finished document of the save.
+  ai.protomolt.proto.repo.v1.Document document = 1 [(ai.protomolt.proto.validate.v1.field).required = true];
 }
 
 // The bytes are one stored codec fragment; the server selects its schema from
@@ -367,23 +403,43 @@ message StreamedPart {
 message UploadDocumentRequest {
   option (ai.protomolt.proto.validate.v1.message).cel = {
     id: "upload-frame-required"
-    message: "a frame is a header or data"
-    expression: "has(this.header) || has(this.data)"
+    message: "a frame is a header, data or a trailer"
+    expression: "has(this.header) || has(this.data) || has(this.trailer)"
   };
   // Exactly one frame kind.
   oneof frame {
     // First frame, exactly once.
     UploadHeader header = 1;
-    // Any number of data frames.
+    // Any number of data frames, only after the accepted answer.
     bytes data = 2;
+    // At most once, after the last data frame, when the header asked for it.
+    UploadTrailer trailer = 3;
   }
 }
 
-// The committed upload.
+// One answer of an upload: accepted, then saved; or replayed; or saved alone
+// for an inline body.
 message UploadDocumentResponse {
-  // The save it committed.
-  SaveDocumentResponse saved = 1 [(ai.protomolt.proto.validate.v1.field).required = true];
+  option (ai.protomolt.proto.validate.v1.message).cel = {
+    id: "upload-answer-required"
+    message: "an upload answer is accepted, replayed or saved"
+    expression: "has(this.accepted) || has(this.replayed) || has(this.saved)"
+  };
+  // Exactly one answer kind.
+  oneof answer {
+    // The committed save, or the recorded outcome found once the bytes and
+    // trailer fixed the upload's intent. Always the last answer.
+    SaveDocumentResponse saved = 1;
+    // The header passed every check; the streamed body may now be sent.
+    UploadAccepted accepted = 2;
+    // The operation ID already committed this intent. The recorded outcome is
+    // returned before any data and the call ends.
+    SaveDocumentResponse replayed = 3;
+  }
 }
+
+// The answer that admits a streamed body.
+message UploadAccepted {}
 
 // ============================================================================
 // Delete, purge, outcomes

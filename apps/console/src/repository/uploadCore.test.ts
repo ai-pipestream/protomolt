@@ -17,6 +17,7 @@ import { FakeUploadRequest, at, routerClients, testAddress, type FakeAnswer } fr
 import {
   HASH_SLICE_BYTES,
   UploadInputError,
+  deriveDocIdFromFilename,
   emptyUploadForm,
   fileSha256,
   followOutcome,
@@ -45,10 +46,13 @@ function itemError(status: number, code: Code, message: string, detail?: ItemErr
 const saved = toBinary(
   UploadDocumentResponseSchema,
   create(UploadDocumentResponseSchema, {
-    saved: create(SaveDocumentResponseSchema, {
-      operationId: 'op-1',
-      accession: create(AccessionSchema, { address: testAddress(), revision: 1n }),
-    }),
+    answer: {
+      case: 'saved',
+      value: create(SaveDocumentResponseSchema, {
+        operationId: 'op-1',
+        accession: create(AccessionSchema, { address: testAddress(), revision: 1n }),
+      }),
+    },
   }),
 )
 
@@ -128,7 +132,7 @@ describe('sendUpload', () => {
     const answer = await result
     expect(answer.kind).toBe('saved')
     if (answer.kind !== 'saved') throw new Error('unreachable')
-    expect(answer.response.saved?.accession?.revision).toBe(1n)
+    expect(answer.response.answer.case === 'saved' ? answer.response.answer.value.accession?.revision : undefined).toBe(1n)
     const r = request()
     expect(r.method).toBe('POST')
     expect(r.withCredentials).toBe(true)
@@ -269,5 +273,13 @@ describe('followOutcome', () => {
     const last = await followOutcome(client, 'acct-a', 'op-1', new AbortController().signal, (a) => seen.push(a.state), noSleep)
     expect(seen).toEqual(['unavailable', 'unavailable', 'unavailable'])
     expect(last.state).toBe('unavailable')
+  })
+})
+
+describe('deriveDocIdFromFilename', () => {
+  it('slugifies filenames and joins optional path prefixes cleanly', () => {
+    expect(deriveDocIdFromFilename('', 'Q4 Financial Summary (Draft).pdf')).toBe('q4-financial-summary-draft-.pdf'.replace('-.pdf', '.pdf'))
+    expect(deriveDocIdFromFilename('/reports/2026/', 'Annual Report.PDF')).toBe('reports/2026/annual-report.pdf')
+    expect(deriveDocIdFromFilename('intake', 'nested/path/notes_v1.md')).toBe('intake/notes_v1.md')
   })
 })

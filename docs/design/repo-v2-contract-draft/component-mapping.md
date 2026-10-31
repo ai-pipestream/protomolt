@@ -40,7 +40,7 @@ between the reviewed draft and the built contract; the draft proto is deleted.
 
 - **Writes**
   - `SaveDocument` and `SaveDocuments` (bidi; one response per request_id, independent of the durable operation_id).
-  - `UploadDocument` (client stream for raw bytes or an encoded codec fragment; the HTTP route maps onto the same upload/save operation).
+  - `UploadDocument` (bidirectional stream for raw bytes or an encoded codec fragment, answered before any byte is staged; the HTTP route maps onto the same upload/save operation).
   - `DeleteDocument` (tombstone) and `PurgeDocument` (admin).
 - **Outcome lookup:** `GetOperationOutcome` returns either `committed` or `none`. The third state, "lookup unavailable", is gRPC `UNAVAILABLE`.
 - **Reads**
@@ -513,8 +513,8 @@ draft, with the reason for each.
 - Every file sets `java_outer_classname`.
 
 **Shape changes.**
-- `UploadDocument` returns `UploadDocumentResponse` (wrapping `SaveDocumentResponse`)
-  to satisfy buf's standard response naming.
+- `UploadDocument` answers with `UploadDocumentResponse` (accepted, replayed, or a
+  wrapped `SaveDocumentResponse`), which also satisfies buf's standard response naming.
 - `REJECTION_REASON_WRITE_DENIED` added for PERMISSION_DENIED writer failures (§5).
   `errors.proto` states which reasons are recorded outcomes: failures before the
   writer is authorized (MALFORMED_REQUEST, OWNER_UNKNOWN, WRITE_DENIED) are not.
