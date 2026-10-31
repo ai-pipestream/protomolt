@@ -34,6 +34,13 @@ import {
   RenditionState,
   VersionManifestSchema,
 } from '@/gen/ai/protomolt/proto/repo/archive/v1/entry_pb'
+import {
+  DeleteDocumentResponseSchema,
+  DocumentService,
+  PurgeDocumentResponseSchema,
+  type DeleteDocumentRequest,
+} from '@/gen/ai/protomolt/proto/repo/v2/document_service_pb'
+import { AccessionSchema } from '@/gen/ai/protomolt/proto/repo/v2/manifest_pb'
 import { at } from '@/repository/repositoryTestKit'
 import { mountRepositoryView, settle } from '@/repository/repositoryViewKit'
 import RepositoryArchiveEntryView from './RepositoryArchiveEntryView.vue'
@@ -552,6 +559,57 @@ describe('RepositoryArchiveEntryView', () => {
       doc: 'e-1',
       revision: '3',
     })
+    wrapper.unmount()
+  })
+
+  it("tombstones the current version through the entry's v2 call number and never purges (#696, #531)", async () => {
+    const s = seen()
+    const deletes: DeleteDocumentRequest[] = []
+    let purges = 0
+    const { wrapper, router } = await mountRepositoryView(RepositoryArchiveEntryView, ENTRY, (r) => {
+      archives(s)(r)
+      r.service(DocumentService, {
+        deleteDocument(request) {
+          deletes.push(request)
+          return create(DeleteDocumentResponseSchema, {
+            operationId: request.operationId,
+            accession: create(AccessionSchema, { address: request.address, revision: 4n, previousRevision: 3n, tombstone: true }),
+          })
+        },
+        purgeDocument() {
+          purges++
+          return create(PurgeDocumentResponseSchema)
+        },
+      })
+    })
+    const dialog = () => document.body.querySelector('[data-testid="delete-dialog"]') as HTMLElement | null
+
+    await wrapper.get('[data-testid="delete-archive-entry"]').trigger('click')
+    await settle()
+    expect(dialog()!.querySelector('[data-testid="delete-call-number"]')!.textContent).toBe('acct-a / archive:acct-a / papers / e-1')
+    expect(dialog()!.querySelector('[data-testid="delete-revision"]')!.textContent).toBe('3')
+    expect(dialog()!.textContent!.toLowerCase()).not.toContain('purge')
+
+    ;(document.body.querySelector('[data-testid="delete-confirm"]') as HTMLElement).click()
+    await settle()
+    expect(deletes).toHaveLength(1)
+    expect(deletes[0].address).toMatchObject({ accountId: 'acct-a', graphId: 'archive:acct-a', graphAddressId: 'papers', docId: 'e-1' })
+    expect(deletes[0].expected?.expected).toEqual({ case: 'revision', value: 3n })
+    expect(purges).toBe(0)
+    expect(router.currentRoute.value.name).toBe('repository-document')
+    expect(router.currentRoute.value.query).toMatchObject({ graph: 'archive:acct-a', node: 'papers', doc: 'e-1', revision: '4' })
+    wrapper.unmount()
+  })
+
+  it('offers Delete entry only on the current version', async () => {
+    const { wrapper } = await mountRepositoryView(
+      RepositoryArchiveEntryView,
+      { name: 'repository-archive-entry', query: { account: 'acct-a', archive: 'papers', entry: 'e-1', version: '2' } },
+      archives(seen()),
+    )
+    await settle()
+    expect(wrapper.find('[data-testid="version-chip"]').text()).toContain('version 2')
+    expect(wrapper.find('[data-testid="delete-archive-entry"]').exists()).toBe(false)
     wrapper.unmount()
   })
 })
