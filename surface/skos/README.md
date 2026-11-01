@@ -128,6 +128,38 @@ The feed needs idempotent replay, per-document revision ordering, durable
 checkpoints and deletion handling. Current repository eventing is disabled
 when Kafka is absent, so graph activation must explicitly require a feed.
 
+A bounded next implementation can be an optional projector library with no
+network listener: given an explicitly authorized `ConceptScheme` or exact-revision
+`ListLinksResponse`, replace that document's derived named graph in a Jena
+transaction. Record the full source address, revision, field path/ordinal,
+retained schema identity and mapping version. Map static links using an explicit
+relation table; dynamic selectors remain selectors, not universal graph edges.
+Tests should prove deterministic projection, account separation, replacement and
+delete behavior. This can run against supplied protobuf snapshots without
+pretending a live repository feed or query authorization exists.
+
+The current [document service contract](../../repo/proto/src/main/proto/ai/protomolt/proto/repo/v2/document_service.proto)
+supports exact-revision `ListLinks`, `GetManifest`, `ReadDocument` and
+`GetSchemaDescriptor`. The last operation grants no access from a digest alone:
+its descriptor must belong to a revision the caller can read. `ListLinks`
+target states are reader-relative, so a privileged worker must not publish its
+`target_unavailable` or `target_tombstoned` flags as universal facts. No RPC lists
+catalog concept tags. A tag projector needs a reusable retained-CORE reader from
+`DocumentReads.decodeCoreLinks` before calling `DocumentConcepts.extract`, with
+its occurrence attestations, descriptor verification and resource budgets intact.
+It must not substitute whatever the registry currently resolves for a type URL.
+
+Live projection is a separate integration milestone. `OutboxRelay` owns
+`Catalog.pendingEvents`/`markRelayed`; those are broker delivery state, not an
+independent graph consumer checkpoint. Reuse the protobuf Kafka serde framing
+from `KafkaOutboxPublisher`, then atomically persist graph changes, processed
+event IDs and partition checkpoints in the graph store before acknowledging
+Kafka. Accession revision guards cannot discard revision-zero purge events.
+Backfill also needs a tested feed high-water/replay protocol: mutable
+`ListDocuments` pages alone are not a consistent snapshot. The worker must be
+restricted to explicitly configured accounts and authenticated reads. Neither
+its credentials nor a shared Kafka topic authorize end-user queries.
+
 Query authorization must restrict the graph before joins, aggregates and
 inference, and current ACL revocations must take effect despite projection lag.
 Named graphs alone are not ACLs. Keep that graph runtime and its dependencies
