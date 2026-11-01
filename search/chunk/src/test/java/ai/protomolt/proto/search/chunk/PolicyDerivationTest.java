@@ -55,6 +55,42 @@ class PolicyDerivationTest {
     }
 
     @Test
+    void chunksOfOneTextShareOneBatchedDocumentCall() {
+        List<List<String>> batches = new java.util.ArrayList<>();
+        EmbeddingProvider batched = new EmbeddingProvider() {
+            public String providerId() { return "fake"; }
+            public int dimension() { return 3; }
+            public float[] embed(String text) { throw new AssertionError("purpose missing"); }
+            public float[] embedDocument(String text) { throw new AssertionError("batch missing"); }
+            public List<float[]> embedAllDocuments(List<String> texts) {
+                batches.add(List.copyOf(texts));
+                return texts.stream().map(text -> new float[] {text.length(), 0, 1}).toList();
+            }
+        };
+        List<PolicyDerivation.DerivedChunk> derived = new PolicyDerivation(batched)
+                .derive("First sentence here now. Second sentence here too. Third one closes it.",
+                        policy(false));
+        assertThat(derived).hasSize(2);
+        assertThat(batches).singleElement().satisfies(batch -> assertThat(batch).hasSize(2));
+        for (var chunk : derived) {
+            assertThat(chunk.vector()).containsExactly(chunk.chunk().text().length(), 0, 1);
+        }
+    }
+
+    @Test
+    void batchWithTheWrongVectorCountRefuses() {
+        EmbeddingProvider undersized = new EmbeddingProvider() {
+            public String providerId() { return "fake"; }
+            public int dimension() { return 3; }
+            public float[] embed(String text) { return new float[] {1, 2, 3}; }
+            public List<float[]> embedAllDocuments(List<String> texts) { return List.of(new float[] {1, 2, 3}); }
+        };
+        assertThatThrownBy(() -> new PolicyDerivation(undersized)
+                .derive("First sentence here now. Second sentence here too. Third one closes it.", policy(false)))
+                .isInstanceOf(IllegalStateException.class).hasMessageContaining("1 vectors for 2 chunks");
+    }
+
+    @Test
     void derivesOneVectorPerChunkInOrder() {
         List<PolicyDerivation.DerivedChunk> derived = new PolicyDerivation(new FakeProvider())
                 .derive("First sentence here now. Second sentence here too. Third one closes it.",

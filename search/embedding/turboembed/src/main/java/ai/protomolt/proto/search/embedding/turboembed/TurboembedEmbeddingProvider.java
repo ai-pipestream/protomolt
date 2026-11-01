@@ -99,6 +99,16 @@ public final class TurboembedEmbeddingProvider implements EmbeddingProvider {
     }
 
     @Override
+    public List<float[]> embedAllDocuments(List<String> texts) {
+        return infer(texts, "PROMPT_DOCUMENT");
+    }
+
+    @Override
+    public List<float[]> embedAllQueries(List<String> texts) {
+        return infer(texts, "PROMPT_QUERY");
+    }
+
+    @Override
     public float[] embedQuery(String text) {
         return infer(List.of(text), "PROMPT_QUERY").getFirst();
     }

@@ -40,7 +40,12 @@ vector the provider produces, and `embed(String)`. A default `embedAll`
 loops over `embed` in order; providers with a real batch API override it.
 Default `embedQuery` and `embedDocument` delegate to `embed`, preserving symmetric
 providers. Providers with role-specific prefixes override those methods; search
-and document derivation call the corresponding purpose.
+and document derivation call the corresponding purpose. The batched forms
+`embedAllDocuments` and `embedAllQueries` default to looping over the single-text
+purpose methods, so an asymmetric provider never falls back to the neutral
+`embedAll`; chunk derivation embeds a text's chunks with one `embedAllDocuments`
+call. TEI and OVMS route both forms to their batched `embedAll`, and Turboembed
+batches each purpose separately.
 
 The SPI is `AutoCloseable`: providers may hold connections, and `close()`
 releases whatever the provider holds. The default is a no-op, so

@@ -29,12 +29,13 @@ turboembed-v1:<manifest-sha256>` (one value with no newline). Supply all six
 The manifest-bound provider ID is part of the policy digest: changing the bundle
 cannot reuse the old index snapshot identity. The `v1` identifies this client's
 purpose/normalization protocol. Indexing calls `embedDocument`; queries call
-`embedQuery`. Ordinary `embed`/`embedAll` explicitly select no prefix.
+`embedQuery`; their batched forms `embedAllDocuments` and `embedAllQueries` keep
+the purpose. Ordinary `embed`/`embedAll` explicitly select no prefix.
 
 A ModelInfer call sends raw UTF-8 text in the standard BYTES tensor `texts`,
 requests no truncation and unquantized vectors, and accepts only finite FP32
 `vectors` matching the declared dimension. Calls have 30-second deadlines and
-neutral batches split at 32 texts. A server with a smaller capacity refuses;
+batches of every purpose split at 32 texts. A server with a smaller capacity refuses;
 there is no client retry that changes the input, model, purpose or precision.
 The constructor taking a ManagedChannel leaves credentials and channel lifetime
 with its caller. Environment-configured plaintext must be chosen explicitly.

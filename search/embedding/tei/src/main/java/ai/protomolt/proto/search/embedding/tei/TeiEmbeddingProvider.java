@@ -190,6 +190,18 @@ public final class TeiEmbeddingProvider implements EmbeddingProvider, AutoClosea
         }
     }
 
+    /** Symmetric model: document text uses the same batched call as {@link #embedAll(List)}. */
+    @Override
+    public List<float[]> embedAllDocuments(List<String> texts) {
+        return embedAll(texts);
+    }
+
+    /** Symmetric model: queries use the same batched call as {@link #embedAll(List)}. */
+    @Override
+    public List<float[]> embedAllQueries(List<String> texts) {
+        return embedAll(texts);
+    }
+
     /**
      * Embeds each text with its own unary Embed call, issued concurrently on virtual threads.
      * TEI batches concurrent requests server side (dynamic batching), so per-text unary calls

@@ -85,9 +85,22 @@ public final class PolicyDerivation {
                     + " produces " + provider.dimension());
         }
         List<Chunk> chunks = chunker.chunk(text, policy.chunking());
-        List<DerivedChunk> derived = new ArrayList<>(chunks.size());
+        List<String> texts = new ArrayList<>(chunks.size());
         for (Chunk chunk : chunks) {
-            float[] vector = provider.embedDocument(chunk.text());
+            texts.add(chunk.text());
+        }
+        // One batched document-purpose call; a provider with a batch API sends
+        // the whole text's chunks together instead of one request per chunk.
+        List<float[]> vectors = texts.isEmpty() ? List.of() : provider.embedAllDocuments(texts);
+        if (vectors == null || vectors.size() != chunks.size()) {
+            throw new IllegalStateException("provider " + provider.providerId() + " returned "
+                    + (vectors == null ? "null" : vectors.size() + " vectors")
+                    + " for " + chunks.size() + " chunks");
+        }
+        List<DerivedChunk> derived = new ArrayList<>(chunks.size());
+        for (int i = 0; i < chunks.size(); i++) {
+            Chunk chunk = chunks.get(i);
+            float[] vector = vectors.get(i);
             if (vector == null || vector.length != embedding.dims()) {
                 throw new IllegalStateException("provider " + provider.providerId()
                         + " returned " + (vector == null ? "null" : vector.length + " dims")

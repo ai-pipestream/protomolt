@@ -198,6 +198,18 @@ public final class OvmsEmbeddingProvider implements EmbeddingProvider, AutoClose
         return embedAll(List.of(text)).getFirst();
     }
 
+    /** Symmetric model: document text uses the same batched call as {@link #embedAll(List)}. */
+    @Override
+    public List<float[]> embedAllDocuments(List<String> texts) {
+        return embedAll(texts);
+    }
+
+    /** Symmetric model: queries use the same batched call as {@link #embedAll(List)}. */
+    @Override
+    public List<float[]> embedAllQueries(List<String> texts) {
+        return embedAll(texts);
+    }
+
     /**
      * Embeds the batch in chunks of at most {@value #MAX_TEXTS_PER_REQUEST} texts, one
      * {@code ModelInferRequest} per chunk under its own fresh 30 second deadline: a BYTES

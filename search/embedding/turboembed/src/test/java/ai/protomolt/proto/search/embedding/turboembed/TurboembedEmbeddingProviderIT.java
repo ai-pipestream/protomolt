@@ -105,6 +105,24 @@ class TurboembedEmbeddingProviderIT {
     }
 
     @Test
+    void batchedPurposesKeepTheirPromptRole() {
+        List<String> texts = new ArrayList<>();
+        for (int i = 1; i <= 33; i++) {
+            texts.add("x".repeat(i));
+        }
+        List<float[]> documents = provider.embedAllDocuments(texts);
+        List<float[]> queries = provider.embedAllQueries(List.of("q"));
+        assertThat(requests).hasSize(3);
+        for (int i = 0; i < texts.size(); i++) {
+            assertThat(documents.get(i)).containsExactly(i + 1, 1);
+        }
+        assertThat(queries).singleElement().satisfies(vector -> assertThat(vector).containsExactly(1, 1));
+        assertThat(requests.subList(0, 2)).allSatisfy(request ->
+                assertThat(request.getParametersOrThrow("prompt_role").getStringParam()).isEqualTo("PROMPT_DOCUMENT"));
+        assertThat(requests.get(2).getParametersOrThrow("prompt_role").getStringParam()).isEqualTo("PROMPT_QUERY");
+    }
+
+    @Test
     void wrongRevisionAndMissingOrDifferentManifestRefuse() {
         transform = r -> r.toBuilder().setModelVersion("revision-2").build();
         assertThatThrownBy(() -> provider.embed("x")).hasMessageContaining("model revision or manifest");

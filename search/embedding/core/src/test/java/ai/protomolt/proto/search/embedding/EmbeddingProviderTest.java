@@ -20,6 +20,21 @@ class EmbeddingProviderTest {
     }
 
     @Test
+    void batchedPurposeDefaultsKeepThePurposeInsteadOfTheNeutralBatch() {
+        EmbeddingProvider asymmetric = new EmbeddingProvider() {
+            public String providerId() { return "asymmetric"; }
+            public int dimension() { return 1; }
+            public float[] embed(String text) { throw new AssertionError("neutral embedding"); }
+            public List<float[]> embedAll(List<String> texts) { throw new AssertionError("neutral batch"); }
+            public float[] embedDocument(String text) { return new float[] {1}; }
+            public float[] embedQuery(String text) { return new float[] {2}; }
+        };
+
+        assertThat(asymmetric.embedAllDocuments(List.of("a", "b"))).containsExactly(new float[] {1}, new float[] {1});
+        assertThat(asymmetric.embedAllQueries(List.of("a"))).containsExactly(new float[] {2});
+    }
+
+    @Test
     void closeDefaultsToANoOpSoInProcessProvidersNeedNoOverride() {
         EmbeddingProvider provider = new FixedTableEmbeddingProvider();
 
