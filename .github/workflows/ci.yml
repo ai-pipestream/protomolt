@@ -128,6 +128,9 @@ jobs:
       - name: Authoring starter configuration
         run: deploy/authoring/check-static.sh
 
+      - name: Test protobuf compatibility gate
+        run: python3 scripts/test_proto_compatibility.py
+
       - name: Buf breaking (PRs)
         if: github.event_name == 'pull_request'
         env:
