@@ -488,3 +488,25 @@ so a plain run neither runs nor skips it.
 | Variable | Default | Accepted |
 |---|---|---|
 | `PROTOMOLT_CONSOLE_BROWSER_IT` | unset = the console browser leg is left out | exactly `1`; runs `ConsoleBrowserIT`, which boots the seeded repository host with Keycloak sign-in and runs the Playwright specs in `apps/console/e2e` against it. Needs `npm ci && npm run build` in `apps/console` and Playwright's Chromium first |
+
+### Turboembed provider selection
+
+`DOCUMENT_PLATFORM_SEARCH_EMBEDDING_PROVIDER` explicitly selects an installed
+embedding provider. Absent retains the existing Model2Vec/lexical-only preset;
+blank, padded, unknown or unconfigured selection fails rather than falling back.
+For Turboembed use `turboembed-v1:<manifest-sha256>`; the identity goes into the
+chunking policy digest so a changed bundle requires reindexing.
+
+| Variable | Required behavior |
+| --- | --- |
+| `PROTOMOLT_TURBOEMBED_TARGET` | Explicit gRPC endpoint. |
+| `PROTOMOLT_TURBOEMBED_TRANSPORT` | Exactly `tls` or `plaintext`; no implicit downgrade. |
+| `PROTOMOLT_TURBOEMBED_MODEL` | Served model name (by default the bundle directory name, not model metadata ID). |
+| `PROTOMOLT_TURBOEMBED_REVISION` | Exact served bundle revision, checked on every response. |
+| `PROTOMOLT_TURBOEMBED_MANIFEST_SHA256` | Exact lowercase 64-character manifest digest, checked on every response. |
+| `PROTOMOLT_TURBOEMBED_DIMS` | Positive integer dimensions, checked against each returned vector. |
+
+All six Turboembed values are required when selected. Configuration does not
+prove server availability; the RPC checks the pinned identity before returning
+vectors. Custom credentials/TLS can be supplied through the caller-owned channel
+constructor. No Turboembed dependency is added to the repository-only assembly.

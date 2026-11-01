@@ -43,6 +43,18 @@ class PolicyDerivationTest {
     }
 
     @Test
+    void chunkDerivationUsesDocumentPurpose() {
+        EmbeddingProvider asymmetric = new EmbeddingProvider() {
+            public String providerId() { return "fake"; }
+            public int dimension() { return 3; }
+            public float[] embed(String text) { throw new AssertionError("purpose missing"); }
+            public float[] embedDocument(String text) { return new float[] {1, 2, 3}; }
+        };
+        assertThat(new PolicyDerivation(asymmetric).derive("One short sentence.", policy(false)))
+                .singleElement().satisfies(chunk -> assertThat(chunk.vector()).containsExactly(1, 2, 3));
+    }
+
+    @Test
     void derivesOneVectorPerChunkInOrder() {
         List<PolicyDerivation.DerivedChunk> derived = new PolicyDerivation(new FakeProvider())
                 .derive("First sentence here now. Second sentence here too. Third one closes it.",

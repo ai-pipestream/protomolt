@@ -26,6 +26,16 @@ public interface EmbeddingProvider extends AutoCloseable {
     /** Embeds {@code text} into a {@link #dimension()}-component vector. */
     float[] embed(String text);
 
+    /** Embeds a search query. Symmetric providers use their ordinary embedding. */
+    default float[] embedQuery(String text) {
+        return embed(text);
+    }
+
+    /** Embeds document content. Symmetric providers use their ordinary embedding. */
+    default float[] embedDocument(String text) {
+        return embed(text);
+    }
+
     /**
      * Embeds each text in order. The default loops over {@link #embed(String)};
      * providers with a batch API should override.

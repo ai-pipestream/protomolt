@@ -73,7 +73,7 @@ public final class RerankedSemanticSearch {
                     + ") must be at least k (" + k
                     + "); the reranker can only reorder what the kNN pass recalled");
         }
-        float[] embedding = embedder.embed(query);
+        float[] embedding = embedder.embedQuery(query);
         List<Float> vector = new ArrayList<>(embedding.length);
         for (float component : embedding) {
             vector.add(component);

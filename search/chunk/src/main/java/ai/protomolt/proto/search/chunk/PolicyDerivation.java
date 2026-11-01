@@ -87,7 +87,7 @@ public final class PolicyDerivation {
         List<Chunk> chunks = chunker.chunk(text, policy.chunking());
         List<DerivedChunk> derived = new ArrayList<>(chunks.size());
         for (Chunk chunk : chunks) {
-            float[] vector = provider.embed(chunk.text());
+            float[] vector = provider.embedDocument(chunk.text());
             if (vector == null || vector.length != embedding.dims()) {
                 throw new IllegalStateException("provider " + provider.providerId()
                         + " returned " + (vector == null ? "null" : vector.length + " dims")

@@ -102,7 +102,7 @@ public final class MappingEmbedder {
         if (text.isEmpty()) {
             return document;
         }
-        float[] embedding = provider.embed(text);
+        float[] embedding = provider.embedDocument(text);
         if (embedding == null || embedding.length != provider.dimension()) {
             throw new IllegalStateException("Provider '" + provider.providerId() + "' returned "
                     + (embedding == null ? "null" : embedding.length + " components")
