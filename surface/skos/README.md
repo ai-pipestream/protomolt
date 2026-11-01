@@ -106,6 +106,9 @@ Malformed RDF retains its parse cause; unavailable input remains an I/O failure.
 Turtle input requires well-formed UTF-8; malformed byte sequences are refused
 instead of replaced. RDF/XML honors its declared encoding. Protobuf strings
 with unpaired UTF-16 surrogates are refused before export can replace them.
+U+FFFE and U+FFFF are also refused because the supported RDF readers reject
+them. Other noncharacters that round-trip remain supported; XML-forbidden
+control characters fail RDF/XML export, while Turtle can preserve them.
 
 This library materializes one scheme. It does not claim constant-memory graph
 ingestion, arbitrary RDF round trips, registry discovery, or native-image
@@ -177,7 +180,7 @@ flock /work/.gradle-krick.lock ./gradlew :protomolt-repo-service:dependencies \
   --configuration runtimeClasspath --max-workers=2
 ```
 
-Sixteen tests passed, zero failures/errors/skips. The installed launcher also
+Eighteen tests passed, zero failures/errors/skips. The installed launcher also
 converted the included example through Turtle -> protobuf -> RDF/XML -> protobuf.
 The repo-service runtime report contains neither Jena nor this module; the SKOS
 distribution contains no Jetty or Servlet JARs. No repository integration test,

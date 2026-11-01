@@ -287,4 +287,45 @@ class SkosConverterTest {
             assertThat(roundTrip.getConcepts(0).getNotation(0).getValue()).isEqualTo("001");
         }
     }
+
+    @Test void exportRefusesNoncharactersThatTheRdfReadersReject() {
+        var valid = read(SIMPLE);
+        for (int codePoint : new int[] {0xfffe, 0xffff}) {
+            String text = "a" + Character.toString(codePoint) + "b";
+            var label = valid.getConcepts(0).getPrefLabel(0).toBuilder().setText(text);
+            var withLabel = valid.toBuilder().setConcepts(0, valid.getConcepts(0).toBuilder().setPrefLabel(0, label)).build();
+            var withNotation = valid.toBuilder().setConcepts(0, valid.getConcepts(0).toBuilder()
+                    .addNotation(ConceptNotation.newBuilder().setValue(text))).build();
+            for (var format : SkosConverter.Format.values()) {
+                for (var scheme : new ConceptScheme[] {withLabel, withNotation}) {
+                    var output = new ByteArrayOutputStream();
+                    assertThatThrownBy(() -> converter.write(scheme, output, format))
+                            .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("cannot round-trip");
+                    assertThat(output.size()).isZero();
+                }
+            }
+        }
+    }
+
+    @Test void otherNoncharactersAndTurtleControlsRetainTheirValues() {
+        var valid = read(SIMPLE);
+        for (int codePoint : new int[] {0, 1, 0xfdd0, 0xfdef, 0x1fffe, 0x1ffff, 0x10fffe, 0x10ffff}) {
+            String text = "a" + Character.toString(codePoint) + "b";
+            var scheme = valid.toBuilder().setConcepts(0, valid.getConcepts(0).toBuilder()
+                    .setPrefLabel(0, valid.getConcepts(0).getPrefLabel(0).toBuilder().setText(text))
+                    .addNotation(ConceptNotation.newBuilder().setValue(text))).build();
+            for (var format : SkosConverter.Format.values()) {
+                var output = new ByteArrayOutputStream();
+                if (format == SkosConverter.Format.RDF_XML && codePoint < 2) {
+                    assertThatThrownBy(() -> converter.write(scheme, output, format))
+                            .isInstanceOf(RuntimeException.class);
+                    assertThat(output.size()).isZero();
+                } else {
+                    converter.write(scheme, output, format);
+                    assertThat(converter.read(new ByteArrayInputStream(output.toByteArray()), format)).isEqualTo(scheme);
+                }
+            }
+        }
+    }
+
 }

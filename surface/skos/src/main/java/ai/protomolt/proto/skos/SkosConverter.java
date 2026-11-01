@@ -443,6 +443,8 @@ public final class SkosConverter {
     private static void requireUnicode(String value) {
         for (int i = 0; i < value.length(); i++) {
             char ch = value.charAt(i);
+            if (ch == '\ufffe' || ch == '\uffff')
+                throw refused("U+FFFE and U+FFFF cannot round-trip through the supported RDF parsers");
             if (Character.isHighSurrogate(ch)) {
                 if (i + 1 == value.length() || !Character.isLowSurrogate(value.charAt(++i)))
                     throw refused("unpaired UTF-16 surrogate in protobuf string");
