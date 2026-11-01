@@ -342,7 +342,8 @@ The design of record is [docs/design/archive.md](../docs/design/archive.md).
   recorded mutation refusal replays its refusal status, and an unknown or
   non-mutation operation ID returns `NOT_FOUND`. Retry the same command with
   the same UUID to replay the recorded receipt or refusal; reusing the UUID for
-  a different command fails with `ALREADY_EXISTS`.
+  a different command fails with `ALREADY_EXISTS`. These operations require
+  explicit authenticated authority and a qualified managed-storage host.
 - `GetArchiveStats` — exact per-archive counters (entries, versions,
   retained/current bytes, per-rendition breakdown, and per-state
   classification counts) computed by `DocumentArchive.getArchiveStats` over

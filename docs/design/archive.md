@@ -10,9 +10,9 @@ collections of entries, each entry a set of independently addressable
 **renditions** — the raw file, a parsed protobuf, markdown, NDJSON, parquet,
 anything — with attached metadata, retained version history, and three ways
 in (gRPC unary, gRPC client-streaming, HTTP POST). It is backed by v2
-documents through `DocumentService` — served by `DocumentArchive`
-(`DocumentArchiveGrpcService`) and `DocumentArchiveMutation`
-(`DocumentArchiveMutationGrpcService`) over the same drives, blob stores,
+documents through `DocumentService` — served by `DocumentArchive` behind
+`DocumentArchiveGrpcService` and, for mutations, the thin
+`DocumentArchiveMutationGrpcService` adapter, over the same drives, blob stores,
 and `protomolt-repo-service` binary, standalone or embedded.
 
 The design premise: when you have a single document you tend to grow it.
@@ -108,9 +108,11 @@ a coordination protocol with its own failure modes. Entry-local carry-forward
 bounds every version's references to that entry's own v2 revision manifests.
 
 A save whose root checksum (SHA-256 over the ordered rendition hashes)
-matches the entry's current version is elided entirely and answers
-`unchanged` (`created = false` on `PutEntry`, `replayed` or `unchanged` on
-`UploadRendition`) with the existing coordinates.
+matches the entry's current version is elided entirely: v2 records an
+unchanged outcome instead of a new revision, and `PutEntry` answers
+`deduplicated = true` with the existing coordinates. `UploadRendition` has no
+dedupe flag. On both responses `replayed = true` marks the recorded outcome of
+an earlier identical call under the same `operation_id`.
 
 ## The manifest is the contract
 
@@ -121,7 +123,8 @@ revision's `RevisionManifest` and stored `CORE` / `BLOBS` / `PARSED` parts
 (§3 below), so it is always transactionally consistent with the revision.
 
 Everything operational derives from the manifest's exact key list, never
-from prefix listing: deletion deletes the manifest's keys, reconciliation
+from prefix listing: a deletion is a tombstone revision whose manifest still
+names its keys (no object bytes go away under keep-forever retention), reconciliation
 diffs the bucket against the union of manifest keys, and a reader holding a
 manifest knows byte-for-byte what a version contains before fetching
 anything. Prefix sweeps are never safe — prefixes nest.
@@ -161,8 +164,9 @@ is required (411 without it); the body streams through a digest straight to
 `DocumentService.UploadDocument` with no full-body buffering; a checksum
 mismatch is a 400. Success returns a binary `UploadRenditionResponse` with
 `Content-Type: application/protobuf`; the route does not negotiate JSON via `Accept`.
-The receipt carries the committed `version`, `rendition`, `size_bytes`, `sha256`,
-`operation_id`, and `replayed` flag (`entry_uuid` is reserved). A producer that
+The receipt carries the committed `version`, `sha256`, `size_bytes`, `object_key`,
+`root_checksum`, `operation_id`, and `replayed` flag; `entry_uuid` is still declared
+but left blank over v2 (§1). A producer that
 must know nothing about protomolt uses this door and still gets every guarantee.
 
 ## Reads
@@ -259,13 +263,14 @@ over the live v2 documents in the `archive:<account_id>` graph (`graph_address_i
 
 ## Durable deletion and recovery
 
-`DocumentArchiveMutation` (`DocumentArchiveMutationGrpcService`) implements
+`DocumentArchiveMutationGrpcService`, a thin adapter over `DocumentArchive`, implements
 `ArchiveMutationService` over v2 `DocumentService` outcomes (§7 below):
 
 - **`DeleteEntry` -> `DeleteDocument` (tombstone).** `DeleteEntry` checks
   `DocumentService.GetOperationOutcome` first for an idempotent replay of
   `operation_id` and otherwise delegates to `DocumentService.DeleteDocument` at
-  the entry's current revision (or `expected_version`). Under keep-forever
+  the entry's current revision; the public `DeleteEntryRequest` has no expected
+  version, only the internal Java overload takes one. Under keep-forever
   retention, logical deletion commits a tombstone revision and removes no
   physical object bytes, returning `ArchiveMutationReceipt` with
   `kind = ARCHIVE_MUTATION_KIND_DELETE_ENTRY`,
@@ -292,8 +297,8 @@ over the live v2 documents in the `archive:<account_id>` graph (`graph_address_i
 This section answers requirements §16 question 1 and is the design of record
 for the archive's storage. `ArchiveService` stays its own service with its own
 read budget and contract. Its entries, renditions and versions are stored as
-v2 documents through `DocumentService`, served by `DocumentArchive` and
-`DocumentArchiveMutation`. The cutover (#632) retired the `ArchiveLedger`
+v2 documents through `DocumentService`, served by `DocumentArchive` behind
+`DocumentArchiveGrpcService` and `DocumentArchiveMutationGrpcService`. The cutover (#632) retired the `ArchiveLedger`
 storage model and dropped the `archives` and `archive_*` tables in Flyway
 migration `V121`, so this v2 mapping is the running service. Provider object
 versioning is never used: stack keys are write-once (requirements §6).
