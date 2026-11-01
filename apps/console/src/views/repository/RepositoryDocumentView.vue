@@ -125,7 +125,7 @@
                          data-testid="part-schema-failure">
                   The schemas retained for the Any payloads of this part did not load
                   ({{ partView.schemaFailure.code }}: {{ partView.schemaFailure.message }}).
-                  Typed Any payloads are shown without a schema.
+                  Their payloads are marked "Schema retained, not loaded" and are not decoded.
                 </v-alert>
                 <div class="pmv">
                   <ProtoMessageNode v-for="(node, n) in partView.tree" :key="n" :node="node" :depth="0" />
@@ -495,7 +495,9 @@ async function readPartAt(index: number) {
     const part = await readPart(clients.documents, address.value, pinned.value, entry.selector, allowOpaque.value, signal)
     const decoded = await decodePart(clients.documents, address.value, part.revision, validation.value, entry.selector, part.bytes, signal)
     // A retained schema that fails to load is distinct from a failed part read:
-    // the part still decodes and shows; its typed Any payloads stay unresolved.
+    // the part still decodes and shows. Its occurrence record is kept, so
+    // opaque payloads stay opaque and resolved ones read as retained but not
+    // loaded, never as absent bindings.
     let schemas = AnySchemas.none()
     let schemaFailure: RpcFailure | null = null
     if (decoded.kind === 'decoded') {
@@ -504,6 +506,7 @@ async function readPartAt(index: number) {
       } catch (error) {
         if (signal.aborted) return
         schemaFailure = rpcFailure(error)
+        schemas = AnySchemas.unloaded(validation.value, entry.selector)
       }
     }
     if (signal.aborted) return

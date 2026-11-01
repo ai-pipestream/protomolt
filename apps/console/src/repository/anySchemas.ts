@@ -19,10 +19,44 @@ export class AnySchemas {
   private constructor(
     private readonly byOccurrence: Map<string, { desc: DescMessage; retained: ResolvedOccurrence; boundary: string }>,
     private readonly opaque: Set<string> = new Set(),
+    /** Locators the revision resolved whose schemas were not loaded. */
+    private readonly unloaded: Set<string> = new Set(),
   ) {}
 
   static none(): AnySchemas {
     return new AnySchemas(new Map())
+  }
+
+  /**
+   * The occurrence record without any schema: what `load` would have keyed,
+   * after the load failed. Opaque locators stay opaque, resolved locators
+   * report `unloaded` instead of `missing`, and nothing is decoded. A locator
+   * `load` would have rejected is skipped rather than thrown on.
+   */
+  static unloaded(validation: RevisionValidation, part?: PartSelector): AnySchemas {
+    const selected = (locator: OccurrenceLocator | undefined) => part === undefined || locator?.part === undefined || equals(PartSelectorSchema, locator.part, part)
+    const keyed = (locator: OccurrenceLocator | undefined): string | null => {
+      try {
+        return retainedLocationKey(locator)
+      } catch {
+        return null
+      }
+    }
+    const opaque = new Set<string>()
+    for (const occurrence of validation.opaqueOccurrences) {
+      if (!selected(occurrence.occurrence)) continue
+      const key = keyed(occurrence.occurrence)
+      if (key !== null) opaque.add(key)
+    }
+    const unloaded = new Set<string>()
+    for (const occurrence of validation.resolvedOccurrences) {
+      if (!selected(occurrence.occurrence)) continue
+      const locator = occurrence.occurrence
+      const terminal = locator?.steps.at(-1)
+      const key = keyed(terminal?.step.case === 'anyBoundary' ? { ...locator!, steps: locator!.steps.slice(0, -1) } : locator)
+      if (key !== null && !opaque.has(key)) unloaded.add(key)
+    }
+    return new AnySchemas(new Map(), opaque, unloaded)
   }
 
   static async load(
@@ -69,10 +103,14 @@ export class AnySchemas {
     return new AnySchemas(byOccurrence, opaque)
   }
 
-  /** Opaque/missing/identity mismatch are distinct from a decoded value. */
-  statusOf(any: Any, location: AnyLocation): 'typed' | 'opaque' | 'missing' | 'mismatch' {
+  /**
+   * Opaque, unloaded (retained, schema not loaded), missing and identity
+   * mismatch are distinct from a decoded value.
+   */
+  statusOf(any: Any, location: AnyLocation): 'typed' | 'opaque' | 'unloaded' | 'missing' | 'mismatch' {
     const key = locationKey(location)
     if (this.opaque.has(key)) return 'opaque'
+    if (this.unloaded.has(key)) return 'unloaded'
     if (!this.byOccurrence.has(key)) return 'missing'
     return this.schemaOf(any, location) === null ? 'mismatch' : 'typed'
   }

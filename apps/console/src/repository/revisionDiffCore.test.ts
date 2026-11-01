@@ -574,6 +574,29 @@ function inspected(nodes: ViewNode[]): string[] {
 }
 
 describe('retained Any inspector', () => {
+  it('keeps opaque and resolved locators apart when the schemas did not load', () => {
+    const tagged = taggedSchema()
+    const root = anyContainer()
+    const packed = anyPack(tagged.desc, create(tagged.desc, { title: 'Resolved' } as never))
+    const validation = create(RevisionValidationSchema, {
+      resolvedOccurrences: [resolved(packed, tagged.set, [fieldStep(1)])],
+      opaqueOccurrences: [{ occurrence: { part: part(DocumentPart.CORE), steps: [fieldStep(2)] }, typeUrl: packed.typeUrl, sha256: digest(packed.value), length: BigInt(packed.value.length) }],
+    })
+    const schemas = AnySchemas.unloaded(validation, part(DocumentPart.CORE))
+    const location = { part: part(DocumentPart.CORE), steps: [] as string[] }
+    expect(schemas.statusOf(packed, { ...location, steps: ['fieldNumber:1'] })).toBe('unloaded')
+    expect(schemas.statusOf(packed, { ...location, steps: ['fieldNumber:2'] })).toBe('opaque')
+    expect(schemas.statusOf(packed, { ...location, steps: ['fieldNumber:3', 'repeatedIndex:0'] })).toBe('missing')
+    expect(schemas.schemaOf(packed, { ...location, steps: ['fieldNumber:1'] })).toBeNull()
+    // Another part's occurrences are not this part's.
+    expect(AnySchemas.unloaded(validation, part(DocumentPart.BLOBS)).statusOf(packed, { ...location, steps: ['fieldNumber:1'] })).toBe('missing')
+    const tree = decodedTree(root.desc, create(root.desc, { first: packed, second: packed } as never), { schemas, location })
+    expect(inspected([tree[0]]).join(' ')).toContain('Schema retained, not loaded.')
+    expect(inspected([tree[1]]).join(' ')).toContain('Opaque: payload not decoded.')
+    expect(inspected(tree).join(' ')).not.toContain('No schema retained')
+    expect(inspected(tree)).not.toContain('Resolved')
+  })
+
   it('preserves exact int64 and unknown fields inside a resolved Any', async () => {
     const root = anyContainer()
     const set = descriptorSetOf(Int64ValueSchema.file)
