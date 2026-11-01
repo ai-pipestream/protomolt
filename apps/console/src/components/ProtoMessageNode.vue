@@ -1,6 +1,8 @@
 <template>
   <div class="pmn" :style="{ '--pmn-depth': depth }">
-    <div class="pmn-row" :class="{ 'pmn-toggle': hasChildren }" @click="hasChildren && (open = !open)">
+    <div class="pmn-row" :class="{ 'pmn-toggle': hasChildren }" :role="hasChildren ? 'button' : undefined"
+         :tabindex="hasChildren ? 0 : undefined" :aria-expanded="hasChildren ? open : undefined"
+         @keydown.enter="hasChildren && (open = !open)" @keydown.space.prevent="hasChildren && (open = !open)" @click="hasChildren && (open = !open)">
       <span v-if="hasChildren" class="pmn-chevron" :class="{ open }">▸</span>
       <span v-else class="pmn-chevron pmn-chevron-spacer" />
       <span v-if="node.label" class="pmn-label">{{ node.label }}</span>
@@ -10,7 +12,7 @@
       <span v-if="node.typeLabel" class="pmn-type">{{ node.typeLabel }}</span>
     </div>
     <div v-if="hasChildren && open" class="pmn-children">
-      <ProtoMessageNode v-for="(child, i) in node.children" :key="i" :node="child" :depth="depth + 1" />
+      <ProtoMessageNode v-for="(child, i) in children" :key="i" :node="child" :depth="depth + 1" />
     </div>
   </div>
 </template>
@@ -26,8 +28,9 @@ const props = defineProps<{
 
 const open = ref(props.depth < 2)
 const hasChildren = computed(
-  () => (props.node.children?.length ?? 0) > 0,
+  () => props.node.loadChildren !== undefined || (props.node.children?.length ?? 0) > 0,
 )
+const children = computed(() => open.value ? (props.node.loadChildren?.() ?? props.node.children ?? []) : [])
 const displayText = computed(() => {
   if (props.node.kind === 'text' && props.node.display !== undefined) {
     return `"${props.node.display}"`
