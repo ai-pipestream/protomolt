@@ -215,4 +215,76 @@ class SkosConverterTest {
                 .hasMessageContaining("unresolved export mapping other/remote");
         assertThat(output.size()).isZero();
     }
+
+    @Test void malformedUtf8CannotBecomeReplacementText() throws Exception {
+        for (byte[] invalid : new byte[][] {{(byte) 0x80}, {(byte) 0xc0, (byte) 0xaf},
+                {(byte) 0xed, (byte) 0xa0, (byte) 0x80}}) {
+            var input = new ByteArrayOutputStream();
+            input.write((PREFIX + "ex:a a skos:Concept; skos:inScheme ex:scheme; skos:prefLabel \"a")
+                    .getBytes(StandardCharsets.UTF_8));
+            input.write(invalid);
+            input.write("b\"@en .".getBytes(StandardCharsets.UTF_8));
+            assertThatThrownBy(() -> converter.read(new ByteArrayInputStream(input.toByteArray()), SkosConverter.Format.TURTLE))
+                    .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("malformed UTF-8");
+        }
+    }
+
+    @Test void exportRefusesUnpairedSurrogatesBeforeWriting() {
+        var valid = read(SIMPLE);
+        for (String invalid : new String[] {"high\ud800end", "low\udc00end"}) {
+            var label = valid.getConcepts(0).getPrefLabel(0).toBuilder().setText(invalid);
+            var withLabel = valid.toBuilder().setConcepts(0, valid.getConcepts(0).toBuilder().setPrefLabel(0, label)).build();
+            var withNotation = valid.toBuilder().setConcepts(0, valid.getConcepts(0).toBuilder()
+                    .addNotation(ConceptNotation.newBuilder().setValue(invalid))).build();
+            for (var format : SkosConverter.Format.values()) {
+                for (var scheme : new ConceptScheme[] {withLabel, withNotation}) {
+                    var output = new ByteArrayOutputStream();
+                    assertThatThrownBy(() -> converter.write(scheme, output, format))
+                            .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("unpaired UTF-16");
+                    assertThat(output.size()).isZero();
+                }
+            }
+        }
+    }
+
+    @Test void identitiesUseResolvedRdfIrisAndExportNeverChangesThem() {
+        var resolved = read(PREFIX + """
+                <https://example.org/a/../b> a skos:Concept;
+                    skos:inScheme ex:scheme; skos:prefLabel "Beta"@en .
+                """);
+        assertThat(resolved.getConcepts(0).getIri()).isEqualTo("https://example.org/b");
+        assertThat(resolved.getConcepts(0).getId()).isEqualTo(SkosConverter.conceptId("https://example.org/b"));
+        assertThat(SkosConverter.conceptId("https://example.org/%41"))
+                .isNotEqualTo(SkosConverter.conceptId("https://example.org/A"));
+        assertThatThrownBy(() -> SkosConverter.conceptId("https://example.org/a/../b"))
+                .hasMessageContaining("IRI is not resolved");
+        var nonResolved = resolved.toBuilder().setConcepts(0,
+                resolved.getConcepts(0).toBuilder().setIri("https://example.org/a/../b")).build();
+        var datatype = resolved.toBuilder().setConcepts(0, resolved.getConcepts(0).toBuilder()
+                .addNotation(ConceptNotation.newBuilder().setValue("code")
+                        .setDatatypeIri("https://example.org/a/../datatype"))).build();
+        for (var scheme : new ConceptScheme[] {nonResolved, datatype}) {
+            var output = new ByteArrayOutputStream();
+            assertThatThrownBy(() -> converter.write(scheme, output, SkosConverter.Format.TURTLE))
+                    .hasMessageContaining("IRI is not resolved");
+            assertThat(output.size()).isZero();
+        }
+    }
+
+    @Test void numericNotationLexicalFormAndSupplementaryUnicodeSurviveBothFormats() {
+        var original = read(PREFIX + """
+                ex:a a skos:Concept; skos:inScheme ex:scheme;
+                    skos:prefLabel "Letter 🙂"@EN;
+                    skos:notation "001"^^<http://www.w3.org/2001/XMLSchema#integer> .
+                """);
+        // RDF language tags compare case-insensitively; Jena emits lowercase tags.
+        assertThat(original.getConcepts(0).getPrefLabel(0).getLanguage()).isEqualTo("en");
+        for (var format : SkosConverter.Format.values()) {
+            var output = new ByteArrayOutputStream();
+            converter.write(original, output, format);
+            var roundTrip = converter.read(new ByteArrayInputStream(output.toByteArray()), format);
+            assertThat(roundTrip).isEqualTo(original);
+            assertThat(roundTrip.getConcepts(0).getNotation(0).getValue()).isEqualTo("001");
+        }
+    }
 }

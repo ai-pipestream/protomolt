@@ -7,8 +7,8 @@ Required behavior: convert an explicitly selected SKOS scheme from Turtle or
 RDF/XML to the existing binary `ConceptScheme`, and export it again. Preserve
 concept IRIs, multilingual labels, typed notations, hierarchy, related links and
 explicitly resolved cross-scheme mappings. Refuse unrepresentable RDF and invalid
-protobuf instead of dropping it. Import IDs are UUIDv5 of the exact concept IRI
-under the fixed ProtoMolt namespace specified by the converter.
+protobuf instead of dropping it. Import IDs are UUIDv5 of the resolved RDF
+concept IRI under the fixed ProtoMolt namespace specified by the converter.
 
 Reuse: Jena RIOT parses and writes RDF; existing `ConceptScheme`, `Concept`,
 `ConceptRef`, `LangLabel` and `ConceptNotation` are the internal model;
@@ -66,7 +66,12 @@ that same context and external bindings. Imported concept IDs use namespace
 `https://protomolt.ai/ns/skos/concept` under the standard URL namespace. Changing
 this constant would change imported identities. Export accepts existing opaque
 concept IDs, but reimport assigns the defined IRI-derived ID; RDF carries IRIs,
-not ProtoMolt's independent hand-authored IDs.
+not ProtoMolt's independent hand-authored IDs. RDF parsing resolves IRI references,
+including dot segments in absolute references, before identity is computed;
+IDs do not preserve the source syntax's IRI lexemes. Percent-encoded and literal
+spellings remain distinct when RDF resolution leaves them distinct. Context,
+external bindings and exported concept/datatype IRIs must already be resolved:
+the converter refuses an IRI whose RDF resolution would change its identity.
 
 ## Supported profile
 
@@ -78,7 +83,8 @@ Input declares one selected `skos:ConceptScheme`, and every local concept declar
   `notation`, `broader`, `narrower`, `related`, and all five mapping relations.
 - Retirement: `owl:deprecated` and `dcterms:isReplacedBy`.
 
-Labels require language tags because `LangLabel` does. Notation lexical values
+Labels require language tags because `LangLabel` does; Jena canonicalizes their
+case to lowercase on import. Notation lexical values
 and their datatype IRIs remain intact; distinct statements retain source order
 on import. RDF 1.1 equates a plain literal with an `xsd:string` literal, so both
 import with an empty `datatype_iri`. Export requires that canonical form and
@@ -97,6 +103,9 @@ directional language literals, blank nodes and undeclared concepts are refused
 by name; no unsupported statements disappear into a successful import.
 Unknown protobuf fields are refused on export, including nested messages.
 Malformed RDF retains its parse cause; unavailable input remains an I/O failure.
+Turtle input requires well-formed UTF-8; malformed byte sequences are refused
+instead of replaced. RDF/XML honors its declared encoding. Protobuf strings
+with unpaired UTF-16 surrogates are refused before export can replace them.
 
 This library materializes one scheme. It does not claim constant-memory graph
 ingestion, arbitrary RDF round trips, registry discovery, or native-image
@@ -136,7 +145,7 @@ flock /work/.gradle-krick.lock ./gradlew :protomolt-repo-service:dependencies \
   --configuration runtimeClasspath --max-workers=2
 ```
 
-Twelve tests passed, zero failures/errors/skips. The installed launcher also
+Sixteen tests passed, zero failures/errors/skips. The installed launcher also
 converted the included example through Turtle -> protobuf -> RDF/XML -> protobuf.
 The repo-service runtime report contains neither Jena nor this module; the SKOS
 distribution contains no Jetty or Servlet JARs. No repository integration test,

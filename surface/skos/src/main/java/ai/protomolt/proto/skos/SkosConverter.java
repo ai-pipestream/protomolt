@@ -14,10 +14,14 @@ import ai.protomolt.proto.validate.source.ProtomoltRuleSource;
 import com.google.protobuf.Message;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.InputStreamReader;
 import java.io.OutputStream;
+import java.io.Reader;
 import java.io.UncheckedIOException;
 import java.net.URI;
 import java.nio.ByteBuffer;
+import java.nio.charset.CharacterCodingException;
+import java.nio.charset.CodingErrorAction;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
@@ -39,6 +43,7 @@ import org.apache.jena.graph.GraphMemFactory;
 import org.apache.jena.graph.Node;
 import org.apache.jena.graph.NodeFactory;
 import org.apache.jena.graph.Triple;
+import org.apache.jena.irix.IRIx;
 import org.apache.jena.riot.Lang;
 import org.apache.jena.riot.RDFDataMgr;
 import org.apache.jena.riot.RDFFormat;
@@ -66,7 +71,7 @@ public final class SkosConverter {
     private static final String XSD_BOOLEAN = "http://www.w3.org/2001/XMLSchema#boolean";
     private static final ProtoValidator VALIDATOR = ProtoValidator.create(List.of(new ProtomoltRuleSource()));
     // UUIDv5(URL namespace, "https://protomolt.ai/ns/skos/concept"). Never change:
-    // imported concept IDs are UUIDv5 of the exact IRI under this namespace.
+    // imported concept IDs are UUIDv5 of the resolved RDF IRI under this namespace.
     private static final UUID CONCEPT_NAMESPACE = UUID.fromString("6583fc39-429f-583c-9abf-cd7ddab29f54");
 
     /** Explicit external syntaxes; neither enables JSON nor remote fetching. */
@@ -125,19 +130,32 @@ public final class SkosConverter {
         Objects.requireNonNull(input, "input");
         Objects.requireNonNull(format, "format");
         var triples = new LinkedHashSet<Triple>();
+        var text = format == Format.TURTLE ? new Utf8Input(input) : null;
         try {
-            RDFParser.create().source(input).lang(format.lang).base(schemeIri)
+            var parser = RDFParser.create().lang(format.lang).base(schemeIri);
+            if (format == Format.TURTLE) {
+                // RIOT's default byte decoder replaces malformed UTF-8. A replacement
+                // must not become valid label text or a different concept identity.
+                parser.source(text);
+            } else {
+                // RDF/XML's parser owns decoding according to the XML declaration.
+                parser.source(input);
+            }
+            parser
                     .errorHandler(ErrorHandlerFactory.errorHandlerStrict).parse(new StreamRDFBase() {
                         @Override public void triple(Triple triple) { triples.add(triple); }
                     });
         } catch (RuntimeException failure) {
+            // The RIOT Reader tokenizer discards the original IOException cause.
+            if (text != null && text.failure != null) throw inputFailure(text.failure);
             for (Throwable cause = failure; cause != null; cause = cause.getCause()) {
-                if (cause instanceof IOException io) throw new UncheckedIOException("SKOS input could not be read", io);
+                if (cause instanceof IOException io) throw inputFailure(io);
             }
             if (failure instanceof RiotException)
                 throw new IllegalArgumentException("SKOS RDF input could not be parsed", failure);
             throw failure;
         }
+        if (text != null && text.failure != null) throw inputFailure(text.failure);
         return fromTriples(triples);
     }
 
@@ -174,7 +192,7 @@ public final class SkosConverter {
 
     /**
      * Stable imported ID, independent of label, notation, or scheme membership.
-     * @param iri exact concept IRI, without normalization
+     * @param iri resolved RDF concept IRI, without further normalization
      * @return canonical UUIDv5 under ProtoMolt's fixed concept namespace
      */
     public static String conceptId(String iri) {
@@ -296,7 +314,7 @@ public final class SkosConverter {
             for (var notation : concept.getNotationList()) {
                 if (notation.getDatatypeIri().equals(XSD_STRING))
                     throw refused("xsd:string notation must use the canonical empty datatype_iri: " + concept.getId());
-                String datatype = notation.getDatatypeIri().isEmpty() ? XSD_STRING : notation.getDatatypeIri();
+                String datatype = notation.getDatatypeIri().isEmpty() ? XSD_STRING : requireIri(notation.getDatatypeIri());
                 add(triples, subject, SKOS + "notation", NodeFactory.createLiteralDT(notation.getValue(),
                         TypeMapper.getInstance().getSafeTypeByName(datatype)));
             }
@@ -388,8 +406,12 @@ public final class SkosConverter {
                 throw refused("unknown protobuf fields on " + message.getDescriptorForType().getFullName());
             for (var value : message.getAllFields().values()) {
                 if (value instanceof Message nested) pending.add(nested);
+                else if (value instanceof String text) requireUnicode(text);
                 else if (value instanceof List<?> items) {
-                    for (var item : items) if (item instanceof Message nested) pending.add(nested);
+                    for (var item : items) {
+                        if (item instanceof Message nested) pending.add(nested);
+                        else if (item instanceof String text) requireUnicode(text);
+                    }
                 }
             }
         }
@@ -406,13 +428,55 @@ public final class SkosConverter {
 
     private static String requireIri(String value) {
         Objects.requireNonNull(value, "iri");
+        requireUnicode(value);
         if (!Rfc3986.isUri(value)) throw refused("invalid absolute IRI " + value);
+        if (!IRIx.create("https://protomolt.ai/").resolve(value).str().equals(value))
+            throw refused("IRI is not resolved; RDF resolution would change its identity: " + value);
         var uri = URI.create(value);
         String scheme = uri.getScheme().toLowerCase(Locale.ROOT);
         if (scheme.equals("urn") && !uri.getSchemeSpecificPart().isEmpty()) return value;
         if ((scheme.equals("http") || scheme.equals("https")) && uri.getRawAuthority() != null
                 && !uri.getRawAuthority().isEmpty()) return value;
         throw refused("IRI must use http(s) with authority or urn: " + value);
+    }
+
+    private static void requireUnicode(String value) {
+        for (int i = 0; i < value.length(); i++) {
+            char ch = value.charAt(i);
+            if (Character.isHighSurrogate(ch)) {
+                if (i + 1 == value.length() || !Character.isLowSurrogate(value.charAt(++i)))
+                    throw refused("unpaired UTF-16 surrogate in protobuf string");
+            } else if (Character.isLowSurrogate(ch)) {
+                throw refused("unpaired UTF-16 surrogate in protobuf string");
+            }
+        }
+    }
+
+    private static RuntimeException inputFailure(IOException cause) {
+        return cause instanceof CharacterCodingException
+                ? new IllegalArgumentException("SKOS malformed UTF-8 input", cause)
+                : new UncheckedIOException("SKOS input could not be read", cause);
+    }
+
+    private static final class Utf8Input extends Reader {
+        private final Reader reader;
+        private IOException failure;
+
+        private Utf8Input(InputStream input) {
+            reader = new InputStreamReader(input, StandardCharsets.UTF_8.newDecoder()
+                    .onMalformedInput(CodingErrorAction.REPORT).onUnmappableCharacter(CodingErrorAction.REPORT));
+        }
+
+        @Override public int read(char[] target, int offset, int length) throws IOException {
+            try {
+                return reader.read(target, offset, length);
+            } catch (IOException unavailable) {
+                failure = unavailable;
+                throw unavailable;
+            }
+        }
+
+        @Override public void close() throws IOException { reader.close(); }
     }
 
     private static Node uri(String iri) { return NodeFactory.createURI(iri); }
