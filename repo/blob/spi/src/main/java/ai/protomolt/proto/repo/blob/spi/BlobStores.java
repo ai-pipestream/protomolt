@@ -38,7 +38,7 @@ public final class BlobStores {
         if (provider == null) throw new IllegalArgumentException("Byte storage provider is not installed: " + id);
         var identity = Objects.requireNonNull(provider.managedIdentity(Map.copyOf(options)),
                 "Byte storage provider returned no identity");
-        if (!id.equals(identity.provider()))
+        if (!requireId(provider.identityProviderId()).equals(identity.provider()))
             throw new IllegalArgumentException("Selected provider returned a different backend identity provider");
         return identity;
     }

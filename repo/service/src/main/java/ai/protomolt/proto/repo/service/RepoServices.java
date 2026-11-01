@@ -413,7 +413,7 @@ public final class RepoServices implements AutoCloseable {
                 this.conceptSchemes = loadConceptSchemes(config.conceptSchemePaths());
             }
             if (bounded == null && managedStorageQualified
-                    && (!config.lifecycleEnabled() || !("s3".equals(config.blobStore()) || "s3-redis-cache".equals(config.blobStore()))))
+                    && (!config.lifecycleEnabled() || !config.hasS3Backing()))
                 throw new IllegalArgumentException("Managed storage requires an S3 backing store and enabled lifecycle recovery");
             this.database = owned.add(new LedgerDatabase(config.ledger()));
             this.tx = new Tx(database.entityManagerFactory());
@@ -424,8 +424,7 @@ public final class RepoServices implements AutoCloseable {
                 // A duplicate or uncertain reply must not fence another live execution.
                 registeredHostTx = tx;
             }
-            String selectedDriveProvider = RepoServiceConfig.BLOB_STORE_S3_REDIS_CACHE.equals(config.blobStore())
-                    ? "s3" : config.blobStore();
+            String selectedDriveProvider = config.driveProvider();
             var driveGate = new SelectedDriveBackend(config);
             this.driveLedger = new DriveLedger(tx, driveGate);
             var storage = RepoStorageWiring.wire(config, providers, bounded != null, owned, tx, readerHost);

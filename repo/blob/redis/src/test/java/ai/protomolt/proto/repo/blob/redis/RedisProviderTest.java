@@ -14,7 +14,7 @@ class RedisProviderTest {
 
     @Test void discoveryDoesNotOpenAnEndpointAndRequiresExplicitSelection() {
         var providers = BlobStores.discover();
-        assertThat(providers.providerIds()).containsExactly("redis");
+        assertThat(providers.providerIds()).containsExactlyInAnyOrder("valkey", "redis");
         assertThatThrownBy(() -> providers.open("absent", Map.of()))
                 .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("not installed");
         assertThatThrownBy(() -> BlobStores.of(List.of(new RedisBlobStoreProvider(), new RedisBlobStoreProvider())))

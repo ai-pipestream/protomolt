@@ -18,7 +18,7 @@ import static org.assertj.core.api.Assertions.*;
 class CachedReclamationIT {
     @Container static final LocalStackContainer S3 = new LocalStackContainer(
             DockerImageName.parse("localstack/localstack:3.8")).withServices("s3");
-    @Container static final GenericContainer<?> REDIS = new GenericContainer<>("redis:7-alpine").withExposedPorts(6379);
+    @Container static final GenericContainer<?> REDIS = new GenericContainer<>(System.getenv().getOrDefault("PROTOMOLT_REDIS_TEST_IMAGE", "valkey/valkey:9.1.3-alpine")).withExposedPorts(6379);
     static OpenedBlobStore backing;
     static OpenedBlobStore cache;
     static CachingBlobStore composed;
@@ -38,7 +38,7 @@ class CachedReclamationIT {
                 Map.entry("api-attempt-timeout-ms", "60000"),
                 Map.entry("connection-timeout-ms", "10000"),
                 Map.entry("socket-timeout-ms", "60000")));
-        cache = providers.open("redis", Map.of("uri", "redis://" + REDIS.getHost() + ":" + REDIS.getMappedPort(6379),
+        cache = providers.open("valkey", Map.of("uri", "redis://" + REDIS.getHost() + ":" + REDIS.getMappedPort(6379),
                 "ttl-seconds", "0", "max-object-bytes", "0", "key-prefix", "reclamation:", "write-policy", "replace"));
         backing.ensureNamespace(BUCKET);
         cache.ensureNamespace(BUCKET);

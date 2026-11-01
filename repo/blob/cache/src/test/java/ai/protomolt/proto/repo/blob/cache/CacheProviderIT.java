@@ -47,7 +47,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 class CacheProviderIT {
 
     @Container
-    static final GenericContainer<?> REDIS = new GenericContainer<>("redis:7-alpine").withExposedPorts(6379);
+    static final GenericContainer<?> REDIS = new GenericContainer<>(System.getenv().getOrDefault("PROTOMOLT_REDIS_TEST_IMAGE", "valkey/valkey:9.1.3-alpine")).withExposedPorts(6379);
 
     @Container
     static final LocalStackContainer LOCALSTACK =
@@ -121,9 +121,9 @@ class CacheProviderIT {
     @Test
     void s3BackingWithRedisFrontCacheWritesAndReadsThrough() throws Exception {
         var providers = BlobStores.discover();
-        assertThat(providers.providerIds()).containsExactlyInAnyOrder("s3", "redis");
+        assertThat(providers.providerIds()).containsExactlyInAnyOrder("s3", "valkey", "redis");
         s3Handle = providers.open("s3", s3Options());
-        redisHandle = providers.open("redis", redisOptions("cache-it-" + UUID.randomUUID()));
+        redisHandle = providers.open("valkey", redisOptions("cache-it-" + UUID.randomUUID()));
         var backing = s3Handle.store();
         var cache = redisHandle.store();
         var decorator = new CachingBlobStore(backing, cache, 60, 1024 * 1024);
@@ -161,8 +161,8 @@ class CacheProviderIT {
     @Test
     void conditionalOperationsBypassAndEvictTheCache() throws Exception {
         var providers = BlobStores.discover();
-        redisHandle = providers.open("redis", redisOptions("backing-it-" + UUID.randomUUID()));
-        var cacheHandle = providers.open("redis", redisOptions("front-it-" + UUID.randomUUID()));
+        redisHandle = providers.open("valkey", redisOptions("backing-it-" + UUID.randomUUID()));
+        var cacheHandle = providers.open("valkey", redisOptions("front-it-" + UUID.randomUUID()));
         try {
             var backing = redisHandle.store();
             var cache = cacheHandle.store();
@@ -192,10 +192,10 @@ class CacheProviderIT {
     @Test
     void concurrentConditionalWritesThroughTheDecoratorHaveOneWinner() throws Exception {
         var providers = BlobStores.discover();
-        redisHandle = providers.open("redis", redisOptions("race-backing-" + UUID.randomUUID()),
+        redisHandle = providers.open("valkey", redisOptions("race-backing-" + UUID.randomUUID()),
                 java.util.Set.of(BlobCapability.ATOMIC_CONDITIONAL_WRITE,
                         BlobCapability.AUTHORITATIVE_CONDITIONAL_READ));
-        var cacheHandle = providers.open("redis", redisOptions("race-front-" + UUID.randomUUID()));
+        var cacheHandle = providers.open("valkey", redisOptions("race-front-" + UUID.randomUUID()));
         try {
             var decorator = new CachingBlobStore(redisHandle.store(), cacheHandle.store(), 60, 1024 * 1024);
             var spec = spec("namespace", "key");

@@ -10,7 +10,7 @@ import static org.assertj.core.api.Assertions.*;
 
 @Testcontainers
 class RedisAtomicStorageIT {
-    @Container static final GenericContainer<?> REDIS = new GenericContainer<>("redis:7-alpine").withExposedPorts(6379);
+    @Container static final GenericContainer<?> REDIS = new GenericContainer<>(System.getenv().getOrDefault("PROTOMOLT_REDIS_TEST_IMAGE", "valkey/valkey:9.1.3-alpine")).withExposedPorts(6379);
     private RedisBlobStore store;
     private static String uri() { return "redis://" + REDIS.getHost() + ":" + REDIS.getMappedPort(6379); }
     @BeforeEach void open() { store = new RedisBlobStore(new RedisBlobStoreConfig(uri(), 0, 1024, "atomic")); }

@@ -25,7 +25,7 @@ import static org.assertj.core.api.Assertions.*;
 @Testcontainers
 class BoundedArchiveProcessIT {
     @Container static final PostgreSQLContainer POSTGRES = new PostgreSQLContainer("postgres:18-alpine");
-    @Container static final GenericContainer<?> REDIS = new GenericContainer<>("redis:7-alpine").withExposedPorts(6379);
+    @Container static final GenericContainer<?> REDIS = new GenericContainer<>(System.getenv().getOrDefault("PROTOMOLT_REDIS_TEST_IMAGE", "valkey/valkey:9.1.3-alpine")).withExposedPorts(6379);
     @TempDir Path directory;
 
     @Test void productionProcessRestartsWithoutRelocatingDriveAndRetainsExactRetry() throws Exception {
@@ -136,7 +136,7 @@ class BoundedArchiveProcessIT {
         assertFails(env, "DOCUMENT_PLATFORM_ARCHIVE_MAX_REQUEST_BYTES must be an integer");
         env.remove("DOCUMENT_PLATFORM_ARCHIVE_MAX_REQUEST_BYTES");
         env.put(RepoServiceConfig.ENV_BLOB_STORE, "s3");
-        assertFails(env, "Bounded archive qualification requires managed Redis");
+        assertFails(env, "Bounded archive qualification requires managed Valkey or Redis");
     }
 
     @Test void sigkillDuringPublicationPreservesHeadAndRestartReclaimsUnpublishedBytes() throws Exception {
@@ -288,6 +288,7 @@ class BoundedArchiveProcessIT {
 
     private Map<String, String> environment() {
         var env = RepoBoundedArchiveMainTest.environment();
+        env.put(RepoServiceConfig.ENV_BLOB_STORE, "valkey");
         env.put("DOCUMENT_PLATFORM_ARCHIVE_ACCOUNT", "process-" + UUID.randomUUID());
         env.put(RepoServiceConfig.ENV_GRPC_PORT, "0");
         env.put(LedgerConfig.ENV_JDBC_URL, POSTGRES.getJdbcUrl());

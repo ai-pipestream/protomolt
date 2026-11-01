@@ -24,16 +24,18 @@ import static org.assertj.core.api.Assertions.*;
 @Testcontainers
 class BoundedArchiveHostIT {
     @Container static final PostgreSQLContainer POSTGRES = new PostgreSQLContainer("postgres:18-alpine");
-    @Container static final GenericContainer<?> REDIS = new GenericContainer<>("redis:7-alpine").withExposedPorts(6379);
+    @Container static final GenericContainer<?> REDIS = new GenericContainer<>(System.getenv().getOrDefault("PROTOMOLT_REDIS_TEST_IMAGE", "valkey/valkey:9.1.3-alpine")).withExposedPorts(6379);
     static final RepositoryCaller CALLER = new RepositoryCaller("bounded-host", true);
 
     private RepoServiceConfig config() { return config(0); }
 
-    private RepoServiceConfig config(int database) {
+    private RepoServiceConfig config(int database) { return config(database, "redis"); }
+
+    private RepoServiceConfig config(int database, String provider) {
         return new RepoServiceConfig(0,
                 new LedgerConfig(POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword()),
                 "http://127.0.0.1:1", "us-east-1", "unused", "unused", "bounded-host", 0,
-                "redis", "redis://" + REDIS.getHost() + ":" + REDIS.getMappedPort(6379) + "/" + database, 0, 1024)
+                provider, "redis://" + REDIS.getHost() + ":" + REDIS.getMappedPort(6379) + "/" + database, 0, 1024)
                 .withManagedStorage(new ManagedStoragePolicy("bounded-redis", "bounded-realm", true));
     }
 
@@ -43,15 +45,18 @@ class BoundedArchiveHostIT {
             public OpenedBlobStore open(Map<String, String> options) { throw new AssertionError("Opened S3"); }
             public BackendIdentity managedIdentity(Map<String, String> options) { throw new AssertionError("Requested S3 identity"); }
         };
-        return BlobStores.of(List.of(unopened, new RedisBlobStoreProvider()));
+        return BlobStores.of(List.of(unopened, new RedisBlobStoreProvider(),
+                new ai.protomolt.proto.repo.blob.redis.ValkeyBlobStoreProvider()));
     }
 
-    @Test void managedLocalArchiveRetainsVersionsAndRefusesUnqualifiedSurfaces() {
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"valkey", "redis"})
+    void managedLocalArchiveRetainsVersionsAndRefusesUnqualifiedSurfaces(String provider) {
         var budget = new PayloadBudget(8192);
         var profile = new BoundedArchiveProfile(new ArchivePutAdmission.Limits(16, 2048, 4), budget, 2);
         String account = "bounded-" + UUID.randomUUID();
         var address = EntryAddress.newBuilder().setAccountId(account).setArchive("records").setEntryId("entry").build();
-        try (var host = new RepoServices(config(), BridgeEngine.standard(), providers(), profile)) {
+        try (var host = new RepoServices(config(0, provider), BridgeEngine.standard(), providers(), profile)) {
             host.driveRepository().createDrive(CALLER, CreateDriveRequest.newBuilder()
                     .setAccountId(account).setName("storage").build());
             var archive = host.archiveRepository();

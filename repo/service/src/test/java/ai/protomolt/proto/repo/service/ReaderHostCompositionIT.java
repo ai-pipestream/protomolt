@@ -16,7 +16,7 @@ import static org.assertj.core.api.Assertions.*;
 class ReaderHostCompositionIT {
     @Container static final PostgreSQLContainer POSTGRES = new PostgreSQLContainer("postgres:18-alpine");
     @Container static final org.testcontainers.containers.GenericContainer<?> REDIS =
-            new org.testcontainers.containers.GenericContainer<>("redis:7-alpine").withExposedPorts(6379);
+            new org.testcontainers.containers.GenericContainer<>(System.getenv().getOrDefault("PROTOMOLT_REDIS_TEST_IMAGE", "valkey/valkey:9.1.3-alpine")).withExposedPorts(6379);
 
     private static Map<String, String> boundedEnv() {
         var env = RepoBoundedArchiveMainTest.environment();

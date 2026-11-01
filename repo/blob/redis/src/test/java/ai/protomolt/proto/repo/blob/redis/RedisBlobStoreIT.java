@@ -23,7 +23,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
  * {@link RedisBlobStore} against a real Redis (testcontainers
- * {@code redis:7-alpine} — no special module needed, a plain container with a
+ * {@code valkey/valkey:9.1.3-alpine} — no special module needed, a plain container with a
  * mapped port). Exercises the port contracts the in-memory fake cannot:
  * the client-side verified write, the two-entries-per-object key mapping,
  * the 1000-key pipelined {@code deleteAll}, SCAN listing across bucket
@@ -33,7 +33,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 class RedisBlobStoreIT {
 
     @Container
-    static final GenericContainer<?> REDIS = new GenericContainer<>("redis:7-alpine")
+    static final GenericContainer<?> REDIS = new GenericContainer<>(System.getenv().getOrDefault("PROTOMOLT_REDIS_TEST_IMAGE", "valkey/valkey:9.1.3-alpine"))
             .withExposedPorts(6379);
 
     static RedisBlobStore store;
