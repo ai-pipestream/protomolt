@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { createHash } from 'node:crypto'
 import { create, toBinary } from '@bufbuild/protobuf'
+import { anyPack } from '@bufbuild/protobuf/wkt'
 import { Code, ConnectError, type ConnectRouter } from '@connectrpc/connect'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
@@ -35,6 +36,7 @@ import {
   PartSchemaBindingSchema,
   PartSelectorSchema,
   PartState,
+  ResolvedOccurrenceSchema,
   RevisionValidationSchema,
   SaveOwnerSchema,
   ValidationStatus,
@@ -53,6 +55,14 @@ const coreBytes = toBinary(
 )
 const DESCRIPTORS = descriptorSetOf(file_ai_protomolt_proto_repo_v1_document)
 const DESCRIPTORS_SHA = createHash('sha256').update(DESCRIPTORS).digest('hex')
+// The same document with a typed Any in structured_data (field 4), retained
+// under a second descriptor set that the repository fails to serve.
+const INNER = anyPack(SearchMetadataSchema, create(SearchMetadataSchema, { title: 'inner' }))
+const coreWithAny = toBinary(
+  DocumentSchema,
+  create(DocumentSchema, { docId: 'doc-1', searchMetadata: create(SearchMetadataSchema, { title: 'Quarterly report' }), structuredData: INNER }),
+)
+const ANY_SET_SHA = 'f'.repeat(64)
 const TEXT = new TextEncoder().encode('line one\nline two\n'.repeat(4000))
 const TEXT_SHA = createHash('sha256').update(TEXT).digest('hex')
 const PDF = new Uint8Array(Array.from({ length: 300_000 }, (_, i) => (i * 13) & 0xff))
@@ -65,7 +75,7 @@ const FILES: Record<string, { bytes: Uint8Array; sha: string; mime: string; name
   'blob-small': { bytes: SMALL, sha: createHash('sha256').update(SMALL).digest('hex'), mime: 'text/plain', name: 'small.txt' },
 }
 
-function validation() {
+function validation(typedAny = false) {
   return create(RevisionValidationSchema, {
     status: ValidationStatus.TYPED_VALID,
     candidateSha256: 'c'.repeat(64),
@@ -79,11 +89,21 @@ function validation() {
         }),
       }),
     ],
+    resolvedOccurrences: typedAny
+      ? [
+          create(ResolvedOccurrenceSchema, {
+            occurrence: { part: CORE, steps: [{ step: { case: 'fieldNumber', value: 4 } }] },
+            schema: create(RepositorySchemaAssetReferenceSchema, { typeUrl: INNER.typeUrl, descriptorSha256: ANY_SET_SHA }),
+            payloadSha256: createHash('sha256').update(INNER.value).digest('hex'),
+            payloadLength: BigInt(INNER.value.length),
+          }),
+        ]
+      : [],
   })
 }
 
 /** A repository holding one document at revisions 1 to 3 (3 is current). */
-function repository(seen: { manifests: GetManifestRequest[]; blobs: ReadBlobRequest[]; holdPartReads?: boolean }) {
+function repository(seen: { manifests: GetManifestRequest[]; blobs: ReadBlobRequest[]; holdPartReads?: boolean; typedAny?: boolean }) {
   return (router: ConnectRouter) =>
     router.service(DocumentService, {
       getManifest(request) {
@@ -100,7 +120,7 @@ function repository(seen: { manifests: GetManifestRequest[]; blobs: ReadBlobRequ
               create(PartManifestEntrySchema, { selector: BLOBS, state: PartState.PRESENT, sizeBytes: 90n, sha256: 'b'.repeat(64), writtenInRevision: 1n, owner }),
             ],
           }),
-          validation: validation(),
+          validation: validation(seen.typedAny),
         })
       },
       getDocument(request) {
@@ -122,7 +142,7 @@ function repository(seen: { manifests: GetManifestRequest[]; blobs: ReadBlobRequ
             }),
           }),
           manifest: create(DocumentManifestSchema, { address: testAddress(), revision: 3n }),
-          validation: validation(),
+          validation: validation(seen.typedAny),
           metadata: { 'request.source': 'console-test', 'batch': '7' },
         })
       },
@@ -154,10 +174,13 @@ function repository(seen: { manifests: GetManifestRequest[]; blobs: ReadBlobRequ
             }),
           },
         })
-        yield create(ReadDocumentResponseSchema, { frame: { case: 'partData', value: create(PartDataSchema, { selector: CORE, offset: 0n, data: coreBytes, last: true }) } })
+        yield create(ReadDocumentResponseSchema, {
+          frame: { case: 'partData', value: create(PartDataSchema, { selector: CORE, offset: 0n, data: seen.typedAny ? coreWithAny : coreBytes, last: true }) },
+        })
         yield create(ReadDocumentResponseSchema, { frame: { case: 'complete', value: create(ReadCompleteSchema) } })
       },
       getSchemaDescriptor(request) {
+        if (request.descriptorSha256 === ANY_SET_SHA) throw new ConnectError('schema store unavailable', Code.Unavailable)
         return create(GetSchemaDescriptorResponseSchema, { revision: 3n, descriptorSha256: request.descriptorSha256, descriptorSet: DESCRIPTORS })
       },
       async *readBlob(request) {
@@ -184,7 +207,7 @@ function repository(seen: { manifests: GetManifestRequest[]; blobs: ReadBlobRequ
 const DOC = { name: 'repository-document', query: { account: 'acct-a', graph: 'intake:acct-a', node: 'ds-files', doc: 'doc-1' } }
 
 function seenCalls() {
-  return { manifests: [] as GetManifestRequest[], blobs: [] as ReadBlobRequest[], holdPartReads: false }
+  return { manifests: [] as GetManifestRequest[], blobs: [] as ReadBlobRequest[], holdPartReads: false, typedAny: false }
 }
 
 afterEach(() => {
@@ -224,6 +247,24 @@ describe('RepositoryDocumentView', () => {
     expect(view.get('[data-testid="decoded-with"]').text()).toContain(DESCRIPTORS_SHA)
     expect(view.text()).toContain('doc_id')
     expect(view.text()).toContain('"Quarterly report"')
+    wrapper.unmount()
+  })
+
+  it('keeps the decoded part, its bytes and Download when a retained Any schema does not load', async () => {
+    const seen = seenCalls()
+    seen.typedAny = true
+    const { wrapper } = await mountRepositoryView(RepositoryDocumentView, DOC, repository(seen))
+    await wrapper.get('[data-testid="read-part-0"]').trigger('click')
+    await settle()
+    const view = wrapper.get('[data-testid="part-view"]')
+    expect(view.get('[data-testid="decoded-with"]').text()).toContain(DESCRIPTORS_SHA)
+    expect(view.text()).toContain('"Quarterly report"')
+    expect(view.text()).toContain('structured_data')
+    expect(view.find('[data-testid="download-part"]').exists()).toBe(true)
+    const notice = view.get('[data-testid="part-schema-failure"]').text()
+    expect(notice).toContain('UNAVAILABLE')
+    expect(notice).toContain('schema store unavailable')
+    expect(wrapper.text()).not.toContain('Reading the part')
     wrapper.unmount()
   })
 
