@@ -345,6 +345,7 @@ at first use is the failure.
 |---|---|---|
 | `PROTOMOLT_TEI_TARGET` | unset | TEI gRPC `host:port` |
 | `PROTOMOLT_TEI_TRUNCATE` | `true` | `false` rejects overlength inputs instead of truncating server side |
+| `PROTOMOLT_TEI_MAX_IN_FLIGHT` | `8` | positive integer; concurrent Embed calls one batch keeps open |
 | `PROTOMOLT_OVMS_TARGET` | unset | OVMS gRPC `host:port` |
 | `PROTOMOLT_OVMS_MODEL` | unset | model name |
 | `PROTOMOLT_OVMS_INPUT` | provider default | input tensor name |
