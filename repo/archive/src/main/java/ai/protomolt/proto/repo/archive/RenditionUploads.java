@@ -67,18 +67,25 @@ public final class RenditionUploads {
     public interface FlowControlledUpload extends StreamObserver<UploadRenditionRequest> {
         /**
          * Returns {@code true} when the underlying upload stream can accept another frame
-         * without unbounded queueing, or when the upload has already terminated.
+         * without unbounded queueing, or when the upload has already terminated and its
+         * outcome has reached the response observer.
+         *
+         * <p>An upload that v2 refused or replayed at the header counts as ready only once
+         * the response observer has been told, so a producer that looks at its response
+         * after this returns sees the outcome instead of going on to read a body that the
+         * client is holding back until it has the answer.
          *
          * @return whether the producer may send the next frame immediately
          */
         boolean isReady();
 
         /**
-         * Blocks the calling thread until {@link #isReady()} is {@code true} or the upload
-         * finishes, up to {@code timeoutNanos}.
+         * Blocks the calling thread until {@link #isReady()} is {@code true}, up to
+         * {@code timeoutNanos}.
          *
          * @param timeoutNanos maximum time to wait in nanoseconds
-         * @return {@code true} if the upload is ready or finished; {@code false} if the wait timed out
+         * @return {@code true} if the upload is ready or its outcome has been delivered;
+         *     {@code false} if the wait timed out
          * @throws InterruptedException if the thread is interrupted while waiting
          */
         boolean awaitReady(long timeoutNanos) throws InterruptedException;
@@ -147,7 +154,10 @@ public final class RenditionUploads {
         private boolean clientCompleted;
         private boolean downstreamCompleted;
         private boolean waitingForUpload;
+        /** No more frames are taken; the outcome is decided. */
         private boolean finished;
+        /** The outcome has reached {@link #responses}, or the client ended the upload itself. */
+        private boolean settled;
 
         Call(StreamObserver<UploadRenditionResponse> responses) {
             this.responses = responses;
@@ -159,6 +169,9 @@ public final class RenditionUploads {
         }
 
         private boolean canAcceptChunk() {
+            if (finished) {
+                return false;
+            }
             if (pending == null || verifying != null || inline != null) {
                 return true;
             }
@@ -169,7 +182,7 @@ public final class RenditionUploads {
         public boolean isReady() {
             lock.lock();
             try {
-                return finished || canAcceptChunk();
+                return settled || canAcceptChunk();
             } finally {
                 lock.unlock();
             }
@@ -180,7 +193,7 @@ public final class RenditionUploads {
             long remaining = timeoutNanos;
             lock.lock();
             try {
-                while (!finished && !canAcceptChunk()) {
+                while (!settled && !canAcceptChunk()) {
                     if (remaining <= 0L) {
                         return false;
                     }
@@ -251,9 +264,9 @@ public final class RenditionUploads {
             DocumentArchive.UploadStart start = archive.startUpload(frame.getHeader());
             if (start instanceof DocumentArchive.Replay replay) {
                 finished = true;
-                readyChanged.signalAll();
                 responses.onNext(replay.response());
                 responses.onCompleted();
+                settle();
                 return;
             }
             if (start instanceof DocumentArchive.Verify verify) {
@@ -401,10 +414,10 @@ public final class RenditionUploads {
                 finished = true;
                 bufferedChunks.clear();
                 inline = null;
-                readyChanged.signalAll();
                 if (upload != null) {
                     upload.cancel("The archive upload's client failed", failure);
                 }
+                settle();
             } finally {
                 lock.unlock();
             }
@@ -425,9 +438,9 @@ public final class RenditionUploads {
                         return;
                     }
                     finished = true;
-                    readyChanged.signalAll();
                     responses.onNext(verifying);
                     responses.onCompleted();
+                    settle();
                     return;
                 }
                 if (pending == null) {
@@ -505,18 +518,12 @@ public final class RenditionUploads {
                 fail(failure);
                 return;
             }
-            lock.lock();
-            try {
-                if (finished) {
-                    return;
-                }
-                finished = true;
-                readyChanged.signalAll();
-            } finally {
-                lock.unlock();
+            if (!finish()) {
+                return;
             }
             responses.onNext(response);
             responses.onCompleted();
+            settleLocked();
         }
 
         private void uploadFailed(Throwable failure) {
@@ -556,18 +563,12 @@ public final class RenditionUploads {
                 fail(translated);
                 return;
             }
-            lock.lock();
-            try {
-                if (finished) {
-                    return;
-                }
-                finished = true;
-                readyChanged.signalAll();
-            } finally {
-                lock.unlock();
+            if (!finish()) {
+                return;
             }
             responses.onNext(replayed);
             responses.onCompleted();
+            settleLocked();
         }
 
         private String sentSha256() {
@@ -588,7 +589,6 @@ public final class RenditionUploads {
                 finished = true;
                 bufferedChunks.clear();
                 inline = null;
-                readyChanged.signalAll();
                 if (upload != null && !downstreamCompleted) {
                     upload.cancel("Archive upload failed", failure);
                 }
@@ -596,6 +596,42 @@ public final class RenditionUploads {
                 lock.unlock();
             }
             responses.onError(failure);
+            settleLocked();
+        }
+
+        /**
+         * Marks the outcome decided so no further frame is taken. Readiness is not signalled
+         * here: a producer waiting in {@link #awaitReady} wakes only once the outcome has
+         * reached the response observer, see {@link #settleLocked()}.
+         *
+         * @return {@code false} when the upload had already finished
+         */
+        private boolean finish() {
+            lock.lock();
+            try {
+                if (finished) {
+                    return false;
+                }
+                finished = true;
+                return true;
+            } finally {
+                lock.unlock();
+            }
+        }
+
+        /** Called with the lock held after the response observer has been told. */
+        private void settle() {
+            settled = true;
+            readyChanged.signalAll();
+        }
+
+        private void settleLocked() {
+            lock.lock();
+            try {
+                settle();
+            } finally {
+                lock.unlock();
+            }
         }
     }
 }
