@@ -677,6 +677,79 @@ class ProtoLuceneMapperTest {
         }
     }
 
+    @Test
+    void emittedFieldsCanAppendToAnExistingIndex(@TempDir Path dir) throws Exception {
+        // Construct the established field layout independently of the mapper, then reopen
+        // that index to catch incompatible point, doc-values or vector metadata changes.
+        Document existing = new Document();
+        for (long value : new long[]{7, 9}) {
+            existing.add(new org.apache.lucene.document.LongPoint("values", value));
+            existing.add(new org.apache.lucene.document.StoredField("values", value));
+            existing.add(new org.apache.lucene.document.SortedNumericDocValuesField("values", value));
+        }
+        existing.add(new org.apache.lucene.document.IntRange("pages", new int[]{3}, new int[]{9}));
+        existing.add(new org.apache.lucene.document.KnnFloatVectorField(
+                "embedding", new float[]{1f, 0f}, VectorSimilarityFunction.COSINE));
+
+        Descriptor numbers = repeatedFieldDescriptor("values", FieldDescriptorProto.Type.TYPE_INT64);
+        DynamicMessage values = DynamicMessage.newBuilder(numbers)
+                .addRepeatedField(numbers.findFieldByName("values"), 7L)
+                .addRepeatedField(numbers.findFieldByName("values"), 9L).build();
+        Document mapped = mapper.map(values, new IndexMapping(numbers.getFullName(), List.of(
+                new IndexMapping.IndexedField("values", "values",
+                        ResolvedFieldHint.builder(IndexFieldKind.INT64).sortable(true).build()))));
+        Descriptor ranges = rangeDescriptor("gte", "lte", FieldDescriptorProto.Type.TYPE_INT32);
+        mapper.map(rangeMessage(ranges, 3, 9), rangeMapping(ranges, IndexFieldKind.INT_RANGE))
+                .getFields().forEach(mapped::add);
+        Descriptor vectors = repeatedFieldDescriptor("embedding", FieldDescriptorProto.Type.TYPE_FLOAT);
+        DynamicMessage vector = DynamicMessage.newBuilder(vectors)
+                .addRepeatedField(vectors.findFieldByName("embedding"), 1f)
+                .addRepeatedField(vectors.findFieldByName("embedding"), 0f).build();
+        mapper.map(vector, new IndexMapping(vectors.getFullName(), List.of(
+                new IndexMapping.IndexedField("embedding", "embedding",
+                        new ResolvedFieldHint(IndexFieldKind.VECTOR, true, true, "", 2)))))
+                .getFields().forEach(mapped::add);
+        assertThat(fieldSignatures(mapped)).containsExactlyElementsOf(fieldSignatures(existing));
+
+        try (LuceneIndexWriter writer = new LuceneIndexWriter(dir)) {
+            writer.add(existing);
+            writer.commit();
+        }
+        try (LuceneIndexWriter writer = new LuceneIndexWriter(dir)) {
+            writer.add(mapped);
+            writer.commit();
+        }
+        try (var directory = FSDirectory.open(dir);
+                DirectoryReader reader = DirectoryReader.open(directory)) {
+            IndexSearcher searcher = new IndexSearcher(reader);
+            assertThat(searcher.count(org.apache.lucene.document.LongPoint.newExactQuery("values", 7)))
+                    .isEqualTo(2);
+            assertThat(searcher.count(org.apache.lucene.document.IntRange.newIntersectsQuery(
+                    "pages", new int[]{5}, new int[]{5}))).isEqualTo(2);
+            assertThat(searcher.search(new KnnFloatVectorQuery(
+                    "embedding", new float[]{1f, 0f}, 2), 2).scoreDocs).hasSize(2);
+            TopDocs sorted = searcher.search(new org.apache.lucene.search.MatchAllDocsQuery(), 2,
+                    new org.apache.lucene.search.Sort(new org.apache.lucene.search.SortedNumericSortField(
+                            "values", org.apache.lucene.search.SortField.Type.LONG)));
+            assertThat(sorted.scoreDocs).hasSize(2);
+            for (var hit : sorted.scoreDocs) {
+                assertThat(((org.apache.lucene.search.FieldDoc) hit).fields).containsExactly(7L);
+                assertThat(reader.storedFields().document(hit.doc).getFields("values"))
+                        .extracting(IndexableField::numericValue).containsExactly(7L, 9L);
+            }
+        }
+    }
+
+    private static List<String> fieldSignatures(Document document) {
+        return document.getFields().stream().map(field -> {
+            String vector = field instanceof org.apache.lucene.document.KnnFloatVectorField floats
+                    ? Arrays.toString(floats.vectorValue()) : "";
+            return field.getClass().getName() + "|" + field.name() + "|" + field.fieldType()
+                    + "|" + field.stringValue() + "|" + field.numericValue() + "|" + field.binaryValue()
+                    + "|" + vector;
+        }).toList();
+    }
+
     private static Document vectorDoc(ProtoLuceneMapper mapper, Descriptor descriptor,
                                       FieldDescriptor embedding, IndexMapping mapping,
                                       String id, float... vector) throws Exception {
