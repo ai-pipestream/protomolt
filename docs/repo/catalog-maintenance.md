@@ -11,10 +11,12 @@ operation outcomes or outbox events. A historical revision must never replace th
 current entry. Missing/corrupt retained material must fail before a repair.
 
 Reuse and call path: `RepoServiceMain` command dispatch → local
-`RepoCatalogMaintenance` → `RepoServices.v2Composition` →
-`CatalogEntryRebuild` → `DocumentReads`/retained schema admission and verified stack
-reads → existing catalog `rewriteRevisionType` and conditional `rewriteEntry`.
-No new public RPC, schema resolver, persistence format or backup authority.
+`RepoCatalogMaintenance` → `RepoMaintenanceComposition` (ledger database, drive
+ledger, selected blob store, parts catalog, drive-to-stack resolution shared with
+the serving host) → `CatalogEntryRebuild` → `DocumentReads`/retained schema
+admission and verified stack reads → existing catalog `rewriteRevisionType` and
+conditional `rewriteEntry`. No new public RPC, schema resolver, persistence format
+or backup authority.
 
 Acceptance: production host saves over PostgreSQL and S3; damage derived lookup
 and revision-type rows; audit leaves those rows unchanged; explicit repair restores
@@ -42,17 +44,19 @@ logging may appear separately.
 This is a privileged **local operator** tool. Possession of the configured SQL and
 stack credentials is its authority, just as for a database maintenance process; it
 is not an account-user command and does not evaluate document ACLs. Keep those
-credentials within the operator boundary. The command opens the usual service
-composition, including normal database migrations and internal credential setup,
-but starts no gRPC/HTTP listener, account seeding or lifecycle loop. With the
-production environment it also loads any configured concept-scheme files, opens the
-selected byte stores, and, when Kafka eventing is configured, constructs the Kafka
-outbox publisher. The outbox relay loop is not started, so no events are published.
+credentials within the operator boundary. The command opens the catalog and the
+stores only (`RepoMaintenanceComposition`): the ledger database with its normal
+migrations, the drive ledger, the selected byte store and the parts catalog. It
+does not build the serving host, so it starts no gRPC/HTTP or in-process listener,
+account seeding or lifecycle loop, loads no concept-scheme files, wires no saves or
+accession service, registers no internal step credential, and constructs no Kafka
+outbox publisher even when `DOCUMENT_PLATFORM_KAFKA_BOOTSTRAP_SERVERS` is set. A
+concept-scheme path that the host could not load does not stop the command.
 Under qualified managed storage it registers its own reader incarnation, as every
-host does, but no reader-host execution. Running the command beside a live host
-shares that host's database and stores. Audit-only mode
+host does, and fences it on exit, but no reader-host execution. Running the command
+beside a live host shares that host's database and stores. Audit-only mode
 makes no document/projection writes; it is not a promise of a SQL read-only
-connection during host initialization. No API token is needed because no network
+connection during initialization. No API token is needed because no network
 surface is opened.
 
 A verified non-tombstone reports `core=VERIFIED_WITH_RETAINED_SCHEMAS`. This means
@@ -105,6 +109,21 @@ flock /work/.gradle-krick.lock ./gradlew \
 Result for this slice: 2 unit tests and 5 integration tests passed, zero failures or
 skips; both guards and Javadoc tasks passed. This is local qualification, not a
 production backup restore or deployment.
+
+`RepoMaintenanceCompositionIT` covers the composition boundary. With an
+unreachable Kafka bootstrap address and a concept-scheme path that does not exist,
+the serving `RepoServices.build` constructs a Kafka producer (visible as a
+`kafka.producer` MBean) or fails on the scheme file, while the maintenance
+composition verifies a saved revision with no producer MBean, no producer,
+transport or lifecycle thread, and no internal step credential in the catalog. A
+child JVM running `RepoServiceMain verify-core` under the same environment exits
+zero with its result line.
+
+```bash
+flock /work/.gradle-krick.lock ./gradlew \
+  :protomolt-repo-service:integrationTest --tests '*RepoMaintenanceCompositionIT*' \
+  --max-workers=2
+```
 
 
 ## Isolated offline restore drill

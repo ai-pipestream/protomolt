@@ -248,7 +248,7 @@ class RepoBackupRestoreIT {
     private static String verifyCore(int revision) {
         var output = new ByteArrayOutputStream();
         RepoCatalogMaintenance.run(new String[] {"verify-core", ACCOUNT, "intake:" + ACCOUNT, "ds", "doc", Integer.toString(revision)},
-                () -> RepoServices.build(config()), new PrintStream(output));
+                () -> RepoMaintenanceComposition.open(config()), new PrintStream(output));
         return output.toString(StandardCharsets.UTF_8);
     }
 
