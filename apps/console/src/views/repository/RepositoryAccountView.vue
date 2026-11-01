@@ -147,7 +147,7 @@
           <div class="d-flex align-center flex-wrap ga-2 mb-2">
             <span class="text-subtitle-2 text-mono" data-testid="drive-inspector-name">{{ inspectedDrive.name }}</span>
             <v-chip size="x-small" variant="tonal" class="text-mono">{{ inspectedDrive.driveType }}</v-chip>
-            <v-chip size="x-small" variant="tonal" color="success" class="text-mono">{{ inspectedDrive.status }}</v-chip>
+            <v-chip size="x-small" variant="tonal" class="text-mono">{{ inspectedDrive.status }}</v-chip>
             <span class="text-caption text-medium-emphasis text-mono">ID {{ inspectedDrive.driveId }}</span>
             <v-spacer />
             <v-btn size="x-small" variant="text" data-testid="drive-inspector-close" @click="inspectedDrive = null">
@@ -623,18 +623,19 @@ async function inspectDrive(name: string) {
     return
   }
   const signal = inspectDriveScope.next()
+  const inspectedAccount = accountId.value
   inspectingDriveName.value = name
   driveInspectorLoading.value = true
   driveInspectorFailure.value = null
   try {
     const answer = await clients.drives.getDrive(
       create(GetDriveRequestSchema, {
-        accountId: accountId.value,
+        accountId: inspectedAccount,
         coordinate: { case: 'name', value: name },
       }),
       { signal },
     )
-    if (signal.aborted) return
+    if (signal.aborted || accountId.value !== inspectedAccount) return
     if (!answer.drive) throw new Error('GetDrive answered without a drive.')
     inspectedDrive.value = describeDriveDetails(answer.drive)
   } catch (error) {
@@ -1041,6 +1042,9 @@ watch(
       listed.value = false
       drives.value = []
       drivesNext.value = ''
+      inspectDriveScope.next()
+      inspectingDriveName.value = ''
+      driveInspectorLoading.value = false
       inspectedDrive.value = null
       driveInspectorFailure.value = null
       loadAll()

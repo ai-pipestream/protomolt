@@ -103,6 +103,7 @@
     <v-card v-if="showPutEntry && address" class="mb-4" data-testid="put-entry-panel">
       <v-card-title class="text-subtitle-2">Atomic metadata &amp; inline renditions commit (ArchiveService.PutEntry)</v-card-title>
       <v-card-text>
+        <fieldset :disabled="putAttempt !== null" class="put-fields">
         <v-row density="compact">
           <v-col cols="12" sm="4">
             <v-text-field
@@ -294,13 +295,18 @@
           </v-row>
         </v-card>
 
+        </fieldset>
+        <v-alert v-if="putAttempt && !putBusy" type="warning" variant="tonal" class="mt-2" data-testid="put-entry-unsettled">
+          The save is not confirmed. Retry sends the same entry, bytes and operation ID.
+          Keep this page open until it is settled. Operation: <span class="text-mono">{{ putAttempt.operationId }}</span>
+        </v-alert>
         <v-alert v-if="putInputError" type="warning" variant="tonal" density="compact" class="mt-2" data-testid="put-entry-input-error">
           {{ putInputError }}
         </v-alert>
         <RpcFailureAlert v-if="putFailure" :failure="putFailure" title="Saving entry via PutEntry" class="mt-2" />
         <div class="d-flex align-center ga-2 mt-2">
           <v-btn size="small" color="primary" :loading="putBusy" data-testid="put-entry-submit" @click="submitPutEntry">
-            Commit PutEntry
+            {{ putAttempt ? 'Retry same save' : 'Commit PutEntry' }}
           </v-btn>
         </div>
         <v-alert
@@ -801,6 +807,7 @@
 import { computed, inject, reactive, ref, shallowRef, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { create } from '@bufbuild/protobuf'
+import { Code, ConnectError } from '@connectrpc/connect'
 import ByteReader from '@/components/repository/ByteReader.vue'
 import DeleteDocumentDialog from '@/components/repository/DeleteDocumentDialog.vue'
 import RpcFailureAlert from '@/components/repository/RpcFailureAlert.vue'
@@ -810,6 +817,7 @@ import { HeaderPresence } from '@/gen/ai/protomolt/proto/asset/v1/format_pb'
 import {
   GetEntryManifestRequestSchema,
   ListVersionsRequestSchema,
+  type PutEntryRequest,
   type BridgeEntryResponse,
   type UploadRenditionResponse,
 } from '@/gen/ai/protomolt/proto/repo/archive/v1/archive_service_pb'
@@ -922,18 +930,55 @@ const putInputError = ref<string | null>(null)
 const putFailure = ref<RpcFailure | null>(null)
 const putOutcome = shallowRef<PutEntryOutcomeSummary | null>(null)
 
+// An unresolved attempt keeps its exact protobuf request, including its original
+// entry and expected version. Navigation must not turn it into a new write.
+const putAttempt = shallowRef<PutEntryRequest | null>(null)
+let putDraftAddress: EntryAddress | null = null
+const pendingPuts: { request: PutEntryRequest; form: PutEntryForm; expectedText: string }[] = []
+
+function copyPutForm(form: PutEntryForm): PutEntryForm {
+  return { ...form, metadata: form.metadata.map(row => ({ ...row })), renditions: form.renditions.map(row => ({ ...row })) }
+}
+
+function resetPutEntry() {
+  putScope.next()
+  putBusy.value = false
+  putAttempt.value = null
+  putDraftAddress = null
+  showPutEntry.value = false
+  putInputError.value = null
+  putFailure.value = null
+  putOutcome.value = null
+  Object.assign(putForm, { title: '', filename: '', contentType: '', sourceUri: '',
+    expectedVersion: 0n, producingModule: 'console', metadata: [], renditions: [] })
+  putExpectedVersionText.value = '0'
+}
+
+function settlePut(request: PutEntryRequest) {
+  const index = pendingPuts.findIndex(pending => pending.request === request)
+  if (index >= 0) pendingPuts.splice(index, 1)
+}
+
 function togglePutEntry() {
   showPutEntry.value = !showPutEntry.value
-  if (showPutEntry.value && info.value) {
-    putForm.title = info.value.title
-    putForm.filename = info.value.filename
-    putForm.contentType = info.value.contentType
-    putForm.sourceUri = info.value.sourceUri
-    putExpectedVersionText.value = (pinned.value ?? 0n).toString()
-    putForm.metadata = Object.entries(info.value.metadata ?? {})
-      .sort(([a], [b]) => a.localeCompare(b))
-      .map(([key, value]) => ({ key, value }))
+  if (!showPutEntry.value || !info.value || !address.value) return
+  if (sameEntry(putDraftAddress, address.value)) return
+  putDraftAddress = address.value
+  const pending = pendingPuts.find(pending => sameEntry(pending.request.address ?? null, address.value!))
+  if (pending) {
+    Object.assign(putForm, copyPutForm(pending.form))
+    putExpectedVersionText.value = pending.expectedText
+    putAttempt.value = pending.request
+    return
   }
+  putForm.title = info.value.title
+  putForm.filename = info.value.filename
+  putForm.contentType = info.value.contentType
+  putForm.sourceUri = info.value.sourceUri
+  putExpectedVersionText.value = (pinned.value ?? 0n).toString()
+  putForm.metadata = Object.entries(info.value.metadata ?? {})
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([key, value]) => ({ key, value }))
 }
 
 function addPutMetaRow() {
@@ -954,7 +999,7 @@ async function submitPutEntry() {
   putInputError.value = null
   putFailure.value = null
   putOutcome.value = null
-  if (!address.value) return
+  if (putBusy.value || !address.value || !sameEntry(putDraftAddress, address.value)) return
   const rawExpected = putExpectedVersionText.value.trim()
   let expectedVersion = 0n
   if (rawExpected !== '') {
@@ -966,9 +1011,13 @@ async function submitPutEntry() {
     }
   }
   putForm.expectedVersion = expectedVersion
-  let req
+  let req = putAttempt.value
   try {
-    req = buildPutEntryRequest(address.value, putForm, newOperationId())
+    if (req === null) {
+      req = buildPutEntryRequest(putDraftAddress!, putForm, newOperationId())
+      pendingPuts.push({ request: req, form: copyPutForm(putForm), expectedText: putExpectedVersionText.value })
+      putAttempt.value = req
+    }
   } catch (error) {
     if (error instanceof UploadInputError) {
       putInputError.value = error.message
@@ -980,12 +1029,23 @@ async function submitPutEntry() {
   putBusy.value = true
   try {
     const answer = await clients.archives.putEntry(req, { signal })
+    settlePut(req)
     if (signal.aborted) return
+    putAttempt.value = null
     putOutcome.value = describePutEntryOutcome(answer)
     putExpectedVersionText.value = answer.version.toString()
     await load()
   } catch (error) {
-    if (!signal.aborted) putFailure.value = rpcFailure(error)
+    // Only a definite service refusal releases the intent. Capacity, transport,
+    // cancellation and unexpected failures leave it available for an exact retry.
+    const refused = error instanceof ConnectError && [Code.InvalidArgument, Code.OutOfRange,
+      Code.NotFound, Code.AlreadyExists, Code.PermissionDenied, Code.Unauthenticated,
+      Code.FailedPrecondition, Code.Aborted, Code.Unimplemented].includes(error.code)
+    if (refused) settlePut(req)
+    if (!signal.aborted) {
+      if (refused) putAttempt.value = null
+      putFailure.value = rpcFailure(error)
+    }
   } finally {
     if (!signal.aborted) putBusy.value = false
   }
@@ -1302,6 +1362,7 @@ async function load() {
     requested.value = parseVersion(queryText('version'))
     compareVersion.value = parseVersion(queryText('compare'))
   } catch (error) {
+    resetPutEntry()
     pendingInspection = null
     bridgeScope.next()
     bridgeResponse.value = null
@@ -1309,6 +1370,7 @@ async function load() {
     routeError.value = (error as Error).message
     return
   }
+  if (putDraftAddress !== null && !sameEntry(putDraftAddress, target)) resetPutEntry()
   if (previousAddress !== null && !sameEntry(previousAddress, target)) {
     bridgeScope.next()
     bridgeResponse.value = null
@@ -1383,3 +1445,7 @@ function closeVersionCompare() {
 
 watch(() => route.fullPath, () => void load(), { immediate: true })
 </script>
+
+<style scoped>
+.put-fields { border: 0; padding: 0; margin: 0; min-width: 0; }
+</style>

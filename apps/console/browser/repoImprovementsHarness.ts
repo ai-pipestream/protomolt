@@ -10,6 +10,7 @@ import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
 import { create, toBinary } from '@bufbuild/protobuf'
+import { Code, ConnectError } from '@connectrpc/connect'
 import { anyPack, StringValueSchema } from '@bufbuild/protobuf/wkt'
 import { CharacterizationEvidenceSchema, ClassificationSchema, ClassificationState } from '@/gen/ai/protomolt/proto/asset/v1/classification_pb'
 import { BridgeKind, BridgeStatus } from '@/gen/ai/protomolt/proto/asset/v1/bridge_pb'
@@ -30,6 +31,7 @@ import {
   ListArchivesResponseSchema,
   ListEntriesResponseSchema,
   ListVersionsResponseSchema,
+  PutEntryRequestSchema,
   PutEntryResponseSchema,
 } from '@/gen/ai/protomolt/proto/repo/archive/v1/archive_service_pb'
 import {
@@ -686,7 +688,10 @@ export async function mountAccountImprovements(initialUrl = '/repository/account
   return { legalTaxonomyBase64 }
 }
 
-export async function mountArchiveEntryImprovements() {
+export const archivePutRequests: Uint8Array[] = []
+
+export async function mountArchiveEntryImprovements(loseFirstPutAnswer = false) {
+  archivePutRequests.length = 0
   const addr = create(EntryAddressSchema, { accountId: 'acct-a', archive: 'executed-agreements', entryId: 'nda-2026-001' })
   const origDesc = create(RenditionDescriptorSchema, { name: 'original', mediaType: 'application/pdf' })
   const ocrDesc = create(RenditionDescriptorSchema, { name: 'ocr', subKey: 'page-1', mediaType: 'text/plain' })
@@ -815,15 +820,18 @@ export async function mountArchiveEntryImprovements() {
             }),
           ],
         }),
-      putEntry: (req) =>
-        create(PutEntryResponseSchema, {
+      putEntry: (req) => {
+        archivePutRequests.push(toBinary(PutEntryRequestSchema, req))
+        if (loseFirstPutAnswer && archivePutRequests.length === 1) throw new ConnectError('Response lost', Code.Unavailable)
+        return create(PutEntryResponseSchema, {
           version: 4n,
           rootChecksum: 'e4d909c290d0fb1ca068ffaddf22cbd0a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4',
           totalBytes: 249_024n,
           deduplicated: false,
           replayed: false,
           operationId: req.operationId || '018f4063-7d4b-7000-8000-000000000694',
-        }),
+        })
+      },
     }),
   )
 

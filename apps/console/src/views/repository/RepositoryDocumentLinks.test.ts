@@ -282,8 +282,8 @@ describe('RepositoryDocumentView links', () => {
 
     await wrapper.get('[data-testid="resolve-all-dynamic-links"]').trigger('click')
     await settle()
-    expect(seen.resolves).toHaveLength(1)
-    expect(wrapper.get('[data-testid="link-status-structured_data.related-0"]').text()).toBe('RESOLVED (1)')
+    expect(seen.resolves).toHaveLength(2)
+    expect(wrapper.get('[data-testid="link-status-structured_data.related-0"]').text()).toBe('RESOLVED (2)')
     expect(wrapper.find('[data-testid="graph-node-match-1"]').exists()).toBe(true)
 
     await wrapper.get('[data-testid="graph-node-citing"]').trigger('click')
@@ -307,11 +307,80 @@ describe('RepositoryDocumentView links', () => {
     await settle()
     expect(resolveAll().classes()).not.toContain('v-btn--loading')
     expect(seen.resolves).toHaveLength(2)
-    expect(wrapper.get('[data-testid="link-status-structured_data.related-0"]').text()).toBe('RESOLVED (1)')
+    expect(wrapper.get('[data-testid="link-status-structured_data.related-0"]').text()).toBe('PARTIAL (1+)')
 
     release()
     await settle()
     expect(resolveAll().classes()).not.toContain('v-btn--loading')
     wrapper.unmount()
   })
+})
+
+
+describe('Link resolution completion', () => {
+  it('resolve all consumes every page before displaying a complete count', async () => {
+    const seen = fresh()
+    const { wrapper } = await openLinks(seen)
+    try {
+      await wrapper.get('[data-testid="resolve-all-dynamic-links"]').trigger('click')
+      await settle()
+      expect(seen.resolves.map(r => r.pageToken)).toEqual(['', 'p2'])
+      expect(wrapper.get('[data-testid="link-status-structured_data.related-0"]').text()).toBe('RESOLVED (2)')
+    } finally { wrapper.unmount() }
+  })
+
+  it('superseding resolve all with a row resolve clears the batch spinner', async () => {
+    let release: (() => void) | undefined
+    let resolves = 0
+    const { wrapper } = await mountRepositoryView(RepositoryDocumentView, DOC, r => r.service(DocumentService, {
+      getManifest: req => create(GetManifestResponseSchema, { manifest: create(DocumentManifestSchema, { address: req.address, revision: 3n }), validation: create(RevisionValidationSchema) }),
+      getDocument: () => create(GetDocumentResponseSchema),
+      listLinks: () => create(ListLinksResponseSchema, { revision: 3n, links: [DYNAMIC] }),
+      listBacklinks: () => create(ListBacklinksResponseSchema),
+      async resolveLink() {
+        if (++resolves === 1) await new Promise<void>(resolve => { release = resolve })
+        return create(ResolveLinkResponseSchema)
+      },
+    }))
+    try {
+      await wrapper.get('[data-testid="tab-links"]').trigger('click')
+      await settle()
+      await wrapper.get('[data-testid="resolve-all-dynamic-links"]').trigger('click')
+      await settle()
+      expect(release).toBeDefined()
+      expect(wrapper.get('[data-testid="resolve-all-dynamic-links"]').classes()).toContain('v-btn--loading')
+      await wrapper.get('[data-testid="resolve-link-structured_data.related-0"]').trigger('click')
+      await settle()
+      release!()
+      await settle()
+      expect(resolves).toBe(2)
+      expect(wrapper.get('[data-testid="resolve-all-dynamic-links"]').classes()).not.toContain('v-btn--loading')
+    } finally { release?.(); wrapper.unmount() }
+  })
+
+  it.each(['refused', 'repeated-token'])('does not show a complete result when a continuation is %s', async failure => {
+    const tokens: string[] = []
+    const { wrapper } = await mountRepositoryView(RepositoryDocumentView, DOC, r => r.service(DocumentService, {
+      getManifest: req => create(GetManifestResponseSchema, { manifest: create(DocumentManifestSchema, { address: req.address, revision: 3n }), validation: create(RevisionValidationSchema) }),
+      getDocument: () => create(GetDocumentResponseSchema),
+      listLinks: () => create(ListLinksResponseSchema, { revision: 3n, links: [DYNAMIC] }),
+      listBacklinks: () => create(ListBacklinksResponseSchema),
+      resolveLink(req) {
+        tokens.push(req.pageToken)
+        if (req.pageToken && failure === 'refused') throw new ConnectError('Continuation unavailable', Code.Unavailable)
+        return create(ResolveLinkResponseSchema, { nextPageToken: 'p2' })
+      },
+    }))
+    try {
+      await wrapper.get('[data-testid="tab-links"]').trigger('click')
+      await settle()
+      await wrapper.get('[data-testid="resolve-all-dynamic-links"]').trigger('click')
+      await settle()
+      expect(tokens).toEqual(['', 'p2'])
+      expect(wrapper.get('[data-testid="link-status-structured_data.related-0"]').text()).toBe('DYNAMIC')
+      expect(wrapper.get('[data-testid="rpc-failure"]').text()).toContain(failure === 'refused' ? 'Continuation unavailable' : 'repeated a page token')
+      expect(wrapper.get('[data-testid="resolve-all-dynamic-links"]').classes()).not.toContain('v-btn--loading')
+    } finally { wrapper.unmount() }
+  })
+
 })

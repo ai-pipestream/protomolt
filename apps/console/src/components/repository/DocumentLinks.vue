@@ -84,15 +84,6 @@
       <v-card-title class="text-subtitle-2 d-flex align-center flex-wrap ga-2">
         <span>Outbound links</span>
         <v-spacer />
-        <v-btn
-          v-if="hasDynamicLinks && backlinks.length === 0 && links.length === 0"
-          size="x-small"
-          variant="tonal"
-          :loading="resolvingAll"
-          @click="resolveAllDynamic"
-        >
-          Resolve all dynamic links
-        </v-btn>
       </v-card-title>
       <v-card-text>
         <div v-if="tombstone" class="text-body-2 text-medium-emphasis">A tombstone revision holds no links.</div>
@@ -282,6 +273,7 @@ const links = shallowRef<LinkRow[]>([])
 const linksLoaded = ref(false)
 const linksFailure = ref<RpcFailure | null>(null)
 const resolvedDynamicMap = ref<Record<string, DocumentRow[]>>({})
+const incompleteDynamic = ref<Record<string, boolean>>({})
 const resolvingAll = ref(false)
 // The resolve-all call that owns `resolvingAll`; any newer resolve or reload supersedes it.
 let resolvingAllSignal: AbortSignal | null = null
@@ -320,6 +312,7 @@ function dynamicStatusColor(key: string): string {
 function dynamicStatusLabel(key: string): string {
   const rows = resolvedDynamicMap.value[key]
   if (rows === undefined) return 'DYNAMIC'
+  if (incompleteDynamic.value[key]) return `PARTIAL (${rows.length}+)`
   return rows.length > 0 ? `RESOLVED (${rows.length})` : 'EMPTY (0)'
 }
 
@@ -354,6 +347,7 @@ async function loadLinks() {
   resolveScope.next()
   resolving.value = null
   resolvedDynamicMap.value = {}
+  incompleteDynamic.value = {}
   resolvingAll.value = false
   resolvingAllSignal = null
   links.value = []
@@ -395,6 +389,7 @@ async function resolve(row: LinkRow, first: boolean) {
       failure: null,
     }
     resolvedDynamicMap.value = { ...resolvedDynamicMap.value, [row.key]: nextRows }
+    incompleteDynamic.value = { ...incompleteDynamic.value, [row.key]: page.nextPageToken !== '' }
   } catch (error) {
     if (isOwnCancellation(error, signal)) return
     resolving.value = { ...resolving.value!, nextToken: earlier?.nextToken ?? '', loading: false, failure: rpcFailure(error) }
@@ -405,13 +400,26 @@ async function resolveAllDynamic() {
   const signal = resolveScope.next()
   resolvingAll.value = true
   resolvingAllSignal = signal
+  resolving.value = null
+  linksFailure.value = null
   try {
     const dynRows = links.value.filter((r) => r.target.kind === 'dynamic')
     for (const row of dynRows) {
-      const page = await clients.documents.resolveLink(resolveLinkRequest(props.address, props.revision, row, ''), { signal })
-      if (signal.aborted) return
-      const rows = page.documents.map(documentRow)
+      const rows: DocumentRow[] = []
+      const tokens = new Set<string>()
+      let token = ''
+      // Replace the displayed result only after every page of this selector is
+      // read. A failed or cancelled continuation must not look complete.
+      do {
+        if (tokens.has(token)) throw new Error('ResolveLink repeated a page token; results are incomplete.')
+        tokens.add(token)
+        const page = await clients.documents.resolveLink(resolveLinkRequest(props.address, props.revision, row, token), { signal })
+        if (signal.aborted) return
+        rows.push(...page.documents.map(documentRow))
+        token = page.nextPageToken
+      } while (token !== '')
       resolvedDynamicMap.value = { ...resolvedDynamicMap.value, [row.key]: rows }
+      incompleteDynamic.value = { ...incompleteDynamic.value, [row.key]: false }
     }
   } catch (error) {
     if (!isOwnCancellation(error, signal)) linksFailure.value = rpcFailure(error)
@@ -483,7 +491,7 @@ watch(() => [props.address, props.revision], () => {
   font-size: 10px;
   font-weight: 600;
   letter-spacing: 0.06em;
-  fill: rgba(255, 255, 255, 0.55);
+  fill: rgba(var(--v-theme-on-surface), 0.65);
 }
 
 .graph-edge-label {
@@ -502,7 +510,7 @@ watch(() => [props.address, props.revision], () => {
 .graph-node-sub {
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   font-size: 10px;
-  fill: rgba(255, 255, 255, 0.68);
+  fill: rgba(var(--v-theme-on-surface), 0.75);
 }
 
 .graph-node-clickable {

@@ -474,7 +474,7 @@ describe('rows and labels', () => {
         metadata: [],
         renditions: [{ name: 'parsed', subKey: 'p1', mediaType: '', schemaSubject: '', text: 'hi' }],
       }),
-    ).toThrow('cannot carry a sub-key')
+    ).toThrow('requires an encoded PARSED protobuf fragment')
 
     const created = describePutEntryOutcome(
       create(PutEntryResponseSchema, {
@@ -543,5 +543,25 @@ describe('rows and labels', () => {
       providerOptions: [{ key: 'multipart.threshold', value: '16MB' }],
       metadata: [{ key: 'tier', value: 'hot' }],
     })
+  })
+})
+
+
+describe('inline rendition admission', () => {
+  const form = (name: string, subKey = '') => ({ title: '', filename: '', contentType: '', sourceUri: '',
+    expectedVersion: 0n, producingModule: 'console', metadata: [],
+    renditions: [{ name, subKey, mediaType: 'text/plain', schemaSubject: '', text: '' }] })
+
+  it.each(['.hidden', '_notes', '-notes', 'x'.repeat(201), 'parsed'])(
+    'refuses an inline rendition the archive cannot accept: %s', name => {
+      expect(() => buildPutEntryRequest(ADDRESS, form(name))).toThrow()
+    },
+  )
+  it.each(['.part', 'x'.repeat(201)])('refuses an invalid sub-key: %s', subKey => {
+    expect(() => buildPutEntryRequest(ADDRESS, form('notes', subKey))).toThrow()
+  })
+  it('accepts the 200-character boundary and an intentionally empty payload', () => {
+    const request = buildPutEntryRequest(ADDRESS, form('x'.repeat(200), 'p'.repeat(200)))
+    expect(request.renditions[0].data).toHaveLength(0)
   })
 })

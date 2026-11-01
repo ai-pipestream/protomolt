@@ -731,7 +731,7 @@ export async function readRendition(
   return { header, receivedBytes: received, verification: { kind: 'verified', sha256: actual } }
 }
 
-const PATH_SAFE_SLUG = /^[A-Za-z0-9._-]+$/
+const PATH_SAFE_SLUG = /^[A-Za-z0-9][A-Za-z0-9._-]{0,199}$/
 
 /** One inline rendition draft in the PutEntry workbench (#694). */
 export interface InlineRenditionDraft {
@@ -780,14 +780,14 @@ export function buildPutEntryRequest(address: EntryAddress, form: PutEntryForm, 
     const name = draft.name.trim()
     if (name === '') throw new UploadInputError(`Rendition ${idx + 1} name`, 'is blank')
     if (!PATH_SAFE_SLUG.test(name)) {
-      throw new UploadInputError(`Rendition "${name}"`, 'must contain only letters, digits, dots, underscores, or hyphens')
+      throw new UploadInputError(`Rendition "${name}"`, 'must start with a letter or digit and contain at most 200 letters, digits, dots, underscores, or hyphens')
     }
     const subKey = draft.subKey.trim()
     if (subKey !== '' && !PATH_SAFE_SLUG.test(subKey)) {
-      throw new UploadInputError(`Rendition "${name}" sub-key`, 'must contain only letters, digits, dots, underscores, or hyphens')
+      throw new UploadInputError(`Rendition "${name}" sub-key`, 'must start with a letter or digit and contain at most 200 letters, digits, dots, underscores, or hyphens')
     }
-    if (name === 'parsed' && subKey !== '') {
-      throw new UploadInputError('Rendition "parsed"', 'cannot carry a sub-key')
+    if (name === 'parsed') {
+      throw new UploadInputError('Rendition "parsed"', 'requires an encoded PARSED protobuf fragment, not inline text')
     }
     const slot = `${name}\u0000${subKey}`
     if (seenSlots.has(slot)) {

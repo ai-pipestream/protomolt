@@ -452,3 +452,35 @@ test('Ticket #696: inspects DriveService.GetDrive provider details, options, met
 
   await page.screenshot({ path: 'test-results/ticket696-drive-inspector-and-entry-v2.png', fullPage: true })
 })
+
+
+test('PutEntry keeps an uncertain request immutable and retries identical protobuf bytes', async ({ page }) => {
+  await page.goto('/console/repo-improvements-test')
+  await page.evaluate(async () => {
+    const path = '/console/browser/repoImprovementsHarness.ts'
+    const { mountArchiveEntryImprovements } = await import(/* @vite-ignore */ path)
+    await mountArchiveEntryImprovements(true)
+  })
+  await page.getByTestId('toggle-put-entry').click()
+  await page.getByTestId('put-entry-title').locator('input').fill('A save whose answer is lost')
+  await page.getByTestId('put-entry-add-rendition').click()
+  await page.getByTestId('put-rendition-name-0').locator('input').fill('notes')
+  await page.getByTestId('put-rendition-text-0').locator('textarea').fill('Exact bytes π')
+  await page.getByTestId('put-entry-submit').click()
+  await expect(page.getByTestId('put-entry-unsettled')).toBeVisible()
+  await expect(page.getByTestId('put-entry-title').locator('input')).toBeDisabled()
+  await expect(page.getByTestId('put-rendition-text-0').locator('textarea')).toBeDisabled()
+  await expect(page.getByTestId('put-entry-add-rendition')).toBeDisabled()
+  await page.getByTestId('toggle-put-entry').click()
+  await page.getByTestId('toggle-put-entry').click()
+  await page.getByTestId('put-entry-submit').click()
+  await expect(page.getByTestId('put-entry-outcome')).toContainText('Committed new version 4')
+  const calls = await page.evaluate(async () => {
+    const path = '/console/browser/repoImprovementsHarness.ts'
+    const { archivePutRequests } = await import(/* @vite-ignore */ path)
+    return archivePutRequests.map((bytes: Uint8Array) => Array.from(bytes))
+  })
+  expect(calls).toHaveLength(2)
+  expect(calls[1]).toEqual(calls[0])
+  await expect(page.getByTestId('put-entry-title').locator('input')).toBeEnabled()
+})
