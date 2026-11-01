@@ -35,12 +35,11 @@ import {
   VersionManifestSchema,
 } from '@/gen/ai/protomolt/proto/repo/archive/v1/entry_pb'
 import {
-  DeleteDocumentResponseSchema,
   DocumentService,
   PurgeDocumentResponseSchema,
-  type DeleteDocumentRequest,
 } from '@/gen/ai/protomolt/proto/repo/v2/document_service_pb'
-import { AccessionSchema } from '@/gen/ai/protomolt/proto/repo/v2/manifest_pb'
+import { ArchiveMutationService, ArchiveMutationResponseSchema } from '@/gen/ai/protomolt/proto/repo/archive/v1/archive_mutation_service_pb'
+import { ArchiveMutationReceiptSchema, ArchiveMutationKind, ArchiveMutationState, type ArchiveMutationRequest } from '@/gen/ai/protomolt/proto/repo/archive/v1/archive_mutation_pb'
 import { at } from '@/repository/repositoryTestKit'
 import { mountRepositoryView, settle } from '@/repository/repositoryViewKit'
 import RepositoryArchiveEntryView from './RepositoryArchiveEntryView.vue'
@@ -562,42 +561,40 @@ describe('RepositoryArchiveEntryView', () => {
     wrapper.unmount()
   })
 
-  it("tombstones the current version through the entry's v2 call number and never purges (#696, #531)", async () => {
-    const s = seen()
-    const deletes: DeleteDocumentRequest[] = []
-    let purges = 0
+  it('deletes through ArchiveMutation with the observed version and displays its receipt, never direct document deletion', async () => {
+    const deletes: ArchiveMutationRequest[] = []
+    let shortcuts = 0
     const { wrapper, router } = await mountRepositoryView(RepositoryArchiveEntryView, ENTRY, (r) => {
-      archives(s)(r)
+      archives(seen())(r)
       r.service(DocumentService, {
-        deleteDocument(request) {
+        deleteDocument() { shortcuts++; throw new Error('No direct document delete') },
+        purgeDocument() { shortcuts++; return create(PurgeDocumentResponseSchema) },
+      })
+      r.service(ArchiveMutationService, {
+        archiveMutation(request) {
           deletes.push(request)
-          return create(DeleteDocumentResponseSchema, {
-            operationId: request.operationId,
-            accession: create(AccessionSchema, { address: request.address, revision: 4n, previousRevision: 3n, tombstone: true }),
-          })
-        },
-        purgeDocument() {
-          purges++
-          return create(PurgeDocumentResponseSchema)
+          return create(ArchiveMutationResponseSchema, { receipt: create(ArchiveMutationReceiptSchema, {
+            operationId: request.operationId, address: address('e-1'), kind: ArchiveMutationKind.DELETE_ENTRY,
+            state: ArchiveMutationState.COMPLETED, entryDeleted: true,
+            commandSha256: '8f98947ff1ae6a17435d9e48c584364593181ff83f1667d3af525067b9a081fe',
+          }) })
         },
       })
     })
-    const dialog = () => document.body.querySelector('[data-testid="delete-dialog"]') as HTMLElement | null
-
     await wrapper.get('[data-testid="delete-archive-entry"]').trigger('click')
     await settle()
-    expect(dialog()!.querySelector('[data-testid="delete-call-number"]')!.textContent).toBe('acct-a / archive:acct-a / papers / e-1')
-    expect(dialog()!.querySelector('[data-testid="delete-revision"]')!.textContent).toBe('3')
-    expect(dialog()!.textContent!.toLowerCase()).not.toContain('purge')
-
-    ;(document.body.querySelector('[data-testid="delete-confirm"]') as HTMLElement).click()
+    expect(document.body.querySelector('[data-testid="delete-archive-address"]')!.textContent).toBe('acct-a / papers / e-1')
+    expect(document.body.querySelector('[data-testid="delete-archive-version"]')!.textContent).toBe('3')
+    ;(document.body.querySelector('[data-testid="delete-archive-confirm"]') as HTMLElement).click()
     await settle()
     expect(deletes).toHaveLength(1)
-    expect(deletes[0].address).toMatchObject({ accountId: 'acct-a', graphId: 'archive:acct-a', graphAddressId: 'papers', docId: 'e-1' })
-    expect(deletes[0].expected?.expected).toEqual({ case: 'revision', value: 3n })
-    expect(purges).toBe(0)
-    expect(router.currentRoute.value.name).toBe('repository-document')
-    expect(router.currentRoute.value.query).toMatchObject({ graph: 'archive:acct-a', node: 'papers', doc: 'e-1', revision: '4' })
+    expect(deletes[0].mutation).toMatchObject({ case: 'deleteEntry', value: { address: address('e-1'), expectedVersion: 3n } })
+    expect(shortcuts).toBe(0)
+    expect(document.body.querySelector('[data-testid="delete-archive-receipt"]')!.textContent).toContain(deletes[0].operationId)
+    ;(document.body.querySelector('[data-testid="delete-archive-close"]') as HTMLElement).click()
+    await settle()
+    expect(router.currentRoute.value.name).toBe('repository-archive')
+    expect(router.currentRoute.value.query).toEqual({ account: 'acct-a', archive: 'papers' })
     wrapper.unmount()
   })
 

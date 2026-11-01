@@ -1,6 +1,7 @@
 package ai.protomolt.proto.repo.service;
 
 import ai.protomolt.proto.repo.archive.v1.ArchiveServiceGrpc;
+import ai.protomolt.proto.repo.archive.v1.ArchiveMutationServiceGrpc;
 import ai.protomolt.proto.repo.v1.DriveServiceGrpc;
 import ai.protomolt.proto.repo.v2.DocumentServiceGrpc;
 import io.grpc.MethodDescriptor;
@@ -35,6 +36,8 @@ class ConsoleProceduresTest {
                 "ai.protomolt.proto.repo.v2.DocumentService/ResolveLink",
                 "ai.protomolt.proto.repo.v2.DocumentService/ListBacklinks",
                 "ai.protomolt.proto.repo.v1.DriveService/ListDrives",
+                "ai.protomolt.proto.repo.archive.v1.ArchiveMutationService/ArchiveMutation",
+                "ai.protomolt.proto.repo.archive.v1.ArchiveMutationService/GetArchiveMutation",
                 "ai.protomolt.proto.repo.archive.v1.ArchiveService/ListArchives",
                 "ai.protomolt.proto.repo.archive.v1.ArchiveService/GetArchive",
                 "ai.protomolt.proto.repo.archive.v1.ArchiveService/GetArchiveStats",
@@ -48,7 +51,8 @@ class ConsoleProceduresTest {
     void everyProcedureIsAUnaryOrServerStreamingMethodTheGatewayCanServe() {
         Map<String, MethodDescriptor.MethodType> types = new HashMap<>();
         for (ServiceDescriptor service : List.of(DocumentServiceGrpc.getServiceDescriptor(),
-                DriveServiceGrpc.getServiceDescriptor(), ArchiveServiceGrpc.getServiceDescriptor())) {
+                DriveServiceGrpc.getServiceDescriptor(), ArchiveServiceGrpc.getServiceDescriptor(),
+                ArchiveMutationServiceGrpc.getServiceDescriptor())) {
             for (MethodDescriptor<?, ?> method : service.getMethods()) {
                 types.put(method.getFullMethodName(), method.getType());
             }

@@ -2145,7 +2145,7 @@ public final class DocumentArchive {
         String operationId = parseOperationId(request.getOperationId());
         return switch (request.getMutationCase()) {
             case DELETE_ENTRY -> deleteEntry(
-                    operationId, request.getDeleteEntry(), 0L, ArchiveOperationKeys.DELETE_ENTRY);
+                    operationId, request.getDeleteEntry(), request.getDeleteEntry().getExpectedVersion(), ArchiveOperationKeys.DELETE_ENTRY);
             case DELETE_RENDITION -> deleteRendition(operationId, request.getDeleteRendition());
             case PRUNE_VERSIONS -> pruneVersions(operationId, request.getPruneVersions());
             case MUTATION_NOT_SET -> throw ArchiveErrors.invalid("mutation", "must be set");
@@ -2154,25 +2154,25 @@ public final class DocumentArchive {
 
     /**
      * {@code DeleteEntry} with a deterministic UUIDv5 {@code operation_id} and
-     * last-write-wins version semantics.
+     * the request's version guard, or delete-current semantics when absent.
      *
      * @param request the delete-entry request
      * @return the archive mutation response carrying the tombstone receipt
      */
     public ArchiveMutationResponse deleteEntry(DeleteEntryRequest request) {
-        return deleteEntry("", request, 0L, ArchiveOperationKeys.DELETE_ENTRY);
+        return deleteEntry("", request, request.getExpectedVersion(), ArchiveOperationKeys.DELETE_ENTRY);
     }
 
     /**
-     * {@code DeleteEntry} with the supplied {@code operationId} and last-write-wins
-     * version semantics.
+     * {@code DeleteEntry} with the supplied {@code operationId} and the request's version
+     * guard, or delete-current semantics when absent.
      *
      * @param operationId the caller-supplied UUID, or empty to derive a deterministic UUIDv5
      * @param request the delete-entry request
      * @return the archive mutation response carrying the tombstone receipt
      */
     public ArchiveMutationResponse deleteEntry(String operationId, DeleteEntryRequest request) {
-        return deleteEntry(operationId, request, 0L, ArchiveOperationKeys.DELETE_ENTRY);
+        return deleteEntry(operationId, request, request.getExpectedVersion(), ArchiveOperationKeys.DELETE_ENTRY);
     }
 
     /**
@@ -2187,6 +2187,9 @@ public final class DocumentArchive {
     public ArchiveMutationResponse deleteEntry(
             String operationId, DeleteEntryRequest request, long expectedVersion, String reason) {
         requireValid(request);
+        if (request.hasExpectedVersion() && request.getExpectedVersion() != expectedVersion) {
+            throw ArchiveErrors.invalid("expected_version", "request and explicit argument disagree");
+        }
         if (expectedVersion < 0) {
             throw ArchiveErrors.invalid(
                     "expected_version", "must not be negative: " + expectedVersion);

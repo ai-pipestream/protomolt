@@ -792,10 +792,10 @@
       </v-card-text>
     </v-card>
 
-    <DeleteDocumentDialog
+    <DeleteArchiveEntryDialog
       v-if="deletingEntry && address && pinned !== null"
-      :address="entryNodeAddress(address)"
-      :revision="pinned"
+      :address="address"
+      :version="pinned"
       @deleted="onEntryDeleted"
       @reload="onEntryReloadAfterConflict"
       @close="deletingEntry = false"
@@ -809,7 +809,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { create } from '@bufbuild/protobuf'
 import { Code, ConnectError } from '@connectrpc/connect'
 import ByteReader from '@/components/repository/ByteReader.vue'
-import DeleteDocumentDialog from '@/components/repository/DeleteDocumentDialog.vue'
+import DeleteArchiveEntryDialog from '@/components/repository/DeleteArchiveEntryDialog.vue'
 import RpcFailureAlert from '@/components/repository/RpcFailureAlert.vue'
 import type { BridgeKind } from '@/gen/ai/protomolt/proto/asset/v1/bridge_pb'
 import type { Classification } from '@/gen/ai/protomolt/proto/asset/v1/classification_pb'
@@ -822,7 +822,6 @@ import {
   type UploadRenditionResponse,
 } from '@/gen/ai/protomolt/proto/repo/archive/v1/archive_service_pb'
 import type { EntryAddress, EntryInfo, VersionManifest } from '@/gen/ai/protomolt/proto/repo/archive/v1/entry_pb'
-import type { Accession } from '@/gen/ai/protomolt/proto/repo/v2/manifest_pb'
 import {
   BRIDGE_KIND_ITEMS,
   DECLARED_FORMAT_ITEMS,
@@ -835,7 +834,6 @@ import {
   describePutEntryOutcome,
   entryAddress,
   entryCallNumber,
-  entryNodeAddress,
   parseVersion,
   planRenditionUpload,
   readRendition,
@@ -1056,18 +1054,14 @@ function openAsV2Document() {
   void router.push(documentRoute(entryCallNumber(address.value), pinned.value))
 }
 
-function onEntryDeleted(accession: Accession) {
+function onEntryDeleted() {
   deletingEntry.value = false
   if (!address.value) return
-  void router.push(documentRoute(entryCallNumber(address.value), accession.revision))
+  void router.push({ name: 'repository-archive', query: { account: address.value.accountId, archive: address.value.archive } })
 }
 
-function onEntryReloadAfterConflict(tombstone: bigint | null) {
+function onEntryReloadAfterConflict() {
   deletingEntry.value = false
-  if (tombstone !== null && address.value) {
-    void router.push(documentRoute(entryCallNumber(address.value), tombstone))
-    return
-  }
   void load()
 }
 const headerPresenceItems = [
