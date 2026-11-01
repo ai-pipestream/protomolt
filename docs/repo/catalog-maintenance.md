@@ -44,7 +44,13 @@ stack credentials is its authority, just as for a database maintenance process; 
 is not an account-user command and does not evaluate document ACLs. Keep those
 credentials within the operator boundary. The command opens the usual service
 composition, including normal database migrations and internal credential setup,
-but starts no gRPC/HTTP listener, account seeding or lifecycle loop. Audit-only mode
+but starts no gRPC/HTTP listener, account seeding or lifecycle loop. With the
+production environment it also loads any configured concept-scheme files, opens the
+selected byte stores, and, when Kafka eventing is configured, constructs the Kafka
+outbox publisher. The outbox relay loop is not started, so no events are published.
+Under qualified managed storage it registers its own reader incarnation, as every
+host does, but no reader-host execution. Running the command beside a live host
+shares that host's database and stores. Audit-only mode
 makes no document/projection writes; it is not a promise of a SQL read-only
 connection during host initialization. No API token is needed because no network
 surface is opened.
@@ -57,8 +63,8 @@ as typed-valid. A tombstone reports `core=TOMBSTONE_NO_CORE` instead.
 Repair first writes the named revision's derived structured-data type, then uses
 the existing conditional transaction to replace the current lookup/link/concept
 rows **only while that exact revision is still current and unpurged**. A historical
-revision, concurrent newer accession or purge reports
-`current_entry=NOT_CURRENT_OR_PURGED`. The command does not substitute the newer
+revision or concurrent newer accession reports `current_entry=NOT_CURRENT`; a purge
+after the type repair reports `current_entry=PURGED`. The command does not substitute the newer
 revision. These are two transactions; if the second fails, the first may already
 have committed. Repeating the exact command is safe and creates no accession,
 operation outcome or outbox event.

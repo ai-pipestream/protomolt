@@ -27,7 +27,8 @@ final class RepoCatalogMaintenance {
                     + " core=" + (result.tombstone() ? "TOMBSTONE_NO_CORE" : "VERIFIED_WITH_RETAINED_SCHEMAS")
                     + " revision_type=" + (result.revisionTypeRewritten() ? "REBUILT" : "NOT_REQUESTED")
                     + " current_entry=" + (!command.repair() ? "NOT_REQUESTED"
-                            : result.currentEntryRewritten() ? "REBUILT" : "NOT_CURRENT_OR_PURGED"));
+                            : result.currentEntryRewritten() ? "REBUILT"
+                            : result.purgedBeforeEntryRepair() ? "PURGED" : "NOT_CURRENT"));
     }
 
     private static Command parse(String[] args) {

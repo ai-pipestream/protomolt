@@ -75,15 +75,23 @@ public final class CatalogEntryRebuild {
                         DocumentSaves.conceptRows(retained.concepts()));
             });
         }
-        if (!repair) return new RevisionResult(manifest.getTombstone(), false, false);
+        if (!repair) return new RevisionResult(manifest.getTombstone(), false, false, false);
         if (!catalog.rewriteRevisionType(address, revision, type(projection.lookup())))
             throw new AccessionException(Status.Code.NOT_FOUND, "Revision was purged before repair", null);
         boolean entry = catalog.rewriteEntry(address, revision, projection.lookup(), projection.links(), projection.concepts());
-        return new RevisionResult(manifest.getTombstone(), true, entry);
+        // A refused entry rewrite means the revision is historical or was purged after
+        // the type repair; the manifest lookup tells the operator which.
+        boolean purged = !entry && catalog.manifest(address, revision).isEmpty();
+        return new RevisionResult(manifest.getTombstone(), true, entry, purged);
     }
 
-    /** Outcome of local exact-revision maintenance; false write flags also describe audit-only mode. */
-    public record RevisionResult(boolean tombstone, boolean revisionTypeRewritten, boolean currentEntryRewritten) {}
+    /**
+     * Outcome of local exact-revision maintenance; false write flags also describe audit-only mode.
+     * {@code purgedBeforeEntryRepair} separates a purge after the type repair from a
+     * revision that is simply no longer current.
+     */
+    public record RevisionResult(boolean tombstone, boolean revisionTypeRewritten, boolean currentEntryRewritten,
+            boolean purgedBeforeEntryRepair) {}
 
     private record Projection(Optional<DocumentLookup> lookup, List<CatalogRecords.Link> links,
             List<CatalogRecords.ConceptTag> concepts) {}

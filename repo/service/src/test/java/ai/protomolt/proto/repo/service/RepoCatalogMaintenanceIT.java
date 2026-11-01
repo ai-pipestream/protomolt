@@ -104,7 +104,7 @@ class RepoCatalogMaintenanceIT {
         save(account, 2);
         damageDerived(account);
         var authoritative = authoritative();
-        assertThat(command("rebuild-entry", account, 1, 0)).contains("current_entry=NOT_CURRENT_OR_PURGED");
+        assertThat(command("rebuild-entry", account, 1, 0)).contains("current_entry=NOT_CURRENT").doesNotContain("PURGED");
         assertThat(derived(account)).contains("damaged", TYPE);
         assertThat(command("rebuild-entry", account, 2, 0)).contains("current_entry=REBUILT");
         assertThat(derived(account)).contains("Title 2").doesNotContain("Title 1", "damaged");
