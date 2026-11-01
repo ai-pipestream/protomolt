@@ -71,10 +71,11 @@ verify every historical revision, validate every catalog column, or test the ent
 storage estate. It does not delete, sweep, restore or rewrite authoritative objects.
 Missing retained schemas are errors, never replaced with a live registry schema.
 
-A complete disaster-recovery drill still needs a coordinated operator-owned SQL and
-object-store backup restored into isolated infrastructure, then all required parts
-and retained artifacts verified. This slice repairs derived rows in an existing
-catalog; it is not that restore mechanism or a portable repository export format.
+Production recovery needs a coordinated operator-owned SQL and object-store backup,
+followed by verification of every required part and retained artifact. The isolated
+drill below qualifies that sequence for one fixture. These commands repair derived
+rows in an existing catalog; they are not a restore mechanism or a portable
+repository export format.
 
 ## Verification
 
@@ -98,3 +99,57 @@ flock /work/.gradle-krick.lock ./gradlew \
 Result for this slice: 2 unit tests and 5 integration tests passed, zero failures or
 skips; both guards and Javadoc tasks passed. This is local qualification, not a
 production backup restore or deployment.
+
+
+## Isolated offline restore drill
+
+`RepoBackupRestoreIT` adds recovery qualification from starting commit `3c7239777`.
+Required behavior: recover two revisions, all five part families, original raw blob
+bytes, retained schemas and operation outcomes after complete catalog and object
+loss. A CORE-only second save must retain the other four parts; retrying either
+original operation after restore must return its original outcome without creating
+new revisions or events.
+
+Reuse and call path: public `DocumentService` saves → existing accession catalog,
+S3 objects and retained schema artifacts → closed services → PostgreSQL `pg_dump`
+→ exact S3 bucket/key/bytes/metadata backup → empty test database and object store
+→ PostgreSQL `psql` restore and exact object replacement → fresh `RepoServices`
+without the custom schema mounted → public historical/current reads, individual
+selected-part streams, raw blob stream, retained descriptors and operation outcomes
+→ `RepoCatalogMaintenance verify-core` for both revisions. The fixture uses the
+existing semantic digest/part codec and does not introduce a repository backup
+format, provider fallback, public API or new schema resolver.
+
+The drill owns dedicated PostgreSQL 18 and LocalStack 3.8 Testcontainers. Every
+service is closed before the backup. It exports a standard SQL dump to a temporary
+file, copies object bytes into the test fixture, deletes every test object version
+and delete marker (rather than merely hiding current objects), drops
+and recreates the test database, then restores both. No destructive operation uses
+an externally configured database or object endpoint. The empty database is checked
+before restore; SQL-only restoration must fail CORE verification until objects are
+restored. Successful verification must preserve exact manifests, schema artifacts,
+stack records, object references, catalog entries, outcomes and outbox payloads.
+
+The recorded endpoint, bucket, namespace and keys remain identical throughout.
+This models loss and recovery of an existing namespace; it does **not** qualify
+migration to another endpoint/bucket or rewriting stable stack identity. It also
+does not qualify online snapshot consistency, point-in-time recovery, provider
+version-history restoration, physical container replacement, or a production
+backup schedule. Object bytes are small test fixtures held in memory; this is not
+a large-store backup implementation. `verify-core` keeps its CORE-only scope; the
+drill separately reads and compares every selected part and raw blob through the
+public API. The custom typed payload retains its exact int64 value and Any bytes
+without requiring a live schema mount after restoration.
+
+Run the additional drill with:
+
+```bash
+flock /work/.gradle-krick.lock ./gradlew \
+  :protomolt-repo-service:integrationTest --tests '*RepoBackupRestoreIT*' \
+  checkZeroRegex checkTestNaming --max-workers=2
+```
+
+Local qualification: the new restore drill and five existing maintenance integration
+tests passed, alongside two maintenance unit tests (8 total, zero failures, errors
+or skips). Zero-regex, Testcontainers naming and service runtime-boundary checks
+passed. This is an isolated Testcontainers drill, not a production restore.
