@@ -49,11 +49,18 @@ import static org.assertj.core.api.Assertions.assertThat;
 @TestMethodOrder(MethodOrderer.OrderAnnotation.class)
 class SolrLiveIntegrationTest {
 
-    // The module has no no-arg constructor and no default tag; solr:10 matches the version
-    // the compose lane pins (DenseVectorField and the knn parser need the 9.x line).
+    // Keep the real engine version aligned with the compose lane.
     @Container
-    static final SolrContainer SOLR = new SolrContainer(DockerImageName.parse("solr:10"))
-            .withCollection("protomolt");
+    static final SolrContainer SOLR = new SolrContainer(DockerImageName.parse("solr:10.1.0")) {
+        @Override
+        protected void configure() {
+            super.configure();
+            // Testcontainers 2.0.5 starts embedded ZooKeeper with bare -DzkRun.
+            // Solr 10.1 rejects that empty boolean even though Jetty starts.
+            // Preserve SolrCloud and collection creation, using the current property.
+            setCommand("-Dsolr.zookeeper.server.enabled=true", "--host", "localhost");
+        }
+    }.withCollection("protomolt");
 
     private static final ObjectMapper JSON = new ObjectMapper();
     private static final HttpClient HTTP = HttpClient.newBuilder()
@@ -66,7 +73,7 @@ class SolrLiveIntegrationTest {
 
     @BeforeAll
     static void createCore() throws Exception {
-        // withCollection precreates this core (solr create -c) at startup; schema
+        // withCollection creates this collection through the Collections API; schema
         // application below is idempotent across runs.
         core = "protomolt";
 
