@@ -9,6 +9,7 @@ import ai.protomolt.proto.validate.testdata.WrapperGauntlet;
 import com.google.protobuf.Message;
 import com.google.protobuf.StringValue;
 import com.google.protobuf.Timestamp;
+import com.google.protobuf.ByteString;
 import org.junit.jupiter.api.Test;
 
 import java.time.Instant;
@@ -74,6 +75,19 @@ class CelFieldRulesTest {
                     assertThat(v.message()).isEqualTo("11 widgets is too many");
                 });
         assertValid(CelShapeGauntlet.newBuilder().setWidgets(10).build());
+    }
+
+    @Test
+    void formatHexEncodesABytesField() {
+        ByteString tag = ByteString.copyFrom(new byte[] {(byte) 0xde, (byte) 0xad, (byte) 0x01});
+        assertThat(VALIDATOR.validate(CelShapeGauntlet.newBuilder().setTag(tag).build())
+                        .violations())
+                .singleElement()
+                .satisfies(v -> {
+                    assertThat(v.ruleId()).isEqualTo("tag.hex");
+                    assertThat(v.message()).isEqualTo("tag dead01 is longer than two bytes");
+                });
+        assertValid(CelShapeGauntlet.newBuilder().setTag(ByteString.copyFromUtf8("ok")).build());
     }
 
     @Test
