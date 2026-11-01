@@ -486,7 +486,17 @@ async function startBatchUpload() {
         } else if (sendResult.kind === 'unsettled') {
           item.status = 'UNSETTLED'
           item.message = `${sendResult.reason} The save may have committed; look up the operation or retry with the same operation ID.`
+        } else if (sendResult.kind === 'refused') {
+          // A definite refusal saved nothing under this operation ID, and the
+          // same request would be refused again. Release the plan so the row
+          // can be corrected and sent again under a fresh operation ID.
+          item.status = 'FAILED'
+          item.message = `${sendResult.failure.code}: ${sendResult.failure.message}`
+          item.plan = null
+          item.operationId = null
         } else {
+          // Capacity and credential refusals: the same request may succeed
+          // later, so the row keeps its plan and operation ID for the retry.
           item.status = 'FAILED'
           item.message = `${sendResult.failure.code}: ${sendResult.failure.message}`
         }

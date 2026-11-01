@@ -350,6 +350,45 @@ describe('RepositoryUploadView', () => {
     wrapper.unmount()
   })
 
+  it('lets a definitively refused batch row be corrected and resent under a fresh operation id', async () => {
+    const answers: Answer[] = [refusal(400, Code.InvalidArgument, 'doc_id must not end with a slash'), saved, saved]
+    const { wrapper } = await mountRepositoryView(
+      RepositoryUploadView,
+      { name: 'repository-upload', query: { account: 'acct-a', datasource: 'ds-files' } },
+      repository([]),
+      { [REPOSITORY_UPLOAD_REQUEST as symbol]: () => new FakeUploadRequest((r) => answers.shift()!(r)) },
+    )
+    ;(wrapper.vm as unknown as { form: { drive: string } }).form.drive = 'intake'
+    const files = ['alpha', 'beta'].map((name) => new File(['abc'], name))
+    const input = wrapper.get('[data-testid="up-file"]').element as HTMLInputElement
+    Object.defineProperty(input, 'files', { value: files, configurable: true })
+    await wrapper.get('[data-testid="up-file"]').trigger('change')
+    await wrapper.get('[data-testid="batch-doc-id-0"] input').setValue('reports/alpha-draft')
+    await wrapper.get('[data-testid="batch-upload-submit"]').trigger('click')
+    await settle()
+    expect(FakeUploadRequest.sent).toHaveLength(2)
+    expect(FakeUploadRequest.sent[0].params().get('doc_id')).toBe('reports/alpha-draft')
+    expect(wrapper.get('[data-testid="batch-status-0"]').text()).toBe('FAILED')
+    expect(wrapper.get('[data-testid="batch-row-0"]').text()).toContain('INVALID_ARGUMENT: doc_id must not end with a slash')
+    expect(wrapper.get('[data-testid="batch-status-1"]').text()).toBe('SAVED')
+    // The refused row is editable again and no longer links a dead operation.
+    expect(wrapper.get('[data-testid="batch-doc-id-0"] input').attributes('disabled')).toBeUndefined()
+    expect(wrapper.find('[data-testid="batch-op-0"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="batch-op-1"]').exists()).toBe(true)
+    const refusedOperation = FakeUploadRequest.sent[0].params().get('operation_id')
+    await wrapper.get('[data-testid="batch-doc-id-0"] input').setValue('reports/alpha')
+    await wrapper.get('[data-testid="batch-upload-submit"]').trigger('click')
+    await settle()
+    expect(FakeUploadRequest.sent).toHaveLength(3)
+    const resent = FakeUploadRequest.sent[2].params()
+    expect(resent.get('doc_id')).toBe('reports/alpha')
+    expect(resent.get('operation_id')).toMatch(/^[0-9a-f-]{36}$/)
+    expect(resent.get('operation_id')).not.toBe(refusedOperation)
+    expect(FakeUploadRequest.sent[2].body).toBe(files[0])
+    expect(wrapper.get('[data-testid="batch-status-0"]').text()).toBe('SAVED')
+    wrapper.unmount()
+  })
+
   it('auto-fills docId from path prefix + filename and uploads a multi-file batch queue', async () => {
     const outcomes: GetOperationOutcomeRequest[] = []
     const mounted = await mountRepositoryView(
