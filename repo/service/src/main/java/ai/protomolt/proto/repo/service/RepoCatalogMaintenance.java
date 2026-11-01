@@ -23,12 +23,17 @@ final class RepoCatalogMaintenance {
             result = new CatalogEntryRebuild(composition.catalog(), reads)
                     .revision(command.address(), command.revision(), command.repair());
         }
-        output.println("revision=" + command.revision()
-                    + " core=" + (result.tombstone() ? "TOMBSTONE_NO_CORE" : "VERIFIED_WITH_RETAINED_SCHEMAS")
-                    + " revision_type=" + (result.revisionTypeRewritten() ? "REBUILT" : "NOT_REQUESTED")
-                    + " current_entry=" + (!command.repair() ? "NOT_REQUESTED"
-                            : result.currentEntryRewritten() ? "REBUILT"
-                            : result.purgedBeforeEntryRepair() ? "PURGED" : "NOT_CURRENT"));
+        output.println(report(command.revision(), command.repair(), result));
+    }
+
+    /** The one line an operator reads; {@code PURGED} means the document vanished between the two repair transactions. */
+    static String report(long revision, boolean repair, CatalogEntryRebuild.RevisionResult result) {
+        return "revision=" + revision
+                + " core=" + (result.tombstone() ? "TOMBSTONE_NO_CORE" : "VERIFIED_WITH_RETAINED_SCHEMAS")
+                + " revision_type=" + (result.revisionTypeRewritten() ? "REBUILT" : "NOT_REQUESTED")
+                + " current_entry=" + (!repair ? "NOT_REQUESTED"
+                        : result.currentEntryRewritten() ? "REBUILT"
+                        : result.purgedBeforeEntryRepair() ? "PURGED" : "NOT_CURRENT");
     }
 
     private static Command parse(String[] args) {
