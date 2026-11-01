@@ -21,6 +21,7 @@ import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
 import org.junit.jupiter.api.TestMethodOrder;
+import org.testcontainers.containers.wait.strategy.Wait;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.solr.SolrContainer;
@@ -49,16 +50,21 @@ import static org.assertj.core.api.Assertions.assertThat;
 @TestMethodOrder(MethodOrderer.OrderAnnotation.class)
 class SolrLiveIntegrationTest {
 
-    // Exact tag, same as docker-compose.integration.yml: the floating solr:10 tag moved to
-    // 10.1, which rejects the bare -DzkRun that Testcontainers passes in its default
-    // SolrCloud mode, so the container died while Jetty still answered (issue #724).
-    // Standalone mode matches the compose lane (solr-precreate) and creates the core
-    // with `solr create -c` instead of the Collections API, so no embedded ZooKeeper is
-    // involved. DenseVectorField and the knn parser are schema features, available either way.
+    // Exercise the latest image, as does docker-compose.integration.yml. Keep this
+    // lane in SolrCloud mode: Testcontainers 2.0.5 passes bare -DzkRun, which Solr
+    // 10.1 rejects as an empty boolean. Use the explicit setting and wait for Solr
+    // health rather than Jetty's listener before creating the collection (#724).
     @Container
-    static final SolrContainer SOLR = new SolrContainer(DockerImageName.parse("solr:10.1.0"))
-            .withZookeeper(false)
-            .withCollection("protomolt");
+    static final SolrContainer SOLR = new SolrContainer(DockerImageName.parse("solr:latest")) {
+        @Override
+        protected void configure() {
+            super.configure();
+            setCommand("-Dsolr.zookeeper.server.enabled=true", "--host", "localhost");
+        }
+    }
+            .withCollection("protomolt")
+            .waitingFor(Wait.forHttp("/solr/admin/info/health?wt=json")
+                    .forPort(8983).forStatusCode(200));
 
     private static final ObjectMapper JSON = new ObjectMapper();
     private static final HttpClient HTTP = HttpClient.newBuilder()
@@ -71,7 +77,7 @@ class SolrLiveIntegrationTest {
 
     @BeforeAll
     static void createCore() throws Exception {
-        // withCollection precreates this core (solr create -c) at startup; schema
+        // withCollection creates this collection through Solr's admin API; schema
         // application below is idempotent across runs.
         core = "protomolt";
 
