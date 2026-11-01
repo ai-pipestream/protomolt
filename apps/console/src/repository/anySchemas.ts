@@ -19,6 +19,7 @@ export class AnySchemas {
   private constructor(
     private readonly byOccurrence: Map<string, { desc: DescMessage; retained: ResolvedOccurrence; boundary: string }>,
     private readonly opaque: Set<string> = new Set(),
+    private readonly unavailable = false,
   ) {}
 
   static none(): AnySchemas {
@@ -33,10 +34,55 @@ export class AnySchemas {
     signal: AbortSignal,
     part?: PartSelector,
   ): Promise<AnySchemas> {
+    return this.loadWithOpaque(client, address, revision, validation, signal, new Set(), part)
+  }
+
+  /**
+   * Inspection keeps the part visible when schema resolution fails. Known opaque
+   * locators remain opaque; every other Any is unresolved, never silently absent
+   * or decoded from a partially loaded registry. The original error is retained.
+   * Comparison continues to use strict load(), which rejects the failed side.
+   */
+  static async inspect(
+    client: Client<typeof DocumentService>,
+    address: NodeAddress,
+    revision: bigint,
+    validation: RevisionValidation,
+    signal: AbortSignal,
+    part?: PartSelector,
+  ): Promise<{ kind: 'loaded'; schemas: AnySchemas } | { kind: 'failed'; schemas: AnySchemas; error: unknown }> {
+    const opaque = new Set<string>()
+    try {
+      return { kind: 'loaded', schemas: await this.loadWithOpaque(client, address, revision, validation, signal, opaque, part) }
+    } catch (error) {
+      return { kind: 'failed', schemas: new AnySchemas(new Map(), opaque, true), error }
+    }
+  }
+
+  private static async loadWithOpaque(
+    client: Client<typeof DocumentService>,
+    address: NodeAddress,
+    revision: bigint,
+    validation: RevisionValidation,
+    signal: AbortSignal,
+    opaque: Set<string>,
+    part?: PartSelector,
+  ): Promise<AnySchemas> {
     const registries = new Map<string, Awaited<ReturnType<typeof retainedRegistry>>>()
     const byOccurrence = new Map<string, { desc: DescMessage; retained: ResolvedOccurrence; boundary: string }>()
     const selected = (locator: OccurrenceLocator | undefined) => part === undefined || locator?.part === undefined || equals(PartSelectorSchema, locator.part, part)
-    const opaque = new Set(validation.opaqueOccurrences.filter(o => selected(o.occurrence)).map((occurrence) => retainedLocationKey(occurrence.occurrence)))
+    let invalidOpaque: { error: unknown } | undefined
+    for (const occurrence of validation.opaqueOccurrences) {
+      if (!selected(occurrence.occurrence)) continue
+      try {
+        opaque.add(retainedLocationKey(occurrence.occurrence))
+      } catch (error) {
+        // Collect the remaining valid opaque locators for inspection, but never
+        // accept the malformed validation record or suppress its first error.
+        invalidOpaque ??= { error }
+      }
+    }
+    if (invalidOpaque !== undefined) throw invalidOpaque.error
     for (const occurrence of validation.resolvedOccurrences) {
       if (!selected(occurrence.occurrence)) continue
       const schema = occurrence.schema
@@ -70,9 +116,10 @@ export class AnySchemas {
   }
 
   /** Opaque/missing/identity mismatch are distinct from a decoded value. */
-  statusOf(any: Any, location: AnyLocation): 'typed' | 'opaque' | 'missing' | 'mismatch' {
+  statusOf(any: Any, location: AnyLocation): 'typed' | 'opaque' | 'missing' | 'mismatch' | 'unavailable' {
     const key = locationKey(location)
     if (this.opaque.has(key)) return 'opaque'
+    if (this.unavailable) return 'unavailable'
     if (!this.byOccurrence.has(key)) return 'missing'
     return this.schemaOf(any, location) === null ? 'mismatch' : 'typed'
   }

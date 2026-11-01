@@ -91,7 +91,7 @@ function messageLeaf(label: string, r: ReflectMessage, context?: InspectionConte
   if (r.desc.typeName === 'google.protobuf.Any' && context) {
     const any = r.message as Any
     const status = context.schemas.statusOf(any, context.location)
-    const reason = { opaque: 'Opaque: payload not decoded.', missing: 'No schema retained for this occurrence.', mismatch: 'Payload differs from its retained binding.', typed: 'Retained schema' }[status]
+    const reason = { unavailable: 'Schema resolution failed; payload not decoded.', opaque: 'Opaque: payload not decoded.', missing: 'No schema retained for this occurrence.', mismatch: 'Payload differs from its retained binding.', typed: 'Retained schema' }[status]
     return branch({ label, typeLabel: any.typeUrl, kind: 'message', detail: `${any.value.length} B · ${reason}` }, () => {
       const envelope = messageNodes(r, undefined, depth + 1)
       if (status !== 'typed') return envelope

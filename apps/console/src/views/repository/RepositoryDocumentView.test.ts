@@ -103,7 +103,7 @@ function validation(typedAny = false) {
 }
 
 /** A repository holding one document at revisions 1 to 3 (3 is current). */
-function repository(seen: { manifests: GetManifestRequest[]; blobs: ReadBlobRequest[]; holdPartReads?: boolean; typedAny?: boolean }) {
+function repository(seen: { manifests: GetManifestRequest[]; blobs: ReadBlobRequest[]; holdPartReads?: boolean; typedAny?: boolean; schemaMismatch?: boolean }) {
   return (router: ConnectRouter) =>
     router.service(DocumentService, {
       getManifest(request) {
@@ -180,7 +180,7 @@ function repository(seen: { manifests: GetManifestRequest[]; blobs: ReadBlobRequ
         yield create(ReadDocumentResponseSchema, { frame: { case: 'complete', value: create(ReadCompleteSchema) } })
       },
       getSchemaDescriptor(request) {
-        if (request.descriptorSha256 === ANY_SET_SHA) throw new ConnectError('schema store unavailable', Code.Unavailable)
+        if (request.descriptorSha256 === ANY_SET_SHA && !seen.schemaMismatch) throw new ConnectError('schema store unavailable', Code.Unavailable)
         return create(GetSchemaDescriptorResponseSchema, { revision: 3n, descriptorSha256: request.descriptorSha256, descriptorSet: DESCRIPTORS })
       },
       async *readBlob(request) {
@@ -207,7 +207,7 @@ function repository(seen: { manifests: GetManifestRequest[]; blobs: ReadBlobRequ
 const DOC = { name: 'repository-document', query: { account: 'acct-a', graph: 'intake:acct-a', node: 'ds-files', doc: 'doc-1' } }
 
 function seenCalls() {
-  return { manifests: [] as GetManifestRequest[], blobs: [] as ReadBlobRequest[], holdPartReads: false, typedAny: false }
+  return { manifests: [] as GetManifestRequest[], blobs: [] as ReadBlobRequest[], holdPartReads: false, typedAny: false, schemaMismatch: false }
 }
 
 afterEach(() => {
@@ -250,9 +250,10 @@ describe('RepositoryDocumentView', () => {
     wrapper.unmount()
   })
 
-  it('keeps the decoded part, its bytes and Download when a retained Any schema does not load', async () => {
+  it.each([false, true])('keeps the decoded part, its bytes and Download after schema failure (digest mismatch: %s)', async (schemaMismatch) => {
     const seen = seenCalls()
     seen.typedAny = true
+    seen.schemaMismatch = schemaMismatch
     const { wrapper } = await mountRepositoryView(RepositoryDocumentView, DOC, repository(seen))
     await wrapper.get('[data-testid="read-part-0"]').trigger('click')
     await settle()
@@ -262,8 +263,10 @@ describe('RepositoryDocumentView', () => {
     expect(view.text()).toContain('structured_data')
     expect(view.find('[data-testid="download-part"]').exists()).toBe(true)
     const notice = view.get('[data-testid="part-schema-failure"]').text()
-    expect(notice).toContain('UNAVAILABLE')
-    expect(notice).toContain('schema store unavailable')
+    expect(notice).toContain(schemaMismatch ? 'CONSOLE' : 'UNAVAILABLE')
+    expect(notice).toContain(schemaMismatch ? 'but revision 3 retained' : 'schema store unavailable')
+    expect(view.text()).not.toContain('No schema retained for this occurrence.')
+    expect(view.text()).toContain('Schema resolution failed; payload not decoded.')
     expect(wrapper.text()).not.toContain('Reading the part')
     wrapper.unmount()
   })

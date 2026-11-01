@@ -499,12 +499,9 @@ async function readPartAt(index: number) {
     let schemas = AnySchemas.none()
     let schemaFailure: RpcFailure | null = null
     if (decoded.kind === 'decoded') {
-      try {
-        schemas = await AnySchemas.load(clients.documents, address.value, part.revision, validation.value, signal, entry.selector)
-      } catch (error) {
-        if (signal.aborted) return
-        schemaFailure = rpcFailure(error)
-      }
+      const inspection = await AnySchemas.inspect(clients.documents, address.value, part.revision, validation.value, signal, entry.selector)
+      schemas = inspection.schemas
+      if (inspection.kind === 'failed') schemaFailure = rpcFailure(inspection.error)
     }
     if (signal.aborted) return
     partView.value = {

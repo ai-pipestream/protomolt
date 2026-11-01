@@ -12,6 +12,7 @@ import {
   type FileDescriptorProto,
 } from '@bufbuild/protobuf/wkt'
 import { createHash } from 'node:crypto'
+import { Code, ConnectError } from '@connectrpc/connect'
 import { describe, expect, it, vi } from 'vitest'
 import { file_ai_protomolt_proto_types_v1_concepts } from '@/gen/ai/protomolt/proto/types/v1/concepts_pb'
 import { DocumentSchema, SearchMetadataSchema } from '@/gen/ai/protomolt/proto/repo/v1/document_pb'
@@ -664,5 +665,70 @@ describe('retained Any inspector', () => {
     expect(children[200].label).toBe('(more entries)')
     expect(children[200].loadChildren!()[0].label).toBe('[200]')
     expect(tree[0].loadChildren!()).toBe(children)
+  })
+})
+
+describe('schema inspection', () => {
+  it('still decodes a retained typed payload after a successful load', async () => {
+    const root = anyContainer()
+    const tagged = taggedSchema()
+    const packed = anyPack(tagged.desc, create(tagged.desc, { subject: { schemeId: 'topics', conceptId: 'wind' } } as never))
+    const core = part(DocumentPart.CORE)
+    const validation = create(RevisionValidationSchema, { resolvedOccurrences: [resolved(packed, tagged.set, [fieldStep(1)])] })
+    const clients = routerClients(router => router.service(DocumentService, {
+      getSchemaDescriptor: () => create(GetSchemaDescriptorResponseSchema, { descriptorSet: tagged.set }),
+    }))
+    const result = await AnySchemas.inspect(clients.documents, testAddress(), 2n, validation, new AbortController().signal, core)
+    expect(result.kind).toBe('loaded')
+    expect(result.schemas.statusOf(packed, { part: core, steps: ['fieldNumber:1'] })).toBe('typed')
+    expect(result.schemas.statusOf(packed, { part: core, steps: ['fieldNumber:2'] })).toBe('missing')
+    const tree = decodedTree(root.desc, create(root.desc, { first: packed } as never),
+      { schemas: result.schemas, location: { part: core, steps: [] } })
+    expect(inspected(tree)).toContain('(decoded payload)')
+  })
+
+  it.each(['unavailable', 'digest', 'conflict', 'malformed locator'] as const)('preserves opaque occurrences and refuses partial decoding after %s', async (failure) => {
+    const root = anyContainer()
+    const first = taggedSchema()
+    const second = taggedSchema('category')
+    const packed = anyPack(first.desc, create(first.desc, { subject: { schemeId: 'topics', conceptId: 'wind' } } as never))
+    const core = part(DocumentPart.CORE)
+    const validation = create(RevisionValidationSchema, {
+      resolvedOccurrences: [
+        resolved(packed, first.set, [fieldStep(1)]),
+        resolved(packed, second.set, [fieldStep(failure === 'conflict' ? 1 : 2)]),
+      ],
+      opaqueOccurrences: [{ occurrence: { part: core, steps: [fieldStep(3), indexStep(0)] },
+        typeUrl: packed.typeUrl, sha256: digest(packed.value), length: BigInt(packed.value.length) }],
+    })
+    if (failure === 'malformed locator') validation.opaqueOccurrences.unshift(create(OpaqueOccurrenceSchema, { occurrence: { part: core } }))
+    const clients = routerClients(router => router.service(DocumentService, {
+      getSchemaDescriptor(request) {
+        if (request.descriptorSha256 === digest(first.set)) return create(GetSchemaDescriptorResponseSchema, { descriptorSet: first.set })
+        if (failure === 'unavailable') throw new ConnectError('schema store unavailable', Code.Unavailable)
+        return create(GetSchemaDescriptorResponseSchema, { descriptorSet: first.set })
+      },
+    }))
+    const result = await AnySchemas.inspect(clients.documents, testAddress(), 2n, validation, new AbortController().signal, core)
+    expect(result.kind).toBe('failed')
+    if (result.kind !== 'failed') throw new Error('Expected failed inspection')
+    if (failure === 'unavailable') {
+      expect(result.error).toBeInstanceOf(ConnectError)
+      expect((result.error as ConnectError).code).toBe(Code.Unavailable)
+    } else {
+      expect(result.error).toBeInstanceOf(Error)
+      expect((result.error as Error).message).toContain(failure === 'conflict' ? 'conflicting Any occurrence bindings' : failure === 'malformed locator' ? 'no complete locator' : 'but revision 2 retained')
+    }
+    expect(result.schemas.statusOf(packed, { part: core, steps: ['fieldNumber:1'] })).toBe('unavailable')
+    expect(result.schemas.schemaOf(packed, { part: core, steps: ['fieldNumber:1'] })).toBeNull()
+    expect(result.schemas.statusOf(packed, { part: core, steps: ['fieldNumber:3', 'repeatedIndex:0'] })).toBe('opaque')
+    const tree = decodedTree(root.desc, create(root.desc, { first: packed, second: packed, items: [packed] } as never),
+      { schemas: result.schemas, location: { part: core, steps: [] } })
+    const rendered = inspected(tree).join(' ')
+    expect(rendered).toContain('Opaque: payload not decoded.')
+    expect(rendered).toContain('Schema resolution failed; payload not decoded.')
+    expect(rendered).not.toContain('No schema retained for this occurrence.')
+    expect(rendered).not.toContain('(decoded payload)')
+    await expect(AnySchemas.load(clients.documents, testAddress(), 2n, validation, new AbortController().signal, core)).rejects.toThrow()
   })
 })
