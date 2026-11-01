@@ -10,6 +10,7 @@ def supportedModules = [
         'protomolt-helpers',
         'protomolt-formats',
         'protomolt-skos',
+        'protomolt-graph',
         'protomolt-sources',
         'protomolt-acquire-gather',
         'protomolt-acquire-gather-git',

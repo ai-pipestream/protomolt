@@ -594,3 +594,6 @@ include 'protomolt-repo-fixtures'
 project(':protomolt-repo-fixtures').projectDir = file('repo/fixtures')
 include 'protomolt-repo-archive'
 project(':protomolt-repo-archive').projectDir = file('repo/archive')
+
+include 'protomolt-graph'
+project(':protomolt-graph').projectDir = file('sink/graph')
