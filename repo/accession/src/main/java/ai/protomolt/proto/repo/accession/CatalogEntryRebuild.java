@@ -38,6 +38,57 @@ public final class CatalogEntryRebuild {
     }
 
     /**
+     * Verifies one exact revision's CORE and retained schemas, optionally repairing
+     * its derived rows. This privileged local host operation is not a document RPC:
+     * the embedding operator must already control the catalog and stack credentials.
+     * It neither reads other parts nor traverses history. Opaque occurrences remain
+     * opaque; tombstones have no CORE to verify.
+     *
+     * <p>Repair uses two existing independent transactions. The revision type is
+     * repaired first; the current entry is rewritten only if this revision is still
+     * current and unpurged. A failure may leave that first repair committed, and
+     * retrying this exact command is safe. No authoritative bytes are rewritten.
+     *
+     * @param address all four address components of the document
+     * @param revision a positive exact revision, never a current/latest alias
+     * @param repair whether to write derived projections after verification
+     * @return whether the revision is a tombstone and which projections were written
+     */
+    public RevisionResult revision(NodeAddress address, long revision, boolean repair) {
+        DocumentReads.requireAddress(Objects.requireNonNull(address));
+        if (revision < 1) throw new IllegalArgumentException("revision must be positive");
+        var manifest = catalog.manifest(address, revision).orElseThrow(() ->
+                new AccessionException(Status.Code.NOT_FOUND, "Revision is missing or purged", null));
+        Projection projection;
+        if (manifest.getTombstone()) {
+            projection = new Projection(Optional.empty(), List.of(), List.of());
+        } else {
+            var ref = coreRef(manifest).orElseThrow(() ->
+                    new AccessionException(Status.Code.DATA_LOSS, "Revision has no CORE object", null));
+            var part = manifest.getPartsList().stream()
+                    .filter(p -> p.getEntry().getSelector().equals(DocumentSaves.CORE_SELECTOR)).findFirst().orElseThrow();
+            if (part.getEntry().getState() != PartState.PART_STATE_PRESENT)
+                throw new AccessionException(Status.Code.DATA_LOSS, "Revision has no present CORE object", null);
+            projection = reads.withVerifiedPart(ref, bytes -> {
+                var retained = reads.decodeRetained(manifest, DocumentSaves.CORE_SELECTOR, bytes);
+                return new Projection(Optional.of(lookup(bytes, manifest)), DocumentLinkReads.rows(retained.links()),
+                        DocumentSaves.conceptRows(retained.concepts()));
+            });
+        }
+        if (!repair) return new RevisionResult(manifest.getTombstone(), false, false);
+        if (!catalog.rewriteRevisionType(address, revision, type(projection.lookup())))
+            throw new AccessionException(Status.Code.NOT_FOUND, "Revision was purged before repair", null);
+        boolean entry = catalog.rewriteEntry(address, revision, projection.lookup(), projection.links(), projection.concepts());
+        return new RevisionResult(manifest.getTombstone(), true, entry);
+    }
+
+    /** Outcome of local exact-revision maintenance; false write flags also describe audit-only mode. */
+    public record RevisionResult(boolean tombstone, boolean revisionTypeRewritten, boolean currentEntryRewritten) {}
+
+    private record Projection(Optional<DocumentLookup> lookup, List<CatalogRecords.Link> links,
+            List<CatalogRecords.ConceptTag> concepts) {}
+
+    /**
      * Rebuilds every current entry of an account, tombstones included, and the
      * structured_data type of every revision of those documents.
      *
