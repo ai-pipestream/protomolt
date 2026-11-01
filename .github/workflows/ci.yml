@@ -238,6 +238,18 @@ jobs:
           :protomolt-kafka-serde:test :protomolt-kafka-serde:integrationTest
           --max-workers=2 --rerun-tasks --console=plain
 
+      - name: Redis 7.2 compatibility
+        # The build job runs the Redis-compatible suites on the pinned Valkey image.
+        # The redis provider name stays supported, so rerun the adapter and the
+        # service composition against Redis 7.2 as well.
+        env:
+          PROTOMOLT_REDIS_TEST_IMAGE: redis:7.2.12-alpine
+          PROTOMOLT_REDIS_TEST_SERVER: redis-server
+        run: >
+          ./gradlew :protomolt-repo-blob-redis:integrationTest --rerun
+          :protomolt-repo-service:integrationTest --tests '*RedisServiceCompositionIT*' --rerun
+          --max-workers=2 --console=plain
+
       - name: Fail if any integration suite skipped
         run: |
           skipped=$(grep -h -o 'skipped="[0-9]*"' \
@@ -249,6 +261,8 @@ jobs:
             sink/iceberg-s3/build/test-results/integrationTest/TEST-*Integration*.xml \
             sink/kafka/connect-iceberg/build/test-results/integrationTest/TEST-*Integration*.xml \
             sink/kafka/serde/build/test-results/integrationTest/TEST-*Integration*.xml \
+            repo/blob/redis/build/test-results/integrationTest/TEST-*.xml \
+            repo/service/build/test-results/integrationTest/TEST-*RedisServiceCompositionIT.xml \
             | grep -o '[0-9]*' | paste -sd+ | bc)
           echo "skipped integration tests: $skipped"
           test "$skipped" -eq 0

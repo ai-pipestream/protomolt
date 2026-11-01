@@ -1,5 +1,6 @@
 package ai.protomolt.proto.repo.service;
 
+import ai.protomolt.proto.repo.blob.redis.RedisTestServers;
 import ai.protomolt.proto.repo.blob.cache.CachingBlobStore;
 import ai.protomolt.proto.repo.blob.spi.*;
 import java.util.Map;
@@ -18,7 +19,7 @@ import static org.assertj.core.api.Assertions.*;
 class CachedReclamationIT {
     @Container static final LocalStackContainer S3 = new LocalStackContainer(
             DockerImageName.parse("localstack/localstack:3.8")).withServices("s3");
-    @Container static final GenericContainer<?> REDIS = new GenericContainer<>(System.getenv().getOrDefault("PROTOMOLT_REDIS_TEST_IMAGE", "valkey/valkey:9.1.3-alpine")).withExposedPorts(6379);
+    @Container static final GenericContainer<?> REDIS = new GenericContainer<>(RedisTestServers.image()).withExposedPorts(6379);
     static OpenedBlobStore backing;
     static OpenedBlobStore cache;
     static CachingBlobStore composed;

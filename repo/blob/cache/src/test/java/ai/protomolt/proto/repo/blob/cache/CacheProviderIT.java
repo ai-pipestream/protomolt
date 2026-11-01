@@ -1,5 +1,6 @@
 package ai.protomolt.proto.repo.blob.cache;
 
+import ai.protomolt.proto.repo.blob.redis.RedisTestServers;
 import ai.protomolt.proto.repo.blob.spi.BlobCapability;
 import ai.protomolt.proto.repo.blob.spi.BlobStore;
 import ai.protomolt.proto.repo.blob.spi.BlobStores;
@@ -47,7 +48,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 class CacheProviderIT {
 
     @Container
-    static final GenericContainer<?> REDIS = new GenericContainer<>(System.getenv().getOrDefault("PROTOMOLT_REDIS_TEST_IMAGE", "valkey/valkey:9.1.3-alpine")).withExposedPorts(6379);
+    static final GenericContainer<?> REDIS = new GenericContainer<>(RedisTestServers.image()).withExposedPorts(6379);
 
     @Container
     static final LocalStackContainer LOCALSTACK =

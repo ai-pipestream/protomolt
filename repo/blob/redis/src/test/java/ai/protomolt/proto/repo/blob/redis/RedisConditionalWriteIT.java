@@ -15,7 +15,7 @@ import static org.assertj.core.api.Assertions.*;
 /** Real Redis comparison/write races; no simulated successful provider. */
 @Testcontainers
 class RedisConditionalWriteIT {
-    @Container static final GenericContainer<?> REDIS = new GenericContainer<>(System.getenv().getOrDefault("PROTOMOLT_REDIS_TEST_IMAGE", "valkey/valkey:9.1.3-alpine")).withExposedPorts(6379);
+    @Container static final GenericContainer<?> REDIS = new GenericContainer<>(RedisTestServers.image()).withExposedPorts(6379);
     private static RedisBlobStore store(String prefix) {
         return new RedisBlobStore(new RedisBlobStoreConfig(
                 "redis://" + REDIS.getHost() + ":" + REDIS.getMappedPort(6379), 0, 0, prefix));

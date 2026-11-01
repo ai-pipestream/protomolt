@@ -1,5 +1,6 @@
 package ai.protomolt.proto.repo.service;
 
+import ai.protomolt.proto.repo.blob.redis.RedisTestServers;
 import ai.protomolt.proto.repo.archive.v1.*;
 import ai.protomolt.proto.repo.blob.redis.*;
 import ai.protomolt.proto.repo.blob.spi.BlobStore;
@@ -25,7 +26,7 @@ import static org.assertj.core.api.Assertions.*;
 @Testcontainers
 class BoundedArchiveProcessIT {
     @Container static final PostgreSQLContainer POSTGRES = new PostgreSQLContainer("postgres:18-alpine");
-    @Container static final GenericContainer<?> REDIS = new GenericContainer<>(System.getenv().getOrDefault("PROTOMOLT_REDIS_TEST_IMAGE", "valkey/valkey:9.1.3-alpine")).withExposedPorts(6379);
+    @Container static final GenericContainer<?> REDIS = new GenericContainer<>(RedisTestServers.image()).withExposedPorts(6379);
     @TempDir Path directory;
 
     @Test void productionProcessRestartsWithoutRelocatingDriveAndRetainsExactRetry() throws Exception {

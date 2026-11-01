@@ -1,5 +1,6 @@
 package ai.protomolt.proto.repo.service.consumer;
 
+import ai.protomolt.proto.repo.blob.redis.RedisTestServers;
 import ai.protomolt.proto.repo.archive.v1.*;
 import ai.protomolt.proto.repo.container.ledger.LedgerConfig;
 import ai.protomolt.proto.repo.service.BoundedArchiveOptions;
@@ -26,7 +27,7 @@ import static org.assertj.core.api.Assertions.*;
 @Testcontainers
 class BoundedArchiveEmbeddingIT {
     @Container static final PostgreSQLContainer POSTGRES = new PostgreSQLContainer("postgres:18-alpine");
-    @Container static final GenericContainer<?> REDIS = new GenericContainer<>(System.getenv().getOrDefault("PROTOMOLT_REDIS_TEST_IMAGE", "valkey/valkey:9.1.3-alpine")).withExposedPorts(6379);
+    @Container static final GenericContainer<?> REDIS = new GenericContainer<>(RedisTestServers.image()).withExposedPorts(6379);
 
     @Test void publicFactorySupportsLocalAndAuthenticatedRemoteArchiveUse() throws Exception {
         var config = new RepoServiceConfig(0,

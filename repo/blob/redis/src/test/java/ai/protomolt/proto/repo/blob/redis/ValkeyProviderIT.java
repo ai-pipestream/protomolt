@@ -17,7 +17,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 @Testcontainers
 class ValkeyProviderIT {
     @Container static final GenericContainer<?> SERVER = new GenericContainer<>(
-            System.getenv().getOrDefault("PROTOMOLT_REDIS_TEST_IMAGE", "valkey/valkey:9.1.3-alpine"))
+            RedisTestServers.image())
             .withExposedPorts(6379);
 
     @ParameterizedTest
