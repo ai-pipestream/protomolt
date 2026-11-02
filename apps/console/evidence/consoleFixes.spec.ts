@@ -15,36 +15,21 @@ const shot = (page: Page, name: string) => page.screenshot({ path: `evidence-scr
 const rpcLog = (page: Page) => page.evaluate(() => [...window.consoleFixRpcLog])
 
 async function mount(page: Page, which: 'mountArchiveEntry' | 'mountDocumentLinks') {
-  // On a cold cache Vite optimizes the harness dependencies on first import and fails that import,
-  // so a fresh page retries it a few times before the spec gives up.
-  for (let attempt = 1; ; attempt++) {
-    await page.goto('/console/console-fixes-evidence')
-    const imported = await page.evaluate(async () => {
-      const path = '/console/evidence/consoleFixesHarness.ts'
-      try {
-        await import(/* @vite-ignore */ path)
-        return true
-      } catch {
-        return false
-      }
-    })
-    if (imported) break
-    if (attempt === 5) throw new Error('The evidence harness did not load after 5 attempts')
-    await page.waitForTimeout(1_000)
-  }
-  await page.evaluate(async (fn) => {
-    const path = '/console/evidence/consoleFixesHarness.ts'
-    const harness = await import(/* @vite-ignore */ path)
-    await harness[fn]()
-  }, which)
+  await page.goto(`/console/console-fixes-evidence?view=${which}`)
+  await expect(page.getByTestId('harness-route')).toBeVisible()
 }
 
 test.beforeEach(async ({ page }) => {
   await page.setViewportSize({ width: 1360, height: 1100 })
-  await page.route('**/console/console-fixes-evidence', (route) =>
+  await page.route('**/console/console-fixes-evidence?view=*', (route) =>
     route.fulfill({
       contentType: 'text/html',
-      body: '<!doctype html><html><head><meta charset="utf-8"><title>Console fix evidence</title></head><body><div id="app"></div></body></html>',
+      body: `<!doctype html><html><head><meta charset="utf-8"><title>Console fix evidence</title></head><body><div id="app"></div>
+        <script type="module">
+          import { mountArchiveEntry, mountDocumentLinks } from '/console/evidence/consoleFixesHarness.ts';
+          const view = new URL(location.href).searchParams.get('view');
+          await (view === 'mountArchiveEntry' ? mountArchiveEntry() : mountDocumentLinks());
+        </script></body></html>`,
     }),
   )
 })
@@ -150,23 +135,23 @@ test('#712: Resolve all stops spinning once a row resolve supersedes it', async 
   await expect(resolveAll).toBeEnabled()
 })
 
-test('#713: Delete entry tombstones the archive call number at the pinned version and never purges', async ({ page }) => {
+test('#713: Delete entry confirms an archive mutation receipt at the pinned version and never purges', async ({ page }) => {
   await mount(page, 'mountArchiveEntry')
   await expect(page.getByTestId('version-chip')).toContainText('version 3')
 
   await page.getByTestId('delete-archive-entry').click()
-  const dialog = page.getByTestId('delete-dialog')
+  const dialog = page.getByTestId('delete-archive-dialog')
   await expect(dialog).toBeVisible()
-  await expect(dialog.getByTestId('delete-call-number')).toHaveText('acct-a / archive:acct-a / executed-agreements / nda-2026-001')
-  await expect(dialog.getByTestId('delete-revision')).toHaveText('3')
+  await expect(dialog.getByTestId('delete-archive-address')).toHaveText('acct-a / executed-agreements / nda-2026-001')
+  await expect(dialog.getByTestId('delete-archive-version')).toHaveText('3')
   await shot(page, '713-1-delete-dialog')
 
-  await dialog.getByTestId('delete-confirm').click()
-  await expect(page.getByTestId('harness-route')).toContainText('repository-document')
-  await shot(page, '713-2-routed-to-tombstone')
-
-  await expect(page.getByTestId('harness-route')).toContainText('revision=4')
+  await dialog.getByTestId('delete-archive-confirm').click()
+  await expect(dialog.getByTestId('delete-archive-receipt')).toContainText('COMPLETED')
+  await shot(page, '713-2-archive-receipt')
+  await dialog.getByTestId('delete-archive-close').click()
+  await expect(page.getByTestId('harness-route')).toContainText('route: repository-archive /repository/archive?account=acct-a&archive=executed-agreements')
   const log = await rpcLog(page)
-  expect(log).toContainEqual('DocumentService.DeleteDocument acct-a / archive:acct-a / executed-agreements / nda-2026-001 expected revision=3')
-  expect(log.some((line) => line.startsWith('DocumentService.PurgeDocument'))).toBe(false)
+  expect(log).toContainEqual('ArchiveMutationService.ArchiveMutation acct-a / executed-agreements / nda-2026-001 expected version=3')
+  expect(log.some((line) => line.startsWith('DocumentService.DeleteDocument') || line.includes('Purge'))).toBe(false)
 })

@@ -12,6 +12,9 @@ import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
 import { create } from '@bufbuild/protobuf'
+import { ArchiveMutationKind, ArchiveMutationReceiptSchema, ArchiveMutationState } from '@/gen/ai/protomolt/proto/repo/archive/v1/archive_mutation_pb'
+import { ArchiveMutationResponseSchema, ArchiveMutationService } from '@/gen/ai/protomolt/proto/repo/archive/v1/archive_mutation_service_pb'
+import { archiveDeleteDigest } from '@/repository/archiveDeleteCore'
 import { BridgeKind, BridgeStatus } from '@/gen/ai/protomolt/proto/asset/v1/bridge_pb'
 import { ArchiveSchema, ArchiveStatsSchema } from '@/gen/ai/protomolt/proto/repo/archive/v1/archive_pb'
 import {
@@ -35,7 +38,6 @@ import {
 } from '@/gen/ai/protomolt/proto/repo/archive/v1/entry_pb'
 import {
   BacklinkSchema,
-  DeleteDocumentResponseSchema,
   DocumentFilterSchema,
   DocumentLookupSchema,
   DocumentService,
@@ -43,7 +45,6 @@ import {
   DynamicLinkSelectorSchema,
   ListBacklinksResponseSchema,
   ListLinksResponseSchema,
-  PurgeDocumentResponseSchema,
   ResolveLinkResponseSchema,
   ResolvedLinkSchema,
   StaticLinkStateSchema,
@@ -177,19 +178,25 @@ export async function mountArchiveEntry() {
         return create(PutEntryResponseSchema, { version: 4n, rootChecksum: PDF_SHA, totalBytes: 248_512n, operationId: r.operationId })
       },
     })
+    router.service(ArchiveMutationService, {
+      archiveMutation: (r) => {
+        if (r.mutation.case !== 'deleteEntry') throw new Error('Evidence expects DeleteEntry, never purge')
+        const a = r.mutation.value.address
+        rpcLog.push(`ArchiveMutationService.ArchiveMutation ${a?.accountId} / ${a?.archive} / ${a?.entryId} expected version=${r.mutation.value.expectedVersion}`)
+        return create(ArchiveMutationResponseSchema, { receipt: create(ArchiveMutationReceiptSchema, {
+          operationId: r.operationId, address: a, kind: ArchiveMutationKind.DELETE_ENTRY,
+          state: ArchiveMutationState.COMPLETED, entryDeleted: true, commandSha256: archiveDeleteDigest(r),
+        }) })
+      },
+    })
     router.service(DocumentService, {
-      deleteDocument: (r) => {
-        const a = r.address
-        const expected = r.expected?.expected.case === 'revision' ? r.expected.expected.value : 'none'
-        rpcLog.push(`DocumentService.DeleteDocument ${a?.accountId} / ${a?.graphId} / ${a?.graphAddressId} / ${a?.docId} expected revision=${expected}`)
-        return create(DeleteDocumentResponseSchema, {
-          operationId: r.operationId,
-          accession: create(AccessionSchema, { address: r.address, revision: 4n, previousRevision: 3n, tombstone: true }),
-        })
+      deleteDocument: () => {
+        rpcLog.push('DocumentService.DeleteDocument')
+        throw new Error('Archive deletion must use ArchiveMutationService')
       },
       purgeDocument: () => {
         rpcLog.push('DocumentService.PurgeDocument')
-        return create(PurgeDocumentResponseSchema)
+        throw new Error('Evidence must never purge stored bytes')
       },
     })
   })
