@@ -6,8 +6,11 @@ import org.slf4j.LoggerFactory;
 
 /**
  * repo-service entry point: the standalone deployment. All wiring lives in
- * {@link RepoServices} — this class only resolves the environment config,
- * starts the Netty server, installs the shutdown hook, and blocks. To embed
+ * {@link RepoServices}. With no arguments this class resolves the environment config,
+ * starts the Netty server, installs the shutdown hook, and blocks. Explicit
+ * {@code verify-core} and {@code rebuild-entry} arguments instead run bounded local
+ * operator maintenance over the catalog and stores alone
+ * ({@link RepoMaintenanceComposition}) and exit without opening network listeners. To embed
  * the same services in-JVM, call {@link RepoServices#build} and
  * {@link RepoServices#startInProcess(String)} instead.
  */
@@ -21,10 +24,18 @@ public final class RepoServiceMain {
     /**
      * Boots the service from the environment and blocks until shutdown.
      *
-     * @param args ignored (configuration is env-driven)
+     * @param args empty to serve, or a local {@code verify-core}/{@code rebuild-entry} command
      * @throws Exception on boot failure
      */
     public static void main(String[] args) throws Exception {
+        if (args.length != 0) {
+            // Local backend credentials authorize this operator path. Only the catalog,
+            // the drive ledger and the selected stores open: no network authentication,
+            // console routes, seed accounts, lifecycle loops, concept schemes, accession
+            // services, in-process server or Kafka publisher.
+            RepoCatalogMaintenance.run(args, () -> RepoMaintenanceComposition.open(RepoServiceConfig.fromEnvironment()), System.out);
+            return;
+        }
         String apiToken = RepositoryNetworkAuthentication.requireOperatorToken(System.getenv("PROTOMOLT_API_TOKEN"));
         RepoServiceConfig config = RepoServiceConfig.fromEnvironment();
         // Read before any service is built so a misconfigured bundle fails the boot,
