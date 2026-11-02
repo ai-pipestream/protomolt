@@ -77,7 +77,7 @@ function repository(seen: Seen, links = [
   staticLink('structured_data.replaces', 'doc-old', 'replaces', { tombstoned: true }),
   staticLink('structured_data.hidden', 'doc-secret', 'requires', { unavailable: true }),
   DYNAMIC,
-]) {
+], holdResolve?: Promise<void>) {
   return (router: ConnectRouter) =>
     router.service(DocumentService, {
       getManifest(request) {
@@ -94,8 +94,9 @@ function repository(seen: Seen, links = [
         const s = request.revision?.selector
         return create(ListLinksResponseSchema, { revision: s?.case === 'revision' ? s.value : 3n, links })
       },
-      resolveLink(request) {
+      async resolveLink(request) {
         seen.resolves.push(request)
+        if (holdResolve !== undefined && seen.resolves.length === 1) await holdResolve
         const first = request.pageToken === ''
         return create(ResolveLinkResponseSchema, {
           documents: [
@@ -133,8 +134,8 @@ function repository(seen: Seen, links = [
     })
 }
 
-async function openLinks(seen: Seen, location = DOC, links?: Parameters<typeof repository>[1]) {
-  const mounted = await mountRepositoryView(RepositoryDocumentView, location, repository(seen, links))
+async function openLinks(seen: Seen, location = DOC, links?: Parameters<typeof repository>[1], holdResolve?: Promise<void>) {
+  const mounted = await mountRepositoryView(RepositoryDocumentView, location, repository(seen, links, holdResolve))
   await mounted.wrapper.get('[data-testid="tab-links"]').trigger('click')
   await settle()
   return mounted
@@ -271,4 +272,115 @@ describe('RepositoryDocumentView links', () => {
     expect(wrapper.get('[data-testid="no-backlinks"]').text()).toContain('No document you can read links here.')
     wrapper.unmount()
   })
+
+  it('renders the 1-hop link neighborhood graph, resolves all dynamic links in batch, and navigates on node click (#695)', async () => {
+    const seen = fresh()
+    const { wrapper, router } = await openLinks(seen)
+    expect(wrapper.find('[data-testid="link-neighborhood-card"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="link-neighborhood-graph"]').exists()).toBe(true)
+    expect(wrapper.get('[data-testid="link-status-structured_data.related-0"]').text()).toBe('DYNAMIC')
+
+    await wrapper.get('[data-testid="resolve-all-dynamic-links"]').trigger('click')
+    await settle()
+    expect(seen.resolves).toHaveLength(2)
+    expect(wrapper.get('[data-testid="link-status-structured_data.related-0"]').text()).toBe('RESOLVED (2)')
+    expect(wrapper.find('[data-testid="graph-node-match-1"]').exists()).toBe(true)
+
+    await wrapper.get('[data-testid="graph-node-citing"]').trigger('click')
+    await settle()
+    expect(router.currentRoute.value.query).toMatchObject({ doc: 'citing', revision: '7' })
+    wrapper.unmount()
+  })
+
+  it('stops showing Resolve all as loading once a single resolve supersedes it', async () => {
+    const seen = fresh()
+    let release = () => {}
+    const held = new Promise<void>((resolve) => { release = resolve })
+    const { wrapper } = await openLinks(seen, DOC, undefined, held)
+    const resolveAll = () => wrapper.get('[data-testid="resolve-all-dynamic-links"]')
+
+    await resolveAll().trigger('click')
+    await settle()
+    expect(resolveAll().classes()).toContain('v-btn--loading')
+
+    await wrapper.get('[data-testid="resolve-link-structured_data.related-0"]').trigger('click')
+    await settle()
+    expect(resolveAll().classes()).not.toContain('v-btn--loading')
+    expect(seen.resolves).toHaveLength(2)
+    expect(wrapper.get('[data-testid="link-status-structured_data.related-0"]').text()).toBe('PARTIAL (1+)')
+
+    release()
+    await settle()
+    expect(resolveAll().classes()).not.toContain('v-btn--loading')
+    wrapper.unmount()
+  })
+})
+
+
+describe('Link resolution completion', () => {
+  it('resolve all consumes every page before displaying a complete count', async () => {
+    const seen = fresh()
+    const { wrapper } = await openLinks(seen)
+    try {
+      await wrapper.get('[data-testid="resolve-all-dynamic-links"]').trigger('click')
+      await settle()
+      expect(seen.resolves.map(r => r.pageToken)).toEqual(['', 'p2'])
+      expect(wrapper.get('[data-testid="link-status-structured_data.related-0"]').text()).toBe('RESOLVED (2)')
+    } finally { wrapper.unmount() }
+  })
+
+  it('superseding resolve all with a row resolve clears the batch spinner', async () => {
+    let release: (() => void) | undefined
+    let resolves = 0
+    const { wrapper } = await mountRepositoryView(RepositoryDocumentView, DOC, r => r.service(DocumentService, {
+      getManifest: req => create(GetManifestResponseSchema, { manifest: create(DocumentManifestSchema, { address: req.address, revision: 3n }), validation: create(RevisionValidationSchema) }),
+      getDocument: () => create(GetDocumentResponseSchema),
+      listLinks: () => create(ListLinksResponseSchema, { revision: 3n, links: [DYNAMIC] }),
+      listBacklinks: () => create(ListBacklinksResponseSchema),
+      async resolveLink() {
+        if (++resolves === 1) await new Promise<void>(resolve => { release = resolve })
+        return create(ResolveLinkResponseSchema)
+      },
+    }))
+    try {
+      await wrapper.get('[data-testid="tab-links"]').trigger('click')
+      await settle()
+      await wrapper.get('[data-testid="resolve-all-dynamic-links"]').trigger('click')
+      await settle()
+      expect(release).toBeDefined()
+      expect(wrapper.get('[data-testid="resolve-all-dynamic-links"]').classes()).toContain('v-btn--loading')
+      await wrapper.get('[data-testid="resolve-link-structured_data.related-0"]').trigger('click')
+      await settle()
+      release!()
+      await settle()
+      expect(resolves).toBe(2)
+      expect(wrapper.get('[data-testid="resolve-all-dynamic-links"]').classes()).not.toContain('v-btn--loading')
+    } finally { release?.(); wrapper.unmount() }
+  })
+
+  it.each(['refused', 'repeated-token'])('does not show a complete result when a continuation is %s', async failure => {
+    const tokens: string[] = []
+    const { wrapper } = await mountRepositoryView(RepositoryDocumentView, DOC, r => r.service(DocumentService, {
+      getManifest: req => create(GetManifestResponseSchema, { manifest: create(DocumentManifestSchema, { address: req.address, revision: 3n }), validation: create(RevisionValidationSchema) }),
+      getDocument: () => create(GetDocumentResponseSchema),
+      listLinks: () => create(ListLinksResponseSchema, { revision: 3n, links: [DYNAMIC] }),
+      listBacklinks: () => create(ListBacklinksResponseSchema),
+      resolveLink(req) {
+        tokens.push(req.pageToken)
+        if (req.pageToken && failure === 'refused') throw new ConnectError('Continuation unavailable', Code.Unavailable)
+        return create(ResolveLinkResponseSchema, { nextPageToken: 'p2' })
+      },
+    }))
+    try {
+      await wrapper.get('[data-testid="tab-links"]').trigger('click')
+      await settle()
+      await wrapper.get('[data-testid="resolve-all-dynamic-links"]').trigger('click')
+      await settle()
+      expect(tokens).toEqual(['', 'p2'])
+      expect(wrapper.get('[data-testid="link-status-structured_data.related-0"]').text()).toBe('DYNAMIC')
+      expect(wrapper.get('[data-testid="rpc-failure"]').text()).toContain(failure === 'refused' ? 'Continuation unavailable' : 'repeated a page token')
+      expect(wrapper.get('[data-testid="resolve-all-dynamic-links"]').classes()).not.toContain('v-btn--loading')
+    } finally { wrapper.unmount() }
+  })
+
 })
