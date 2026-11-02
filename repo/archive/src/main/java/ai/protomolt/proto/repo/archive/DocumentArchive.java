@@ -122,8 +122,10 @@ import io.grpc.Context;
 import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
 import io.grpc.protobuf.StatusProto;
+import java.io.FilterInputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.OutputStream;
 import java.time.Clock;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -1027,7 +1029,19 @@ public final class DocumentArchive {
             }
             Bridge.Derivation derivation;
             try (InputStream stream = openBlobStream(address, currentRevision, primary.getBlobId())) {
-                derivation = bridge.get().derive(stream, new Bridge.Context(format, filename.isEmpty() ? null : filename));
+                // A decoder may stop at a format terminator and close its input
+                // before ReadBlob reaches EOF. Keep ownership here so a successful
+                // derivation cannot bypass the stack's final length/SHA-256 check
+                // or the RPC's terminal status.
+                InputStream bridgeInput = new FilterInputStream(stream) {
+                    @Override
+                    public void close() {
+                        // The enclosing scope owns the pinned repository read.
+                    }
+                };
+                derivation = bridge.get().derive(
+                        bridgeInput, new Bridge.Context(format, filename.isEmpty() ? null : filename));
+                stream.transferTo(OutputStream.nullOutputStream());
             } catch (StatusRuntimeException storageFailure) {
                 throw storageFailure;
             } catch (IOException | RuntimeException e) {
@@ -2131,7 +2145,7 @@ public final class DocumentArchive {
         String operationId = parseOperationId(request.getOperationId());
         return switch (request.getMutationCase()) {
             case DELETE_ENTRY -> deleteEntry(
-                    operationId, request.getDeleteEntry(), 0L, ArchiveOperationKeys.DELETE_ENTRY);
+                    operationId, request.getDeleteEntry(), request.getDeleteEntry().getExpectedVersion(), ArchiveOperationKeys.DELETE_ENTRY);
             case DELETE_RENDITION -> deleteRendition(operationId, request.getDeleteRendition());
             case PRUNE_VERSIONS -> pruneVersions(operationId, request.getPruneVersions());
             case MUTATION_NOT_SET -> throw ArchiveErrors.invalid("mutation", "must be set");
@@ -2140,25 +2154,25 @@ public final class DocumentArchive {
 
     /**
      * {@code DeleteEntry} with a deterministic UUIDv5 {@code operation_id} and
-     * last-write-wins version semantics.
+     * the request's version guard, or delete-current semantics when absent.
      *
      * @param request the delete-entry request
      * @return the archive mutation response carrying the tombstone receipt
      */
     public ArchiveMutationResponse deleteEntry(DeleteEntryRequest request) {
-        return deleteEntry("", request, 0L, ArchiveOperationKeys.DELETE_ENTRY);
+        return deleteEntry("", request, request.getExpectedVersion(), ArchiveOperationKeys.DELETE_ENTRY);
     }
 
     /**
-     * {@code DeleteEntry} with the supplied {@code operationId} and last-write-wins
-     * version semantics.
+     * {@code DeleteEntry} with the supplied {@code operationId} and the request's version
+     * guard, or delete-current semantics when absent.
      *
      * @param operationId the caller-supplied UUID, or empty to derive a deterministic UUIDv5
      * @param request the delete-entry request
      * @return the archive mutation response carrying the tombstone receipt
      */
     public ArchiveMutationResponse deleteEntry(String operationId, DeleteEntryRequest request) {
-        return deleteEntry(operationId, request, 0L, ArchiveOperationKeys.DELETE_ENTRY);
+        return deleteEntry(operationId, request, request.getExpectedVersion(), ArchiveOperationKeys.DELETE_ENTRY);
     }
 
     /**
@@ -2173,6 +2187,9 @@ public final class DocumentArchive {
     public ArchiveMutationResponse deleteEntry(
             String operationId, DeleteEntryRequest request, long expectedVersion, String reason) {
         requireValid(request);
+        if (request.hasExpectedVersion() && request.getExpectedVersion() != expectedVersion) {
+            throw ArchiveErrors.invalid("expected_version", "request and explicit argument disagree");
+        }
         if (expectedVersion < 0) {
             throw ArchiveErrors.invalid(
                     "expected_version", "must not be negative: " + expectedVersion);

@@ -21,6 +21,14 @@ export default defineConfig({
       '@': fileURLToPath(new URL('./src', import.meta.url)),
     },
   },
+  optimizeDeps: {
+    // The Playwright harnesses under browser/ and evidence/ are imported by the page
+    // at run time, not from index.html, so the dependency scanner would not see what
+    // they pull in (vuetify/components, @mdi/font, the Connect router kit). Without
+    // this a cold cache discovers those on the first import, re-optimizes and reloads
+    // the page under the running spec, which then fails to fetch the module.
+    entries: ['index.html', 'browser/**/*.ts', 'evidence/**/*.ts'],
+  },
   server: {
     proxy: {
       '/api/protomolt': {

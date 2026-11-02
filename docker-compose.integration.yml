@@ -46,7 +46,7 @@ services:
       retries: 30
 
   schema-registry:
-    image: confluentinc/cp-schema-registry:8.3.2
+    image: confluentinc/cp-schema-registry:8.4.0
     depends_on:
       kafka:
         condition: service_healthy
@@ -69,7 +69,7 @@ services:
   # Live search engines for the index-module integration suites: the generated
   # schemas/mappings are applied to real engines and queried back.
   solr:
-    image: solr:10
+    image: solr:10.1.0
     ports:
       - "18983:8983"
     command: ["solr-precreate", "protomolt"]

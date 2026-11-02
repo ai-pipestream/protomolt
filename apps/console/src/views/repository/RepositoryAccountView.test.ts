@@ -616,3 +616,33 @@ describe('RepositoryAccountView', () => {
     wrapper.unmount()
   })
 })
+
+
+describe('Drive inspection navigation', () => {
+  it('a late drive inspection cannot appear under another account', async () => {
+    let release: (() => void) | undefined
+    const { wrapper, router } = await mountRepositoryView(RepositoryAccountView, '/repository/accounts/acct-a', r => {
+      r.service(DriveService, {
+        listDrives: req => create(ListDrivesResponseSchema, { drives: [create(DriveSchema, { name: 'intake', accountId: req.accountId, provider: 's3' })] }),
+        async getDrive(req) {
+          await new Promise<void>(resolve => { release = resolve })
+          return create(GetDriveResponseSchema, { drive: create(DriveSchema, { name: 'intake', accountId: req.accountId, bucket: 'acct-a-only-bucket', provider: 's3' }) })
+        },
+      })
+      r.service(ArchiveService, { listArchives: () => create(ListArchivesResponseSchema) })
+      r.service(DocumentService, { listDocuments: () => create(ListDocumentsResponseSchema) })
+    })
+    try {
+      await wrapper.get('[data-testid="inspect-drive-intake"]').trigger('click')
+      await settle()
+      expect(release).toBeDefined()
+      await router.push('/repository/accounts/acct-b')
+      await settle()
+      expect(wrapper.find('[data-testid="drive-inspector-panel"]').exists()).toBe(false)
+      release!()
+      await settle()
+      expect(router.currentRoute.value.params.accountId).toBe('acct-b')
+      expect(wrapper.find('[data-testid="drive-inspector-panel"]').exists()).toBe(false)
+    } finally { release?.(); wrapper.unmount() }
+  })
+})

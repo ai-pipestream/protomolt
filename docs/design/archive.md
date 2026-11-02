@@ -1043,6 +1043,34 @@ before pagination.
   `GetEntryManifest` at `version = 0` return `NOT_FOUND`, `ListEntries` and
   `GetArchiveStats` omit the deleted entry, and a retry with the same
   `operation_id` replays the recorded receipt.
+- **The console-session door.** `ArchiveMutationService` is served behind the
+  archive interceptor, which admits process authority for every mutation and
+  admits a scoped caller (a console session, an access-policy bearer) for
+  `DeleteEntry` and `GetArchiveMutation` only, in an account the caller is bound
+  to; an unbound principal, another account, `DeleteRendition` and
+  `PruneVersions` are refused with `PERMISSION_DENIED` before the request is
+  read. The tombstone itself is committed by `DocumentService.DeleteDocument`
+  as that caller, so document ACLs (`ACCESS_WRITE` on the entry) and writer
+  authority (the binding's intake writer scope for the archive datasource)
+  decide whether the delete happens, exactly as on the direct document path.
+  The console's Delete entry uses this door and always supplies the displayed
+  current version in optional `DeleteEntryRequest.expected_version`. A concurrent
+  update is refused with `ABORTED`; the user reloads and confirms a new operation.
+  An absent field retains the existing delete-current behavior; a present field
+  must be positive. Archive versions are the backing document revisions, so the
+  same value reaches the existing atomic `DeleteDocument` revision check.
+  Every successful console delete returns an `ArchiveMutationReceipt`; after a
+  lost response the console can look it up through `GetArchiveMutation` or resend
+  the identical request and operation ID. A missing receipt does not prove a
+  request still in flight failed. No document-delete fallback or borrowed process
+  authority is used. The archive request has no free-text reason; the recorded
+  tombstone reason stays `archive.delete-entry`.
+  Receipt `command_sha256` retains its existing address-only logical-delete
+  encoding (the version guard is not part of that receipt digest). On replay a
+  supplied guard must match the recorded accession's previous revision; changing
+  it to another version is `ALREADY_EXISTS`. Legacy absent-guard retries remain
+  supported. Receipt lookup identifies the recorded operation, not a new version
+  comparison. No generic document metadata or persistence format is added.
 - **`GetArchiveMutation` -> `GetOperationOutcome`.** `GetArchiveMutation` reads
   the account's recorded outcome for `operation_id` from `DocumentService`: a
   committed tombstone accession under `archive:<account_id>` projects to the

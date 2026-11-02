@@ -23,6 +23,7 @@ protos=(
   repo/proto/src/main/proto/ai/protomolt/proto/repo/v2/document_service.proto
   repo/proto/src/main/proto/ai/protomolt/proto/repo/v1/drive.proto
   repo/proto/src/main/proto/ai/protomolt/proto/repo/archive/v1/archive_service.proto
+  repo/proto/src/main/proto/ai/protomolt/proto/repo/archive/v1/archive_mutation_service.proto
   protobuf/types/src/main/proto/ai/protomolt/proto/authz/v1/console_session.proto
 )
 stubs=apps/console/src/gen
@@ -35,6 +36,10 @@ for proto in "${protos[@]}"; do
   path_args+=(--path "$proto")
 done
 buf generate --template "$template" "${path_args[@]}"
+# google.rpc.Status is the archive upload route's error body. No workspace
+# module owns it, so the console carries a vendored copy under proto/ and
+# generates it as its own input (its only import is a well-known type).
+buf generate --template "$template" apps/console/proto
 if [[ "${1:-}" == --check ]]; then
   if ! diff -r "$work_dir/gen" "$stubs"; then
     echo "Generated stubs in $stubs are stale: run apps/console/scripts/proto-stubs.sh and commit the result." >&2

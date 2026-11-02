@@ -7,7 +7,15 @@ import ai.protomolt.proto.authz.AccountBindingResolver;
 import ai.protomolt.proto.authz.AccountBindings;
 import ai.protomolt.proto.authz.AclIdentity;
 import ai.protomolt.proto.authz.Principal;
+import ai.protomolt.proto.authz.IntakeWriterScope;
 import ai.protomolt.proto.repo.archive.v1.Archive;
+import ai.protomolt.proto.repo.archive.v1.ArchiveMutationReceipt;
+import ai.protomolt.proto.repo.archive.v1.ArchiveMutationRequest;
+import ai.protomolt.proto.repo.archive.v1.ArchiveMutationServiceGrpc;
+import ai.protomolt.proto.repo.archive.v1.ArchiveMutationState;
+import ai.protomolt.proto.repo.archive.v1.DeleteEntryRequest;
+import ai.protomolt.proto.repo.archive.v1.DeleteRenditionRequest;
+import ai.protomolt.proto.repo.archive.v1.GetArchiveMutationRequest;
 import ai.protomolt.proto.repo.archive.v1.ArchiveServiceGrpc;
 import ai.protomolt.proto.repo.archive.v1.CreateArchiveRequest;
 import ai.protomolt.proto.repo.archive.v1.EntryAddress;
@@ -64,6 +72,16 @@ import io.grpc.stub.AbstractStub;
 import io.grpc.stub.StreamObserver;
 import io.grpc.stub.MetadataUtils;
 import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+import ai.protomolt.proto.http.connect.ConnectGateway;
+import ai.protomolt.proto.repo.archive.v1.ArchiveMutationResponse;
+import ai.protomolt.proto.repo.archive.v1.GetArchiveMutationResponse;
+import ai.protomolt.proto.repo.archive.v1.GetEntryManifestRequest;
 import java.util.UUID;
 import java.util.function.Supplier;
 import org.assertj.core.api.ThrowableAssert.ThrowingCallable;
@@ -104,17 +122,22 @@ class ScopedCallersIT {
     private static final String ALICE = "synthetic-alice-credential";
     private static final String BOB = "synthetic-bob-credential";
     private static final String CAROL = "synthetic-carol-credential";
+    private static final String ERIN = "synthetic-erin-credential";
     private static final String ACCOUNT_A = "scoped-account-a";
     private static final String ACCOUNT_B = "scoped-account-b";
     private static final String DATASOURCE = "ds-scoped";
     private static final String ALICE_UPN = "alice@example.com";
+    private static final String ERIN_UPN = "erin@example.com";
+    /** The intake datasource archive entries are owned by (DocumentArchive default). */
+    private static final String ARCHIVE_DATASOURCE = "ds-archive";
 
     static RepoServices services;
     static ManagedChannel channel;
     static String driveOfB;
+    static String httpBase;
 
     @BeforeAll
-    static void boot() {
+    static void boot() throws Exception {
         RepoServiceConfig config = new RepoServiceConfig(
                 0,
                 new LedgerConfig(POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword()),
@@ -130,16 +153,26 @@ class ScopedCallersIT {
                 .addPrincipals(principal("alice", ALICE))
                 .addPrincipals(principal("bob", BOB))
                 .addPrincipals(principal("carol", CAROL))
+                .addPrincipals(principal("erin", ERIN))
                 .build();
         var bindings = AccountBindings.newBuilder()
                 .addBindings(AccountBinding.newBuilder().setPrincipal("alice").addAccountIds(ACCOUNT_A)
                         .addAclIdentities(AclIdentity.newBuilder()
                                 .setIdentityType("user-principal-name").setIdentity(ALICE_UPN)))
                 .addBindings(AccountBinding.newBuilder().setPrincipal("bob").addAccountIds(ACCOUNT_B))
+                // erin: a console-style session in account A that may write archive entries.
+                .addBindings(AccountBinding.newBuilder().setPrincipal("erin").addAccountIds(ACCOUNT_A)
+                        .addAclIdentities(AclIdentity.newBuilder()
+                                .setIdentityType("user-principal-name").setIdentity(ERIN_UPN))
+                        .addIntakeWriters(IntakeWriterScope.newBuilder().setAccountId(ACCOUNT_A)
+                                .setDatasourceId(ARCHIVE_DATASOURCE)))
                 .build();
         services = RepoServices.build(config).withAccountBindings(AccountBindingResolver.of(bindings));
         int port = services.startNetty(0, OPERATOR, new AccessPolicyCallers(policy)).getPort();
         channel = NettyChannelBuilder.forAddress("localhost", port).usePlaintext().build();
+        var http = services.startHttp(0, OPERATOR, RepositoryConsole.notConfigured(), Map.of(),
+                RepoServices.requestCallers(OPERATOR, new AccessPolicyCallers(policy), Optional.empty()));
+        httpBase = "http://127.0.0.1:" + http.port();
 
         var operatorDrives = as(OPERATOR, DriveServiceGrpc.newBlockingStub(channel));
         var operatorArchives = as(OPERATOR, ArchiveServiceGrpc.newBlockingStub(channel));
@@ -458,6 +491,164 @@ class ScopedCallersIT {
         }
     }
 
+    // ------------------------------------------------------------------
+    // Archive mutations: the console-session door (docs/design/archive.md section 7)
+    // ------------------------------------------------------------------
+
+    @Test
+    void aBoundWriterDeletesAnEntryInItsOwnAccountThroughArchiveMutationAndReadsTheReceipt() {
+        var operatorArchives = as(OPERATOR, ArchiveServiceGrpc.newBlockingStub(channel));
+        var target = EntryAddress.newBuilder().setAccountId(ACCOUNT_A).setArchive("docs").setEntryId("entry-to-delete").build();
+        operatorArchives.putEntry(PutEntryRequest.newBuilder().setAddress(target)
+                .addRenditions(rendition("original", "text/plain", "to be deleted")).build());
+        setEntryAccess(target, ERIN_UPN, Access.ACCESS_WRITE);
+
+        var erin = as(ERIN, ArchiveMutationServiceGrpc.newBlockingStub(channel));
+        String operationId = UUID.randomUUID().toString();
+        ArchiveMutationReceipt receipt = erin.archiveMutation(deleteEntry(operationId, target)).getReceipt();
+        assertThat(receipt.getEntryDeleted()).isTrue();
+        assertThat(receipt.getState()).isEqualTo(ArchiveMutationState.ARCHIVE_MUTATION_STATE_COMPLETED);
+
+        // The receipt is recorded under the account and readable by the same session.
+        ArchiveMutationReceipt read = erin.getArchiveMutation(GetArchiveMutationRequest.newBuilder()
+                .setAccountId(ACCOUNT_A).setOperationId(operationId).build()).getReceipt();
+        assertThat(read.getCommandSha256()).isEqualTo(receipt.getCommandSha256());
+        assertThat(read.getEntryDeleted()).isTrue();
+
+        // A retry with the same operation id replays, and the entry is gone for readers.
+        assertThat(erin.archiveMutation(deleteEntry(operationId, target)).getReceipt().getCommandSha256())
+                .isEqualTo(receipt.getCommandSha256());
+        assertThat(statusOf(() -> as(ERIN, ArchiveServiceGrpc.newBlockingStub(channel))
+                .getEntry(GetEntryRequest.newBuilder().setAddress(target).build())).getCode())
+                .isEqualTo(Status.Code.NOT_FOUND);
+    }
+
+    @Test
+    void theConsoleDoorStillAppliesDocumentAuthorityToTheDelete() {
+        // alice is bound to A and may read entry-1, but holds no writer grant and no WRITE rule.
+        var alice = as(ALICE, ArchiveMutationServiceGrpc.newBlockingStub(channel));
+        assertThat(statusOf(() -> alice.archiveMutation(deleteEntry(UUID.randomUUID().toString(), entry(ACCOUNT_A))))
+                .getCode()).isEqualTo(Status.Code.PERMISSION_DENIED);
+        // The refusal came from the document path, not from the interceptor's account gate.
+        assertThat(as(ALICE, ArchiveServiceGrpc.newBlockingStub(channel))
+                .getEntry(GetEntryRequest.newBuilder().setAddress(entry(ACCOUNT_A)).build())
+                .getInfo().getAddress().getEntryId()).isEqualTo("entry-1");
+    }
+
+    @Test
+    void theConsoleDoorIsBoundToTheCallersOwnAccounts() {
+        var bob = as(BOB, ArchiveMutationServiceGrpc.newBlockingStub(channel));
+        assertDenied(() -> bob.archiveMutation(deleteEntry(UUID.randomUUID().toString(), entry(ACCOUNT_A))),
+                "The caller is not bound to account '" + ACCOUNT_A + "'");
+        assertDenied(() -> bob.getArchiveMutation(GetArchiveMutationRequest.newBuilder()
+                        .setAccountId(ACCOUNT_A).setOperationId(UUID.randomUUID().toString()).build()),
+                "The caller is not bound to account '" + ACCOUNT_A + "'");
+        var carol = as(CAROL, ArchiveMutationServiceGrpc.newBlockingStub(channel));
+        assertDenied(() -> carol.archiveMutation(deleteEntry(UUID.randomUUID().toString(), entry(ACCOUNT_A))),
+                "The caller is bound to no account");
+    }
+
+    @Test
+    void destructiveMutationsStayProcessAuthority() {
+        var erin = as(ERIN, ArchiveMutationServiceGrpc.newBlockingStub(channel));
+        assertDenied(() -> erin.archiveMutation(ArchiveMutationRequest.newBuilder()
+                        .setOperationId(UUID.randomUUID().toString())
+                        .setDeleteRendition(DeleteRenditionRequest.newBuilder().setAddress(entry(ACCOUNT_A))
+                                .setRendition("original").setReason("console door probe")).build()),
+                "Repository account policy is not configured for this principal");
+    }
+
+    @Test
+    void theConsoleDoorRefusesARequestWithoutAnAccount() {
+        // The gRPC door applies the same rule as the in-process SPI: an address or lookup that
+        // names no account is refused before the archive sees it, not passed on as "no account".
+        var erin = as(ERIN, ArchiveMutationServiceGrpc.newBlockingStub(channel));
+        var unaddressed = EntryAddress.newBuilder().setArchive("docs").setEntryId("entry-1").build();
+        assertDenied(() -> erin.archiveMutation(deleteEntry(UUID.randomUUID().toString(), unaddressed)),
+                "The caller is not bound to account ''");
+        assertDenied(() -> erin.getArchiveMutation(GetArchiveMutationRequest.newBuilder()
+                        .setOperationId(UUID.randomUUID().toString()).build()),
+                "The caller is not bound to account ''");
+        // The entry it named is untouched.
+        assertThat(as(OPERATOR, ArchiveServiceGrpc.newBlockingStub(channel))
+                .getEntry(GetEntryRequest.newBuilder().setAddress(entry(ACCOUNT_A)).build())
+                .getInfo().getAddress().getEntryId()).isEqualTo("entry-1");
+    }
+
+    @Test
+    void connectArchiveDeletePreservesObservedVersionAuthorizationAndReplay() throws Exception {
+        var operator = as(OPERATOR, ArchiveServiceGrpc.newBlockingStub(channel));
+        var target = entry(ACCOUNT_A).toBuilder().setEntryId("connect-delete-guard").build();
+        operator.putEntry(PutEntryRequest.newBuilder().setAddress(target)
+                .addRenditions(rendition("original", "text/plain", "before")).build());
+        setEntryAccess(target, ERIN_UPN, Access.ACCESS_WRITE);
+        long observed = operator.getEntryManifest(GetEntryManifestRequest.newBuilder().setAddress(target).build())
+                .getManifest().getVersion();
+        var request = deleteEntry(UUID.randomUUID().toString(), target).toBuilder()
+                .setDeleteEntry(DeleteEntryRequest.newBuilder().setAddress(target).setExpectedVersion(observed)).build();
+        String procedure = ArchiveMutationServiceGrpc.getArchiveMutationMethod().getFullMethodName();
+        assertThat(connectArchive(null, procedure, request).statusCode()).isEqualTo(401);
+        assertThat(connectArchive(BOB, procedure, request).statusCode()).isEqualTo(403);
+        assertThat(connectArchive(ALICE, procedure, request).statusCode()).isEqualTo(403);
+        var missingAccount = request.toBuilder().setDeleteEntry(request.getDeleteEntry().toBuilder()
+                .setAddress(target.toBuilder().clearAccountId())).build();
+        assertThat(connectArchive(ERIN, procedure, missingAccount).statusCode()).isEqualTo(403);
+        var zeroVersion = request.toBuilder().setDeleteEntry(request.getDeleteEntry().toBuilder().setExpectedVersion(0)).build();
+        assertThat(connectArchive(ERIN, procedure, zeroVersion).statusCode()).isEqualTo(400);
+
+        operator.putEntry(PutEntryRequest.newBuilder().setAddress(target).setTitle("updated after confirmation").build());
+        setEntryAccess(target, ERIN_UPN, Access.ACCESS_WRITE);
+        var stale = connectArchive(ERIN, procedure, request);
+        assertThat(stale.statusCode()).as(new String(stale.body(), java.nio.charset.StandardCharsets.UTF_8)).isEqualTo(409);
+        long current = operator.getEntryManifest(GetEntryManifestRequest.newBuilder().setAddress(target).build())
+                .getManifest().getVersion();
+        assertThat(current).isGreaterThan(observed);
+        var fresh = request.toBuilder().setOperationId(UUID.randomUUID().toString())
+                .setDeleteEntry(request.getDeleteEntry().toBuilder().setExpectedVersion(current)).build();
+        var deleted = connectArchive(ERIN, procedure, fresh);
+        assertThat(deleted.statusCode()).as(new String(deleted.body(), java.nio.charset.StandardCharsets.UTF_8)).isEqualTo(200);
+        var receipt = ArchiveMutationResponse.parseFrom(deleted.body()).getReceipt();
+        assertThat(receipt.getEntryDeleted()).isTrue();
+        var replay = connectArchive(ERIN, procedure, fresh);
+        assertThat(replay.statusCode()).isEqualTo(200);
+        assertThat(ArchiveMutationResponse.parseFrom(replay.body()).getReceipt()).isEqualTo(receipt);
+        var changedGuard = fresh.toBuilder().setDeleteEntry(fresh.getDeleteEntry().toBuilder()
+                .setExpectedVersion(observed)).build();
+        assertThat(connectArchive(ERIN, procedure, changedGuard).statusCode()).isEqualTo(409);
+        var lookup = connectArchive(ERIN, ArchiveMutationServiceGrpc.getGetArchiveMutationMethod().getFullMethodName(),
+                GetArchiveMutationRequest.newBuilder().setAccountId(ACCOUNT_A).setOperationId(fresh.getOperationId()).build());
+        assertThat(lookup.statusCode()).isEqualTo(200);
+        assertThat(GetArchiveMutationResponse.parseFrom(lookup.body()).getReceipt()).isEqualTo(receipt);
+        // The tombstone does not purge retained document manifests. Archive current-entry
+        // admission refuses a tombstoned entry even for a pinned archive read.
+        var documents = as(OPERATOR, DocumentServiceGrpc.newBlockingStub(channel));
+        var node = ai.protomolt.proto.repo.archive.ArchiveCoordinates.address(target);
+        var revision = ai.protomolt.proto.repo.v2.RevisionSelector.newBuilder().setRevision(current).build();
+        var retained = documents.getDocument(GetDocumentRequest.newBuilder().setAddress(node).setRevision(revision).build());
+        assertThat(retained.getManifest().getRevision()).isEqualTo(current);
+        var bag = retained.getDocument().getBlobBag();
+        var blob = bag.hasBlob() ? bag.getBlob() : bag.getBlobs().getBlob(0);
+        var frames = documents.readBlob(ai.protomolt.proto.repo.v2.ReadBlobRequest.newBuilder()
+                .setAddress(node).setRevision(revision).setBlobId(blob.getBlobId()).build());
+        var bytes = new java.io.ByteArrayOutputStream();
+        frames.forEachRemaining(frame -> { if (frame.hasData()) bytes.writeBytes(frame.getData().toByteArray()); });
+        assertThat(bytes.toString(java.nio.charset.StandardCharsets.UTF_8)).isEqualTo("before");
+    }
+
+    private static HttpResponse<byte[]> connectArchive(String credential, String procedure,
+            com.google.protobuf.Message request) throws Exception {
+        var builder = HttpRequest.newBuilder(URI.create(httpBase + ConnectGateway.PATH + "/" + procedure))
+                .header("Content-Type", ConnectGateway.UNARY_CONTENT_TYPE).header("Connect-Protocol-Version", "1")
+                .POST(HttpRequest.BodyPublishers.ofByteArray(request.toByteArray()));
+        if (credential != null) builder.header("Authorization", "Bearer " + credential);
+        return HttpClient.newHttpClient().send(builder.build(), HttpResponse.BodyHandlers.ofByteArray());
+    }
+
+    private static ArchiveMutationRequest deleteEntry(String operationId, EntryAddress target) {
+        return ArchiveMutationRequest.newBuilder().setOperationId(operationId)
+                .setDeleteEntry(DeleteEntryRequest.newBuilder().setAddress(target)).build();
+    }
+
     private static <S extends AbstractStub<S>> S as(String credential, S stub) {
         var headers = new Metadata();
         headers.put(Metadata.Key.of("api_token", Metadata.ASCII_STRING_MARSHALLER), credential);
@@ -556,14 +747,22 @@ class ScopedCallersIT {
     }
 
     private static void setEntryReader(EntryAddress target, String identity) {
+        setEntryAccess(target, identity, Access.ACCESS_READ);
+    }
+
+    private static void setEntryAccess(EntryAddress target, String identity, Access access) {
         var operatorDocuments = as(OPERATOR, DocumentServiceGrpc.newBlockingStub(channel));
         var node = ai.protomolt.proto.repo.archive.ArchiveCoordinates.address(target);
         var current = operatorDocuments.getDocument(GetDocumentRequest.newBuilder().setAddress(node)
                 .setSelection(ai.protomolt.proto.repo.v2.PartSelection.newBuilder()
                         .addSelectors(PartSelector.newBuilder().setPart(DocumentPart.DOCUMENT_PART_CORE))).build());
         var restricted = current.getDocument().toBuilder();
-        restricted.getOwnershipBuilder().setSecurity(DocumentSecurity.newBuilder()
-                .addPermissions(rule("user-principal-name", identity)));
+        var security = DocumentSecurity.newBuilder().addPermissions(rule("user-principal-name", identity));
+        if (access != Access.ACCESS_READ) {
+            // WRITE does not imply READ; the delete path reads the entry before it tombstones it.
+            security.addPermissions(rule("user-principal-name", identity).toBuilder().setAccess(access));
+        }
+        restricted.getOwnershipBuilder().setSecurity(security);
         operatorDocuments.saveDocument(SaveDocumentRequest.newBuilder().setOperationId("entry-acl-" + UUID.randomUUID())
                 .setTarget(DocumentTarget.newBuilder().setAddress(node))
                 .setExpected(ExpectedRevision.newBuilder().setRevision(current.getManifest().getRevision()))
