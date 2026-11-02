@@ -16,6 +16,8 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
+# Bound Gradle workers to two on shared CI runners; keep all test suites enabled.
+# The same bound is used by local qualification under /work/.gradle-krick.lock.
 jobs:
   # Compilation is pinned to --release 25, and the test JVM runs on that same baseline.
   # The matrix stays a matrix so a newer JDK can be added beside it without reshaping
@@ -137,6 +139,9 @@ jobs:
         run: deploy/agents/check-static.sh
       - name: Authoring starter configuration
         run: deploy/authoring/check-static.sh
+
+      - name: Test protobuf compatibility gate
+        run: python3 scripts/test_proto_compatibility.py
 
       - name: Buf breaking (PRs)
         if: github.event_name == 'pull_request'
