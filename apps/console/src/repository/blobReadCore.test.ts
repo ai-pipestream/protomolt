@@ -138,6 +138,18 @@ describe('readBlob', () => {
     expect(serverSignal!.aborted).toBe(true)
   })
 
+  it.each([BigInt(FILE.length), BigInt(FILE.length + 1)])('verifies complete previews within the %s-byte cap', async (cap) => {
+    const result = await readBlob(honestServer().documents, spec(), () => {}, new AbortController().signal, undefined, cap)
+    expect(result.verification).toEqual({ kind: 'verified', sha256: FILE_SHA })
+    const corrupt = routerClients((router) => router.service(DocumentService, {
+      async *readBlob() {
+        yield header(BigInt(FILE.length), 'e'.repeat(64))
+        yield data(FILE)
+      },
+    }))
+    await expect(readBlob(corrupt.documents, spec(), () => {}, new AbortController().signal, undefined, cap)).rejects.toThrow('hash to')
+  })
+
   it('reads a file shorter than stopAfter whole, without asking for bytes past its end', async () => {
     const seen: ReadBlobRequest[] = []
     const out = collector()

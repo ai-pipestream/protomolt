@@ -686,13 +686,13 @@ export async function readRendition(
           }
           header = h
           expected = stopAfter !== undefined && stopAfter < h.length ? stopAfter : h.length
-          hash = h.wholeObject && stopAfter === undefined ? new Sha256() : null
+          hash = h.wholeObject && expected === h.sizeBytes ? new Sha256() : null
           break
         }
         case 'data': {
           if (header === null) throw new RenditionStreamError('ReadRendition sent data before its header frame.')
           let chunk = frame.frame.value
-          if (stopAfter !== undefined && received + BigInt(chunk.length) > expected) {
+          if (stopAfter !== undefined && hash === null && received + BigInt(chunk.length) > expected) {
             chunk = chunk.subarray(0, Number(expected - received))
             stopped = true
           }
@@ -708,7 +708,7 @@ export async function readRendition(
         case undefined:
           throw new RenditionStreamError('ReadRendition sent a frame with neither a header nor data.')
       }
-      if (stopped || (stopAfter !== undefined && header !== null && received === expected)) break
+      if (stopped || (stopAfter !== undefined && header !== null && received === expected && hash === null)) break
     }
   } finally {
     call.release()
