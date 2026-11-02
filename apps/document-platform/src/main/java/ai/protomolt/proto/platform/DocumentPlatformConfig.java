@@ -236,6 +236,10 @@ public record DocumentPlatformConfig(
     public static final String ENV_SEARCH_VECTORIZE_SENSITIVITY =
             "DOCUMENT_PLATFORM_SEARCH_VECTORIZE_SENSITIVITY";
 
+    /** Explicit embedding provider identity; absent retains the Model2Vec preset. */
+    public static final String ENV_SEARCH_EMBEDDING_PROVIDER =
+            "DOCUMENT_PLATFORM_SEARCH_EMBEDDING_PROVIDER";
+
     /**
      * Env var for the default local metrics lake: where rebuilt rollups
      * land when no {@code DOCUMENT_PLATFORM_METRICS_ICEBERG_*} family is

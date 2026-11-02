@@ -1,0 +1,17 @@
+description = 'Revision-pinned Turboembed embeddings over the existing KServe protobuf contract'
+
+dependencies {
+    api project(':protomolt-search-embedding')
+    // Reuse the vendored KServe contract and tensor decoder; no duplicate proto.
+    implementation project(':protomolt-search-embedding-ovms')
+    implementation libs.grpc.stub
+    implementation libs.grpc.protobuf
+    implementation libs.grpc.netty.shaded
+    testImplementation libs.grpc.inprocess
+}
+
+// Real deployment qualification is selected explicitly; no assumption/skip in the test.
+optInSuite('**/TurboembedLiveIT*', ['PROTOMOLT_TURBOEMBED_TARGET',
+    'PROTOMOLT_TURBOEMBED_MODEL', 'PROTOMOLT_TURBOEMBED_REVISION',
+    'PROTOMOLT_TURBOEMBED_MANIFEST_SHA256', 'PROTOMOLT_TURBOEMBED_DIMS',
+    'PROTOMOLT_TURBOEMBED_TRANSPORT'])

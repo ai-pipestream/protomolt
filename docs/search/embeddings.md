@@ -11,6 +11,7 @@ produced, locating and validating both fields through the mapping.
 | `protomolt-search-embedding` | The `EmbeddingProvider` SPI and the mapping-driven `MappingEmbedder` |
 | `protomolt-search-embedding-model2vec` | A Model2Vec static-embedding provider backed by OpenNLP |
 | `protomolt-search-embedding-tei` | A remote provider for Hugging Face Text Embeddings Inference over gRPC |
+| `protomolt-search-embedding-turboembed` | A manifest-pinned Turboembed provider with query/document purposes |
 | `protomolt-search-embedding-ovms` | A remote provider for OpenVINO Model Server over the KServe v2 gRPC protocol |
 | `protomolt-search-embedding-harness` | Pairwise cosine-equivalence certification for providers serving the same model |
 
@@ -23,6 +24,7 @@ embedding/
   model2vec/    protomolt-search-embedding-model2vec
   tei/          protomolt-search-embedding-tei
   ovms/         protomolt-search-embedding-ovms
+  turboembed/   protomolt-search-embedding-turboembed
   harness/      protomolt-search-embedding-harness
 ```
 
@@ -32,10 +34,18 @@ agreement.
 
 ## The provider SPI
 
-`EmbeddingProvider` is a `ServiceLoader` contract with three methods: a
+`EmbeddingProvider` is a `ServiceLoader` contract with three required methods: a
 stable `providerId()` (e.g. `model2vec`), the fixed `dimension()` of every
 vector the provider produces, and `embed(String)`. A default `embedAll`
 loops over `embed` in order; providers with a real batch API override it.
+Default `embedQuery` and `embedDocument` delegate to `embed`, preserving symmetric
+providers. Providers with role-specific prefixes override those methods; search
+and document derivation call the corresponding purpose. The batched forms
+`embedAllDocuments` and `embedAllQueries` default to looping over the single-text
+purpose methods, so an asymmetric provider never falls back to the neutral
+`embedAll`; chunk derivation embeds a text's chunks with one `embedAllDocuments`
+call. TEI and OVMS route both forms to their batched `embedAll`, and Turboembed
+batches each purpose separately.
 
 The SPI is `AutoCloseable`: providers may hold connections, and `close()`
 releases whatever the provider holds. The default is a no-op, so
@@ -56,7 +66,9 @@ into a validated provider: the provider registered under the spec's model
 id, refused loudly when it is absent or produces vectors of a different
 dimension. Resolution may load the model (a lazily configured provider
 learns its dimension by loading), so a misconfigured provider fails at
-resolution, naming its configuration knobs, not partway through a corpus.
+resolution, naming its configuration knobs. A remote provider can validate its
+local configuration at resolution, but remote availability and returned model
+identity are checked on the actual embedding RPC.
 
 `PolicyDerivation.discover(policy)` in `protomolt-search-chunk` composes the
 whole lane from the policy alone: chunk under the policy's chunking spec,
@@ -283,3 +295,18 @@ standalone CPU fast path, not a mixable provider.
 `TeiOvmsEquivalenceLiveIntegrationTest` runs this check against live servers
 when `PROTOMOLT_TEI_TARGET`, `PROTOMOLT_OVMS_TARGET`, and
 `PROTOMOLT_OVMS_MODEL` are all set, and skips otherwise.
+
+## Turboembed
+
+The optional [Turboembed provider](../../search/embedding/turboembed/README.md)
+reuses the KServe contract with exact model revision and manifest checks.
+`EmbeddingProvider.embedDocument` and `embedQuery` distinguish retrieval purposes;
+existing symmetric providers retain their ordinary embedding behavior. Index
+mapping/chunk derivation selects document purpose; search and reranking select
+query purpose. A Turboembed policy names `turboembed-v1:<manifest-sha256>`, not a
+mutable alias. Changing the bundle therefore changes the policy digest.
+
+The full document platform includes the provider and selects it explicitly through
+`DOCUMENT_PLATFORM_SEARCH_EMBEDDING_PROVIDER`. No provider is added to the standalone
+repository distribution. Live qualification is provider interoperability only;
+it does not establish Rust search integration or retrieval-quality benchmarks.

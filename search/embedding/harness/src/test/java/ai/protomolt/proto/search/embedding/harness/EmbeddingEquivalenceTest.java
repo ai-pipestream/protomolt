@@ -60,6 +60,26 @@ class EmbeddingEquivalenceTest {
     }
 
     @Test
+    void comparesDocumentPurposeVectorsBecauseThoseAreStored() {
+        EmbeddingProvider documentsMatch = new FixedTableProvider("prefixed", TABLE) {
+            @Override
+            public float[] embed(String text) {
+                return new float[]{0, 0, 0};
+            }
+
+            @Override
+            public float[] embedDocument(String text) {
+                return super.embed(text);
+            }
+        };
+
+        EquivalenceReport report = EmbeddingEquivalence.compare(
+                new FixedTableProvider("a", TABLE), documentsMatch, CORPUS, 0.999);
+
+        assertThat(report.certified()).isTrue();
+    }
+
+    @Test
     void orthogonalVectorsDoNotCertify() {
         Map<String, float[]> rotated = Map.of(
                 "alpha", new float[]{0, 1, 0},
@@ -185,7 +205,7 @@ class EmbeddingEquivalenceTest {
     }
 
     /** Embeds from a fixed table so tests can assert exact cosines. */
-    private static final class FixedTableProvider implements EmbeddingProvider {
+    private static class FixedTableProvider implements EmbeddingProvider {
 
         private final String id;
         private final Map<String, float[]> table;

@@ -72,7 +72,7 @@ final class SearchQueries {
         }
         return new KnnFloatVectorQuery(
                 lane.vectorField(),
-                embedder.embed(request.getQuery()),
+                embedder.embedQuery(request.getQuery()),
                 request.getK());
     }
 
