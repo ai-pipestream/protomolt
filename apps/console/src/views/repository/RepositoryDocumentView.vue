@@ -121,6 +121,12 @@
                   Decoded as {{ partView.decoded.typeUrl }} with the descriptor retained at
                   <span class="text-mono">{{ partView.decoded.descriptorSha256 }}</span>
                 </div>
+                <v-alert v-if="partView.schemaFailure" type="warning" variant="tonal" density="compact" class="mb-2"
+                         data-testid="part-schema-failure">
+                  The schemas retained for the Any payloads of this part did not load
+                  ({{ partView.schemaFailure.code }}: {{ partView.schemaFailure.message }}).
+                  Their payloads are marked "Schema retained, not loaded" and are not decoded.
+                </v-alert>
                 <div class="pmv">
                   <ProtoMessageNode v-for="(node, n) in partView.tree" :key="n" :node="node" :depth="0" />
                 </div>
@@ -341,6 +347,8 @@ const partView = shallowRef<{
   revision: bigint
   size: bigint
   decoded: DecodedPart
+  /** Why the retained Any schemas did not load; the part is shown without them. */
+  schemaFailure: RpcFailure | null
   bytes: Uint8Array
   previewUnavailable: string | null
   tree: ViewNode[]
@@ -486,14 +494,28 @@ async function readPartAt(index: number) {
   try {
     const part = await readPart(clients.documents, address.value, pinned.value, entry.selector, allowOpaque.value, signal)
     const decoded = await decodePart(clients.documents, address.value, part.revision, validation.value, entry.selector, part.bytes, signal)
-    const schemas = decoded.kind === 'decoded'
-      ? await AnySchemas.load(clients.documents, address.value, part.revision, validation.value, signal, entry.selector) : AnySchemas.none()
+    // A retained schema that fails to load is distinct from a failed part read:
+    // the part still decodes and shows. Its occurrence record is kept, so
+    // opaque payloads stay opaque and resolved ones read as retained but not
+    // loaded, never as absent bindings.
+    let schemas = AnySchemas.none()
+    let schemaFailure: RpcFailure | null = null
+    if (decoded.kind === 'decoded') {
+      try {
+        schemas = await AnySchemas.load(clients.documents, address.value, part.revision, validation.value, signal, entry.selector)
+      } catch (error) {
+        if (signal.aborted) return
+        schemaFailure = rpcFailure(error)
+        schemas = AnySchemas.unloaded(validation.value, entry.selector)
+      }
+    }
     if (signal.aborted) return
     partView.value = {
       label: parts.value[index].label,
       revision: part.revision,
       size: BigInt(part.bytes.length),
       decoded,
+      schemaFailure,
       bytes: part.bytes,
       previewUnavailable: entry.opaque || validation.value.opaqueOccurrences.some((o) => o.occurrence?.part && equals(PartSelectorSchema, o.occurrence.part, entry.selector!))
         ? 'Custom previews are unavailable for parts containing opaque payloads.' : null,
