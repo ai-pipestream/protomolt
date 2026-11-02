@@ -7,6 +7,13 @@ public interface BlobStoreProvider {
     String id();
 
     /**
+     * Canonical persisted provider name. An explicit compatibility alias may reuse
+     * an existing provider's physical layout and identity; ordinary providers use
+     * their own ID. This declaration grants no additional storage capabilities.
+     */
+    default String identityProviderId() { return id(); }
+
+    /**
      * Describe the original physical location without acquiring resources. The
      * provider validates identity-bearing options and returns only nonsecret
      * fields. Other runtime options never become persisted identity implicitly.

@@ -26,13 +26,17 @@ class BoundedArchiveOptionsTest {
         assertThatThrownBy(() -> new BoundedArchiveOptions(1, 1, 257, 7, 1)).isInstanceOf(IllegalArgumentException.class);
     }
 
-    @Test void publicFactoryRejectsUnqualifiedStorageBeforeConnecting() {
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"valkey", "redis"})
+    void publicFactoryRejectsUnqualifiedStorageBeforeConnecting(String mode) {
         var limits = new BoundedArchiveOptions(16, 1024, 4, 8192, 2);
         var config = new RepoServiceConfig(0, new LedgerConfig("jdbc:postgresql://127.0.0.1:1/missing", "unused", "unused"),
-                null, null, null, null, "bounded", 0, "redis", "redis://127.0.0.1:1", 0, 1024);
+                null, null, null, null, "bounded", 0, mode, "redis://127.0.0.1:1", 0, 1024);
         assertThatThrownBy(() -> RepoServices.buildBoundedArchive(config, limits)).isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("requires managed Redis");
+                .hasMessageContaining("requires managed Valkey or Redis");
         var qualified = config.withManagedStorage(new ManagedStoragePolicy("bounded", "realm", true));
+        assertThatThrownBy(() -> RepoServices.build(qualified))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("requires an S3 backing store");
         var excessive = new BoundedArchiveOptions(1025, 2048, 4, 16384, 2);
         assertThatThrownBy(() -> RepoServices.buildBoundedArchive(qualified, excessive)).isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("object limit");

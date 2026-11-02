@@ -3,6 +3,7 @@ dependencies {
     api project(':protomolt-repo-blob-spi')
     implementation libs.slf4j.api
     testImplementation project(':protomolt-repo-blob-redis')
+    testImplementation testFixtures(project(':protomolt-repo-blob-redis'))
     testImplementation project(':protomolt-repo-blob-s3')
     testImplementation libs.awssdk.url.connection.client
     testImplementation libs.testcontainers.localstack

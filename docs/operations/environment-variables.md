@@ -42,12 +42,15 @@ naming the missing ones.
 | `DOCUMENT_PLATFORM_S3_REGION` | `us-east-1` | non-blank text |
 | `DOCUMENT_PLATFORM_S3_ACCESS_KEY` | unset = SDK default credentials chain | text; must be set together with the secret key or the record constructor fails fast |
 | `DOCUMENT_PLATFORM_S3_SECRET_KEY` | unset | text; paired with the access key |
-| `DOCUMENT_PLATFORM_S3_CONDITIONAL_WRITES` | `false` | strict flag; requires an s3 or s3-redis-cache blob store |
+| `DOCUMENT_PLATFORM_S3_CONDITIONAL_WRITES` | `false` | strict flag; requires an s3, s3-valkey-cache or s3-redis-cache blob store |
 | `DOCUMENT_PLATFORM_DEFAULT_BUCKET_BASE` | `documents` | non-blank text |
-| `DOCUMENT_PLATFORM_BLOB_STORE` | `s3` | `s3`, `redis` or `s3-redis-cache`; anything else (including the retired `repo` values) fails fast |
-| `DOCUMENT_PLATFORM_REDIS_URI` | `redis://localhost:6379` | non-blank text |
-| `DOCUMENT_PLATFORM_REDIS_TTL_SECONDS` | `3600` | integer >= 0 |
-| `DOCUMENT_PLATFORM_REDIS_MAX_OBJECT_BYTES` | `8388608` | integer >= 0; 0 = unbounded |
+| `DOCUMENT_PLATFORM_BLOB_STORE` | `s3` | `s3` (default), `valkey`, `s3-valkey-cache`, `redis` or `s3-redis-cache`; anything else (including the retired `repo` values) fails fast |
+| `DOCUMENT_PLATFORM_VALKEY_URI` | `redis://localhost:6379` | preferred non-blank Redis-compatible connection URI (`redis://` or `rediss://`) |
+| `DOCUMENT_PLATFORM_VALKEY_TTL_SECONDS` | `3600` | preferred integer 0..2147483647; 0 disables expiry |
+| `DOCUMENT_PLATFORM_VALKEY_MAX_OBJECT_BYTES` | `8388608` | preferred integer >= 0; 0 retains the adapter ceiling |
+| `DOCUMENT_PLATFORM_REDIS_URI` | `redis://localhost:6379` | compatibility alias of `DOCUMENT_PLATFORM_VALKEY_URI` |
+| `DOCUMENT_PLATFORM_REDIS_TTL_SECONDS` | `3600` | compatibility alias of `DOCUMENT_PLATFORM_VALKEY_TTL_SECONDS` |
+| `DOCUMENT_PLATFORM_REDIS_MAX_OBJECT_BYTES` | `8388608` | compatibility alias of `DOCUMENT_PLATFORM_VALKEY_MAX_OBJECT_BYTES` |
 | `DOCUMENT_PLATFORM_LIFECYCLE_ENABLED` | `true` | strict flag |
 | `DOCUMENT_PLATFORM_PURGE_INTERVAL_MS` | `5000` | integer >= 1 |
 | `DOCUMENT_PLATFORM_SWEEP_INTERVAL_MS` | `60000` | integer >= 1 |
@@ -68,6 +71,14 @@ naming the missing ones.
 | `PROTOMOLT_CONSOLE_OIDC_CLIENT_SECRET` | required with the issuer | text |
 | `PROTOMOLT_CONSOLE_OIDC_REDIRECT_URI` | required with the issuer | the host's `/console/session/callback` as the provider reaches it, registered at the provider exactly |
 | `PROTOMOLT_CONSOLE_SESSION_TTL` | required with the issuer | ISO-8601 duration, one second to seven days (`PT8H`) |
+
+Valkey is the preferred Redis-compatible server, selected explicitly. S3 stays the
+default authoritative streaming store; the bounded Valkey/Redis adapter does not
+gain native streamed reads or managed-storage qualification from its name.
+The `VALKEY_*` and `REDIS_*` environment spellings apply to either compatible
+provider. Setting both aliases to different values is rejected without printing
+the values. Explicit blank/malformed values fail; defaults apply only to omitted
+settings. These aliases do not migrate persisted data or change storage identity.
 
 Startup concept schemes are binary protobuf `ConceptScheme` messages in `.pb` or
 `.binpb` files. For example, `DOCUMENT_PLATFORM_CONCEPT_SCHEMES=/config/schemes;topics=/config/topics.pb`.
