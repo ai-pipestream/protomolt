@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { createHash } from 'node:crypto'
 import { create, toBinary } from '@bufbuild/protobuf'
+import { anyPack } from '@bufbuild/protobuf/wkt'
 import { Code, ConnectError, type ConnectRouter } from '@connectrpc/connect'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
@@ -12,6 +13,7 @@ import {
   file_ai_protomolt_proto_repo_v1_document,
 } from '@/gen/ai/protomolt/proto/repo/v1/document_pb'
 import { RepositorySchemaAssetReferenceSchema } from '@/gen/ai/protomolt/proto/repo/v1/schema_asset_reference_pb'
+import { RepositoryOccurrenceKeyType } from '@/gen/ai/protomolt/proto/repo/v1/schema_occurrence_pb'
 import { ChangeKind, PartChangeSchema } from '@/gen/ai/protomolt/proto/repo/v2/events_pb'
 import {
   BlobHeaderSchema,
@@ -34,11 +36,14 @@ import {
   PartManifestEntrySchema,
   PartSchemaBindingSchema,
   PartSelectorSchema,
+  OpaqueOccurrenceSchema,
   PartState,
+  ResolvedOccurrenceSchema,
   RevisionValidationSchema,
   SaveOwnerSchema,
   ValidationStatus,
 } from '@/gen/ai/protomolt/proto/repo/v2/manifest_pb'
+import type { ViewNode } from '@/lib/message-view/messageTree'
 import RepositoryDocumentView from '@/views/repository/RepositoryDocumentView.vue'
 import { at, descriptorSetOf, testAddress } from '@/repository/repositoryTestKit'
 import { mountRepositoryView, settle } from '@/repository/repositoryViewKit'
@@ -53,6 +58,27 @@ const coreBytes = toBinary(
 )
 const DESCRIPTORS = descriptorSetOf(file_ai_protomolt_proto_repo_v1_document)
 const DESCRIPTORS_SHA = createHash('sha256').update(DESCRIPTORS).digest('hex')
+// The same document with a typed Any in structured_data (field 4), retained
+// under a second descriptor set that the repository fails to serve, and an
+// opaque Any at parser_results["tika"].document.shape (fields 5, 7, 1).
+const INNER = anyPack(SearchMetadataSchema, create(SearchMetadataSchema, { title: 'inner' }))
+const OPAQUE = anyPack(SearchMetadataSchema, create(SearchMetadataSchema, { title: 'opaque' }))
+const coreWithAny = toBinary(
+  DocumentSchema,
+  create(DocumentSchema, {
+    docId: 'doc-1',
+    searchMetadata: create(SearchMetadataSchema, { title: 'Quarterly report' }),
+    structuredData: INNER,
+    parserResults: { tika: { parserName: 'tika', document: { shape: OPAQUE } } },
+  }),
+)
+const ANY_SET_SHA = 'f'.repeat(64)
+const OPAQUE_STEPS = [
+  { step: { case: 'fieldNumber' as const, value: 5 } },
+  { step: { case: 'mapKey' as const, value: { type: RepositoryOccurrenceKeyType.STRING, value: { case: 'stringValue' as const, value: 'tika' } } } },
+  { step: { case: 'fieldNumber' as const, value: 7 } },
+  { step: { case: 'fieldNumber' as const, value: 1 } },
+]
 const TEXT = new TextEncoder().encode('line one\nline two\n'.repeat(4000))
 const TEXT_SHA = createHash('sha256').update(TEXT).digest('hex')
 const PDF = new Uint8Array(Array.from({ length: 300_000 }, (_, i) => (i * 13) & 0xff))
@@ -65,7 +91,7 @@ const FILES: Record<string, { bytes: Uint8Array; sha: string; mime: string; name
   'blob-small': { bytes: SMALL, sha: createHash('sha256').update(SMALL).digest('hex'), mime: 'text/plain', name: 'small.txt' },
 }
 
-function validation() {
+function validation(typedAny = false) {
   return create(RevisionValidationSchema, {
     status: ValidationStatus.TYPED_VALID,
     candidateSha256: 'c'.repeat(64),
@@ -79,11 +105,31 @@ function validation() {
         }),
       }),
     ],
+    resolvedOccurrences: typedAny
+      ? [
+          create(ResolvedOccurrenceSchema, {
+            occurrence: { part: CORE, steps: [{ step: { case: 'fieldNumber', value: 4 } }] },
+            schema: create(RepositorySchemaAssetReferenceSchema, { typeUrl: INNER.typeUrl, descriptorSha256: ANY_SET_SHA }),
+            payloadSha256: createHash('sha256').update(INNER.value).digest('hex'),
+            payloadLength: BigInt(INNER.value.length),
+          }),
+        ]
+      : [],
+    opaqueOccurrences: typedAny
+      ? [
+          create(OpaqueOccurrenceSchema, {
+            occurrence: { part: CORE, steps: OPAQUE_STEPS },
+            typeUrl: OPAQUE.typeUrl,
+            sha256: createHash('sha256').update(OPAQUE.value).digest('hex'),
+            length: BigInt(OPAQUE.value.length),
+          }),
+        ]
+      : [],
   })
 }
 
 /** A repository holding one document at revisions 1 to 3 (3 is current). */
-function repository(seen: { manifests: GetManifestRequest[]; blobs: ReadBlobRequest[]; holdPartReads?: boolean }) {
+function repository(seen: { manifests: GetManifestRequest[]; blobs: ReadBlobRequest[]; holdPartReads?: boolean; typedAny?: boolean; wrongDigest?: boolean }) {
   return (router: ConnectRouter) =>
     router.service(DocumentService, {
       getManifest(request) {
@@ -100,7 +146,7 @@ function repository(seen: { manifests: GetManifestRequest[]; blobs: ReadBlobRequ
               create(PartManifestEntrySchema, { selector: BLOBS, state: PartState.PRESENT, sizeBytes: 90n, sha256: 'b'.repeat(64), writtenInRevision: 1n, owner }),
             ],
           }),
-          validation: validation(),
+          validation: validation(seen.typedAny),
         })
       },
       getDocument(request) {
@@ -122,7 +168,7 @@ function repository(seen: { manifests: GetManifestRequest[]; blobs: ReadBlobRequ
             }),
           }),
           manifest: create(DocumentManifestSchema, { address: testAddress(), revision: 3n }),
-          validation: validation(),
+          validation: validation(seen.typedAny),
           metadata: { 'request.source': 'console-test', 'batch': '7' },
         })
       },
@@ -154,10 +200,14 @@ function repository(seen: { manifests: GetManifestRequest[]; blobs: ReadBlobRequ
             }),
           },
         })
-        yield create(ReadDocumentResponseSchema, { frame: { case: 'partData', value: create(PartDataSchema, { selector: CORE, offset: 0n, data: coreBytes, last: true }) } })
+        yield create(ReadDocumentResponseSchema, {
+          frame: { case: 'partData', value: create(PartDataSchema, { selector: CORE, offset: 0n, data: seen.typedAny ? coreWithAny : coreBytes, last: true }) },
+        })
         yield create(ReadDocumentResponseSchema, { frame: { case: 'complete', value: create(ReadCompleteSchema) } })
       },
       getSchemaDescriptor(request) {
+        if (request.descriptorSha256 === ANY_SET_SHA && !seen.wrongDigest) throw new ConnectError('schema store unavailable', Code.Unavailable)
+        // For ANY_SET_SHA with wrongDigest set this answers DESCRIPTORS, which hashes to DESCRIPTORS_SHA, not ANY_SET_SHA.
         return create(GetSchemaDescriptorResponseSchema, { revision: 3n, descriptorSha256: request.descriptorSha256, descriptorSet: DESCRIPTORS })
       },
       async *readBlob(request) {
@@ -183,8 +233,13 @@ function repository(seen: { manifests: GetManifestRequest[]; blobs: ReadBlobRequ
 
 const DOC = { name: 'repository-document', query: { account: 'acct-a', graph: 'intake:acct-a', node: 'ds-files', doc: 'doc-1' } }
 
+/** Every label, value and detail of a decoded tree, with lazy branches opened. */
+function fullyExpanded(nodes: ViewNode[]): string[] {
+  return nodes.flatMap((node) => [node.label, node.display ?? '', node.detail ?? '', ...fullyExpanded(node.loadChildren?.() ?? node.children ?? [])])
+}
+
 function seenCalls() {
-  return { manifests: [] as GetManifestRequest[], blobs: [] as ReadBlobRequest[], holdPartReads: false }
+  return { manifests: [] as GetManifestRequest[], blobs: [] as ReadBlobRequest[], holdPartReads: false, typedAny: false, wrongDigest: false }
 }
 
 afterEach(() => {
@@ -224,6 +279,54 @@ describe('RepositoryDocumentView', () => {
     expect(view.get('[data-testid="decoded-with"]').text()).toContain(DESCRIPTORS_SHA)
     expect(view.text()).toContain('doc_id')
     expect(view.text()).toContain('"Quarterly report"')
+    wrapper.unmount()
+  })
+
+  it('keeps the decoded part, its bytes and Download when a retained Any schema does not load', async () => {
+    const seen = seenCalls()
+    seen.typedAny = true
+    const { wrapper } = await mountRepositoryView(RepositoryDocumentView, DOC, repository(seen))
+    await wrapper.get('[data-testid="read-part-0"]').trigger('click')
+    await settle()
+    const view = wrapper.get('[data-testid="part-view"]')
+    expect(view.get('[data-testid="decoded-with"]').text()).toContain(DESCRIPTORS_SHA)
+    expect(view.text()).toContain('"Quarterly report"')
+    expect(view.text()).toContain('structured_data')
+    expect(view.find('[data-testid="download-part"]').exists()).toBe(true)
+    const notice = view.get('[data-testid="part-schema-failure"]').text()
+    expect(notice).toContain('UNAVAILABLE')
+    expect(notice).toContain('schema store unavailable')
+    expect(wrapper.text()).not.toContain('Reading the part')
+    // The occurrence record survives the failed load: the resolved binding
+    // reads as retained but not loaded, the opaque one as opaque, and no
+    // occurrence is relabelled as having no retained schema.
+    expect(view.text()).toContain('Schema retained, not loaded.')
+    expect(view.text()).not.toContain('No schema retained for this occurrence.')
+    // The opaque occurrence sits below the depth the screen opens by default,
+    // so walk the whole tree the view holds.
+    const tree = (wrapper.vm as unknown as { partView: { tree: ViewNode[] } }).partView.tree
+    const whole = fullyExpanded(tree).join(' ')
+    expect(whole).toContain('Schema retained, not loaded.')
+    expect(whole).toContain('Opaque: payload not decoded.')
+    expect(whole).not.toContain('No schema retained')
+    expect(whole).not.toContain('"inner"')
+    expect(whole).not.toContain('"opaque"')
+    wrapper.unmount()
+  })
+
+  it('names a descriptor set with the wrong digest as a console failure in the notice', async () => {
+    const seen = seenCalls()
+    seen.typedAny = true
+    seen.wrongDigest = true
+    const { wrapper } = await mountRepositoryView(RepositoryDocumentView, DOC, repository(seen))
+    await wrapper.get('[data-testid="read-part-0"]').trigger('click')
+    await settle()
+    const view = wrapper.get('[data-testid="part-view"]')
+    expect(view.text()).toContain('"Quarterly report"')
+    const notice = view.get('[data-testid="part-schema-failure"]').text()
+    expect(notice).toContain('CONSOLE')
+    expect(notice).toContain(`hashes to ${DESCRIPTORS_SHA}, but revision 3 retained ${ANY_SET_SHA}`)
+    expect(view.text()).toContain('Schema retained, not loaded.')
     wrapper.unmount()
   })
 

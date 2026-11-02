@@ -1,1 +1,2 @@
+ai.protomolt.proto.repo.blob.redis.ValkeyBlobStoreProvider
 ai.protomolt.proto.repo.blob.redis.RedisBlobStoreProvider

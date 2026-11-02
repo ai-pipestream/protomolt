@@ -41,20 +41,20 @@ import java.util.List;
  *        directly)
  * @param blobStore which {@code BlobStore} implementation backs the services
  *        ({@code DOCUMENT_PLATFORM_BLOB_STORE}): {@code "s3"} (default; the
- *        direct object-storage path), {@code "redis"}
+ *        direct object-storage path), {@code "valkey"} (preferred) or {@code "redis"}
  *        (objects live in Redis at {@code redisUri}), or
- *        {@code "s3-redis-cache"} (S3 of record with a Redis read-through/
+ *        {@code "s3-valkey-cache"} or {@code "s3-redis-cache"} (S3 of record with a read-through/
  *        write-through cache in front)
  * @param redisUri the Redis connection URI
- *        ({@code DOCUMENT_PLATFORM_REDIS_URI}, default
+ *        ({@code DOCUMENT_PLATFORM_VALKEY_URI}, with {@code DOCUMENT_PLATFORM_REDIS_URI} as an alias; default
  *        {@code redis://localhost:6379}) — used by the {@code redis} and
  *        {@code s3-redis-cache} blob-store modes
  * @param redisTtlSeconds per-object TTL in Redis
- *        ({@code DOCUMENT_PLATFORM_REDIS_TTL_SECONDS}, default 3600; in
+ *        ({@code DOCUMENT_PLATFORM_VALKEY_TTL_SECONDS}, with the REDIS spelling as an alias; default 3600; in
  *        {@code s3-redis-cache} mode this is the cache-entry TTL)
  * @param redisMaxObjectBytes largest object admitted to Redis
- *        ({@code DOCUMENT_PLATFORM_REDIS_MAX_OBJECT_BYTES}, default 8388608;
- *        0 = unbounded) — in {@code s3-redis-cache} mode this is the cache
+ *        ({@code DOCUMENT_PLATFORM_VALKEY_MAX_OBJECT_BYTES}, with the REDIS spelling as an alias; default 8388608;
+ *        0 = adapter ceiling) — in {@code s3-redis-cache} mode this is the cache
  *        ceiling: larger objects bypass the cache
  * @param lifecycleEnabled whether the background purge lifecycle loops run
  *        when {@link RepoServices#startLifecycle()} is called
@@ -283,11 +283,17 @@ public record RepoServiceConfig(
     public static final String ENV_HTTP_PORT = "DOCUMENT_PLATFORM_HTTP_PORT";
     /** Environment variable selecting the BlobStore implementation. */
     public static final String ENV_BLOB_STORE = "DOCUMENT_PLATFORM_BLOB_STORE";
-    /** Environment variable for the Redis connection URI (redis blob-store modes). */
+    /** Preferred connection URI for either Redis-compatible server ({@code redis://} or {@code rediss://}). */
+    public static final String ENV_VALKEY_URI = "DOCUMENT_PLATFORM_VALKEY_URI";
+    /** Preferred per-object or cache-entry TTL in seconds; zero disables expiry. */
+    public static final String ENV_VALKEY_TTL_SECONDS = "DOCUMENT_PLATFORM_VALKEY_TTL_SECONDS";
+    /** Preferred object/cache ceiling in bytes; zero retains the adapter limit. */
+    public static final String ENV_VALKEY_MAX_OBJECT_BYTES = "DOCUMENT_PLATFORM_VALKEY_MAX_OBJECT_BYTES";
+    /** Compatibility alias of {@link #ENV_VALKEY_URI}; conflicting values are rejected. */
     public static final String ENV_REDIS_URI = "DOCUMENT_PLATFORM_REDIS_URI";
-    /** Environment variable for the Redis per-object TTL in seconds. */
+    /** Compatibility alias of {@link #ENV_VALKEY_TTL_SECONDS}; conflicting values are rejected. */
     public static final String ENV_REDIS_TTL_SECONDS = "DOCUMENT_PLATFORM_REDIS_TTL_SECONDS";
-    /** Environment variable for the largest object admitted to Redis. */
+    /** Compatibility alias of {@link #ENV_VALKEY_MAX_OBJECT_BYTES}; conflicting values are rejected. */
     public static final String ENV_REDIS_MAX_OBJECT_BYTES = "DOCUMENT_PLATFORM_REDIS_MAX_OBJECT_BYTES";
     /** Environment variable toggling the background purge lifecycle loops. */
     public static final String ENV_LIFECYCLE_ENABLED = "DOCUMENT_PLATFORM_LIFECYCLE_ENABLED";
@@ -341,7 +347,11 @@ public record RepoServiceConfig(
     public static final String BLOB_STORE_REPO = "repo";
     /** Retired in-process blob-store value, retained only for explicit refusal. */
     public static final String BLOB_STORE_REPO_INPROCESS = "repo-inprocess";
-    /** Blob-store selection value: objects live in Redis. */
+    /** Preferred Redis-compatible byte provider; preserves canonical Redis storage identity. */
+    public static final String BLOB_STORE_VALKEY = "valkey";
+    /** S3 authoritative storage with the preferred Valkey cache provider. */
+    public static final String BLOB_STORE_S3_VALKEY_CACHE = "s3-valkey-cache";
+    /** Legacy Redis-compatible byte-provider selection. */
     public static final String BLOB_STORE_REDIS = "redis";
     /** Blob-store selection value: S3 of record with a Redis cache in front. */
     public static final String BLOB_STORE_S3_REDIS_CACHE = "s3-redis-cache";
@@ -514,15 +524,18 @@ public record RepoServiceConfig(
             throw new IllegalArgumentException("Remote repository blob storage is retired: " + blobStore);
         }
         if (!blobStore.equals(BLOB_STORE_S3)
+                && !blobStore.equals(BLOB_STORE_VALKEY)
+                && !blobStore.equals(BLOB_STORE_S3_VALKEY_CACHE)
                 && !blobStore.equals(BLOB_STORE_REDIS)
                 && !blobStore.equals(BLOB_STORE_S3_REDIS_CACHE)) {
             throw new IllegalArgumentException(ENV_BLOB_STORE
-                    + " must be one of s3|redis|s3-redis-cache");
+                    + " must be one of s3|valkey|s3-valkey-cache|redis|s3-redis-cache");
         }
         if (s3ConditionalWrites && !blobStore.equals(BLOB_STORE_S3)
+                && !blobStore.equals(BLOB_STORE_S3_VALKEY_CACHE)
                 && !blobStore.equals(BLOB_STORE_S3_REDIS_CACHE)) {
             throw new IllegalArgumentException(ENV_S3_CONDITIONAL_WRITES
-                    + " requires s3 or s3-redis-cache backing storage");
+                    + " requires s3, s3-valkey-cache or s3-redis-cache backing storage");
         }
         if (redisUri == null || redisUri.isBlank()) {
             redisUri = DEFAULT_REDIS_URI;
@@ -579,6 +592,28 @@ public record RepoServiceConfig(
         return s3AccessKey != null;
     }
 
+    /** S3 remains authoritative for both explicitly selected cache modes. */
+    boolean hasS3Backing() {
+        return BLOB_STORE_S3.equals(blobStore) || BLOB_STORE_S3_VALKEY_CACHE.equals(blobStore)
+                || BLOB_STORE_S3_REDIS_CACHE.equals(blobStore);
+    }
+
+    /** Provider used to acquire the selected Redis-compatible endpoint, with no fallback. */
+    String redisCompatibleProvider() {
+        return BLOB_STORE_VALKEY.equals(blobStore) || BLOB_STORE_S3_VALKEY_CACHE.equals(blobStore)
+                ? "valkey" : "redis";
+    }
+
+    /** Persisted drive identity remains Redis-compatible across the explicit Valkey alias. */
+    String driveProvider() { return hasS3Backing() ? "s3" : "redis"; }
+
+    private static String alias(java.util.Map<String, String> environment, String preferred, String legacy) {
+        if (environment.containsKey(preferred) && environment.containsKey(legacy)
+                && !java.util.Objects.equals(environment.get(preferred), environment.get(legacy)))
+            throw new IllegalArgumentException(preferred + " conflicts with " + legacy);
+        return environment.containsKey(preferred) ? preferred : legacy;
+    }
+
     /**
      * Whether Kafka eventing is on (bootstrap servers configured). When off:
      * no outbox writes, no relay loop, no producer.
@@ -612,9 +647,9 @@ public record RepoServiceConfig(
                 env.text(ENV_DEFAULT_BUCKET_BASE, DEFAULT_BUCKET_BASE),
                 env.httpPort(ENV_HTTP_PORT, DEFAULT_HTTP_PORT),
                 env.text(ENV_BLOB_STORE, BLOB_STORE_S3),
-                env.text(ENV_REDIS_URI, DEFAULT_REDIS_URI),
-                (int) env.number(ENV_REDIS_TTL_SECONDS, DEFAULT_REDIS_TTL_SECONDS, 0, Integer.MAX_VALUE),
-                env.number(ENV_REDIS_MAX_OBJECT_BYTES, DEFAULT_REDIS_MAX_OBJECT_BYTES, 0, Long.MAX_VALUE),
+                env.text(alias(environment, ENV_VALKEY_URI, ENV_REDIS_URI), DEFAULT_REDIS_URI),
+                (int) env.number(alias(environment, ENV_VALKEY_TTL_SECONDS, ENV_REDIS_TTL_SECONDS), DEFAULT_REDIS_TTL_SECONDS, 0, Integer.MAX_VALUE),
+                env.number(alias(environment, ENV_VALKEY_MAX_OBJECT_BYTES, ENV_REDIS_MAX_OBJECT_BYTES), DEFAULT_REDIS_MAX_OBJECT_BYTES, 0, Long.MAX_VALUE),
                 env.flag(ENV_LIFECYCLE_ENABLED, DEFAULT_LIFECYCLE_ENABLED),
                 env.number(ENV_PURGE_INTERVAL_MS, DEFAULT_PURGE_INTERVAL_MS, 1, Long.MAX_VALUE),
                 env.number(ENV_SWEEP_INTERVAL_MS, DEFAULT_SWEEP_INTERVAL_MS, 1, Long.MAX_VALUE),

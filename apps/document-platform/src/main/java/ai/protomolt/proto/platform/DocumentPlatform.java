@@ -989,29 +989,38 @@ public final class DocumentPlatform implements AutoCloseable {
     }
 
     /**
-     * The default chunk lane over the folded body: on when a Model2Vec
-     * model is configured ({@code protomolt.embeddings.model2vec.path} or
-     * {@code PROTOMOLT_MODEL2VEC_PATH}), off otherwise — lexical search
-     * always works, the vector lane activates with the model. The policy's
-     * dims come from the loaded model, never assumed, so a different model
-     * is a different policy digest and a re-derived corpus.
+     * The default chunk lane uses an explicitly selected provider, or the existing
+     * Model2Vec preset when its model is configured. Without either configuration,
+     * the lexical lane remains available. The provider identity and declared
+     * dimensions enter the policy digest; remote responses must still validate
+     * that pinned identity and dimension when embedding.
      */
     private static ChunkingPolicy defaultChunkingPolicy() {
+        return defaultChunkingPolicy(System.getenv(DocumentPlatformConfig.ENV_SEARCH_EMBEDDING_PROVIDER));
+    }
+
+    /** Explicit selection takes precedence; absence retains the existing Model2Vec preset. */
+    static ChunkingPolicy defaultChunkingPolicy(String selected) {
+        if (selected != null && (selected.isBlank() || !selected.equals(selected.strip()))) {
+            throw new IllegalArgumentException(DocumentPlatformConfig.ENV_SEARCH_EMBEDDING_PROVIDER
+                    + " must be a nonblank installed provider identity without surrounding whitespace");
+        }
         boolean configured =
                 System.getProperty(Model2VecEmbeddingProvider.PATH_PROPERTY) != null
                         || System.getenv(
                                 Model2VecEmbeddingProvider.PATH_ENVIRONMENT_VARIABLE) != null;
-        if (!configured) {
+        if (selected == null && !configured) {
             LOG.info("search: no Model2Vec model configured; the repo-document subject"
                     + " serves the lexical lane only (set {} to activate vectors)",
                     Model2VecEmbeddingProvider.PATH_ENVIRONMENT_VARIABLE);
             return null;
         }
+        String providerId = selected == null ? Model2VecEmbeddingProvider.PROVIDER_ID : selected;
         int dims;
         // Borrowed only to learn the model's dimension; the derivation loads
         // its own provider, so this instance goes back.
         try (EmbeddingProvider provider =
-                EmbeddingProviders.byId(Model2VecEmbeddingProvider.PROVIDER_ID)) {
+                EmbeddingProviders.byId(providerId)) {
             dims = provider.dimension();
         }
         return new ChunkingPolicy(
@@ -1019,7 +1028,7 @@ public final class DocumentPlatform implements AutoCloseable {
                         SentencePackedChunker.STRATEGY, SentencePackedChunker.STRATEGY_VERSION,
                         120, 16, 20, 200, SentencePackedChunker.BOUNDARY),
                 new ChunkingPolicy.EmbeddingSpec(
-                        Model2VecEmbeddingProvider.PROVIDER_ID, dims,
+                        providerId, dims,
                         VectorSimilarity.COSINE, true),
                 "", true);
     }

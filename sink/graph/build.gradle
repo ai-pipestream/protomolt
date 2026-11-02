@@ -1,0 +1,10 @@
+description = 'Optional trusted protobuf snapshot projection into derived Jena named graphs'
+
+dependencies {
+    api project(':protomolt-repo-proto')
+    api project(':protomolt-skos')
+    api libs.jena.arq
+    implementation project(':protomolt-descriptors')
+    implementation project(':protomolt-formats')
+    implementation project(':protomolt-protobuf-validation')
+}

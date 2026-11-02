@@ -54,6 +54,8 @@ dependencies {
     // Model2Vec model activates the vector lane, and the preset names its
     // configuration knobs by constant.
     implementation project(':protomolt-search-embedding-model2vec')
+    // Optional remote provider; inert unless explicitly selected.
+    runtimeOnly project(':protomolt-search-embedding-turboembed')
     implementation project(':protomolt-workflow')
     implementation project(':protomolt-actions')
     implementation project(':protomolt-registry')

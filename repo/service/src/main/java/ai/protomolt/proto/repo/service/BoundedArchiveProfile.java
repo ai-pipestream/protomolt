@@ -21,12 +21,13 @@ record BoundedArchiveProfile(ArchivePutAdmission.Limits limits, PayloadBudget bu
 
     ArchivePutAdmission openAdmission(RepoServiceConfig config) {
         if (!config.managedStorage().retentionQualified() || !config.lifecycleEnabled()
-                || !RepoServiceConfig.BLOB_STORE_REDIS.equals(config.blobStore()))
-            throw new IllegalArgumentException("Bounded archive qualification requires managed Redis and lifecycle recovery");
+                || !(RepoServiceConfig.BLOB_STORE_VALKEY.equals(config.blobStore())
+                    || RepoServiceConfig.BLOB_STORE_REDIS.equals(config.blobStore())))
+            throw new IllegalArgumentException("Bounded archive qualification requires managed Valkey or Redis and lifecycle recovery");
         if (config.redisTtlSeconds() != 0 || config.redisMaxObjectBytes() < 1
                 || config.redisMaxObjectBytes() > 9 * 1024 * 1024
                 || limits.maxObjectBytes() > config.redisMaxObjectBytes())
-            throw new IllegalArgumentException("Bounded Redis requires zero TTL and an object limit within 9 MiB");
+            throw new IllegalArgumentException("Bounded Valkey/Redis requires zero TTL and an object limit within 9 MiB");
         return new ArchivePutAdmission(limits, budget, maxActive);
     }
 }

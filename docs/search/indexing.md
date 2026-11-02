@@ -19,6 +19,10 @@ and does not interpret hints at all.
 | `protomolt-search-index-protobuf` | Facade chaining optional validation → mapping → NDJSON; registers the declared-rules gate for unpacked Any payloads |
 | `protomolt-kafka-connect-opensearch` | Kafka Connect sink over this write path ([guide](../sink/kafka-connect-opensearch.md)) |
 
+The proposed Rust repository integration boundary is specified in
+[Managed search publication and status](managed-publication.md). It separates
+source acceptance, durable publication decisions and current serving observations.
+
 ## Indexing hints
 
 Hints are protobuf `FieldOptions` extensions that bake into the descriptor,

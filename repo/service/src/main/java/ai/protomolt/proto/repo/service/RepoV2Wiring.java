@@ -80,28 +80,7 @@ final class RepoV2Wiring {
                 new CatalogConfig(config.ledger().jdbcUrl(),
                         config.ledger().username(), config.ledger().password(), config.ledger().maxPoolSize()),
                 catalogSchema));
-        var v2Stacks = new ConcurrentHashMap<String, Stack>();
-        BlobStore stackStore = new StackBlobStore(blobStore);
-        Function<DriveRecord, Stack> stackForDrive = driveStacks(catalog::registerStack,
-                (id, record, prefix) -> new BlobStoreStack(id, stackStore, record.bucket, prefix),
-                selectedDriveProvider, config.s3Endpoint(), v2Stacks);
-        var v2Drives = DocumentSaves.Drives.dynamic("intake",
-                (accountId, driveName) -> driveLedger.findByName(accountId, driveName)
-                        .or(() -> "default".equals(driveName) ? driveLedger.findByName(accountId, "intake")
-                                : Optional.<DriveRecord>empty())
-                        .map(stackForDrive),
-                stackId -> {
-                    var cached = v2Stacks.get(stackId);
-                    if (cached != null) return Optional.of(cached);
-                    // A peer host may have written the revision; resolve the drive directly by primary key.
-                    if (!stackId.startsWith("stack-")) return Optional.empty();
-                    try {
-                        var driveId = UUID.fromString(stackId.substring("stack-".length()));
-                        return driveLedger.findById(driveId).map(stackForDrive);
-                    } catch (IllegalArgumentException malformed) {
-                        return Optional.empty();
-                    }
-                });
+        var v2Drives = drives(config, catalog, driveLedger, blobStore, selectedDriveProvider);
         var limits = DocumentSchemaAdmission.Limits.SERVICE_DEFAULTS;
         DocumentSchemaAdmission.Resolver builtinSchemas =
                 selection -> {
@@ -161,6 +140,38 @@ final class RepoV2Wiring {
             relay = new OutboxRelay(catalog, publisher);
         }
         return new Wired(catalog, v2Uploads, relay, accession, v2Drives, builtinSchemas, limits);
+    }
+
+    /**
+     * The per-account drive resolution onto this host's blob store, shared by the
+     * serving composition and the local maintenance composition so both resolve a
+     * revision's stack the same way. A drive resolves by name per save and by
+     * recorded stack id per read; the catalog stays the namespace authority.
+     */
+    static DocumentSaves.Drives drives(RepoServiceConfig config, PostgresCatalog catalog, DriveLedger driveLedger,
+            BlobStore blobStore, String selectedDriveProvider) {
+        var v2Stacks = new ConcurrentHashMap<String, Stack>();
+        BlobStore stackStore = new StackBlobStore(blobStore);
+        Function<DriveRecord, Stack> stackForDrive = driveStacks(catalog::registerStack,
+                (id, record, prefix) -> new BlobStoreStack(id, stackStore, record.bucket, prefix),
+                selectedDriveProvider, config.s3Endpoint(), v2Stacks);
+        return DocumentSaves.Drives.dynamic("intake",
+                (accountId, driveName) -> driveLedger.findByName(accountId, driveName)
+                        .or(() -> "default".equals(driveName) ? driveLedger.findByName(accountId, "intake")
+                                : Optional.<DriveRecord>empty())
+                        .map(stackForDrive),
+                stackId -> {
+                    var cached = v2Stacks.get(stackId);
+                    if (cached != null) return Optional.of(cached);
+                    // A peer host may have written the revision; resolve the drive directly by primary key.
+                    if (!stackId.startsWith("stack-")) return Optional.empty();
+                    try {
+                        var driveId = UUID.fromString(stackId.substring("stack-".length()));
+                        return driveLedger.findById(driveId).map(stackForDrive);
+                    } catch (IllegalArgumentException malformed) {
+                        return Optional.empty();
+                    }
+                });
     }
 
     /** Opens one stack for a resolved namespace; the composition supplies the blob store. */

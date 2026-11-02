@@ -1,0 +1,22 @@
+# Opt-in cache; S3 remains authoritative. No live deployment is changed by this file.
+# docker compose -f deploy/document-platform/compose.yml \
+#   -f deploy/document-platform/compose.valkey.yml up --build
+services:
+  valkey:
+    image: valkey/valkey:9.1.3-alpine
+    # Disposable cache, reachable only on the Compose network; no published port.
+    command: ["valkey-server", "--save", "", "--appendonly", "no", "--maxmemory", "256mb", "--maxmemory-policy", "allkeys-lru"]
+    healthcheck:
+      test: ["CMD", "valkey-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+  platform:
+    depends_on:
+      valkey:
+        condition: service_healthy
+    environment:
+      DOCUMENT_PLATFORM_BLOB_STORE: s3-valkey-cache
+      DOCUMENT_PLATFORM_VALKEY_URI: redis://valkey:6379
+      DOCUMENT_PLATFORM_VALKEY_TTL_SECONDS: "3600"
+      DOCUMENT_PLATFORM_VALKEY_MAX_OBJECT_BYTES: "8388608"

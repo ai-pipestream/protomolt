@@ -61,8 +61,10 @@ class SelectedDriveBackendTest {
         aws.accept(drive("s3", DriveProviderConfig.newBuilder().setS3(S3DriveConfig.getDefaultInstance()).build()));
     }
 
-    @Test void redisRequiresEverySettingToMatchAndRejectsPrefixAndProviderOverrides() {
-        var config = config("redis");
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"valkey", "redis"})
+    void redisRequiresEverySettingToMatchAndRejectsPrefixAndProviderOverrides(String mode) {
+        var config = config(mode);
         var backend = new SelectedDriveBackend(config);
         var good = RedisDriveConfig.newBuilder().setUri(config.redisUri())
                 .setTtlSeconds(config.redisTtlSeconds()).setMaxObjectBytes(config.redisMaxObjectBytes());

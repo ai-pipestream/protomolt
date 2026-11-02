@@ -1058,6 +1058,14 @@ public final class DocumentReads {
         }
     }
 
+    /** Runs a local maintenance projection while its verified part bytes remain reserved. */
+    <T> T withVerifiedPart(StackRef ref, Function<ByteString, T> projection) {
+        requirePartWithinCeiling(ref);
+        try (var lease = Objects.requireNonNull(reservations.reserve(ref.getLength()), "reservation lease")) {
+            return projection.apply(read(ref));
+        }
+    }
+
     static Function<PartSelector, Boolean> selected(PartSelection selection) {
         if (selection.getSelectorsCount() == 0
                 && !selection.getAllSegmentations() && !selection.getAllEmbeddingSets()) return selector -> true;

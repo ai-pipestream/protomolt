@@ -48,18 +48,18 @@ final class RepoStorageWiring {
                 blobStore = selected.store();
                 namespaces = selected::ensureNamespace;
             }
-            case RepoServiceConfig.BLOB_STORE_REDIS -> {
-                selectedBacking = SelectedBlobBacking.open(providers, "redis", redisOptions(config, bounded),
+            case RepoServiceConfig.BLOB_STORE_VALKEY, RepoServiceConfig.BLOB_STORE_REDIS -> {
+                selectedBacking = SelectedBlobBacking.open(providers, config.redisCompatibleProvider(), redisOptions(config, bounded),
                         config.managedStorage().retentionQualified(), owned);
                 var selected = selectedBacking.handle();
                 blobStore = selected.store();
                 namespaces = selected::ensureNamespace;
             }
-            case RepoServiceConfig.BLOB_STORE_S3_REDIS_CACHE -> {
+            case RepoServiceConfig.BLOB_STORE_S3_VALKEY_CACHE, RepoServiceConfig.BLOB_STORE_S3_REDIS_CACHE -> {
                 selectedBacking = SelectedBlobBacking.open(providers, "s3", s3Options(config),
                         config.managedStorage().retentionQualified(), owned);
                 var backing = selectedBacking.handle();
-                var cache = owned.add(providers.open("redis", redisOptions(config)));
+                var cache = owned.add(providers.open(config.redisCompatibleProvider(), redisOptions(config)));
                 blobStore = new CachingBlobStore(backing.store(), cache.store(),
                         config.redisTtlSeconds(), config.redisMaxObjectBytes());
                 selectedBacking = selectedBacking.withReclaimer(

@@ -1,3 +1,7 @@
+plugins {
+    id 'java-test-fixtures'
+}
+
 description = 'Redis byte storage adapter'
 dependencies {
     api project(':protomolt-repo-blob-spi')

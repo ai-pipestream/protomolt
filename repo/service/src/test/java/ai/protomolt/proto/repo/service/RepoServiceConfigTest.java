@@ -13,6 +13,44 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  * the pre-existing fields.
  */
 class RepoServiceConfigTest {
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"valkey", "s3-valkey-cache", "redis", "s3-redis-cache"})
+    void explicitProviderSelectionAndValkeyEnvironmentRetainCanonicalDriveIdentity(String mode) {
+        var config = RepoServiceConfig.fromEnvironment(java.util.Map.of(
+                RepoServiceConfig.ENV_BLOB_STORE, mode,
+                RepoServiceConfig.ENV_VALKEY_URI, "rediss://cache.example:6379/2",
+                RepoServiceConfig.ENV_VALKEY_TTL_SECONDS, "0",
+                RepoServiceConfig.ENV_VALKEY_MAX_OBJECT_BYTES, "2048"));
+        assertThat(config.blobStore()).isEqualTo(mode);
+        assertThat(config.redisCompatibleProvider()).isEqualTo(mode.contains("valkey") ? "valkey" : "redis");
+        assertThat(config.driveProvider()).isEqualTo(mode.startsWith("s3-") ? "s3" : "redis");
+        assertThat(config.redisUri()).isEqualTo("rediss://cache.example:6379/2");
+        assertThat(config.redisTtlSeconds()).isZero();
+        assertThat(config.redisMaxObjectBytes()).isEqualTo(2048);
+    }
+
+    @Test void conflictingEnvironmentAliasesFailWithoutEchoingCredentials() {
+        for (var names : java.util.List.of(
+                java.util.List.of(RepoServiceConfig.ENV_VALKEY_URI, RepoServiceConfig.ENV_REDIS_URI),
+                java.util.List.of(RepoServiceConfig.ENV_VALKEY_TTL_SECONDS, RepoServiceConfig.ENV_REDIS_TTL_SECONDS),
+                java.util.List.of(RepoServiceConfig.ENV_VALKEY_MAX_OBJECT_BYTES, RepoServiceConfig.ENV_REDIS_MAX_OBJECT_BYTES))) {
+            assertThatThrownBy(() -> RepoServiceConfig.fromEnvironment(java.util.Map.of(
+                    names.get(0), "secret-new", names.get(1), "secret-old")))
+                    .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("conflicts")
+                    .hasMessageNotContaining("secret").hasNoCause();
+        }
+        var config = RepoServiceConfig.fromEnvironment(java.util.Map.of(
+                RepoServiceConfig.ENV_VALKEY_URI, "redis://same:6379",
+                RepoServiceConfig.ENV_REDIS_URI, "redis://same:6379"));
+        assertThat(config.redisUri()).isEqualTo("redis://same:6379");
+        assertThat(config.blobStore()).isEqualTo("s3");
+        for (var blank : java.util.List.of("", " ")) {
+            assertThatThrownBy(() -> RepoServiceConfig.fromEnvironment(java.util.Map.of(
+                    RepoServiceConfig.ENV_VALKEY_URI, blank, RepoServiceConfig.ENV_REDIS_URI, blank)))
+                    .isInstanceOf(IllegalArgumentException.class).hasMessageContaining(RepoServiceConfig.ENV_VALKEY_URI);
+        }
+    }
+
     @Test void retiredRemoteStorageFailsBeforeOpeningTheLedger() {
         for (var mode : java.util.List.of("repo", "repo-inprocess")) {
             assertThatThrownBy(() -> RepoServiceConfig.fromEnvironment(java.util.Map.of(
@@ -23,7 +61,7 @@ class RepoServiceConfigTest {
     }
 
     @Test void explicitBlankStorageAndDefaultedTextSettingsCannotSelectAnotherConfiguration() {
-        for (var name : java.util.List.of(RepoServiceConfig.ENV_BLOB_STORE, RepoServiceConfig.ENV_REDIS_URI,
+        for (var name : java.util.List.of(RepoServiceConfig.ENV_BLOB_STORE, RepoServiceConfig.ENV_REDIS_URI, RepoServiceConfig.ENV_VALKEY_URI,
                 RepoServiceConfig.ENV_DEFAULT_BUCKET_BASE,
                 RepoServiceConfig.ENV_S3_REGION, RepoServiceConfig.ENV_KAFKA_TOPIC,
                 RepoServiceConfig.ENV_PURGE_QUEUE, RepoServiceConfig.ENV_KAFKA_PURGE_TOPIC)) {
@@ -50,6 +88,7 @@ class RepoServiceConfigTest {
     static java.util.stream.Stream<org.junit.jupiter.params.provider.Arguments> invalidEnvironmentLimits() {
         var names = java.util.List.of(RepoServiceConfig.ENV_GRPC_PORT, RepoServiceConfig.ENV_HTTP_PORT,
                 RepoServiceConfig.ENV_REDIS_TTL_SECONDS, RepoServiceConfig.ENV_REDIS_MAX_OBJECT_BYTES,
+                RepoServiceConfig.ENV_VALKEY_TTL_SECONDS, RepoServiceConfig.ENV_VALKEY_MAX_OBJECT_BYTES,
                 RepoServiceConfig.ENV_PURGE_INTERVAL_MS, RepoServiceConfig.ENV_SWEEP_INTERVAL_MS,
                 RepoServiceConfig.ENV_RECONCILE_MIN_AGE_MS, LedgerConfig.ENV_POOL_SIZE,
                 RepoServiceConfig.ENV_READ_BUDGET_BYTES);

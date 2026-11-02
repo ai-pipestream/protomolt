@@ -1,8 +1,13 @@
-# Redis byte provider
+# Valkey and Redis-compatible byte provider
 
-This provider implements byte storage for standalone Redis 7 or later. Include
-`protomolt-repo-blob-redis` to discover the `redis` provider through the byte SPI.
-Configuration requires `uri`, `ttl-seconds`, `max-object-bytes` and `key-prefix`.
+Valkey is the preferred server for this provider. Include
+`protomolt-repo-blob-redis` and explicitly select `valkey` through the byte SPI.
+The existing `redis` selection remains supported. Both factories reuse the same
+`RedisBlobStore`, Jedis client and Lua operations; no data migration or server
+detection occurs. Use `redis://` or `rediss://` URIs for either server.
+
+Configuration requires `uri`, `ttl-seconds`, `max-object-bytes`, `key-prefix`
+and `write-policy`.
 Zero TTL disables expiry; zero size configuration still has a 512 MiB per-value
 adapter ceiling. Stream writes buffer the declared payload and reject short or
 extra bytes before writing. They are not an unbounded streaming upload path.
@@ -14,7 +19,7 @@ Each object uses one hash containing its bytes and metadata. Lua operations keep
 reads, bounded size checks, writes and copies atomic with respect to concurrent
 Redis commands. Scripts do not promise rollback after server errors. Listing
 uses SCAN and is not a snapshot. The caller's logical prefix is matched literally.
-Redis Cluster is not supported by this implementation.
+Valkey Cluster and Redis Cluster are not supported by this implementation.
 
 ## Create-only physical keys
 
@@ -61,7 +66,7 @@ administrative mutation and repository key reuse policy require separate review.
 
 ## Process-crash coverage
 
-`RedisPersistenceIT` kills the real Redis process with SIGKILL and starts the same
+`RedisPersistenceIT` kills the real selected server process with SIGKILL and starts the same
 container again. With AOF enabled, `appendfsync always`, disabled snapshotting and
 `maxmemory-policy noeviction`, acknowledged writes and copies retain their bytes,
 content type, ETag, custom metadata and non-expiring TTL. The test first recovers
@@ -86,3 +91,58 @@ There is no fallback to the old concatenated keys or `$meta` hashes. Existing da
 requires an explicit migration using the old reader or a deliberate rebuild.
 Retained backend generations must not be relabeled as v2 while their objects use
 the old layout. No automated migration is supplied in this change.
+
+
+## Selection and retained identity
+
+The `valkey` factory declares `redis` as its canonical identity provider. Thus
+`BlobStores.managedIdentity("valkey", options)` equals the existing `redis`
+identity for the same endpoint, database, prefix and write policy. Physical keys,
+`redis/v2` and `redis/v3` identities, and persisted `RedisDriveConfig` remain
+unchanged. A different endpoint still changes identity; this alias does not
+redirect historical references or migrate Redis data files.
+
+Repository configuration accepts `valkey` and `s3-valkey-cache` alongside the
+legacy `redis` and `s3-redis-cache` modes. Prefer the `DOCUMENT_PLATFORM_VALKEY_URI`,
+`DOCUMENT_PLATFORM_VALKEY_TTL_SECONDS` and `DOCUMENT_PLATFORM_VALKEY_MAX_OBJECT_BYTES`
+environment variables; the corresponding `REDIS` variables remain accepted.
+Supplying both spellings with different values fails without echoing credentials.
+
+S3 remains the default authoritative store. The shared Valkey/Redis adapter has
+bounded, buffered payloads and does not acquire native streaming capabilities by
+renaming the server. Direct `BlobStoreStack` construction rejects its missing
+streamed reads. General managed storage still requires S3 and lifecycle recovery;
+the existing bounded archive profile remains separately limited. S3 with a Valkey
+cache keeps S3 authoritative and forwards streamed reads to S3. An empty cache can
+be rebuilt; an authoritative store must not be discarded or silently redirected.
+
+## Server qualification
+
+The default integration target is `valkey/valkey:9.1.3-alpine`, pinned from the
+[official stable 9.1 release page](https://valkey.io/download/9.1/).
+Keep its Lua engine enabled: EVAL and cmsgpack are required. The same tests can
+exercise a Redis server with explicit environment overrides, including the server
+executable used by the crash test:
+
+```sh
+flock /work/.gradle-krick.lock ./gradlew \
+  :protomolt-repo-blob-spi:test :protomolt-repo-blob-redis:test \
+  :protomolt-repo-blob-redis:integrationTest --rerun \
+  :protomolt-repo-blob-cache:integrationTest --rerun --max-workers=2
+
+PROTOMOLT_REDIS_TEST_IMAGE=redis:7.2.12-alpine \
+PROTOMOLT_REDIS_TEST_SERVER=redis-server \
+flock /work/.gradle-krick.lock ./gradlew \
+  :protomolt-repo-blob-redis:integrationTest --rerun --max-workers=2
+```
+
+The `--rerun` task option ensures changing the test server reruns the suite.
+`ValkeyProviderIT` proves cross-alias reads, copies and reclamation through real
+providers for both write policies, alongside the existing atomicity, conditional
+write, expiry, metadata, size-bound and process-crash suites. These tests establish
+only their asserted behavior, not cluster/failover or host-power-loss durability.
+
+Before migrating existing authoritative data, check the source server version.
+The [Valkey migration guide](https://valkey.io/topics/migration/) covers Redis OSS
+through 7.2; Redis 7.4+ persistence files are incompatible. This change provides no
+file conversion, cutover, rollback or administrative data migration.

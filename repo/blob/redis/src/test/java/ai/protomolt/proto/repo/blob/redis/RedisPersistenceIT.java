@@ -35,9 +35,9 @@ class RedisPersistenceIT {
     }
 
     private static void verifyRestart(boolean persistent) throws Exception {
-        try (var redis = new GenericContainer<>("redis:7-alpine")
+        try (var redis = new GenericContainer<>(RedisTestServers.image())
                 .withExposedPorts(6379)
-                .withCommand("redis-server", "--save", "", "--appendonly", persistent ? "yes" : "no",
+                .withCommand(RedisTestServers.server(), "--save", "", "--appendonly", persistent ? "yes" : "no",
                         "--appendfsync", "always", "--maxmemory-policy", "noeviction")) {
             redis.start();
             int firstPort = port(redis);

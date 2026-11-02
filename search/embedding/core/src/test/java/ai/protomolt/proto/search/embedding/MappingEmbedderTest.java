@@ -41,6 +41,19 @@ class MappingEmbedderTest {
     }
 
     @Test
+    void mappingUsesDocumentPurpose() {
+        EmbeddingProvider asymmetric = new EmbeddingProvider() {
+            public String providerId() { return "asymmetric"; }
+            public int dimension() { return 3; }
+            public float[] embed(String text) { throw new AssertionError("purpose missing"); }
+            public float[] embedDocument(String text) { return new float[] {1, 2, 3}; }
+        };
+        var document = new LinkedHashMap<String, Object>(Map.of("title", "hello"));
+        new MappingEmbedder(asymmetric, singleTextMapping(3)).embed(document);
+        assertThat(document.get("embedding")).isEqualTo(List.of(1f, 2f, 3f));
+    }
+
+    @Test
     void autoSelectionEmbedsTheOnlyTextFieldIntoTheOnlyVectorField() {
         Map<String, Object> document = new LinkedHashMap<>(Map.of("title", "hello world", "genre", "memoir"));
 

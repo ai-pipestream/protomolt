@@ -65,6 +65,7 @@ dependencies {
 
     // The console sign-in tests drive a fake OpenID provider before the Keycloak one.
     testImplementation testFixtures(project(':protomolt-authz'))
+    testImplementation testFixtures(project(':protomolt-repo-blob-redis'))
     testImplementation libs.testcontainers.postgresql
     testImplementation libs.testcontainers.localstack
     testImplementation libs.testcontainers.redpanda

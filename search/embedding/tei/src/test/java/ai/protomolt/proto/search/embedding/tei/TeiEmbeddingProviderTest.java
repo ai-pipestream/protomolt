@@ -20,7 +20,9 @@ import java.io.IOException;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.LinkedBlockingDeque;
 import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -34,11 +36,13 @@ class TeiEmbeddingProviderTest {
     private FakeEmbed fake;
     private String savedTargetProperty;
     private String savedTruncateProperty;
+    private String savedMaxInFlightProperty;
 
     @BeforeEach
     void startInProcessServer() throws IOException {
         savedTargetProperty = System.clearProperty(TeiEmbeddingProvider.TARGET_PROPERTY);
         savedTruncateProperty = System.clearProperty(TeiEmbeddingProvider.TRUNCATE_PROPERTY);
+        savedMaxInFlightProperty = System.clearProperty(TeiEmbeddingProvider.MAX_IN_FLIGHT_PROPERTY);
         serverName = "tei-" + UUID.randomUUID();
         fake = new FakeEmbed();
         server = InProcessServerBuilder.forName(serverName)
@@ -62,6 +66,118 @@ class TeiEmbeddingProviderTest {
             System.clearProperty(TeiEmbeddingProvider.TRUNCATE_PROPERTY);
         } else {
             System.setProperty(TeiEmbeddingProvider.TRUNCATE_PROPERTY, savedTruncateProperty);
+        }
+        if (savedMaxInFlightProperty == null) {
+            System.clearProperty(TeiEmbeddingProvider.MAX_IN_FLIGHT_PROPERTY);
+        } else {
+            System.setProperty(TeiEmbeddingProvider.MAX_IN_FLIGHT_PROPERTY, savedMaxInFlightProperty);
+        }
+    }
+
+    @Test
+    void embedAllKeepsAtMostTheConfiguredCallsInFlight() throws Exception {
+        TeiEmbeddingProvider provider = new TeiEmbeddingProvider(channel,
+                Map.of(TeiEmbeddingProvider.MAX_IN_FLIGHT_ENVIRONMENT_VARIABLE, "2"));
+        List<String> texts = List.of("c0", "c1", "c2", "c3", "c4", "c5", "c6");
+        fake.hold = true;
+
+        CompletableFuture<List<float[]>> batch = CompletableFuture.supplyAsync(() -> provider.embedAll(texts));
+
+        int answered = 0;
+        while (answered < texts.size()) {
+            int expected = Math.min(2, texts.size() - answered);
+            awaitHeld(expected);
+            // Give any task that ignored the cap time to open its call before checking.
+            Thread.sleep(150);
+            assertThat(fake.held.size()).as("calls in flight").isEqualTo(expected);
+            assertThat(fake.peakInFlight()).isLessThanOrEqualTo(2);
+            fake.answerOneHeld();
+            answered++;
+        }
+        List<float[]> vectors = batch.get(10, TimeUnit.SECONDS);
+
+        assertThat(fake.peakInFlight()).isEqualTo(2);
+        assertThat(vectors).hasSize(texts.size());
+        for (int i = 0; i < texts.size(); i++) {
+            assertThat(vectors.get(i)).containsExactly(FakeEmbed.vectorFor(texts.get(i)));
+        }
+    }
+
+    @Test
+    void embedAllDefaultsToEightCallsInFlight() throws Exception {
+        TeiEmbeddingProvider provider = new TeiEmbeddingProvider(channel, Map.of());
+        List<String> texts = new java.util.ArrayList<>();
+        for (int i = 0; i < 20; i++) {
+            texts.add("chunk-" + i);
+        }
+        fake.hold = true;
+
+        CompletableFuture<List<float[]>> batch = CompletableFuture.supplyAsync(() -> provider.embedAll(texts));
+        awaitHeld(TeiEmbeddingProvider.DEFAULT_MAX_IN_FLIGHT);
+        Thread.sleep(150);
+        assertThat(fake.held.size()).isEqualTo(TeiEmbeddingProvider.DEFAULT_MAX_IN_FLIGHT);
+        fake.hold = false;
+        while (!fake.held.isEmpty()) {
+            fake.answerOneHeld();
+        }
+
+        assertThat(batch.get(10, TimeUnit.SECONDS)).hasSize(texts.size());
+        assertThat(fake.peakInFlight()).isEqualTo(TeiEmbeddingProvider.DEFAULT_MAX_IN_FLIGHT);
+    }
+
+    @Test
+    void embedAllFailureStillCancelsTheRestUnderTheCap() {
+        TeiEmbeddingProvider provider = new TeiEmbeddingProvider(channel,
+                Map.of(TeiEmbeddingProvider.MAX_IN_FLIGHT_ENVIRONMENT_VARIABLE, "1"));
+
+        long start = System.nanoTime();
+        assertThatThrownBy(() -> provider.embedAll(List.of("boom", "hang", "after")))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining(channel.authority());
+        long elapsedMillis = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - start);
+
+        assertThat(elapsedMillis).isLessThan(10_000L);
+    }
+
+    @Test
+    void nonPositiveInFlightCapIsRefusedNamingBothKnobs() {
+        for (String bad : List.of("0", "-3", "many")) {
+            TeiEmbeddingProvider provider = new TeiEmbeddingProvider(channel,
+                    Map.of(TeiEmbeddingProvider.MAX_IN_FLIGHT_ENVIRONMENT_VARIABLE, bad));
+            assertThatThrownBy(() -> provider.embedAll(List.of("x")))
+                    .isInstanceOf(IllegalStateException.class)
+                    .hasMessageContaining(TeiEmbeddingProvider.MAX_IN_FLIGHT_PROPERTY)
+                    .hasMessageContaining(TeiEmbeddingProvider.MAX_IN_FLIGHT_ENVIRONMENT_VARIABLE)
+                    .hasMessageContaining(bad);
+        }
+    }
+
+    @Test
+    void inFlightCapPropertyBeatsTheEnvironmentVariable() throws Exception {
+        System.setProperty(TeiEmbeddingProvider.MAX_IN_FLIGHT_PROPERTY, "3");
+        TeiEmbeddingProvider provider = new TeiEmbeddingProvider(channel,
+                Map.of(TeiEmbeddingProvider.MAX_IN_FLIGHT_ENVIRONMENT_VARIABLE, "1"));
+        fake.hold = true;
+
+        CompletableFuture<List<float[]>> batch = CompletableFuture.supplyAsync(
+                () -> provider.embedAll(List.of("a", "b", "c", "d", "e")));
+        awaitHeld(3);
+        fake.hold = false;
+        while (!fake.held.isEmpty()) {
+            fake.answerOneHeld();
+        }
+
+        assertThat(batch.get(10, TimeUnit.SECONDS)).hasSize(5);
+        assertThat(fake.peakInFlight()).isEqualTo(3);
+    }
+
+    private void awaitHeld(int count) throws InterruptedException {
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+        while (fake.held.size() < count) {
+            if (System.nanoTime() > deadline) {
+                throw new AssertionError("only " + fake.held.size() + " of " + count + " calls arrived");
+            }
+            Thread.sleep(5);
         }
     }
 
@@ -229,7 +345,32 @@ class TeiEmbeddingProviderTest {
         private static final int DIMENSION = 3;
 
         private final List<EmbedRequest> requests = new CopyOnWriteArrayList<>();
+        private final LinkedBlockingDeque<Runnable> held = new LinkedBlockingDeque<>();
+        private final java.util.concurrent.atomic.AtomicInteger inFlight =
+                new java.util.concurrent.atomic.AtomicInteger();
+        private final java.util.concurrent.atomic.AtomicInteger peak =
+                new java.util.concurrent.atomic.AtomicInteger();
         private volatile io.grpc.StatusRuntimeException failWith;
+        /** When set, answers are parked in {@link #held} until {@link #answerOneHeld()}. */
+        private volatile boolean hold;
+
+        int peakInFlight() {
+            return peak.get();
+        }
+
+        /** Answers the oldest parked call. */
+        void answerOneHeld() throws InterruptedException {
+            Runnable answer = held.pollFirst(10, TimeUnit.SECONDS);
+            if (answer == null) {
+                throw new AssertionError("no parked call to answer");
+            }
+            answer.run();
+        }
+
+        private void track() {
+            int now = inFlight.incrementAndGet();
+            peak.accumulateAndGet(now, Math::max);
+        }
 
         /** The vector {@code text} embeds to: derived from the text, so tests see ordering. */
         private static float[] vectorFor(String text) {
@@ -254,8 +395,17 @@ class TeiEmbeddingProviderTest {
             for (float component : vectorFor(request.getInputs())) {
                 response.addEmbeddings(component);
             }
-            observer.onNext(response.build());
-            observer.onCompleted();
+            Runnable answer = () -> {
+                observer.onNext(response.build());
+                observer.onCompleted();
+                inFlight.decrementAndGet();
+            };
+            track();
+            if (hold) {
+                held.addLast(answer);
+                return;
+            }
+            answer.run();
         }
     }
 }
