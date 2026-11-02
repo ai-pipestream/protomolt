@@ -595,5 +595,8 @@ project(':protomolt-repo-fixtures').projectDir = file('repo/fixtures')
 include 'protomolt-repo-archive'
 project(':protomolt-repo-archive').projectDir = file('repo/archive')
 
+include 'protomolt-search-embedding-turboembed'
+project(':protomolt-search-embedding-turboembed').projectDir = file('search/embedding/turboembed')
+
 include 'protomolt-graph'
 project(':protomolt-graph').projectDir = file('sink/graph')

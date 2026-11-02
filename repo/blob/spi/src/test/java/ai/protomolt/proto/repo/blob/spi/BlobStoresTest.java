@@ -27,6 +27,23 @@ class BlobStoresTest {
                 .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("different backend identity");
     }
 
+    @Test void aliasesMustReturnTheirDeclaredCanonicalIdentity() {
+        var alias = new BlobStoreProvider() {
+            public String id() { return "alias"; }
+            public String identityProviderId() { return "original"; }
+            public OpenedBlobStore open(Map<String, String> options) { throw new AssertionError("Opened client"); }
+            public BackendIdentity managedIdentity(Map<String, String> options) {
+                return new BackendIdentity(options.get("provider"), options.get("provider") + "/v1", Map.of("namespace", "same"));
+            }
+        };
+        var providers = BlobStores.of(List.of(alias));
+        assertThat(providers.managedIdentity("alias", Map.of("provider", "original")).provider()).isEqualTo("original");
+        for (var unexpected : List.of("alias", "elsewhere")) {
+            assertThatThrownBy(() -> providers.managedIdentity("alias", Map.of("provider", unexpected)))
+                    .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("different backend identity");
+        }
+    }
+
     @Test void emptyInstallationHasNoImplicitBackend() {
         var providers = BlobStores.discover();
         assertThat(providers.providerIds()).isEmpty();

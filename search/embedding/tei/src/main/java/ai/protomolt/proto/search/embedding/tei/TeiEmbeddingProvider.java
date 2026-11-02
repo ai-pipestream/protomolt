@@ -65,6 +65,18 @@ public final class TeiEmbeddingProvider implements EmbeddingProvider, AutoClosea
     /** Environment variable consulted when {@link #TRUNCATE_PROPERTY} is unset: {@value}. */
     public static final String TRUNCATE_ENVIRONMENT_VARIABLE = "PROTOMOLT_TEI_TRUNCATE";
 
+    /**
+     * System property capping how many Embed calls one {@link #embedAll(List)} keeps in flight
+     * at once: {@value}. A positive integer; unset means {@value #DEFAULT_MAX_IN_FLIGHT}.
+     */
+    public static final String MAX_IN_FLIGHT_PROPERTY = "protomolt.embeddings.tei.max-in-flight";
+
+    /** Environment variable consulted when {@link #MAX_IN_FLIGHT_PROPERTY} is unset: {@value}. */
+    public static final String MAX_IN_FLIGHT_ENVIRONMENT_VARIABLE = "PROTOMOLT_TEI_MAX_IN_FLIGHT";
+
+    /** In-flight cap applied when neither knob is set: {@value}. */
+    public static final int DEFAULT_MAX_IN_FLIGHT = 8;
+
     /** Fixed text embedded once to learn the vector length; see {@link #dimension()}. */
     private static final String DIMENSION_PROBE = "dimension probe";
 
@@ -75,6 +87,7 @@ public final class TeiEmbeddingProvider implements EmbeddingProvider, AutoClosea
     private volatile String target;
     private volatile Integer dimension;
     private volatile Boolean truncate;
+    private volatile Integer maxInFlight;
 
     /**
      * ServiceLoader constructor. The target is resolved on the first {@link #dimension()},
@@ -190,10 +203,29 @@ public final class TeiEmbeddingProvider implements EmbeddingProvider, AutoClosea
         }
     }
 
+    /** Symmetric model: document text uses the same batched call as {@link #embedAll(List)}. */
+    @Override
+    public List<float[]> embedAllDocuments(List<String> texts) {
+        return embedAll(texts);
+    }
+
+    /** Symmetric model: queries use the same batched call as {@link #embedAll(List)}. */
+    @Override
+    public List<float[]> embedAllQueries(List<String> texts) {
+        return embedAll(texts);
+    }
+
     /**
      * Embeds each text with its own unary Embed call, issued concurrently on virtual threads.
      * TEI batches concurrent requests server side (dynamic batching), so per-text unary calls
      * issued at the same time get the batching benefit without a batch API.
+     *
+     * <p>At most {@link #MAX_IN_FLIGHT_PROPERTY} calls (default {@value #DEFAULT_MAX_IN_FLIGHT})
+     * are open at the same time, however long the input list is: the texts are queued in
+     * input order on a pool of that many virtual threads, so a document with hundreds of
+     * chunks costs the server and this client a fixed number of concurrent requests. One
+     * future per text is still created up front, which keeps input-order collection and
+     * cancellation simple; a cancelled text that has not started yet is skipped by the pool.
      *
      * <p>Results are collected in input order. When a collected call has failed, every call
      * not yet collected is cancelled and the failure propagates. A failure is only noticed
@@ -214,7 +246,11 @@ public final class TeiEmbeddingProvider implements EmbeddingProvider, AutoClosea
     @Override
     public List<float[]> embedAll(List<String> texts) {
         Objects.requireNonNull(texts, "texts");
-        try (ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor()) {
+        if (texts.isEmpty()) {
+            return new ArrayList<>();
+        }
+        int workers = Math.min(maxInFlight(), texts.size());
+        try (ExecutorService executor = Executors.newFixedThreadPool(workers, Thread.ofVirtual().factory())) {
             List<Future<float[]>> futures = new ArrayList<>(texts.size());
             for (String text : texts) {
                 futures.add(executor.submit(() -> embed(text)));
@@ -278,6 +314,19 @@ public final class TeiEmbeddingProvider implements EmbeddingProvider, AutoClosea
         }
     }
 
+    private int maxInFlight() {
+        Integer resolved = maxInFlight;
+        if (resolved != null) {
+            return resolved;
+        }
+        synchronized (lock) {
+            if (maxInFlight == null) {
+                maxInFlight = configuredMaxInFlight();
+            }
+            return maxInFlight;
+        }
+    }
+
     private static float[] await(Future<float[]> future) {
         try {
             return future.get();
@@ -303,6 +352,29 @@ public final class TeiEmbeddingProvider implements EmbeddingProvider, AutoClosea
                     + " environment variable to the server's host:port");
         }
         return resolved;
+    }
+
+    private int configuredMaxInFlight() {
+        String configured = System.getProperty(MAX_IN_FLIGHT_PROPERTY);
+        if (configured == null) {
+            configured = environment.get(MAX_IN_FLIGHT_ENVIRONMENT_VARIABLE);
+        }
+        if (configured == null) {
+            return DEFAULT_MAX_IN_FLIGHT;
+        }
+        int parsed;
+        try {
+            parsed = Integer.parseInt(configured.trim());
+        } catch (NumberFormatException e) {
+            parsed = 0;
+        }
+        if (parsed < 1) {
+            throw new IllegalStateException("The TEI in-flight cap must be a positive integer; set the '"
+                    + MAX_IN_FLIGHT_PROPERTY + "' system property or the "
+                    + MAX_IN_FLIGHT_ENVIRONMENT_VARIABLE + " environment variable, found '"
+                    + configured + "'");
+        }
+        return parsed;
     }
 
     private boolean configuredTruncate() {

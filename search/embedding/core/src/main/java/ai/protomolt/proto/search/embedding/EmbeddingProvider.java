@@ -26,6 +26,16 @@ public interface EmbeddingProvider extends AutoCloseable {
     /** Embeds {@code text} into a {@link #dimension()}-component vector. */
     float[] embed(String text);
 
+    /** Embeds a search query. Symmetric providers use their ordinary embedding. */
+    default float[] embedQuery(String text) {
+        return embed(text);
+    }
+
+    /** Embeds document content. Symmetric providers use their ordinary embedding. */
+    default float[] embedDocument(String text) {
+        return embed(text);
+    }
+
     /**
      * Embeds each text in order. The default loops over {@link #embed(String)};
      * providers with a batch API should override.
@@ -34,6 +44,31 @@ public interface EmbeddingProvider extends AutoCloseable {
         List<float[]> vectors = new ArrayList<>(texts.size());
         for (String text : texts) {
             vectors.add(embed(text));
+        }
+        return vectors;
+    }
+
+    /**
+     * Embeds each document text in order. The default loops over
+     * {@link #embedDocument(String)}, so an asymmetric provider is never sent through
+     * the neutral {@link #embedAll(List)}; providers with a batch API should override.
+     */
+    default List<float[]> embedAllDocuments(List<String> texts) {
+        List<float[]> vectors = new ArrayList<>(texts.size());
+        for (String text : texts) {
+            vectors.add(embedDocument(text));
+        }
+        return vectors;
+    }
+
+    /**
+     * Embeds each search query in order. The default loops over
+     * {@link #embedQuery(String)}; providers with a batch API should override.
+     */
+    default List<float[]> embedAllQueries(List<String> texts) {
+        List<float[]> vectors = new ArrayList<>(texts.size());
+        for (String text : texts) {
+            vectors.add(embedQuery(text));
         }
         return vectors;
     }

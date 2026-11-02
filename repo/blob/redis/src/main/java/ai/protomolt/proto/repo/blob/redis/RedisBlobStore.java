@@ -19,7 +19,7 @@ import java.util.Map;
 import java.util.Objects;
 
 /**
- * Standalone Redis 7+ object storage with one atomic hash per encoded object.
+ * Standalone Valkey / Redis-compatible object storage with one atomic hash per encoded object.
  * Layout v2 does not read legacy split byte/metadata keys. Version selection
  * is unsupported. Conditional writes compare content ETags,
  * not mutation epochs. TTL and server eviction/persistence policy

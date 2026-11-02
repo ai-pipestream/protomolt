@@ -24,7 +24,7 @@ public final class EmbeddingEquivalence {
     }
 
     /**
-     * Compares {@code a} and {@code b} over {@code texts}: one {@code embedAll} per provider,
+     * Compares {@code a} and {@code b} over {@code texts}: one {@code embedAllDocuments} per provider,
      * one cosine and one norm ratio per text, reduced to an {@link EquivalenceReport}.
      *
      * @throws IllegalArgumentException when {@code texts} is empty or the providers disagree
@@ -43,8 +43,9 @@ public final class EmbeddingEquivalence {
                     + "' embeds at " + a.dimension() + ", provider '" + b.providerId()
                     + "' at " + b.dimension());
         }
-        List<float[]> vectorsA = a.embedAll(texts);
-        List<float[]> vectorsB = b.embedAll(texts);
+        // Index compatibility is about stored vectors, so compare document-purpose output.
+        List<float[]> vectorsA = a.embedAllDocuments(texts);
+        List<float[]> vectorsB = b.embedAllDocuments(texts);
         List<Double> cosines = new ArrayList<>(texts.size());
         List<Double> normRatios = new ArrayList<>(texts.size());
         for (int i = 0; i < texts.size(); i++) {

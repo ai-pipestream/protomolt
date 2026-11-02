@@ -42,12 +42,15 @@ naming the missing ones.
 | `DOCUMENT_PLATFORM_S3_REGION` | `us-east-1` | non-blank text |
 | `DOCUMENT_PLATFORM_S3_ACCESS_KEY` | unset = SDK default credentials chain | text; must be set together with the secret key or the record constructor fails fast |
 | `DOCUMENT_PLATFORM_S3_SECRET_KEY` | unset | text; paired with the access key |
-| `DOCUMENT_PLATFORM_S3_CONDITIONAL_WRITES` | `false` | strict flag; requires an s3 or s3-redis-cache blob store |
+| `DOCUMENT_PLATFORM_S3_CONDITIONAL_WRITES` | `false` | strict flag; requires an s3, s3-valkey-cache or s3-redis-cache blob store |
 | `DOCUMENT_PLATFORM_DEFAULT_BUCKET_BASE` | `documents` | non-blank text |
-| `DOCUMENT_PLATFORM_BLOB_STORE` | `s3` | `s3`, `redis` or `s3-redis-cache`; anything else (including the retired `repo` values) fails fast |
-| `DOCUMENT_PLATFORM_REDIS_URI` | `redis://localhost:6379` | non-blank text |
-| `DOCUMENT_PLATFORM_REDIS_TTL_SECONDS` | `3600` | integer >= 0 |
-| `DOCUMENT_PLATFORM_REDIS_MAX_OBJECT_BYTES` | `8388608` | integer >= 0; 0 = unbounded |
+| `DOCUMENT_PLATFORM_BLOB_STORE` | `s3` | `s3` (default), `valkey`, `s3-valkey-cache`, `redis` or `s3-redis-cache`; anything else (including the retired `repo` values) fails fast |
+| `DOCUMENT_PLATFORM_VALKEY_URI` | `redis://localhost:6379` | preferred non-blank Redis-compatible connection URI (`redis://` or `rediss://`) |
+| `DOCUMENT_PLATFORM_VALKEY_TTL_SECONDS` | `3600` | preferred integer 0..2147483647; 0 disables expiry |
+| `DOCUMENT_PLATFORM_VALKEY_MAX_OBJECT_BYTES` | `8388608` | preferred integer >= 0; 0 retains the adapter ceiling |
+| `DOCUMENT_PLATFORM_REDIS_URI` | `redis://localhost:6379` | compatibility alias of `DOCUMENT_PLATFORM_VALKEY_URI` |
+| `DOCUMENT_PLATFORM_REDIS_TTL_SECONDS` | `3600` | compatibility alias of `DOCUMENT_PLATFORM_VALKEY_TTL_SECONDS` |
+| `DOCUMENT_PLATFORM_REDIS_MAX_OBJECT_BYTES` | `8388608` | compatibility alias of `DOCUMENT_PLATFORM_VALKEY_MAX_OBJECT_BYTES` |
 | `DOCUMENT_PLATFORM_LIFECYCLE_ENABLED` | `true` | strict flag |
 | `DOCUMENT_PLATFORM_PURGE_INTERVAL_MS` | `5000` | integer >= 1 |
 | `DOCUMENT_PLATFORM_SWEEP_INTERVAL_MS` | `60000` | integer >= 1 |
@@ -57,6 +60,8 @@ naming the missing ones.
 | `DOCUMENT_PLATFORM_KAFKA_BOOTSTRAP_SERVERS` | unset = eventing off (no outbox, no relay) | text |
 | `DOCUMENT_PLATFORM_KAFKA_TOPIC` | `document-events` | non-blank text |
 | `DOCUMENT_PLATFORM_SCHEMA_REGISTRY_URL` | unset = registry-free (frames stamp schema id 0) | URL |
+| `DOCUMENT_PLATFORM_CONCEPT_SCHEMES` | unset = no startup concept schemes, unless the alias below is set | comma- or semicolon-separated files, directories, or `schemeId=path` entries; trims whitespace and ignores empty entries; a nonblank value takes precedence over `PROTOMOLT_REPO_CONCEPT_SCHEME_PATHS` |
+| `PROTOMOLT_REPO_CONCEPT_SCHEME_PATHS` | unset = no startup concept schemes | same syntax as `DOCUMENT_PLATFORM_CONCEPT_SCHEMES`; used only when that variable is absent or blank |
 | `DOCUMENT_PLATFORM_SEED_ACCOUNT_ID` | unset = no boot-time drive seeding | text; treat as permanent once used |
 | `DOCUMENT_PLATFORM_READ_BUDGET_BYTES` | `268435456` (256 MiB) | integer >= 1; sizes both the verified-read budget and a separate v2 save-admission budget of the same capacity (up to `2 * DOCUMENT_PLATFORM_READ_BUDGET_BYTES` across concurrent reads and saves) |
 | `DOCUMENT_PLATFORM_PURGE_QUEUE` | `jdbc` | `jdbc` or `kafka`; `kafka` requires the bootstrap servers or the config fails fast |
@@ -66,6 +71,23 @@ naming the missing ones.
 | `PROTOMOLT_CONSOLE_OIDC_CLIENT_SECRET` | required with the issuer | text |
 | `PROTOMOLT_CONSOLE_OIDC_REDIRECT_URI` | required with the issuer | the host's `/console/session/callback` as the provider reaches it, registered at the provider exactly |
 | `PROTOMOLT_CONSOLE_SESSION_TTL` | required with the issuer | ISO-8601 duration, one second to seven days (`PT8H`) |
+
+Valkey is the preferred Redis-compatible server, selected explicitly. S3 stays the
+default authoritative streaming store; the bounded Valkey/Redis adapter does not
+gain native streamed reads or managed-storage qualification from its name.
+The `VALKEY_*` and `REDIS_*` environment spellings apply to either compatible
+provider. Setting both aliases to different values is rejected without printing
+the values. Explicit blank/malformed values fail; defaults apply only to omitted
+settings. These aliases do not migrate persisted data or change storage identity.
+
+Startup concept schemes are binary protobuf `ConceptScheme` messages in `.pb` or
+`.binpb` files. For example, `DOCUMENT_PLATFORM_CONCEPT_SCHEMES=/config/schemes;topics=/config/topics.pb`.
+Directories contribute their immediate regular `.pb`/`.binpb` files in filename
+order; they are not scanned recursively. Without an explicit `schemeId=path`,
+the filename without its extension supplies the scheme ID. Paths are interpreted
+relative to the process working directory unless absolute. Missing paths,
+unsupported file types, duplicate scheme IDs, invalid protobuf, or failed scheme
+validation stop startup. The two variables are alternatives, not combined lists.
 
 The ledger (read by `LedgerConfig.fromEnvironment` in `repo/container`;
 `DOCUMENT_PLATFORM_POOL_SIZE` fails fast on a non-positive or non-integer
@@ -345,6 +367,7 @@ at first use is the failure.
 |---|---|---|
 | `PROTOMOLT_TEI_TARGET` | unset | TEI gRPC `host:port` |
 | `PROTOMOLT_TEI_TRUNCATE` | `true` | `false` rejects overlength inputs instead of truncating server side |
+| `PROTOMOLT_TEI_MAX_IN_FLIGHT` | `8` | positive integer; concurrent Embed calls one batch keeps open |
 | `PROTOMOLT_OVMS_TARGET` | unset | OVMS gRPC `host:port` |
 | `PROTOMOLT_OVMS_MODEL` | unset | model name |
 | `PROTOMOLT_OVMS_INPUT` | provider default | input tensor name |
@@ -488,3 +511,25 @@ so a plain run neither runs nor skips it.
 | Variable | Default | Accepted |
 |---|---|---|
 | `PROTOMOLT_CONSOLE_BROWSER_IT` | unset = the console browser leg is left out | exactly `1`; runs `ConsoleBrowserIT`, which boots the seeded repository host with Keycloak sign-in and runs the Playwright specs in `apps/console/e2e` against it. Needs `npm ci && npm run build` in `apps/console` and Playwright's Chromium first |
+
+### Turboembed provider selection
+
+`DOCUMENT_PLATFORM_SEARCH_EMBEDDING_PROVIDER` explicitly selects an installed
+embedding provider. Absent retains the existing Model2Vec/lexical-only preset;
+blank, padded, unknown or unconfigured selection fails rather than falling back.
+For Turboembed use `turboembed-v1:<manifest-sha256>`; the identity goes into the
+chunking policy digest so a changed bundle requires reindexing.
+
+| Variable | Required behavior |
+| --- | --- |
+| `PROTOMOLT_TURBOEMBED_TARGET` | Explicit gRPC endpoint. |
+| `PROTOMOLT_TURBOEMBED_TRANSPORT` | Exactly `tls` or `plaintext`; no implicit downgrade. |
+| `PROTOMOLT_TURBOEMBED_MODEL` | Served model name (by default the bundle directory name, not model metadata ID). |
+| `PROTOMOLT_TURBOEMBED_REVISION` | Exact served bundle revision, checked on every response. |
+| `PROTOMOLT_TURBOEMBED_MANIFEST_SHA256` | Exact lowercase 64-character manifest digest, checked on every response. |
+| `PROTOMOLT_TURBOEMBED_DIMS` | Positive integer dimensions, checked against each returned vector. |
+
+All six Turboembed values are required when selected. Configuration does not
+prove server availability; the RPC checks the pinned identity before returning
+vectors. Custom credentials/TLS can be supplied through the caller-owned channel
+constructor. No Turboembed dependency is added to the repository-only assembly.

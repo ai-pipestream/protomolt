@@ -13,8 +13,7 @@ final class SelectedDriveBackend implements Consumer<DriveRecord> {
 
     SelectedDriveBackend(RepoServiceConfig config) {
         this.config = config;
-        this.provider = RepoServiceConfig.BLOB_STORE_S3_REDIS_CACHE.equals(config.blobStore())
-                ? "s3" : config.blobStore();
+        this.provider = config.driveProvider();
     }
 
     @Override public void accept(DriveRecord drive) {

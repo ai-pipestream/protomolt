@@ -7,10 +7,12 @@ import {
   FileDescriptorSetSchema,
   anyPack,
   AnySchema,
+  Int64ValueSchema,
   type Any,
   type FileDescriptorProto,
 } from '@bufbuild/protobuf/wkt'
 import { createHash } from 'node:crypto'
+import { Code, ConnectError } from '@connectrpc/connect'
 import { describe, expect, it, vi } from 'vitest'
 import { file_ai_protomolt_proto_types_v1_concepts } from '@/gen/ai/protomolt/proto/types/v1/concepts_pb'
 import { DocumentSchema, SearchMetadataSchema } from '@/gen/ai/protomolt/proto/repo/v1/document_pb'
@@ -35,6 +37,8 @@ import { FieldRulesSchema, field as fieldRules, file_ai_protomolt_proto_validate
 import { linkRow } from './linksCore'
 import { AnySchemas, flatten, linkLines, partDiff, readSide, searchMetadataLines, sectionDiff } from './revisionDiffCore'
 import { descriptorSetOf, routerClients, testAddress } from './repositoryTestKit'
+import { decodedTree } from './decodedTreeCore'
+import type { ViewNode } from '@/lib/message-view/messageTree'
 import { Sha256 } from './sha256'
 import { ResolvedLinkSchema, StaticLinkStateSchema } from '@/gen/ai/protomolt/proto/repo/v2/document_service_pb'
 
@@ -561,5 +565,187 @@ describe('linkLines and sectionDiff', () => {
       'del structured_data.cites[0] references -> intake:acct-a/ds-files/doc-3',
       'add structured_data.cites[0] references -> intake:acct-a/ds-files/doc-4',
     ])
+  })
+})
+
+
+/** Fully expand only in tests; the screen expands branches on demand. */
+function inspected(nodes: ViewNode[]): string[] {
+  return nodes.flatMap(node => [node.label, node.display ?? '', node.detail ?? '', ...inspected(node.loadChildren?.() ?? node.children ?? [])])
+}
+
+describe('retained Any inspector', () => {
+  it('keeps opaque and resolved locators apart when the schemas did not load', () => {
+    const tagged = taggedSchema()
+    const root = anyContainer()
+    const packed = anyPack(tagged.desc, create(tagged.desc, { title: 'Resolved' } as never))
+    const validation = create(RevisionValidationSchema, {
+      resolvedOccurrences: [resolved(packed, tagged.set, [fieldStep(1)])],
+      opaqueOccurrences: [{ occurrence: { part: part(DocumentPart.CORE), steps: [fieldStep(2)] }, typeUrl: packed.typeUrl, sha256: digest(packed.value), length: BigInt(packed.value.length) }],
+    })
+    const schemas = AnySchemas.unloaded(validation, part(DocumentPart.CORE))
+    const location = { part: part(DocumentPart.CORE), steps: [] as string[] }
+    expect(schemas.statusOf(packed, { ...location, steps: ['fieldNumber:1'] })).toBe('unloaded')
+    expect(schemas.statusOf(packed, { ...location, steps: ['fieldNumber:2'] })).toBe('opaque')
+    expect(schemas.statusOf(packed, { ...location, steps: ['fieldNumber:3', 'repeatedIndex:0'] })).toBe('missing')
+    expect(schemas.schemaOf(packed, { ...location, steps: ['fieldNumber:1'] })).toBeNull()
+    // Another part's occurrences are not this part's.
+    expect(AnySchemas.unloaded(validation, part(DocumentPart.BLOBS)).statusOf(packed, { ...location, steps: ['fieldNumber:1'] })).toBe('missing')
+    const tree = decodedTree(root.desc, create(root.desc, { first: packed, second: packed } as never), { schemas, location })
+    expect(inspected([tree[0]]).join(' ')).toContain('Schema retained, not loaded.')
+    expect(inspected([tree[1]]).join(' ')).toContain('Opaque: payload not decoded.')
+    expect(inspected(tree).join(' ')).not.toContain('No schema retained')
+    expect(inspected(tree)).not.toContain('Resolved')
+  })
+
+  it('preserves exact int64 and unknown fields inside a resolved Any', async () => {
+    const root = anyContainer()
+    const set = descriptorSetOf(Int64ValueSchema.file)
+    const packed = anyPack(Int64ValueSchema, create(Int64ValueSchema, { value: 9007199254740993n }))
+    packed.value = new Uint8Array([...packed.value, 0xa0, 6, 1])
+    const { schemas } = await loadSchemas(create(RevisionValidationSchema, { resolvedOccurrences: [resolved(packed, set, [fieldStep(1)])] }), [set])
+    const tree = decodedTree(root.desc, create(root.desc, { first: packed } as never), { schemas, location: { part: part(DocumentPart.CORE), steps: [] } })
+    expect(inspected(tree)).toContain('9007199254740993')
+    expect(inspected(tree)).toContain('#100')
+  })
+
+  it('stops a very deep ordinary message at an explicit display boundary', () => {
+    const file = create(FileDescriptorProtoSchema, { name: 'deep.proto', package: 'test', syntax: 'proto3', messageType: [{ name: 'Node', field: [{ name: 'child', number: 1, type: FieldDescriptorProto_Type.MESSAGE, typeName: '.test.Node', label: FieldDescriptorProto_Label.OPTIONAL }] }] })
+    const desc = createFileRegistry(create(FileDescriptorSetSchema, { file: [file] })).getMessage('test.Node')!
+    const message = create(desc)
+    let at = message as unknown as { child?: unknown }
+    for (let i = 0; i < 10000; i++) { const child = create(desc); at.child = child; at = child as unknown as { child?: unknown } }
+    const tree = decodedTree(desc, message, { schemas: AnySchemas.none(), location: { part: part(DocumentPart.CORE), steps: [] } })
+    expect(inspected(tree).join(' ')).toContain('Inspection depth limit reached')
+  })
+
+  it('lazily expands consecutive Any envelopes and distinguishes opaque same-byte siblings', async () => {
+    const tagged = taggedSchema()
+    const root = anyContainer()
+    const packed = anyPack(tagged.desc, create(tagged.desc, { title: 'Only typed content' } as never))
+    const outer = anyPack(AnySchema, packed)
+    const anySet = descriptorSetOf(AnySchema.file)
+    const { schemas } = await loadSchemas(create(RevisionValidationSchema, {
+      resolvedOccurrences: [resolved(outer, anySet, [fieldStep(1)]), resolved(packed, tagged.set, [fieldStep(1), boundaryStep(outer, anySet)])],
+      opaqueOccurrences: [{ occurrence: { part: part(DocumentPart.CORE), steps: [fieldStep(2)] }, typeUrl: outer.typeUrl, sha256: digest(outer.value), length: BigInt(outer.value.length) }],
+    }), [anySet, tagged.set])
+    const tree = decodedTree(root.desc, create(root.desc, { first: outer, second: outer } as never), { schemas, location: { part: part(DocumentPart.CORE), steps: [] } })
+    expect(tree[0].children).toBeUndefined()
+    expect(tree[0].loadChildren).toBeTypeOf('function')
+    expect(inspected([tree[0]])).toContain('Only typed content')
+    expect(inspected([tree[1]]).join(' ')).toContain('Opaque: payload not decoded')
+    expect(inspected([tree[1]])).not.toContain('Only typed content')
+  })
+
+  it('uses repeated indices and map keys without lending schemas to neighbors', async () => {
+    const tagged = taggedSchema()
+    const root = anyContainer()
+    const packed = anyPack(tagged.desc, create(tagged.desc, { title: 'Resolved' } as never))
+    const mapKey = create(RepositorySchemaOccurrenceStepSchema, { step: { case: 'mapKey', value: { type: RepositoryOccurrenceKeyType.STRING, value: { case: 'stringValue', value: 'yes' } } } })
+    const { schemas } = await loadSchemas(create(RevisionValidationSchema, { resolvedOccurrences: [
+      resolved(packed, tagged.set, [fieldStep(3), indexStep(1)]), resolved(packed, tagged.set, [fieldStep(4), mapKey]),
+    ] }), [tagged.set])
+    const tree = decodedTree(root.desc, create(root.desc, { items: [packed, packed], entries: { no: packed, yes: packed } } as never), { schemas, location: { part: part(DocumentPart.CORE), steps: [] } })
+    const items = tree[0].loadChildren!()
+    expect(inspected([items[0]])).not.toContain('Resolved')
+    expect(inspected([items[1]])).toContain('Resolved')
+    const entries = tree[1].loadChildren!()
+    expect(inspected([entries[0]])).not.toContain('Resolved')
+    expect(inspected([entries[1]])).toContain('Resolved')
+  })
+
+  it('shows a mismatched binding and malformed typed bytes as different failures', async () => {
+    const tagged = taggedSchema()
+    const root = anyContainer()
+    const packed = create(AnySchema, { typeUrl: `type.googleapis.com/${tagged.desc.typeName}`, value: new Uint8Array([10, 255]) })
+    const changed = clone(AnySchema, packed)
+    changed.value = new Uint8Array([10, 0])
+    const { schemas } = await loadSchemas(create(RevisionValidationSchema, { resolvedOccurrences: [resolved(packed, tagged.set, [fieldStep(1)]), resolved(packed, tagged.set, [fieldStep(2)])] }), [tagged.set])
+    const tree = decodedTree(root.desc, create(root.desc, { first: packed, second: changed } as never), { schemas, location: { part: part(DocumentPart.CORE), steps: [] } })
+    expect(inspected([tree[0]])).toContain('(invalid payload)')
+    expect(inspected([tree[1]]).join(' ')).toContain('Payload differs from its retained binding')
+    expect(inspected([tree[1]])).not.toContain('(decoded payload)')
+  })
+
+  it('uses each occurrence’s own descriptor even when names and bytes match', async () => {
+    const first = taggedSchema()
+    const second = taggedSchema('category')
+    const root = anyContainer()
+    const packed = anyPack(first.desc, create(first.desc, { subject: { schemeId: 'topics', conceptId: 'wind' } } as never))
+    const { schemas } = await loadSchemas(create(RevisionValidationSchema, { resolvedOccurrences: [resolved(packed, first.set, [fieldStep(1)]), resolved(packed, second.set, [fieldStep(2)])] }), [first.set, second.set])
+    const tree = decodedTree(root.desc, create(root.desc, { first: packed, second: packed } as never), { schemas, location: { part: part(DocumentPart.CORE), steps: [] } })
+    expect(inspected([tree[0]])).toContain('subject')
+    expect(inspected([tree[0]])).not.toContain('category')
+    expect(inspected([tree[1]])).toContain('category')
+  })
+
+  it('pages large collections lazily without hiding the remaining entries', () => {
+    const root = anyContainer()
+    const tree = decodedTree(root.desc, create(root.desc, { items: Array.from({ length: 10000 }, () => create(AnySchema)) } as never), { schemas: AnySchemas.none(), location: { part: part(DocumentPart.CORE), steps: [] } })
+    expect(tree[0].children).toBeUndefined()
+    const children = tree[0].loadChildren!()
+    expect(children).toHaveLength(201)
+    expect(children[200].label).toBe('(more entries)')
+    expect(children[200].loadChildren!()[0].label).toBe('[200]')
+    expect(tree[0].loadChildren!()).toBe(children)
+  })
+})
+
+describe('retained Any inspector after a failed load', () => {
+  // The view loads strictly and, when the load throws, falls back to the
+  // occurrence record without schemas. Each failure keeps its own error and
+  // the same fallback: opaque locators stay opaque, resolved ones read as
+  // retained but not loaded, and no payload is decoded from a partial load.
+  it.each(['unavailable', 'digest', 'conflict', 'malformed locator'] as const)('keeps the first error and the occurrence record after %s', async (failure) => {
+    const root = anyContainer()
+    const first = taggedSchema()
+    const second = taggedSchema('category')
+    const packed = anyPack(first.desc, create(first.desc, { subject: { schemeId: 'topics', conceptId: 'wind' } } as never))
+    const core = part(DocumentPart.CORE)
+    const validation = create(RevisionValidationSchema, {
+      resolvedOccurrences: [
+        resolved(packed, first.set, [fieldStep(1)]),
+        resolved(packed, second.set, [fieldStep(failure === 'conflict' ? 1 : 2)]),
+      ],
+      opaqueOccurrences: [{ occurrence: { part: core, steps: [fieldStep(3), indexStep(0)] },
+        typeUrl: packed.typeUrl, sha256: digest(packed.value), length: BigInt(packed.value.length) }],
+    })
+    // A malformed opaque locator sits first, ahead of the valid one.
+    if (failure === 'malformed locator') validation.opaqueOccurrences.unshift(create(OpaqueOccurrenceSchema, { occurrence: { part: core } }))
+    const descriptorCalls: string[] = []
+    const clients = routerClients(router => router.service(DocumentService, {
+      getSchemaDescriptor(request) {
+        descriptorCalls.push(request.descriptorSha256)
+        if (request.descriptorSha256 === digest(first.set)) return create(GetSchemaDescriptorResponseSchema, { descriptorSet: first.set })
+        if (failure === 'unavailable') throw new ConnectError('schema store unavailable', Code.Unavailable)
+        // The wrong set for the second digest.
+        return create(GetSchemaDescriptorResponseSchema, { descriptorSet: first.set })
+      },
+    }))
+    const load = AnySchemas.load(clients.documents, testAddress(), 2n, validation, new AbortController().signal, core)
+    if (failure === 'unavailable') {
+      await expect(load).rejects.toMatchObject({ code: Code.Unavailable })
+    } else {
+      await expect(load).rejects.toThrow(
+        failure === 'conflict' ? 'conflicting Any occurrence bindings' : failure === 'malformed locator' ? 'no complete locator' : 'but revision 2 retained',
+      )
+    }
+    // A malformed locator is rejected before any descriptor is fetched.
+    if (failure === 'malformed locator') expect(descriptorCalls).toEqual([])
+
+    const schemas = AnySchemas.unloaded(validation, core)
+    expect(schemas.statusOf(packed, { part: core, steps: ['fieldNumber:1'] })).toBe('unloaded')
+    expect(schemas.schemaOf(packed, { part: core, steps: ['fieldNumber:1'] })).toBeNull()
+    expect(schemas.statusOf(packed, { part: core, steps: ['fieldNumber:2'] })).toBe(failure === 'conflict' ? 'missing' : 'unloaded')
+    expect(schemas.statusOf(packed, { part: core, steps: ['fieldNumber:3', 'repeatedIndex:0'] })).toBe('opaque')
+    // Field 2 carries no occurrence in the conflict case, so it is left out.
+    const fields = failure === 'conflict' ? { first: packed, items: [packed] } : { first: packed, second: packed, items: [packed] }
+    const tree = decodedTree(root.desc, create(root.desc, fields as never), { schemas, location: { part: core, steps: [] } })
+    const rendered = inspected(tree).join(' ')
+    expect(rendered).toContain('Schema retained, not loaded.')
+    expect(rendered).toContain('Opaque: payload not decoded.')
+    expect(rendered).not.toContain('No schema retained for this occurrence.')
+    expect(rendered).not.toContain('(decoded payload)')
+    expect(rendered).not.toContain('wind')
   })
 })

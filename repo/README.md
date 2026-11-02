@@ -223,7 +223,7 @@ for the ledger, LocalStack for S3, the full stack booted through
 - `SeedAccountDrivesIT` — the seeded default account: `intake`/`pipeline`
   drives appear with the provisioning defaults, seeding is idempotent across
   repeat runs, and an unset variable is a no-op.
-- `RedisBlobStoreIT` — the Redis blob store against `redis:7-alpine`:
+- `RedisBlobStoreIT` — the shared byte adapter against pinned `valkey/valkey:9.1.3-alpine`:
   verified writes, the two-entries-per-object mapping, 1000-key pipelined
   deletes, SCAN listing, TTL expiry.
 - `CacheCloseTest` / `CacheProviderIT` — the caching decorator's
@@ -244,10 +244,10 @@ unless disabled, the HTTP upload route. To embed in-JVM instead, use
 | `DOCUMENT_PLATFORM_S3_REGION` | `us-east-1` | S3 region |
 | `DOCUMENT_PLATFORM_S3_ACCESS_KEY` / `_SECRET_KEY` | _(SDK default chain)_ | Static credentials; both or neither. Blank = the AWS default credentials chain (IRSA/instance profile in prod) |
 | `DOCUMENT_PLATFORM_DEFAULT_BUCKET_BASE` | `documents` | Provisioned drives without an explicit bucket get `<base>-<accountId>-<name>` |
-| `DOCUMENT_PLATFORM_BLOB_STORE` | `s3` | Blob-store selection: `s3` (direct object storage), `redis` (objects live in Redis; not constructable for v2 stacks, whose streamed reads `RedisBlobStore` does not implement), `s3-redis-cache` (S3 of record behind a Redis read-through/write-through cache; supported, the cache forwards streamed reads to S3). The former `repo` / `repo-inprocess` delegation modes are retired (Step 5A) and fail construction with `Remote repository blob storage is retired` |
-| `DOCUMENT_PLATFORM_REDIS_URI` | `redis://localhost:6379` | Redis connection URI (`redis://[:password@]host:port[/db]`) for the `redis` and `s3-redis-cache` modes |
-| `DOCUMENT_PLATFORM_REDIS_TTL_SECONDS` | `3600` | Per-object TTL in Redis (0 = no expiry); the cache-entry TTL in `s3-redis-cache` mode |
-| `DOCUMENT_PLATFORM_REDIS_MAX_OBJECT_BYTES` | `8388608` | Largest object admitted to Redis (0 = unbounded); the cache ceiling in `s3-redis-cache` mode — larger objects bypass the cache |
+| `DOCUMENT_PLATFORM_BLOB_STORE` | `s3` | Blob-store selection: `s3` (default, direct object storage), `valkey` (preferred Redis-compatible byte provider), `s3-valkey-cache` (preferred S3 + cache composition), `redis` (objects live in Redis; not constructable for v2 stacks, whose streamed reads `RedisBlobStore` does not implement), `s3-redis-cache` (S3 of record behind a Redis read-through/write-through cache; supported, the cache forwards streamed reads to S3). The former `repo` / `repo-inprocess` delegation modes are retired (Step 5A) and fail construction with `Remote repository blob storage is retired` |
+| `DOCUMENT_PLATFORM_VALKEY_URI` / `DOCUMENT_PLATFORM_REDIS_URI` | `redis://localhost:6379` | Connection URI (`redis://` or `rediss://`) for all Valkey/Redis byte and cache modes; conflicting alias values fail |
+| `DOCUMENT_PLATFORM_VALKEY_TTL_SECONDS` / `DOCUMENT_PLATFORM_REDIS_TTL_SECONDS` | `3600` | Per-object TTL (0 = no expiry); cache-entry TTL in either S3 cache mode |
+| `DOCUMENT_PLATFORM_VALKEY_MAX_OBJECT_BYTES` / `DOCUMENT_PLATFORM_REDIS_MAX_OBJECT_BYTES` | `8388608` | Largest object admitted to the adapter (0 retains its ceiling); either S3 cache mode bypasses the cache for larger objects |
 | `PROTOMOLT_API_TOKEN` | _(required to open network listeners)_ | Bearer token for gRPC and HTTP (repo-service mounts no MCP surface) |
 | `DOCUMENT_PLATFORM_READ_BUDGET_BYTES` | `268435456` | Per-pool byte ceiling for verified document/blob reads (`Read buffer budget exhausted`) and for a separate v2 save-admission reservation pool of the same size (`ReadByteBudget.forSaves`, reporting `Save buffer budget exhausted`), so concurrent reads and saves can hold up to `2 * DOCUMENT_PLATFORM_READ_BUDGET_BYTES` combined. Streaming `ReadDocument` reserves each non-opaque part's catalog length while decoding and streaming it (a bounded 131,072-byte chunk buffer for opaque parts); `ReadBlob` streams in 64 KiB chunks without a catalog-length reservation; unary `GetDocument` and bulk `ReadDocuments` reserve each selected part's catalog length; unary v2 saves reserve split part fragments and extracted inline raw-blob bytes from admission until commit, and `UploadDocument` reserves per received 64 KiB encoded-part chunk |
 | `DOCUMENT_PLATFORM_S3_CONDITIONAL_WRITES` | `false` | Require S3 `If-None-Match` semantics for write-once stack-object creation |
@@ -330,18 +330,25 @@ The design of record is [docs/design/archive.md](../docs/design/archive.md).
   manifest, and a missing body fails `FAILED_PRECONDITION` by name.
 - `ListEntries` / `ListVersions` — paginated listings.
 - `ArchiveMutation` on `ArchiveMutationService` — an operation UUID plus one
-  delete-entry, delete-rendition, or prune-versions command. The transaction removes
-  logical references and records exact cleanup targets. Rendition removal leaves
-  tombstones with size, hash, and reason. Pruning keeps the newest N versions.
-- `GetArchiveMutation` — inspect the durable receipt: logical counts, pending
-  objects, confirmed absence, and retry state. Retry the same command with the
-  same UUID; a different command under that UUID conflicts. These operations
-  require explicit authenticated authority and a qualified managed-storage host.
-  Legacy unbound content requires verified identity migration before deletion.
-- `GetArchiveStats` — exact ledger-maintained counters (entries, versions,
-  retained/current bytes, per-rendition breakdown), adjusted in the same
-  transaction as the mutations they describe, plus exact per-state
-  classification counts.
+  delete-entry, delete-rendition, or prune-versions command. `DeleteEntry`
+  commits a v2 tombstone revision through `DocumentService.DeleteDocument`
+  (leaving stored object bytes intact under keep-forever retention).
+  `DeleteRendition` and `PruneVersions` are refused by name with
+  `FAILED_PRECONDITION` under keep-forever retention and record their refusal
+  under the operation UUID.
+- `GetArchiveMutation` — reads the account's recorded `DocumentService`
+  operation outcome (`GetOperationOutcome`) for the operation UUID: a committed
+  `DeleteEntry` tombstone projects to a completed `ArchiveMutationReceipt`, a
+  recorded mutation refusal replays its refusal status, and an unknown or
+  non-mutation operation ID returns `NOT_FOUND`. Retry the same command with
+  the same UUID to replay the recorded receipt or refusal; reusing the UUID for
+  a different command fails with `ALREADY_EXISTS`. These operations require
+  explicit authenticated authority and a qualified managed-storage host.
+- `GetArchiveStats` — exact per-archive counters (entries, versions,
+  retained/current bytes, per-rendition breakdown, and per-state
+  classification counts) computed by `DocumentArchive.getArchiveStats` over
+  live v2 documents in `archive:<account_id>` and their projected revision
+  manifests.
 - `ClassifyEntry` — declare (or re-declare) the entry's format and have
   characterization re-read the primary rendition's bytes; returns the
   state machine's resolution.
@@ -487,29 +494,27 @@ Consumers that need byte storage compose a provider (`s3`, `redis`,
 `s3-redis-cache`) directly; document access goes through the v2
 `DocumentService`.
 
-## The Redis blob stores
+## Valkey and Redis-compatible blob storage
 
-`RedisBlobStore` (`repo/container/.../blob`) is the port's second provider:
-blocking Jedis on virtual threads, sample-grade but honest. Redis has no
-buckets, so the physical key is `<keyPrefix><bucket>/<key>` — the bucket is a
-namespace label, which keeps per-bucket `list`/`deleteAll` working and
-buckets collision-free. Each object is two entries: the bytes, plus a
-`$meta` hash (content type, etag, last-modified). Verified writes are
-client-side: the SHA-256 is computed before the write and a mismatch rejects
-the put (Redis has no server-side checksum trailer like S3's). Listing is
-`SCAN MATCH` — a full-database walk, which is the sample-grade part.
+Valkey is the preferred Redis-compatible server. Explicitly select `valkey` for
+bounded byte storage or `s3-valkey-cache` for an expendable cache over S3. The
+legacy `redis` and `s3-redis-cache` modes remain supported. S3 remains the default
+and the authoritative store for general streaming/managed storage.
 
-`CachingBlobStore` is the read-through/write-through decorator:
-`CachingBlobStore(backing, cache, ttlSeconds, maxCacheableBytes)`. The cache
-is always expendable and the backing store is truth — every write lands on
-backing first and is mirrored into the cache best-effort; reads serve cache
-hits and populate on misses; `list`/`headBucket` never touch the cache.
+Both names reuse `RedisBlobStore` in `repo/blob/redis`, with a single atomic hash
+per encoded object. They preserve the existing physical keys, `redis/v2` and
+`redis/v3` backend identities, and persisted drive provider `redis`. Selecting
+Valkey does not change an endpoint or migrate data. Use `redis://` or `rediss://`.
+The adapter still buffers payloads and has no native streamed reads; it does not
+qualify as an unrestricted v2 stack. See the [provider documentation](blob/redis/README.md)
+for limits, identity rules, real-server qualification and migration boundaries.
 
-Two more `DOCUMENT_PLATFORM_BLOB_STORE` modes wire them:
-
-- **`redis`** — objects live in Redis outright.
-- **`s3-redis-cache`** — S3 (of record) behind a Redis cache; the Redis TTL
-  and max-object-bytes props become the cache TTL and ceiling.
+Prefer `DOCUMENT_PLATFORM_VALKEY_*` environment variables. Their `REDIS_*` aliases
+remain accepted; conflicting values are rejected. `CachingBlobStore` keeps the
+backing store authoritative, writes there first, and forwards streaming reads to
+it. Cache loss does not lose authoritative objects. An optional
+[document-platform override](../deploy/document-platform/compose.valkey.yml)
+explicitly selects S3 with Valkey cache without changing the base deployment.
 
 ## Drive provider_config and the field-99 convention
 
