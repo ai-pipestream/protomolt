@@ -666,6 +666,10 @@ public final class UploadHttpServer implements AutoCloseable {
                                 stream.onError(timeout);
                                 throw timeout;
                             }
+                            // awaitReady returns for a refused or replayed header only after the
+                            // response observer has been told, so this check sees the outcome and
+                            // the read below is not entered against a client that is holding its
+                            // body back until it has the status line.
                             if (responseFuture.isDone()) {
                                 break;
                             }

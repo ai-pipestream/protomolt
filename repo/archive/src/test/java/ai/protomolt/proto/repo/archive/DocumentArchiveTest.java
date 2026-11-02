@@ -113,7 +113,9 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
@@ -1208,6 +1210,71 @@ class DocumentArchiveTest {
         assertThat(v2.frames.getFirst().hasHeader()).isTrue();
     }
 
+    /**
+     * The HTTP route waits for readiness, then looks at its response future before it blocks
+     * reading the request body. A refusal that v2 delivers from its own thread must not wake
+     * that wait before the response observer has been told, or the route reads a body that
+     * the client is holding back until it has seen the status line.
+     */
+    @Test
+    void awaitReadyOnARefusedHeaderReturnsOnlyAfterTheRefusalReachedTheObserver() throws Exception {
+        ByteString body = pdfBytes(2 * 1024 * 1024);
+        V2Uploads v2 = new V2Uploads(entryNode("e-late-denied"), body, header -> null);
+        v2.answerAccepted.set(false);
+        startService(v2);
+        CountDownLatch refusalEntered = new CountDownLatch(1);
+        CountDownLatch releaseRefusal = new CountDownLatch(1);
+        // The observer is slow inside onError, which widens the window between the upload
+        // finishing and its outcome reaching the producer.
+        Received received = new Received() {
+            @Override
+            public void onError(Throwable t) {
+                refusalEntered.countDown();
+                try {
+                    releaseRefusal.await(5, TimeUnit.SECONDS);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+                super.onError(t);
+            }
+        };
+        RenditionUploads.FlowControlledUpload stream = new RenditionUploads(archive(channel))
+                .uploadFlowControlled(received);
+        stream.onNext(header("e-late-denied", "op-late-denied", body.size(), "").build());
+        assertThat(v2.frames).hasSize(1);
+        assertThat(stream.isReady()).isFalse();
+
+        // The producer does what UploadHttpServer does: wait, then check the response.
+        CompletableFuture<Boolean> producer = CompletableFuture.supplyAsync(() -> {
+            try {
+                return stream.awaitReady(TimeUnit.SECONDS.toNanos(5)) && received.done.isDone();
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new RuntimeException(e);
+            }
+        });
+        // v2 refuses from another thread, as the in-process server executor does in production.
+        CompletableFuture<Void> refuser = CompletableFuture.runAsync(() -> v2.refuse(
+                Status.PERMISSION_DENIED.withDescription("The caller may not write this document")
+                        .asRuntimeException()));
+        assertThat(refusalEntered.await(5, TimeUnit.SECONDS)).isTrue();
+
+        // The refusal is on its way to the observer but has not arrived. The producer must still wait.
+        assertThatThrownBy(() -> producer.get(1, TimeUnit.SECONDS)).isInstanceOf(TimeoutException.class);
+        assertThat(stream.isReady()).isFalse();
+
+        releaseRefusal.countDown();
+        refuser.get(5, TimeUnit.SECONDS);
+        assertThat(producer.get(5, TimeUnit.SECONDS))
+                .as("awaitReady returned with the refusal already visible on the response")
+                .isTrue();
+        assertThat(stream.isReady()).isTrue();
+        assertThatThrownBy(() -> received.done.get(5, TimeUnit.SECONDS))
+                .hasCauseInstanceOf(StatusRuntimeException.class)
+                .hasMessageContaining("PERMISSION_DENIED");
+        assertThat(v2.frames).hasSize(1);
+    }
+
     @Test
     void aRenditionOfAtMostOneMebibyteIsOneInlineHeaderWithItsFinishedCore() throws Exception {
         ByteString body = pdfBytes(RenditionUploads.INLINE_BODY_MAX_BYTES);
@@ -1291,6 +1358,11 @@ class DocumentArchiveTest {
                     .setAccepted(ai.protomolt.proto.repo.v2.UploadAccepted.getDefaultInstance()).build());
         }
 
+        /** Refuses the open upload from the calling thread, after its header was taken. */
+        void refuse(StatusRuntimeException status) {
+            open.get().onError(status);
+        }
+
         private void answer(StreamObserver<UploadDocumentResponse> responses, UploadDocumentResponse answer) {
             answers.add(answer.getAnswerCase());
             responses.onNext(answer);
@@ -1367,7 +1439,7 @@ class DocumentArchiveTest {
     }
 
     /** The archive client's side of one upload. */
-    private static final class Received implements StreamObserver<UploadRenditionResponse> {
+    private static class Received implements StreamObserver<UploadRenditionResponse> {
         final CompletableFuture<UploadRenditionResponse> done = new CompletableFuture<>();
         private UploadRenditionResponse result;
 
