@@ -467,6 +467,13 @@ The converter lives in its own edge module; `types/v1` and the mount depend on n
 RDF library. Whichever parser the converter uses must meet the licensing rule
 above (Apache Jena is ASF).
 
+The optional [`protomolt-skos` edge module](../../surface/skos/README.md) implements
+a strict one-scheme Turtle/RDF/XML converter using released Jena RIOT. It reuses
+the protobuf types and both validation gates. The module documents its supported
+subset, explicit external-concept bindings and RDF set/order limitations; the
+types, mount and repository runtime remain independent of Jena. This is file and
+library conversion, not a live RDF graph projection or SPARQL service.
+
 **Link relations.** The `link_relation` Tier 1 format (§17 of the requirements)
 checks a relation name against two bundled vocabularies, both allowed by the
 licensing rule: Dublin Core terms (CC-BY 4.0, NOTICE attribution) and the IANA

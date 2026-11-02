@@ -284,6 +284,9 @@ project(':protomolt-kafka-serde-micrometer').projectDir = file('sink/kafka/serde
 
 // surface/ — protocol endpoints over the toolkit.
 
+include 'protomolt-skos'
+project(':protomolt-skos').projectDir = file('surface/skos')
+
 include 'protomolt-grpc-invoke'
 project(':protomolt-grpc-invoke').projectDir = file('surface/grpc/invoke')
 

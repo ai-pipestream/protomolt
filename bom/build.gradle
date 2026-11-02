@@ -9,6 +9,7 @@ def supportedModules = [
         'protomolt-workflow-authoring',
         'protomolt-helpers',
         'protomolt-formats',
+        'protomolt-skos',
         'protomolt-sources',
         'protomolt-acquire-gather',
         'protomolt-acquire-gather-git',
