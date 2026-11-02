@@ -75,6 +75,10 @@ public final class UploadHttpServer implements AutoCloseable {
     private static final Logger LOG = LoggerFactory.getLogger(UploadHttpServer.class);
     private static final int STREAM_CHUNK_BYTES = 64 * 1024;
     private static final long UPLOAD_READY_TIMEOUT_NANOS = TimeUnit.SECONDS.toNanos(60);
+    /** The most of an unconsumed request body read after a response, so the client sees it. */
+    private static final long LINGER_MAX_BYTES = 64L * 1024 * 1024;
+    /** How long after a response an unconsumed request body is still read. */
+    private static final long LINGER_NANOS = TimeUnit.SECONDS.toNanos(2);
 
     /** The parts-based document route. */
     private final HttpHandler documentUploads;
@@ -690,8 +694,8 @@ public final class UploadHttpServer implements AutoCloseable {
                             body.close();
                         } else if (bytesRead < contentLength) {
                             // The call terminated early (for example on an immediate idempotent replay
-                            // or header-time refusal). Mark Connection: close instead of draining the
-                            // remaining request body so large refused or replayed bodies are not read.
+                            // or header-time refusal). Answer before reading the rest of the body and
+                            // close the connection; writeProtobuf reads what is left only after the answer.
                             exchange.getResponseHeaders().set("Connection", "close");
                         } else {
                             body.close();
@@ -868,11 +872,38 @@ public final class UploadHttpServer implements AutoCloseable {
         exchange.sendResponseHeaders(status, response.getSerializedSize());
         try (OutputStream body = exchange.getResponseBody()) {
             response.writeTo(body);
+            body.flush();
+            discardUnreadBody(exchange);
+        }
+    }
+
+    /**
+     * Reads and discards what the client is still sending of a body the route did not
+     * consume, after the response is on the wire and before the connection closes. The
+     * server reads at most 64 KiB of a leftover body itself; closing with more unread
+     * resets the connection under a client that is still sending, and the JDK HttpClient
+     * then fails the exchange without the response. Bounded by {@link #LINGER_MAX_BYTES}
+     * and {@link #LINGER_NANOS}, checked between reads; past either bound the connection
+     * closes as before.
+     */
+    private static void discardUnreadBody(HttpExchange exchange) {
+        byte[] buffer = new byte[STREAM_CHUNK_BYTES];
+        long deadline = System.nanoTime() + LINGER_NANOS;
+        long discarded = 0L;
+        try {
+            InputStream body = exchange.getRequestBody();
+            int read;
+            while (discarded < LINGER_MAX_BYTES && System.nanoTime() - deadline < 0
+                    && (read = body.read(buffer)) != -1) {
+                discarded += read;
+            }
+        } catch (IOException closedOrReset) {
+            // Already consumed and closed, or the client went away: nothing left to protect.
         }
     }
 
     private static void writeError(HttpExchange exchange, int status, String message) throws IOException {
-        // Refuse from headers without waiting for an untrusted request body.
+        // Refuse from headers without consuming an untrusted request body first.
         exchange.getResponseHeaders().set("Connection", "close");
         int code = switch (status) {
             case 400, 411 -> Status.Code.INVALID_ARGUMENT.value();
