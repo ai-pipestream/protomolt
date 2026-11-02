@@ -209,6 +209,21 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Reserve disk for registry integration fixtures
+        # Hosted images carry Android and .NET SDKs this JVM job never uses.
+        # Their space is needed by the registry images and Gradle outputs:
+        # Redpanda refuses writes under disk pressure even while it is healthy.
+        # Preserve that protection and fail before tests if capacity is inadequate.
+        run: |
+          df -h /var/lib/docker
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet
+          available_kib=$(df -Pk /var/lib/docker | awk 'NR == 2 {print $4}')
+          if [ "$available_kib" -lt 31457280 ]; then
+            echo "::error::Registry integration needs at least 30 GiB free before pulling fixtures; found ${available_kib} KiB."
+            exit 1
+          fi
+          df -h /var/lib/docker
+
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
