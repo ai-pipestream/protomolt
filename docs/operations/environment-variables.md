@@ -57,6 +57,8 @@ naming the missing ones.
 | `DOCUMENT_PLATFORM_KAFKA_BOOTSTRAP_SERVERS` | unset = eventing off (no outbox, no relay) | text |
 | `DOCUMENT_PLATFORM_KAFKA_TOPIC` | `document-events` | non-blank text |
 | `DOCUMENT_PLATFORM_SCHEMA_REGISTRY_URL` | unset = registry-free (frames stamp schema id 0) | URL |
+| `DOCUMENT_PLATFORM_CONCEPT_SCHEMES` | unset = no startup concept schemes, unless the alias below is set | comma- or semicolon-separated files, directories, or `schemeId=path` entries; trims whitespace and ignores empty entries; a nonblank value takes precedence over `PROTOMOLT_REPO_CONCEPT_SCHEME_PATHS` |
+| `PROTOMOLT_REPO_CONCEPT_SCHEME_PATHS` | unset = no startup concept schemes | same syntax as `DOCUMENT_PLATFORM_CONCEPT_SCHEMES`; used only when that variable is absent or blank |
 | `DOCUMENT_PLATFORM_SEED_ACCOUNT_ID` | unset = no boot-time drive seeding | text; treat as permanent once used |
 | `DOCUMENT_PLATFORM_READ_BUDGET_BYTES` | `268435456` (256 MiB) | integer >= 1; sizes both the verified-read budget and a separate v2 save-admission budget of the same capacity (up to `2 * DOCUMENT_PLATFORM_READ_BUDGET_BYTES` across concurrent reads and saves) |
 | `DOCUMENT_PLATFORM_PURGE_QUEUE` | `jdbc` | `jdbc` or `kafka`; `kafka` requires the bootstrap servers or the config fails fast |
@@ -66,6 +68,15 @@ naming the missing ones.
 | `PROTOMOLT_CONSOLE_OIDC_CLIENT_SECRET` | required with the issuer | text |
 | `PROTOMOLT_CONSOLE_OIDC_REDIRECT_URI` | required with the issuer | the host's `/console/session/callback` as the provider reaches it, registered at the provider exactly |
 | `PROTOMOLT_CONSOLE_SESSION_TTL` | required with the issuer | ISO-8601 duration, one second to seven days (`PT8H`) |
+
+Startup concept schemes are binary protobuf `ConceptScheme` messages in `.pb` or
+`.binpb` files. For example, `DOCUMENT_PLATFORM_CONCEPT_SCHEMES=/config/schemes;topics=/config/topics.pb`.
+Directories contribute their immediate regular `.pb`/`.binpb` files in filename
+order; they are not scanned recursively. Without an explicit `schemeId=path`,
+the filename without its extension supplies the scheme ID. Paths are interpreted
+relative to the process working directory unless absolute. Missing paths,
+unsupported file types, duplicate scheme IDs, invalid protobuf, or failed scheme
+validation stop startup. The two variables are alternatives, not combined lists.
 
 The ledger (read by `LedgerConfig.fromEnvironment` in `repo/container`;
 `DOCUMENT_PLATFORM_POOL_SIZE` fails fast on a non-positive or non-integer

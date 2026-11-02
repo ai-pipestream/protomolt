@@ -1043,6 +1043,18 @@ before pagination.
   `GetEntryManifest` at `version = 0` return `NOT_FOUND`, `ListEntries` and
   `GetArchiveStats` omit the deleted entry, and a retry with the same
   `operation_id` replays the recorded receipt.
+- **The console-session door.** `ArchiveMutationService` is served behind the
+  archive interceptor, which admits process authority for every mutation and
+  admits a scoped caller (a console session, an access-policy bearer) for
+  `DeleteEntry` and `GetArchiveMutation` only, in an account the caller is bound
+  to; an unbound principal, another account, `DeleteRendition` and
+  `PruneVersions` are refused with `PERMISSION_DENIED` before the request is
+  read. The tombstone itself is committed by `DocumentService.DeleteDocument`
+  as that caller, so document ACLs (`ACCESS_WRITE` on the entry) and writer
+  authority (the binding's intake writer scope for the archive datasource)
+  decide whether the delete happens, exactly as on the direct document path.
+  The console's Delete entry uses this door, so every console delete leaves an
+  `ArchiveMutationReceipt` the Get archive mutation tool can read back.
 - **`GetArchiveMutation` -> `GetOperationOutcome`.** `GetArchiveMutation` reads
   the account's recorded outcome for `operation_id` from `DocumentService`: a
   committed tombstone accession under `archive:<account_id>` projects to the
