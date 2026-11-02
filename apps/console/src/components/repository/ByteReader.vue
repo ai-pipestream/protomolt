@@ -194,8 +194,7 @@ async function preview() {
     const bytes = out.bytes()
     outcome.value = { ...result, what: 'Preview' }
     const isWholePreview =
-      result.verification.kind === 'verified' ||
-      (wanted.offset === 0n && wanted.length === 0n && BigInt(bytes.byteLength) < PREVIEW_BYTES)
+      result.verification.kind === 'verified'
     const prepared = prepareBytePreview(
       bytes,
       wanted.offset,

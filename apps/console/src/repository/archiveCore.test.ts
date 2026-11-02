@@ -106,6 +106,12 @@ describe('readRendition', () => {
     await expect(readRendition(server([], 'e'.repeat(64)), spec(), () => {}, signal())).rejects.toThrow(`hash to ${SHA}`)
   })
 
+  it.each([BigInt(BYTES.length), BigInt(BYTES.length + 1)])('verifies complete rendition previews within the %s-byte cap', async (cap) => {
+    const result = await readRendition(server(), spec(), () => {}, signal(), undefined, cap)
+    expect(result.verification).toEqual({ kind: 'verified', sha256: SHA })
+    await expect(readRendition(server([], 'e'.repeat(64)), spec(), () => {}, signal(), undefined, cap)).rejects.toThrow('hash to')
+  })
+
   it('keeps stopAfter bytes of a long rendition and reads a short one to its end', async () => {
     const out = collector()
     const result = await readRendition(server(), spec(), out.sink, signal(), undefined, 1000n)
