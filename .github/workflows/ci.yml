@@ -52,7 +52,18 @@ jobs:
       - name: Build and test
         env:
           PROTOMOLT_APICURIO_TEST_DIAGNOSTIC_PATH: ${{ runner.temp }}/apicurio-test-diagnostics/registry.log
-        run: ./gradlew build --console=plain -PtestJdk=${{ matrix.test-jdk }}
+        run: ./gradlew build --max-workers=2 --console=plain -PtestJdk=${{ matrix.test-jdk }}
+
+      - name: Save failed integration test reports
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-integration-diagnostics-jdk-${{ matrix.test-jdk }}-${{ github.run_attempt }}
+          path: |
+            **/build/test-results/integrationTest/*.xml
+            surface/http/connect/build/reports/tests/integrationTest/
+          if-no-files-found: warn
+          retention-days: 3
 
       - name: Save failed sample test reports
         if: failure()
@@ -91,12 +102,24 @@ jobs:
           if-no-files-found: warn
           retention-days: 3
 
+      # Every module's integrationTest results: the assertion messages and captured
+      # output the console log leaves out.
+      - name: Save integration test results
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: integration-test-results-jdk-${{ matrix.test-jdk }}-${{ github.run_attempt }}
+          path: |
+            **/build/test-results/integrationTest/*.xml
+          if-no-files-found: warn
+          retention-days: 7
+
       # Excluded from `build` because these tests fork an agent JVM and shell out to
       # protoc, which is slower than anything the default test task runs. The lane keeps
       # the coverage (the agent driven exactly as an IDE drives it) without slowing the
       # main build; a single run is enough.
       - name: ACP protocol round trips
-        run: ./gradlew :protomolt-acp-agent:acpProtocolTest --rerun-tasks --console=plain -PtestJdk=${{ matrix.test-jdk }}
+        run: ./gradlew :protomolt-acp-agent:acpProtocolTest --max-workers=2 --rerun-tasks --console=plain -PtestJdk=${{ matrix.test-jdk }}
 
       - name: Buf lint
         run: buf lint
@@ -180,7 +203,7 @@ jobs:
         run: go install github.com/bufbuild/protovalidate/tools/protovalidate-conformance@63347b8
 
       - name: Build the conformance executor
-        run: ./gradlew :protomolt-protobuf-validation-conformance:installDist --console=plain
+        run: ./gradlew :protomolt-protobuf-validation-conformance:installDist --max-workers=2 --console=plain
 
       - name: Run the full conformance suite
         run: |
@@ -227,7 +250,7 @@ jobs:
           :protomolt-iceberg-s3:test :protomolt-iceberg-s3:integrationTest
           :protomolt-kafka-connect-iceberg:test :protomolt-kafka-connect-iceberg:integrationTest
           :protomolt-kafka-serde:test :protomolt-kafka-serde:integrationTest
-          --rerun-tasks --console=plain
+          --max-workers=2 --rerun-tasks --console=plain
 
       - name: Fail if any integration suite skipped
         run: |
@@ -243,6 +266,15 @@ jobs:
             | grep -o '[0-9]*' | paste -sd+ | bc)
           echo "skipped integration tests: $skipped"
           test "$skipped" -eq 0
+
+      - name: Save integration test reports
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: integration-diagnostics-${{ github.run_attempt }}
+          path: '**/build/test-results/integrationTest/*.xml'
+          if-no-files-found: warn
+          retention-days: 3
 
       - name: Registry logs on failure
         if: failure()

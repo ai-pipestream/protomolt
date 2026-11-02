@@ -55,7 +55,7 @@ import {
   type RenditionDescriptor,
   type VersionManifest,
 } from '@/gen/ai/protomolt/proto/repo/archive/v1/entry_pb'
-import { ItemErrorSchema } from '@/gen/ai/protomolt/proto/repo/v2/errors_pb'
+import { StatusSchema } from '@/gen/google/rpc/status_pb'
 import { linkedController, type BlobRange } from './blobReadCore'
 import { enumLabel, instant } from './formatCore'
 import { codeName, type RpcFailure } from './rpcErrorCore'
@@ -546,9 +546,11 @@ export function sendRenditionUpload(
           return
         }
       }
+      // The archive route writes its refusals as google.rpc.Status (not the
+      // documents route's ItemError): code, message and any details entries.
       if (type.startsWith('application/proto')) {
         try {
-          const err = fromBinary(ItemErrorSchema, new Uint8Array(request.response as ArrayBuffer))
+          const err = fromBinary(StatusSchema, new Uint8Array(request.response as ArrayBuffer))
           done({
             kind: 'failed',
             httpStatus: request.status,
