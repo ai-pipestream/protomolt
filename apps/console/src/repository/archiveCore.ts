@@ -62,7 +62,7 @@ import {
 } from '@/gen/ai/protomolt/proto/repo/archive/v1/entry_pb'
 import { NodeAddressSchema, type NodeAddress } from '@/gen/ai/protomolt/proto/repo/v1/address_pb'
 import { DriveStatusSchema, DriveTypeSchema, type Drive } from '@/gen/ai/protomolt/proto/repo/v1/drive_pb'
-import { ItemErrorSchema } from '@/gen/ai/protomolt/proto/repo/v2/errors_pb'
+import { StatusSchema } from '@/gen/google/rpc/status_pb'
 import { linkedController, type BlobRange } from './blobReadCore'
 import type { CallNumber } from './documentCore'
 import { enumLabel, instant } from './formatCore'
@@ -554,9 +554,11 @@ export function sendRenditionUpload(
           return
         }
       }
+      // The archive route writes its refusals as google.rpc.Status (not the
+      // documents route's ItemError): code, message and any details entries.
       if (type.startsWith('application/proto')) {
         try {
-          const err = fromBinary(ItemErrorSchema, new Uint8Array(request.response as ArrayBuffer))
+          const err = fromBinary(StatusSchema, new Uint8Array(request.response as ArrayBuffer))
           done({
             kind: 'failed',
             httpStatus: request.status,
@@ -692,13 +694,13 @@ export async function readRendition(
           }
           header = h
           expected = stopAfter !== undefined && stopAfter < h.length ? stopAfter : h.length
-          hash = h.wholeObject && stopAfter === undefined ? new Sha256() : null
+          hash = h.wholeObject && expected === h.sizeBytes ? new Sha256() : null
           break
         }
         case 'data': {
           if (header === null) throw new RenditionStreamError('ReadRendition sent data before its header frame.')
           let chunk = frame.frame.value
-          if (stopAfter !== undefined && received + BigInt(chunk.length) > expected) {
+          if (stopAfter !== undefined && hash === null && received + BigInt(chunk.length) > expected) {
             chunk = chunk.subarray(0, Number(expected - received))
             stopped = true
           }
@@ -714,7 +716,7 @@ export async function readRendition(
         case undefined:
           throw new RenditionStreamError('ReadRendition sent a frame with neither a header nor data.')
       }
-      if (stopped || (stopAfter !== undefined && header !== null && received === expected)) break
+      if (stopped || (stopAfter !== undefined && header !== null && received === expected && hash === null)) break
     }
   } finally {
     call.release()

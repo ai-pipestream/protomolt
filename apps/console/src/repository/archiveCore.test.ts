@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto'
 import { create, toBinary } from '@bufbuild/protobuf'
+import { anyPack } from '@bufbuild/protobuf/wkt'
 import { Code, ConnectError } from '@connectrpc/connect'
 import { describe, expect, it } from 'vitest'
 import { CharacterizationEvidenceSchema, ClassificationSchema, ClassificationState } from '@/gen/ai/protomolt/proto/asset/v1/classification_pb'
@@ -34,6 +35,7 @@ import {
   VersionManifestSchema,
   WriteAttributionSchema,
 } from '@/gen/ai/protomolt/proto/repo/archive/v1/entry_pb'
+import { StatusSchema } from '@/gen/google/rpc/status_pb'
 import { collector } from './blobReadCore'
 import {
   RenditionStreamError,
@@ -126,6 +128,12 @@ describe('readRendition', () => {
 
   it('fails a whole read whose bytes do not match the attested digest', async () => {
     await expect(readRendition(server([], 'e'.repeat(64)), spec(), () => {}, signal())).rejects.toThrow(`hash to ${SHA}`)
+  })
+
+  it.each([BigInt(BYTES.length), BigInt(BYTES.length + 1)])('verifies complete rendition previews within the %s-byte cap', async (cap) => {
+    const result = await readRendition(server(), spec(), () => {}, signal(), undefined, cap)
+    expect(result.verification).toEqual({ kind: 'verified', sha256: SHA })
+    await expect(readRendition(server([], 'e'.repeat(64)), spec(), () => {}, signal(), undefined, cap)).rejects.toThrow('hash to')
   })
 
   it('keeps stopAfter bytes of a long rendition and reads a short one to its end', async () => {
@@ -563,5 +571,57 @@ describe('inline rendition admission', () => {
   it('accepts the 200-character boundary and an intentionally empty payload', () => {
     const request = buildPutEntryRequest(ADDRESS, form('x'.repeat(200), 'p'.repeat(200)))
     expect(request.renditions[0].data).toHaveLength(0)
+  })
+})
+
+describe('archive upload refusals', () => {
+  it('decodes a refusal as google.rpc.Status, details included', async () => {
+    const body = new TextEncoder().encode('rendition payload')
+    const plan = planRenditionUpload(
+      { accountId: 'acct-a', archive: 'papers', entryId: 'e-1', rendition: 'ocr', subKey: '', contentType: 'text/plain', module: '', expectedVersion: '' },
+      new File([body], 'ocr.txt', { type: 'text/plain' }),
+      '018f4063-7d4b-7000-8000-000000000099',
+      createHash('sha256').update(body).digest('hex'),
+    )
+    // The route's writeError and StatusProto.fromThrowable both produce this
+    // shape; a details entry is where an ItemError decode read a bogus conflict.
+    const wire = toBinary(
+      StatusSchema,
+      create(StatusSchema, {
+        code: Code.FailedPrecondition,
+        message: 'entry e-1 is at version 5, expected 3',
+        details: [anyPack(EntryAddressSchema, ADDRESS)],
+      }),
+    )
+    const outcome = await sendRenditionUpload(
+      plan,
+      () => {
+        const req = {
+          upload: { onprogress: null as ((e: ProgressEvent) => void) | null },
+          onload: null as ((this: XMLHttpRequest, ev: ProgressEvent) => unknown) | null,
+          onerror: null as ((this: XMLHttpRequest, ev: ProgressEvent) => unknown) | null,
+          onabort: null as ((this: XMLHttpRequest, ev: ProgressEvent) => unknown) | null,
+          withCredentials: false,
+          status: 409,
+          responseType: 'arraybuffer' as XMLHttpRequestResponseType,
+          response: wire.buffer.slice(wire.byteOffset, wire.byteOffset + wire.byteLength),
+          open: () => {},
+          setRequestHeader: () => {},
+          getResponseHeader: () => 'application/protobuf',
+          send: () => {
+            req.onload?.call(req as unknown as XMLHttpRequest, {} as ProgressEvent)
+          },
+          abort: () => {},
+        }
+        return req
+      },
+      () => {},
+      signal(),
+    )
+    expect(outcome.kind).toBe('failed')
+    if (outcome.kind === 'failed') {
+      expect(outcome.httpStatus).toBe(409)
+      expect(outcome.failure).toEqual({ code: 'FAILED_PRECONDITION', codeNumber: Code.FailedPrecondition, message: 'entry e-1 is at version 5, expected 3' })
+    }
   })
 })

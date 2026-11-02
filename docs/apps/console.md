@@ -468,7 +468,9 @@ The dev server also proxies `/connect` to a repository host
 Repository section. Its generated stubs live in `src/gen`; after changing a
 proto the console uses, run `scripts/proto-stubs.sh` (buf 1.70.0, after
 `npm ci`) and commit the result. CI runs `scripts/proto-stubs.sh --check`,
-which fails when the committed stubs drift from the protos.
+which fails when the committed stubs drift from the protos. `google.rpc.Status`,
+the archive upload route's error body, is vendored under `apps/console/proto`
+and generated from there by the same script.
 
 The browser leg drives the built console in Chromium against a real
 repository host. `ConsoleBrowserIT` in `repo/fixtures` starts PostgreSQL,

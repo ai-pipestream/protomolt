@@ -319,6 +319,50 @@ describe('RepositoryArchiveEntryView', () => {
     wrapper.unmount()
   })
 
+  it.each(['settled', 'pending'])('clears %s classification results on entry navigation', async (timing) => {
+    let release!: () => void
+    let entered = false
+    const held = new Promise<void>((resolve) => { release = resolve })
+    const { wrapper, router } = await mountRepositoryView(RepositoryArchiveEntryView, ENTRY, (r) => {
+      archives(seen())(r)
+      r.service(ArchiveService, {
+        getEntryManifest(request) {
+          return create(GetEntryManifestResponseSchema, {
+            info: create(EntryInfoSchema, {
+              address: request.address, currentVersion: 3n,
+              classification: create(ClassificationSchema, { state: ClassificationState.UNCLASSIFIED }),
+            }),
+            manifest: manifest(3n),
+          })
+        },
+        async classifyEntry() {
+          entered = true
+          if (timing === 'pending') await held
+          return create(ClassifyEntryResponseSchema, {
+            classification: create(ClassificationSchema, {
+              state: ClassificationState.VERIFIED,
+              evidence: [create(CharacterizationEvidenceSchema, { signal: 'old-entry', observation: 'only e-1' })],
+            }),
+          })
+        },
+      })
+    })
+    await wrapper.get('[data-testid="toggle-classify-bridge"]').trigger('click')
+    await wrapper.get('[data-testid="classify-submit"]').trigger('click')
+    await settle()
+    expect(entered).toBe(true)
+    if (timing === 'settled') expect(wrapper.text()).toContain('only e-1')
+    await router.push({ ...ENTRY, query: { ...ENTRY.query, entry: 'e-2' } })
+    await settle()
+    release()
+    await settle()
+    expect(wrapper.text()).not.toContain('only e-1')
+    expect(wrapper.find('[data-testid="classify-result"]').exists()).toBe(false)
+    expect((wrapper.vm as unknown as { classifyBusy: boolean }).classifyBusy).toBe(false)
+    expect((wrapper.vm as unknown as { classification: string }).classification).toBe('UNCLASSIFIED')
+    wrapper.unmount()
+  })
+
   it('invokes ClassifyEntry and BridgeEntry from the characterization workbench and inspects produced renditions', async () => {
     const s = seen()
     let classifiedDeclared: string | undefined
