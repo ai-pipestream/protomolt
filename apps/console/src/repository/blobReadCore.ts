@@ -95,7 +95,7 @@ export function linkedController(signal: AbortSignal): { controller: AbortContro
  * after each. The signal ends the stream at the server when aborted. With
  * `stopAfter`, the read keeps only that many bytes of the range and then ends
  * the stream itself, which is how a preview reads the start of a file of any
- * size; such a read is never a verified whole-file read.
+ * size. If the whole file fits, its digest is verified before previewing it.
  */
 export async function readBlob(
   client: Client<typeof DocumentService>,
@@ -112,7 +112,7 @@ export async function readBlob(
     offset: spec.range.offset,
     length: spec.range.length,
   })
-  const hash = isFullRead(spec.range) && stopAfter === undefined ? new Sha256() : null
+  const hash = isFullRead(spec.range) ? new Sha256() : null
   const call = linkedController(signal)
   let header: BlobHeader | null = null
   let expected = 0n
@@ -139,7 +139,7 @@ export async function readBlob(
         case 'data': {
           if (header === null) throw new BlobStreamError('ReadBlob sent data before its header frame.')
           let chunk = frame.frame.value
-          if (stopAfter !== undefined && received + BigInt(chunk.length) > expected) {
+          if (stopAfter !== undefined && expected < header.totalLength && received + BigInt(chunk.length) > expected) {
             chunk = chunk.subarray(0, Number(expected - received))
             stopped = true
           }
@@ -155,7 +155,7 @@ export async function readBlob(
         case undefined:
           throw new BlobStreamError('ReadBlob sent a frame with neither a header nor data.')
       }
-      if (stopped || (stopAfter !== undefined && header !== null && received === expected)) break
+      if (stopped || (stopAfter !== undefined && header !== null && received === expected && expected < header.totalLength)) break
     }
   } finally {
     call.release()
@@ -164,7 +164,7 @@ export async function readBlob(
   if (received !== expected) {
     throw new BlobStreamError(`ReadBlob ended after ${received} of ${expected} bytes.`)
   }
-  if (hash === null) {
+  if (hash === null || received !== header.totalLength) {
     return { header, receivedBytes: received, verification: { kind: 'range-unverified', wholeObjectSha256: header.sha256 } }
   }
   const actual = hash.hex()

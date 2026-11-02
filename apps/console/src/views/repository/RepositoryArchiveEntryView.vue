@@ -505,6 +505,7 @@
     <v-card v-if="showUpload && address" class="mb-4" data-testid="rendition-upload-panel">
         <v-card-title class="text-subtitle-2">Upload rendition (/v1/archive:upload)</v-card-title>
         <v-card-text>
+          <fieldset :disabled="uploadAttempt !== null" class="upload-fields" data-testid="rendition-upload-fields">
           <v-row density="compact">
             <v-col cols="12" sm="4">
               <v-text-field
@@ -573,12 +574,16 @@
               {{ uploadFile.name }} · {{ byteSize(uploadFile.size) }}
             </span>
           </div>
+          </fieldset>
+          <v-alert v-if="uploadAttempt" type="info" variant="tonal" density="compact" class="mt-2">
+            This upload is unsettled. Retry sends the same file and operation. Keep this page open until it settles.
+          </v-alert>
           <v-alert v-if="uploadInputError" type="warning" variant="tonal" density="compact" class="mt-2" data-testid="rendition-up-input-error">
             {{ uploadInputError }}
           </v-alert>
           <RpcFailureAlert v-if="uploadFailure" :failure="uploadFailure" title="Uploading rendition" class="mt-2" />
           <div class="d-flex align-center ga-2 mt-3">
-            <v-btn size="small" color="primary" :loading="uploadBusy" data-testid="rendition-up-submit" @click="submitRenditionUpload">
+            <v-btn size="small" color="primary" :loading="uploadBusy" :disabled="uploadBusy" data-testid="rendition-up-submit" @click="submitRenditionUpload">
               Upload rendition
             </v-btn>
           </div>
@@ -844,6 +849,8 @@ import {
   type ClassifyEntryForm,
   type PutEntryForm,
   type PutEntryOutcomeSummary,
+  type RenditionUploadForm,
+  type RenditionUploadPlan,
   type RenditionChange,
   type RenditionRow,
   type VersionRow,
@@ -1102,6 +1109,36 @@ const uploadBusy = ref(false)
 const uploadInputError = ref<string | null>(null)
 const uploadFailure = ref<RpcFailure | null>(null)
 const uploadSaved = shallowRef<UploadRenditionResponse | null>(null)
+interface RenditionAttempt {
+  form: RenditionUploadForm
+  file: File
+  operationId: string
+  plan: RenditionUploadPlan | null
+}
+const pendingUploads: RenditionAttempt[] = []
+const uploadAttempt = shallowRef<RenditionAttempt | null>(null)
+
+function releaseUpload(attempt: RenditionAttempt) {
+  const index = pendingUploads.indexOf(attempt)
+  if (index >= 0) pendingUploads.splice(index, 1)
+  if (uploadAttempt.value === attempt) uploadAttempt.value = null
+}
+
+function resetRenditionUpload() {
+  uploadScope.next()
+  uploadBusy.value = false
+  uploadFailure.value = null
+  uploadInputError.value = null
+  uploadSaved.value = null
+  showUpload.value = false
+  const pending = pendingUploads.find(({ form }) => form.accountId === queryText('account')
+    && form.archive === queryText('archive') && form.entryId === queryText('entry')) ?? null
+  uploadAttempt.value = pending
+  uploadFile.value = pending?.file ?? null
+  Object.assign(uploadForm, pending?.form ?? {
+    rendition: 'original', subKey: '', expectedVersion: '', contentType: '', module: '',
+  })
+}
 
 const renditions = computed(() => (manifest.value ? renditionRows(manifest.value) : []))
 const classification = computed(() => classificationLabel(classifyResolved.value ?? info.value?.classification))
@@ -1209,69 +1246,55 @@ function pickUploadFile(event: Event) {
 }
 
 async function submitRenditionUpload() {
+  if (uploadBusy.value || !address.value) return
   uploadInputError.value = null
   uploadFailure.value = null
   uploadSaved.value = null
-  if (!address.value) return
-  if (!uploadFile.value) {
-    uploadInputError.value = 'File: choose a rendition file to upload'
-    return
-  }
-  const chosen = uploadFile.value
-  const operationId = newOperationId()
-  try {
-    planRenditionUpload(
-      {
-        accountId: address.value.accountId,
-        archive: address.value.archive,
-        entryId: address.value.entryId,
-        rendition: uploadForm.rendition,
-        subKey: uploadForm.subKey,
-        contentType: uploadForm.contentType,
-        module: uploadForm.module,
-        expectedVersion: uploadForm.expectedVersion,
-      },
-      chosen,
-      operationId,
-      '0'.repeat(64),
-    )
-  } catch (error) {
-    if (error instanceof UploadInputError) {
-      uploadInputError.value = error.message
+  let attempt = uploadAttempt.value
+  if (!attempt) {
+    if (!uploadFile.value) {
+      uploadInputError.value = 'File: choose a rendition file to upload'
       return
     }
-    throw error
+    const form: RenditionUploadForm = {
+      ...uploadForm, accountId: address.value.accountId,
+      archive: address.value.archive, entryId: address.value.entryId,
+    }
+    attempt = { form, file: uploadFile.value, operationId: newOperationId(), plan: null }
+    try {
+      planRenditionUpload(form, attempt.file, attempt.operationId, '0'.repeat(64))
+    } catch (error) {
+      if (error instanceof UploadInputError) {
+        uploadInputError.value = error.message
+        return
+      }
+      throw error
+    }
+    pendingUploads.push(attempt)
+    uploadAttempt.value = attempt
   }
   const signal = uploadScope.next()
   uploadBusy.value = true
   try {
-    const sha256 = await fileSha256(chosen, signal)
-    if (signal.aborted) return
-    const plan = planRenditionUpload(
-      {
-        accountId: address.value.accountId,
-        archive: address.value.archive,
-        entryId: address.value.entryId,
-        rendition: uploadForm.rendition,
-        subKey: uploadForm.subKey,
-        contentType: uploadForm.contentType,
-        module: uploadForm.module,
-        expectedVersion: uploadForm.expectedVersion,
-      },
-      chosen,
-      operationId,
-      sha256,
-    )
-    const result = await sendRenditionUpload(plan, newRequest, () => {}, signal)
-    if (signal.aborted) return
-    if (result.kind === 'saved') {
-      uploadSaved.value = result.response
-    } else {
-      uploadFailure.value = result.failure
+    if (!attempt.plan) {
+      const sha256 = await fileSha256(attempt.file, signal)
+      if (signal.aborted) return
+      attempt.plan = planRenditionUpload(attempt.form, attempt.file, attempt.operationId, sha256)
     }
+    const result = await sendRenditionUpload(attempt.plan, newRequest, () => {}, signal)
+    const refused = result.kind === 'failed' && result.failure.codeNumber !== null
+      && [Code.InvalidArgument, Code.OutOfRange, Code.NotFound, Code.AlreadyExists,
+        Code.PermissionDenied, Code.Unauthenticated, Code.FailedPrecondition,
+        Code.Aborted, Code.Unimplemented].includes(result.failure.codeNumber)
+    if (result.kind === 'saved' || refused) releaseUpload(attempt)
+    if (signal.aborted) return
+    if (result.kind === 'saved') uploadSaved.value = result.response
+    else uploadFailure.value = result.failure
   } catch (error) {
     if (!signal.aborted) uploadFailure.value = rpcFailure(error)
   } finally {
+    // A failure before constructing a plan has never sent anything.
+    if (!attempt.plan) releaseUpload(attempt)
     if (!signal.aborted) uploadBusy.value = false
   }
 }
@@ -1409,11 +1432,13 @@ function openVersion(version: bigint | null) {
 }
 
 function openVersionCompare(baseVersion: bigint) {
+  const version = pinned.value ?? requested.value
+  if (version === null) return
   const query: Record<string, string> = {
     account: queryText('account'),
     archive: queryText('archive'),
     entry: queryText('entry'),
-    version: (pinned.value ?? requested.value ?? 1n).toString(),
+    version: version.toString(),
     compare: baseVersion.toString(),
   }
   void router.push({ name: 'repository-archive-entry', query })
@@ -1437,9 +1462,20 @@ function closeVersionCompare() {
   void router.push({ name: 'repository-archive-entry', query })
 }
 
-watch(() => route.fullPath, () => void load(), { immediate: true })
+watch(() => route.fullPath, () => {
+  // A refresh after ClassifyEntry keeps its result. Navigation does not: even
+  // an answer that arrives after the new manifest must belong to its old route.
+  classifyScope.next()
+  classifyResolved.value = null
+  classifyFailure.value = null
+  classifyInputError.value = null
+  classifyBusy.value = false
+  resetRenditionUpload()
+  void load()
+}, { immediate: true })
 </script>
 
 <style scoped>
 .put-fields { border: 0; padding: 0; margin: 0; min-width: 0; }
+.upload-fields { border: 0; margin: 0; padding: 0; min-width: 0; }
 </style>
