@@ -5,7 +5,9 @@
     "src/**/*.vue",
     "vite.config.ts",
     "playwright.config.ts",
-    "e2e/**/*.ts"
+    "e2e/**/*.ts",
+    "browser/**/*.ts",
+    "playwright.preview.config.ts"
   ],
   "compilerOptions": {
     "baseUrl": ".",

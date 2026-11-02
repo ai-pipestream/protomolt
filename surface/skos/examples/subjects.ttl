@@ -1,0 +1,17 @@
+@prefix skos: <http://www.w3.org/2004/02/skos/core#> .
+@prefix ex: <https://example.org/> .
+
+ex:subjects a skos:ConceptScheme;
+    skos:prefLabel "Subjects"@en, "Disciplines"@fr .
+
+ex:science a skos:Concept;
+    skos:inScheme ex:subjects;
+    skos:prefLabel "Science"@en, "Science"@fr .
+
+ex:physics a skos:Concept;
+    skos:inScheme ex:subjects;
+    skos:prefLabel "Physics"@en, "Physique"@fr;
+    skos:altLabel "Natural philosophy"@en;
+    skos:notation "530"^^<urn:notation:ddc>;
+    skos:definition "The study of matter and energy."@en;
+    skos:broader ex:science .

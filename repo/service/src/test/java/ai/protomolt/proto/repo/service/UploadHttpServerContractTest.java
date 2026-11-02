@@ -5,11 +5,16 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 import java.io.ByteArrayInputStream;
+import java.io.IOException;
+import java.io.OutputStream;
+import java.net.Socket;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -131,6 +136,46 @@ class UploadHttpServerContractTest {
                 .build());
         assertThat(response.statusCode()).isEqualTo(411);
         assertThat(response.body()).contains("Content-Length");
+    }
+
+    // ------------------------------------------------------------------ refusal delivery
+
+    @Test
+    void aRefusedClientFinishesSendingItsBodyAndReadsTheRefusal() throws Exception {
+        // The route refuses from the headers alone. Closing the connection with
+        // body bytes unread resets it under a client that is still sending, and the
+        // JDK HttpClient then fails the exchange without the refusal. The server
+        // must read the declared body before it closes.
+        int bodyBytes = 16 * 1024 * 1024;
+        try (Socket socket = new Socket("127.0.0.1", server.port())) {
+            socket.setSoTimeout(10_000);
+            String head = "POST " + UploadHttpServer.ARCHIVE_UPLOAD_PATH
+                    + "?account_id=a&archive=ar&entry_id=e HTTP/1.1\r\n"
+                    + "Host: 127.0.0.1\r\n"
+                    + "Content-Type: application/octet-stream\r\n"
+                    + "Content-Length: " + bodyBytes + "\r\n\r\n";
+            OutputStream out = socket.getOutputStream();
+            out.write(head.getBytes(StandardCharsets.US_ASCII));
+            out.flush();
+            AtomicReference<IOException> sendFailure = new AtomicReference<>();
+            Thread sender = Thread.ofVirtual().start(() -> {
+                byte[] chunk = new byte[64 * 1024];
+                try {
+                    for (int sent = 0; sent < bodyBytes; sent += chunk.length) {
+                        out.write(chunk);
+                    }
+                    out.flush();
+                } catch (IOException resetByServer) {
+                    sendFailure.set(resetByServer);
+                }
+            });
+            assertThat(sender.join(Duration.ofSeconds(10))).as("body sender finished").isTrue();
+            assertThat(sendFailure.get()).as("the server reset the upload before reading it").isNull();
+
+            byte[] statusLine = new byte["HTTP/1.1 401".length()];
+            int read = socket.getInputStream().readNBytes(statusLine, 0, statusLine.length);
+            assertThat(new String(statusLine, 0, read, StandardCharsets.US_ASCII)).isEqualTo("HTTP/1.1 401");
+        }
     }
 
     // ------------------------------------------------------------------ helpers

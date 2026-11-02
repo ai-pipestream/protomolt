@@ -20,6 +20,7 @@ import ai.protomolt.proto.repo.v2.StoredManifest;
 import ai.protomolt.proto.repo.v2.StoredPartEntry;
 import com.google.protobuf.ByteString;
 import com.google.protobuf.UnsafeByteOperations;
+import io.grpc.Context;
 import io.grpc.Status;
 import io.grpc.stub.ServerCallStreamObserver;
 import io.grpc.stub.StreamObserver;
@@ -28,6 +29,7 @@ import java.io.InputStream;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.locks.ReentrantLock;
 
 /**
@@ -111,6 +113,7 @@ public final class DocumentStreams {
                 prepared.manifest(),
                 prepared.selectedParts());
         try {
+            session.listenForCancellation();
             if (serverObserver != null) {
                 serverObserver.setOnCancelHandler(session::cancel);
                 serverObserver.setOnReadyHandler(session::pump);
@@ -159,6 +162,7 @@ public final class DocumentStreams {
         var serverObserver = observer instanceof ServerCallStreamObserver<ReadBlobResponse> s ? s : null;
         var session = new BlobStreamSession(observer, serverObserver, prepared.header(), prepared.stream());
         try {
+            session.listenForCancellation();
             if (serverObserver != null) {
                 serverObserver.setOnCancelHandler(session::cancel);
                 serverObserver.setOnReadyHandler(session::pump);
@@ -281,6 +285,9 @@ public final class DocumentStreams {
         private final Object stateLock = new Object();
         private final ReentrantLock pumpLock = new ReentrantLock();
 
+        private final Context context = Context.current();
+        private final Context.CancellationListener cancelListener = ignored -> cancel();
+        private final AtomicBoolean cancellationStarted = new AtomicBoolean();
         private volatile boolean cancelled;
         private volatile InputStream activeStream;
         private boolean completed;
@@ -318,12 +325,22 @@ public final class DocumentStreams {
             this.selectedParts = selectedParts;
         }
 
+        void listenForCancellation() {
+            // gRPC serializes onCancel behind the initial handler/onReady callback.
+            // Context cancellation is dispatched independently, so it can close a
+            // stream while that callback is blocked inside a provider read. Keep
+            // the existing synchronous pump and its bounded flow-control behavior.
+            context.addListener(cancelListener, Runnable::run);
+        }
+
         void cancel() {
             cancel(null);
         }
 
         void cancel(Throwable failure) {
+            if (!cancellationStarted.compareAndSet(false, true)) return;
             cancelled = true;
+            context.removeListener(cancelListener);
             var stream = activeStream;
             activeStream = null;
             if (failure == null) closeOnCancel(stream);
@@ -376,6 +393,7 @@ public final class DocumentStreams {
                             observer.onNext(ReadDocumentResponse.newBuilder()
                                     .setComplete(ReadComplete.getDefaultInstance())
                                     .build());
+                            context.removeListener(cancelListener);
                             observer.onCompleted();
                             return;
                         }
@@ -421,6 +439,7 @@ public final class DocumentStreams {
                         .withCause(failure)
                         .asRuntimeException());
             } finally {
+                if (cancelled || completed) context.removeListener(cancelListener);
                 DocumentAdmissionReservations.Lease leaseToRelease = null;
                 InputStream streamToClose = null;
                 synchronized (stateLock) {
@@ -697,6 +716,9 @@ public final class DocumentStreams {
         private final byte[] buffer = new byte[CHUNK_SIZE];
         private final ReentrantLock pumpLock = new ReentrantLock();
 
+        private final Context context = Context.current();
+        private final Context.CancellationListener cancelListener = ignored -> cancel();
+        private final AtomicBoolean cancellationStarted = new AtomicBoolean();
         private volatile boolean cancelled;
         private boolean completed;
         private boolean pumping;
@@ -713,12 +735,22 @@ public final class DocumentStreams {
             this.stream = stream;
         }
 
+        void listenForCancellation() {
+            // gRPC serializes onCancel behind the initial handler/onReady callback.
+            // Context cancellation is dispatched independently, so it can close a
+            // stream while that callback is blocked inside a provider read. Keep
+            // the existing synchronous pump and its bounded flow-control behavior.
+            context.addListener(cancelListener, Runnable::run);
+        }
+
         void cancel() {
             cancel(null);
         }
 
         void cancel(Throwable failure) {
+            if (!cancellationStarted.compareAndSet(false, true)) return;
             cancelled = true;
+            context.removeListener(cancelListener);
             if (failure == null) closeOnCancel(stream);
             else closeOnFailure(stream, failure);
         }
@@ -750,6 +782,7 @@ public final class DocumentStreams {
                     if (read < 0) {
                         completed = true;
                         stream.close();
+                        context.removeListener(cancelListener);
                         observer.onCompleted();
                         return;
                     }
@@ -787,6 +820,7 @@ public final class DocumentStreams {
                             .asRuntimeException());
                 }
             } finally {
+                if (cancelled || completed) context.removeListener(cancelListener);
                 pumping = false;
             }
         }
