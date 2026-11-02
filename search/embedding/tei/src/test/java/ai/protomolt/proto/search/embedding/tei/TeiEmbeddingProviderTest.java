@@ -75,6 +75,29 @@ class TeiEmbeddingProviderTest {
     }
 
     @Test
+    void completedFakeCallIsReleasedBeforeItsReplacementArrives() {
+        var responses = new java.util.ArrayList<EmbedResponse>();
+        StreamObserver<EmbedResponse> replacement = new StreamObserver<>() {
+            @Override public void onNext(EmbedResponse value) { responses.add(value); }
+            @Override public void onError(Throwable failure) { throw new AssertionError(failure); }
+            @Override public void onCompleted() { }
+        };
+        fake.embed(EmbedRequest.newBuilder().setInputs("first").build(), new StreamObserver<>() {
+            @Override public void onNext(EmbedResponse value) { responses.add(value); }
+            @Override public void onError(Throwable failure) { throw new AssertionError(failure); }
+            @Override public void onCompleted() {
+                // The client can start another RPC as soon as completion is delivered,
+                // before the previous server handler returns from onCompleted().
+                fake.embed(EmbedRequest.newBuilder().setInputs("next").build(), replacement);
+            }
+        });
+        assertThat(responses).hasSize(2);
+        assertThat(fake.requests).extracting(EmbedRequest::getInputs).containsExactly("first", "next");
+        assertThat(fake.inFlight.get()).isZero();
+        assertThat(fake.peakInFlight()).isEqualTo(1);
+    }
+
+    @Test
     void embedAllKeepsAtMostTheConfiguredCallsInFlight() throws Exception {
         TeiEmbeddingProvider provider = new TeiEmbeddingProvider(channel,
                 Map.of(TeiEmbeddingProvider.MAX_IN_FLIGHT_ENVIRONMENT_VARIABLE, "2"));
@@ -397,8 +420,10 @@ class TeiEmbeddingProviderTest {
             }
             Runnable answer = () -> {
                 observer.onNext(response.build());
-                observer.onCompleted();
+                // Completion can release the client and admit its next request before
+                // onCompleted returns. Stop counting this response before publishing it.
                 inFlight.decrementAndGet();
+                observer.onCompleted();
             };
             track();
             if (hold) {
