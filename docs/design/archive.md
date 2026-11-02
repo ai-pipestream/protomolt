@@ -107,10 +107,11 @@ Global content-addressed stores need reference-counted garbage collection —
 a coordination protocol with its own failure modes. Entry-local carry-forward
 bounds every version's references to that entry's own v2 revision manifests.
 
-A save whose root checksum (SHA-256 over the ordered rendition hashes)
-matches the entry's current version is elided entirely: v2 records an
-unchanged outcome instead of a new revision, and `PutEntry` answers
-`deduplicated = true` with the existing coordinates. `UploadRendition` has no
+A save takes the unchanged path only when every write is a PUT matching a
+PRESENT part in the current revision (§535, prerequisite 6). Matching rendition
+hashes alone is insufficient: changed CORE metadata still creates a revision.
+For an unchanged save, v2 records the outcome without a new revision, and
+`PutEntry` answers `deduplicated = true` with the existing coordinates. `UploadRendition` has no
 dedupe flag. On both responses `replayed = true` marks the recorded outcome of
 an earlier identical call under the same `operation_id`.
 
@@ -123,8 +124,9 @@ revision's `RevisionManifest` and stored `CORE` / `BLOBS` / `PARSED` parts
 (§3 below), so it is always transactionally consistent with the revision.
 
 Everything operational derives from the manifest's exact key list, never
-from prefix listing: a deletion is a tombstone revision whose manifest still
-names its keys (no object bytes go away under keep-forever retention), reconciliation
+from prefix listing: a deletion creates a tombstone without content parts;
+earlier revision manifests retain the references to the kept objects. No object
+bytes go away under keep-forever retention. Reconciliation
 diffs the bucket against the union of manifest keys, and a reader holding a
 manifest knows byte-for-byte what a version contains before fetching
 anything. Prefix sweeps are never safe — prefixes nest.
