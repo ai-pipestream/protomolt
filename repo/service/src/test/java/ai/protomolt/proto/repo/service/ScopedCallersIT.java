@@ -544,6 +544,23 @@ class ScopedCallersIT {
                 "Repository account policy is not configured for this principal");
     }
 
+    @Test
+    void theConsoleDoorRefusesARequestWithoutAnAccount() {
+        // The gRPC door applies the same rule as the in-process SPI: an address or lookup that
+        // names no account is refused before the archive sees it, not passed on as "no account".
+        var erin = as(ERIN, ArchiveMutationServiceGrpc.newBlockingStub(channel));
+        var unaddressed = EntryAddress.newBuilder().setArchive("docs").setEntryId("entry-1").build();
+        assertDenied(() -> erin.archiveMutation(deleteEntry(UUID.randomUUID().toString(), unaddressed)),
+                "The caller is not bound to account ''");
+        assertDenied(() -> erin.getArchiveMutation(GetArchiveMutationRequest.newBuilder()
+                        .setOperationId(UUID.randomUUID().toString()).build()),
+                "The caller is not bound to account ''");
+        // The entry it named is untouched.
+        assertThat(as(OPERATOR, ArchiveServiceGrpc.newBlockingStub(channel))
+                .getEntry(GetEntryRequest.newBuilder().setAddress(entry(ACCOUNT_A)).build())
+                .getInfo().getAddress().getEntryId()).isEqualTo("entry-1");
+    }
+
     private static ArchiveMutationRequest deleteEntry(String operationId, EntryAddress target) {
         return ArchiveMutationRequest.newBuilder().setOperationId(operationId)
                 .setDeleteEntry(DeleteEntryRequest.newBuilder().setAddress(target)).build();
