@@ -9,7 +9,8 @@ import org.slf4j.LoggerFactory;
  * {@link RepoServices}. With no arguments this class resolves the environment config,
  * starts the Netty server, installs the shutdown hook, and blocks. Explicit
  * {@code verify-core} and {@code rebuild-entry} arguments instead run bounded local
- * operator maintenance and exit without opening network listeners. To embed
+ * operator maintenance over the catalog and stores alone
+ * ({@link RepoMaintenanceComposition}) and exit without opening network listeners. To embed
  * the same services in-JVM, call {@link RepoServices#build} and
  * {@link RepoServices#startInProcess(String)} instead.
  */
@@ -28,9 +29,11 @@ public final class RepoServiceMain {
      */
     public static void main(String[] args) throws Exception {
         if (args.length != 0) {
-            // Local backend credentials authorize this operator path. No network
-            // authentication, console routes, seed accounts or lifecycle loops are started.
-            RepoCatalogMaintenance.run(args, () -> RepoServices.build(RepoServiceConfig.fromEnvironment()), System.out);
+            // Local backend credentials authorize this operator path. Only the catalog,
+            // the drive ledger and the selected stores open: no network authentication,
+            // console routes, seed accounts, lifecycle loops, concept schemes, accession
+            // services, in-process server or Kafka publisher.
+            RepoCatalogMaintenance.run(args, () -> RepoMaintenanceComposition.open(RepoServiceConfig.fromEnvironment()), System.out);
             return;
         }
         String apiToken = RepositoryNetworkAuthentication.requireOperatorToken(System.getenv("PROTOMOLT_API_TOKEN"));

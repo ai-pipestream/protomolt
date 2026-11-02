@@ -31,7 +31,7 @@ import org.testcontainers.utility.DockerImageName;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-/** Real host, catalog and S3 path; each maintenance command reopens the production composition. */
+/** Real host, catalog and S3 path; each maintenance command reopens the catalog-and-storage composition. */
 @Testcontainers
 class RepoCatalogMaintenanceIT {
     @Container static final PostgreSQLContainer POSTGRES = new PostgreSQLContainer("postgres:18-alpine");
@@ -163,7 +163,7 @@ class RepoCatalogMaintenanceIT {
     private static String command(String mode, String account, int revision, long budget) {
         var output = new ByteArrayOutputStream();
         RepoCatalogMaintenance.run(new String[] {mode, account, "intake:" + account, "ds", "doc", Integer.toString(revision)},
-                () -> RepoServices.build(config(budget)), new PrintStream(output));
+                () -> RepoMaintenanceComposition.open(config(budget)), new PrintStream(output));
         return output.toString(java.nio.charset.StandardCharsets.UTF_8);
     }
 

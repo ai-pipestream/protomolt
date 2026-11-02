@@ -1,27 +1,25 @@
 package ai.protomolt.proto.repo.service;
 
 import ai.protomolt.proto.repo.accession.CatalogEntryRebuild;
-import ai.protomolt.proto.repo.accession.DocumentReads;
 import ai.protomolt.proto.repo.v1.NodeAddress;
 import java.io.PrintStream;
-import java.time.Clock;
 import java.util.Objects;
 import java.util.function.Supplier;
 
-/** Local operator commands over the configured repository; never mounted on a network listener. */
+/**
+ * Local operator commands over the configured repository; never mounted on a network
+ * listener. A command opens only the {@link RepoMaintenanceComposition}: the catalog,
+ * the drive ledger and the selected stores, not the serving host.
+ */
 final class RepoCatalogMaintenance {
     private RepoCatalogMaintenance() {}
 
-    static void run(String[] args, Supplier<RepoServices> open, PrintStream output) {
+    static void run(String[] args, Supplier<RepoMaintenanceComposition> open, PrintStream output) {
         // Refuse malformed commands before opening a database or contacting storage.
         var command = parse(args);
         CatalogEntryRebuild.RevisionResult result;
-        try (var services = open.get()) {
-            var composition = services.v2Composition();
-            var reads = new DocumentReads(composition.catalog(), composition.drives(), composition.limits(),
-                    services.readBudget(), Clock.systemUTC());
-            result = new CatalogEntryRebuild(composition.catalog(), reads)
-                    .revision(command.address(), command.revision(), command.repair());
+        try (var composition = open.get()) {
+            result = composition.rebuild().revision(command.address(), command.revision(), command.repair());
         }
         output.println(report(command.revision(), command.repair(), result));
     }
