@@ -69,7 +69,7 @@ services:
   # Live search engines for the index-module integration suites: the generated
   # schemas/mappings are applied to real engines and queried back.
   solr:
-    image: solr:10.1.0
+    image: solr:latest
     ports:
       - "18983:8983"
     command: ["solr-precreate", "protomolt"]

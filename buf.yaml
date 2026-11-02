@@ -150,13 +150,7 @@ lint:
 breaking:
   use:
     - FILE
-  # For a deliberate pre-GA wire break, carry a temporary rule-level
-  # `except` block here in the SAME PR (buf reads breaking config from the
-  # input side) and drop it in the next PR. Path-based breaking.ignore
-  # entries never match in this multi-module v2 workspace — do not try
-  # them again (proven on buf 1.70 with a real break present).
-  # Standing note: repo/ and acquire-confluence are pre-release, but the
-  # ignore mechanism breaks the workspace image comparison for any PR
-  # that adds a module, and repo/'s NodeAddress wire break (the reason
-  # a waiver once existed) is long merged. A future deliberate wire break
-  # gets flagged here and decided in its own PR.
+  # Keep every FILE rule enabled. The approved pre-release #675 transition
+  # is recognized by scripts/check-proto-compatibility.sh only when the exact
+  # before/after source identities and complete Buf findings match approval.
+  # Future breaks require their own decision; do not add broad rule exceptions.
