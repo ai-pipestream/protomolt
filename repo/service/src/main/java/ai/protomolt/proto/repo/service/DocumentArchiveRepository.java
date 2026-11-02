@@ -429,21 +429,30 @@ final class DocumentArchiveRepository implements ArchiveRepository, ArchiveMutat
         if (caller.processAuthority()) {
             return;
         }
+        String refusal = scopedMutationRefusal(caller, request);
+        if (refusal != null) {
+            throw new RepositoryException(RepositoryException.Code.PERMISSION_DENIED, refusal);
+        }
+    }
+
+    /**
+     * Why a scoped caller may not make this {@code ArchiveMutationService} call, or null when
+     * it may. One rule for the gRPC interceptor and the in-process SPI, so a request with an
+     * empty or missing account id is refused on both doors instead of reaching the archive on
+     * one of them.
+     */
+    static String scopedMutationRefusal(RepositoryCaller caller, Object request) {
         if (!consoleSessionMutation(request)) {
-            throw new RepositoryException(
-                    RepositoryException.Code.PERMISSION_DENIED,
-                    "Repository account policy is not configured for this principal");
+            return "Repository account policy is not configured for this principal";
         }
         if (caller.accountIds().isEmpty()) {
-            throw new RepositoryException(
-                    RepositoryException.Code.PERMISSION_DENIED, "The caller is bound to no account");
+            return "The caller is bound to no account";
         }
         String accountId = extractAccountId(request);
         if (accountId == null || accountId.trim().isEmpty() || !caller.accountIds().contains(accountId)) {
-            throw new RepositoryException(
-                    RepositoryException.Code.PERMISSION_DENIED,
-                    "The caller is not bound to account '" + accountId + "'");
+            return "The caller is not bound to account '" + (accountId == null ? "" : accountId) + "'";
         }
+        return null;
     }
 
     private static void requireAccountAccess(RepositoryCaller caller, String accountId) {
@@ -604,13 +613,15 @@ final class DocumentArchiveRepository implements ArchiveRepository, ArchiveMutat
                             return;
                         }
                         if (!isWrite && !caller.processAuthority()) {
-                            if (isMutationService && !consoleSessionMutation(message)) {
-                                closed = true;
-                                call.close(
-                                        Status.PERMISSION_DENIED.withDescription(
-                                                "Repository account policy is not configured for this principal"),
-                                        new Metadata());
-                                return;
+                            if (isMutationService) {
+                                // The console-session door: the same rule as the in-process SPI,
+                                // including the refusal of an empty account id.
+                                String refusal = scopedMutationRefusal(caller, message);
+                                if (refusal != null) {
+                                    closed = true;
+                                    call.close(Status.PERMISSION_DENIED.withDescription(refusal), new Metadata());
+                                    return;
+                                }
                             }
                             String accountId = extractAccountId(message);
                             if (accountId != null && !accountId.trim().isEmpty()
