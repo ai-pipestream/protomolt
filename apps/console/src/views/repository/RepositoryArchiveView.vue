@@ -61,8 +61,166 @@
         />
         <v-select v-model="classification" :items="classificationItems" label="Classification" density="compact" hide-details
                   style="max-width: 240px" data-testid="classification-filter" />
+        <v-btn
+          size="small"
+          variant="tonal"
+          prepend-icon="mdi-upload"
+          data-testid="toggle-new-entry-upload"
+          @click="showNewEntryPanel = !showNewEntryPanel"
+        >
+          {{ showNewEntryPanel ? 'Hide upload' : 'Upload new entry' }}
+        </v-btn>
       </v-card-title>
       <v-card-text>
+        <div
+          v-if="classification !== ClassificationState.UNSPECIFIED || (entrySearch ?? '').trim() !== ''"
+          class="d-flex align-center flex-wrap ga-1 mb-3"
+          data-testid="archive-active-filters"
+        >
+          <span class="text-caption text-medium-emphasis mr-1">Active URL filters:</span>
+          <v-chip
+            v-if="classification !== ClassificationState.UNSPECIFIED"
+            size="small"
+            color="primary"
+            variant="tonal"
+            closable
+            class="text-mono"
+            data-testid="archive-filter-classification"
+            @click:close="classification = ClassificationState.UNSPECIFIED"
+          >
+            classification: {{ classificationState(classification) }}
+          </v-chip>
+          <v-chip
+            v-if="(entrySearch ?? '').trim() !== ''"
+            size="small"
+            color="primary"
+            variant="tonal"
+            closable
+            class="text-mono"
+            data-testid="archive-filter-q"
+            @click:close="entrySearch = ''"
+          >
+            q: {{ (entrySearch ?? '').trim() }}
+          </v-chip>
+          <v-btn
+            size="x-small"
+            variant="text"
+            data-testid="archive-clear-filters"
+            @click="clearArchiveFilters"
+          >
+            Clear filters
+          </v-btn>
+        </div>
+
+        <v-sheet v-if="showNewEntryPanel" rounded border class="pa-3 mb-3" data-testid="new-entry-upload-panel">
+          <div class="text-subtitle-2 mb-2">Upload new archive entry</div>
+          <v-row density="compact">
+            <v-col cols="12" md="4">
+              <v-text-field
+                v-model="newEntryForm.entryId"
+                label="Entry ID"
+                density="compact"
+                hint="Auto-suggested when a file is chosen"
+                persistent-hint
+                autocorrect="off"
+                autocapitalize="off"
+                spellcheck="false"
+                data-testid="new-entry-id"
+              />
+            </v-col>
+            <v-col cols="12" md="3">
+              <v-text-field
+                v-model="newEntryForm.rendition"
+                label="Rendition name"
+                density="compact"
+                autocorrect="off"
+                autocapitalize="off"
+                spellcheck="false"
+                data-testid="new-entry-rendition"
+              />
+            </v-col>
+            <v-col cols="12" md="3">
+              <v-text-field
+                v-model="newEntryForm.contentType"
+                label="Content type (optional)"
+                density="compact"
+                autocorrect="off"
+                autocapitalize="off"
+                spellcheck="false"
+                data-testid="new-entry-type"
+              />
+            </v-col>
+            <v-col cols="12" md="2">
+              <v-text-field
+                v-model="newEntryForm.module"
+                label="Writer module"
+                density="compact"
+                autocorrect="off"
+                autocapitalize="off"
+                spellcheck="false"
+                data-testid="new-entry-module"
+              />
+            </v-col>
+          </v-row>
+          <div class="d-flex align-center flex-wrap ga-3 mt-2">
+            <input type="file" data-testid="new-entry-file" @change="pickNewEntryFile" />
+            <span v-if="newEntryFile" class="text-caption text-mono">
+              {{ newEntryFile.name }} · {{ byteSize(newEntryFile.size) }}
+            </span>
+            <v-btn
+              size="small"
+              color="primary"
+              :loading="newEntryBusy"
+              :disabled="newEntryBusy"
+              data-testid="new-entry-submit"
+              @click="submitNewEntryUpload"
+            >
+              Upload new entry
+            </v-btn>
+          </div>
+          <v-alert
+            v-if="newEntryError"
+            type="warning"
+            variant="tonal"
+            density="compact"
+            class="mt-2"
+            data-testid="new-entry-error"
+          >
+            {{ newEntryError }}
+          </v-alert>
+          <v-alert
+            v-if="newEntryCommitted"
+            type="success"
+            variant="tonal"
+            density="compact"
+            class="mt-2"
+            data-testid="new-entry-committed"
+          >
+            <div class="d-flex align-center flex-wrap ga-2">
+              <span>
+                Committed entry <span class="text-mono">{{ newEntryCommitted.entryId }}</span> (version {{ newEntryCommitted.version }}, rendition
+                <span class="text-mono">{{ newEntryCommitted.rendition }}</span>).
+              </span>
+              <router-link
+                v-if="newEntryOperationId"
+                :to="{ name: 'repository-lookup', query: { account: accountId, op: newEntryOperationId } }"
+                class="text-caption text-mono"
+                data-testid="new-entry-op-link"
+              >
+                op: {{ newEntryOperationId }}
+              </router-link>
+              <v-btn
+                size="x-small"
+                variant="tonal"
+                data-testid="new-entry-open"
+                @click="openEntry(newEntryCommitted.entryId)"
+              >
+                Open entry
+              </v-btn>
+            </div>
+          </v-alert>
+        </v-sheet>
+
         <RpcFailureAlert v-if="entriesFailure" :failure="entriesFailure" title="Listing entries" />
         <v-table v-if="filteredEntries.length > 0" density="compact" hover data-testid="entry-table">
           <thead>
@@ -102,7 +260,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref, shallowRef, watch } from 'vue'
+import { computed, inject, onMounted, reactive, ref, shallowRef, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { create } from '@bufbuild/protobuf'
 import RpcFailureAlert from '@/components/repository/RpcFailureAlert.vue'
@@ -113,20 +271,29 @@ import {
   GetArchiveStatsRequestSchema,
   ListEntriesRequestSchema,
 } from '@/gen/ai/protomolt/proto/repo/archive/v1/archive_service_pb'
-import { entryRow, type EntryRow } from '@/repository/archiveCore'
-import { useRepositoryClients } from '@/repository/clients'
+import {
+  entryRow,
+  planRenditionUpload,
+  sendRenditionUpload,
+  suggestEntryIdFromFilename,
+  type EntryRow,
+} from '@/repository/archiveCore'
+import { REPOSITORY_UPLOAD_REQUEST, useRepositoryClients } from '@/repository/clients'
 import { byteSize, enumLabel, instant } from '@/repository/formatCore'
 import { PageCursor } from '@/repository/listingCore'
 import { isOwnCancellation, rpcFailure, type RpcFailure } from '@/repository/rpcErrorCore'
+import { fileSha256, newOperationId } from '@/repository/uploadCore'
 import { useCallScope } from '@/repository/useCallScope'
 
 const ENTRIES_PAGE_SIZE = 50
 
 const clients = useRepositoryClients()
+const newRequest = inject(REPOSITORY_UPLOAD_REQUEST, () => new XMLHttpRequest())
 const route = useRoute()
 const router = useRouter()
 const infoScope = useCallScope()
 const listScope = useCallScope()
+const uploadScope = useCallScope()
 
 function queryText(name: string): string {
   const value = route.query[name]
@@ -147,8 +314,21 @@ const classificationItems = ClassificationStateSchema.values.map((v) => ({
   title: v.number === ClassificationState.UNSPECIFIED ? 'Any classification' : enumLabel(ClassificationStateSchema, v.number),
   value: v.number as ClassificationState,
 }))
-const classification = ref<ClassificationState>(ClassificationState.UNSPECIFIED)
-const entrySearch = ref('')
+
+function parseClassificationQuery(raw: string): ClassificationState {
+  const trimmed = raw.trim().toUpperCase()
+  if (trimmed === '') return ClassificationState.UNSPECIFIED
+  for (const v of ClassificationStateSchema.values) {
+    const label = enumLabel(ClassificationStateSchema, v.number).toUpperCase()
+    if (label === trimmed || String(v.number) === trimmed) {
+      return v.number as ClassificationState
+    }
+  }
+  return ClassificationState.UNSPECIFIED
+}
+
+const classification = ref<ClassificationState>(parseClassificationQuery(queryText('classification')))
+const entrySearch = ref(queryText('q'))
 const cursor = reactive(new PageCursor()) as PageCursor
 const entries = shallowRef<EntryRow[]>([])
 const filteredEntries = computed(() => {
@@ -168,12 +348,131 @@ const listed = ref(false)
 const entriesFailure = ref<RpcFailure | null>(null)
 // The filter the page tokens were issued for.
 let listedClassification = classification.value
+let loadedAccount = ''
+let loadedArchive = ''
+
+// Upload new archive entry state (#689).
+const showNewEntryPanel = ref(false)
+const newEntryForm = reactive({
+  entryId: '',
+  rendition: 'original',
+  contentType: '',
+  module: 'console',
+})
+const lastAutoEntryId = ref('')
+const newEntryFile = shallowRef<File | null>(null)
+const newEntryBusy = ref(false)
+const newEntryError = ref<string | null>(null)
+const newEntryOperationId = ref<string | null>(null)
+const newEntryCommitted = ref<{ entryId: string; version: string; rendition: string } | null>(null)
+
+function pickNewEntryFile(event: Event) {
+  const files = (event.target as HTMLInputElement).files
+  const picked = files && files.length > 0 ? files[0] : null
+  newEntryFile.value = picked
+  newEntryError.value = null
+  newEntryCommitted.value = null
+  if (picked !== null) {
+    const currentId = newEntryForm.entryId.trim()
+    if (currentId === '' || currentId === lastAutoEntryId.value) {
+      const suggested = suggestEntryIdFromFilename(picked.name)
+      newEntryForm.entryId = suggested
+      lastAutoEntryId.value = suggested
+    }
+  }
+}
+
+async function submitNewEntryUpload() {
+  newEntryError.value = null
+  newEntryCommitted.value = null
+  newEntryOperationId.value = null
+  const chosen = newEntryFile.value
+  if (chosen === null) {
+    newEntryError.value = 'Choose a file to upload as the new archive entry.'
+    return
+  }
+  const entryId = newEntryForm.entryId.trim()
+  if (entryId === '') {
+    newEntryError.value = 'Entry ID is required.'
+    return
+  }
+  const signal = uploadScope.next()
+  newEntryBusy.value = true
+  try {
+    const opId = newOperationId()
+    newEntryOperationId.value = opId
+    const sha256 = await fileSha256(chosen, signal)
+    if (signal.aborted) return
+    const plan = planRenditionUpload(
+      {
+        accountId: accountId.value,
+        archive: archiveName.value,
+        entryId,
+        rendition: newEntryForm.rendition,
+        subKey: '',
+        contentType: newEntryForm.contentType,
+        module: newEntryForm.module,
+        expectedVersion: '',
+      },
+      chosen,
+      opId,
+      sha256,
+    )
+    const outcome = await sendRenditionUpload(plan, newRequest, () => {}, signal)
+    if (signal.aborted) return
+    if (outcome.kind === 'saved') {
+      const committedVersion = outcome.response.version || 1n
+      newEntryCommitted.value = {
+        entryId,
+        version: committedVersion.toString(),
+        rendition: newEntryForm.rendition.trim() || 'original',
+      }
+      void loadInfo()
+      void loadEntries()
+    } else {
+      newEntryError.value = `${outcome.failure.code}: ${outcome.failure.message}`
+    }
+  } catch (error) {
+    if (!signal.aborted) {
+      newEntryError.value = error instanceof Error ? error.message : String(error)
+    }
+  } finally {
+    if (!signal.aborted) newEntryBusy.value = false
+  }
+}
 
 function versioning(value: number) {
   return enumLabel(VersioningPolicySchema, value)
 }
 function classificationState(value: number) {
   return enumLabel(ClassificationStateSchema, value)
+}
+
+function syncArchiveQuery() {
+  if (route.name !== 'repository-archive') return
+  if (accountId.value.trim() === '' || archiveName.value.trim() === '') return
+  const nextQuery: Record<string, string> = {
+    account: accountId.value,
+    archive: archiveName.value,
+  }
+  if (classification.value !== ClassificationState.UNSPECIFIED) {
+    nextQuery.classification = classificationState(classification.value)
+  }
+  const q = (entrySearch.value ?? '').trim()
+  if (q !== '') {
+    nextQuery.q = q
+  }
+  const currClass = queryText('classification')
+  const currQ = queryText('q')
+  if ((nextQuery.classification ?? '') === currClass && (nextQuery.q ?? '') === currQ) {
+    return
+  }
+  void router.replace({ name: 'repository-archive', query: nextQuery })
+}
+
+function clearArchiveFilters() {
+  classification.value = ClassificationState.UNSPECIFIED
+  entrySearch.value = ''
 }
 
 async function loadInfo() {
@@ -244,10 +543,14 @@ function load() {
   listed.value = false
   entriesFailure.value = null
   routeError.value = null
+  loadedAccount = accountId.value
+  loadedArchive = archiveName.value
   if (accountId.value.trim() === '' || archiveName.value.trim() === '') {
     routeError.value = 'An archive needs an account ID and an archive name.'
     return
   }
+  classification.value = parseClassificationQuery(queryText('classification'))
+  entrySearch.value = queryText('q')
   listedClassification = classification.value
   cursor.reset()
   void loadInfo()
@@ -255,10 +558,27 @@ function load() {
 }
 
 watch(classification, (next) => {
+  syncArchiveQuery()
+  if (next === listedClassification) return
   listedClassification = next
   cursor.reset()
   void loadEntries()
 })
-watch(() => route.fullPath, load)
+watch(entrySearch, () => {
+  syncArchiveQuery()
+})
+watch(
+  () => route.fullPath,
+  () => {
+    if (accountId.value !== loadedAccount || archiveName.value !== loadedArchive) {
+      load()
+      return
+    }
+    const routeClass = parseClassificationQuery(queryText('classification'))
+    const routeQ = queryText('q')
+    if (classification.value !== routeClass) classification.value = routeClass
+    if ((entrySearch.value ?? '') !== routeQ) entrySearch.value = routeQ
+  },
+)
 onMounted(load)
 </script>

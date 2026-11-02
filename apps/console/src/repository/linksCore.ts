@@ -225,3 +225,218 @@ export function documentRoute(call: CallNumber, revision: bigint | null) {
   if (revision !== null) query.revision = revision.toString()
   return { name: 'repository-document', query }
 }
+
+/** One node in the 1-hop link neighborhood graph (#695). */
+export interface LinkGraphNode {
+  id: string
+  column: 'inbound' | 'current' | 'outbound'
+  docId: string
+  subtitle: string
+  status: TargetStatus | 'DYNAMIC' | 'CURRENT'
+  call: CallNumber | null
+  revision: bigint | null
+  x: number
+  y: number
+}
+
+/** One directed edge in the 1-hop link neighborhood graph (#695). */
+export interface LinkGraphEdge {
+  id: string
+  fromId: string
+  toId: string
+  relation: string
+  x1: number
+  y1: number
+  x2: number
+  y2: number
+  labelX: number
+  labelY: number
+  dashed: boolean
+}
+
+/** Deterministic SVG layout for the 1-hop link neighborhood (#695). */
+export interface LinkNeighborhoodGraph {
+  width: number
+  height: number
+  nodes: LinkGraphNode[]
+  edges: LinkGraphEdge[]
+}
+
+/**
+ * Builds a deterministic 3-column 1-hop link neighborhood graph:
+ * left column = inbound backlinks, center = current document, right column = outbound static & dynamic/resolved targets.
+ */
+export function buildLinkNeighborhoodGraph(
+  current: CallNumber,
+  currentRevision: bigint,
+  outbound: LinkRow[],
+  backlinks: BacklinkRow[],
+  resolvedDynamic: Record<string, { graphId: string; graphAddressId: string; docId: string; revision: string }[]> = {},
+): LinkNeighborhoodGraph {
+  const inboundItems: Omit<LinkGraphNode, 'x' | 'y'>[] = []
+  const inboundEdges: { fromId: string; relation: string }[] = []
+  const seenInbound = new Set<string>()
+  for (const b of backlinks) {
+    const id = `in:${b.call.graphId}/${b.call.graphAddressId}/${b.call.docId}`
+    if (!seenInbound.has(id)) {
+      seenInbound.add(id)
+      inboundItems.push({
+        id,
+        column: 'inbound',
+        docId: b.call.docId,
+        subtitle: `${b.call.graphAddressId} · rev ${b.revision}`,
+        status: 'RESOLVED',
+        call: b.call,
+        revision: b.revision,
+      })
+    }
+    inboundEdges.push({ fromId: id, relation: b.relation })
+  }
+
+  const outboundItems: Omit<LinkGraphNode, 'x' | 'y'>[] = []
+  const outboundEdges: { toId: string; relation: string; dashed: boolean }[] = []
+  const seenOutbound = new Set<string>()
+
+  for (const row of outbound) {
+    if (row.target.kind === 'static') {
+      const c = row.target.call
+      const id = `out:static:${c.graphId}/${c.graphAddressId}/${c.docId}:${row.target.pinnedRevision ?? 'cur'}`
+      if (!seenOutbound.has(id)) {
+        seenOutbound.add(id)
+        outboundItems.push({
+          id,
+          column: 'outbound',
+          docId: c.docId,
+          subtitle:
+            row.target.pinnedRevision !== null
+              ? `${c.graphAddressId} · rev ${row.target.pinnedRevision}`
+              : `${c.graphAddressId} · ${row.target.status}`,
+          status: row.target.status,
+          call: row.target.status === 'UNAVAILABLE' ? null : c,
+          revision: row.target.pinnedRevision,
+        })
+      }
+      outboundEdges.push({ toId: id, relation: row.relation, dashed: false })
+    } else {
+      const resolved = resolvedDynamic[row.key]
+      if (resolved !== undefined && resolved.length > 0) {
+        for (const doc of resolved) {
+          const call: CallNumber = {
+            accountId: current.accountId,
+            graphId: doc.graphId,
+            graphAddressId: doc.graphAddressId,
+            docId: doc.docId,
+          }
+          const id = `out:dyn-doc:${doc.graphId}/${doc.graphAddressId}/${doc.docId}`
+          if (!seenOutbound.has(id)) {
+            seenOutbound.add(id)
+            outboundItems.push({
+              id,
+              column: 'outbound',
+              docId: doc.docId,
+              subtitle: `${doc.graphAddressId} · rev ${doc.revision} (dynamic)`,
+              status: 'RESOLVED',
+              call,
+              revision: null,
+            })
+          }
+          outboundEdges.push({ toId: id, relation: row.relation, dashed: true })
+        }
+      } else {
+        const id = `out:dyn-sel:${row.key}`
+        const countNote = resolved !== undefined ? '0 matches' : 'selector'
+        outboundItems.push({
+          id,
+          column: 'outbound',
+          docId: `${row.fieldPath}[${row.ordinal}]`,
+          subtitle: `${row.target.conditions[0] ?? 'dynamic'} (${countNote})`,
+          status: 'DYNAMIC',
+          call: null,
+          revision: null,
+        })
+        outboundEdges.push({ toId: id, relation: row.relation, dashed: true })
+      }
+    }
+  }
+
+  const maxCount = Math.max(1, inboundItems.length, outboundItems.length)
+  const rowStep = 64
+  const height = Math.max(180, maxCount * rowStep + 48)
+  const width = 760
+  const centerY = Math.round(height / 2)
+
+  const layoutColumn = (items: Omit<LinkGraphNode, 'x' | 'y'>[], x: number): LinkGraphNode[] => {
+    if (items.length === 0) return []
+    const totalSpan = (items.length - 1) * rowStep
+    const startY = Math.round(centerY - totalSpan / 2)
+    return items.map((item, i) => ({
+      ...item,
+      x,
+      y: startY + i * rowStep,
+    }))
+  }
+
+  const currentNode: LinkGraphNode = {
+    id: 'current',
+    column: 'current',
+    docId: current.docId,
+    subtitle: `${current.graphAddressId} · rev ${currentRevision}`,
+    status: 'CURRENT',
+    call: current,
+    revision: currentRevision,
+    x: 380,
+    y: centerY,
+  }
+
+  const leftNodes = layoutColumn(inboundItems, 125)
+  const rightNodes = layoutColumn(outboundItems, 635)
+  const nodes = [...leftNodes, currentNode, ...rightNodes]
+  const nodeById = new Map(nodes.map((n) => [n.id, n]))
+
+  const nodeHalfWidth = 92
+  const edges: LinkGraphEdge[] = []
+  inboundEdges.forEach((e, idx) => {
+    const from = nodeById.get(e.fromId)
+    if (!from) return
+    const x1 = from.x + nodeHalfWidth
+    const y1 = from.y
+    const x2 = currentNode.x - nodeHalfWidth
+    const y2 = currentNode.y
+    edges.push({
+      id: `edge-in-${idx}`,
+      fromId: e.fromId,
+      toId: 'current',
+      relation: e.relation,
+      x1,
+      y1,
+      x2,
+      y2,
+      labelX: Math.round((x1 + x2) / 2),
+      labelY: Math.round((y1 + y2) / 2) - 6,
+      dashed: false,
+    })
+  })
+  outboundEdges.forEach((e, idx) => {
+    const to = nodeById.get(e.toId)
+    if (!to) return
+    const x1 = currentNode.x + nodeHalfWidth
+    const y1 = currentNode.y
+    const x2 = to.x - nodeHalfWidth
+    const y2 = to.y
+    edges.push({
+      id: `edge-out-${idx}`,
+      fromId: 'current',
+      toId: e.toId,
+      relation: e.relation,
+      x1,
+      y1,
+      x2,
+      y2,
+      labelX: Math.round((x1 + x2) / 2),
+      labelY: Math.round((y1 + y2) / 2) - 6,
+      dashed: e.dashed,
+    })
+  })
+
+  return { width, height, nodes, edges }
+}

@@ -236,6 +236,7 @@ describe('RepositoryDocumentView', () => {
     expect(history).toContain('op-2')
     expect(history).toContain('ADDED CORE')
     expect(history).toContain('REPLACED CORE')
+    expect(wrapper.get('[data-testid="revision-op-2"]').attributes('href')).toContain('op=op-2')
     await wrapper.get('[data-testid="open-revision-2"]').trigger('click')
     await settle()
     expect(router.currentRoute.value.query.revision).toBe('2')

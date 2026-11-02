@@ -10,8 +10,10 @@ import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
 import { create, toBinary } from '@bufbuild/protobuf'
+import { Code, ConnectError } from '@connectrpc/connect'
 import { anyPack, StringValueSchema } from '@bufbuild/protobuf/wkt'
-import { ClassificationSchema, ClassificationState } from '@/gen/ai/protomolt/proto/asset/v1/classification_pb'
+import { CharacterizationEvidenceSchema, ClassificationSchema, ClassificationState } from '@/gen/ai/protomolt/proto/asset/v1/classification_pb'
+import { BridgeKind, BridgeStatus } from '@/gen/ai/protomolt/proto/asset/v1/bridge_pb'
 import { ContentClass, ContentProfileSchema, QualityDimensionSchema, QualityScoreSchema } from '@/gen/ai/protomolt/proto/asset/v1/content_pb'
 import { FormatFactSchema, PdfDocumentSchema } from '@/gen/ai/protomolt/proto/asset/v1/format_pb'
 import { IntakeWriterScopeSchema } from '@/gen/ai/protomolt/proto/authz/v1/account_bindings_pb'
@@ -19,11 +21,18 @@ import { ConsoleSessionStatusSchema } from '@/gen/ai/protomolt/proto/authz/v1/co
 import { ArchiveSchema, ArchiveStatsSchema, VersioningPolicy } from '@/gen/ai/protomolt/proto/repo/archive/v1/archive_pb'
 import {
   ArchiveService,
+  BridgeEntryResponseSchema,
+  BridgeOutcomeSchema,
+  ClassifyEntryResponseSchema,
+  CreateArchiveResponseSchema,
   GetArchiveResponseSchema,
   GetArchiveStatsResponseSchema,
   GetEntryManifestResponseSchema,
   ListArchivesResponseSchema,
+  ListEntriesResponseSchema,
   ListVersionsResponseSchema,
+  PutEntryRequestSchema,
+  PutEntryResponseSchema,
 } from '@/gen/ai/protomolt/proto/repo/archive/v1/archive_service_pb'
 import {
   EntryAddressSchema,
@@ -35,25 +44,47 @@ import {
   WriteAttributionSchema,
 } from '@/gen/ai/protomolt/proto/repo/archive/v1/entry_pb'
 import { BlobBagSchema, BlobSchema, BlobsSchema, DocumentSchema, SearchMetadataSchema } from '@/gen/ai/protomolt/proto/repo/v1/document_pb'
-import { DriveSchema, DriveService, DriveStatus, DriveType, ListDrivesResponseSchema } from '@/gen/ai/protomolt/proto/repo/v1/drive_pb'
 import {
+  CreateDriveResponseSchema,
+  DriveProviderConfigSchema,
+  DriveSchema,
+  DriveService,
+  DriveStatus,
+  DriveType,
+  GetDriveResponseSchema,
+  ListDrivesResponseSchema,
+  S3DriveConfigSchema,
+  type Drive,
+} from '@/gen/ai/protomolt/proto/repo/v1/drive_pb'
+import {
+  BacklinkSchema,
   BlobHeaderSchema,
   ConceptFilterEvidenceSchema,
+  ConceptFilterSchema,
+  DocumentFilterSchema,
   DocumentLookupSchema,
   DocumentService,
   DocumentSummarySchema,
+  DynamicLinkSelectorSchema,
   GetDocumentResponseSchema,
   GetManifestResponseSchema,
+  GetOperationOutcomeResponseSchema,
   GetSchemaDescriptorResponseSchema,
+  ListBacklinksResponseSchema,
   ListDocumentsResponseSchema,
   ListLinksResponseSchema,
   ListRevisionsResponseSchema,
   MountedConceptSchemeSchema,
   ReadBlobResponseSchema,
   ReadDocumentResponseSchema,
+  RecordedOutcomeSchema,
+  ResolveLinkResponseSchema,
+  ResolvedLinkSchema,
   RevisionSummarySchema,
+  StaticLinkStateSchema,
 } from '@/gen/ai/protomolt/proto/repo/v2/document_service_pb'
 import {
+  AccessionSchema,
   DocumentManifestSchema,
   DocumentPart,
   PartSelectorSchema,
@@ -62,7 +93,9 @@ import {
   ValidationStatus,
 } from '@/gen/ai/protomolt/proto/repo/v2/manifest_pb'
 import {
+  ConceptExpansionSchema,
   ConceptNotationSchema,
+  ConceptRefSchema,
   ConceptSchema,
   ConceptSchemeSchema,
   LangLabelSchema,
@@ -74,7 +107,10 @@ import { Sha256 } from '@/repository/sha256'
 import { moltDark } from '@/styles/theme'
 import RepositoryAccountView from '@/views/repository/RepositoryAccountView.vue'
 import RepositoryArchiveEntryView from '@/views/repository/RepositoryArchiveEntryView.vue'
+import RepositoryArchiveView from '@/views/repository/RepositoryArchiveView.vue'
 import RepositoryDocumentView from '@/views/repository/RepositoryDocumentView.vue'
+import RepositoryLookupView from '@/views/repository/RepositoryLookupView.vue'
+import RepositoryUploadView from '@/views/repository/RepositoryUploadView.vue'
 
 const hash = (bytes: Uint8Array) => new Sha256().update(bytes).hex()
 
@@ -291,7 +327,94 @@ export async function mountDocumentImprovements(initialTab?: string) {
             }),
           ],
         }),
-      listLinks: () => create(ListLinksResponseSchema),
+      listLinks: () =>
+        create(ListLinksResponseSchema, {
+          revision: 7n,
+          links: [
+            create(ResolvedLinkSchema, {
+              fieldPath: 'structured_data.supersedes',
+              ordinal: 0,
+              relation: 'supersedes',
+              label: 'Prior Mutual NDA (2024)',
+              target: {
+                case: 'staticTarget',
+                value: create(StaticLinkStateSchema, {
+                  address: testAddress({ docId: 'nda-2024-base' }),
+                  pinnedRevision: 2n,
+                }),
+              },
+            }),
+            create(ResolvedLinkSchema, {
+              fieldPath: 'structured_data.archived_draft',
+              ordinal: 0,
+              relation: 'replaces',
+              label: 'Retired Early Draft',
+              target: {
+                case: 'staticTarget',
+                value: create(StaticLinkStateSchema, {
+                  address: testAddress({ docId: 'legacy-draft-001' }),
+                  targetTombstoned: true,
+                }),
+              },
+            }),
+            create(ResolvedLinkSchema, {
+              fieldPath: 'structured_data.related_agreements',
+              ordinal: 0,
+              relation: 'related',
+              label: 'Active Commercial Contracts',
+              target: {
+                case: 'dynamicTarget',
+                value: create(DynamicLinkSelectorSchema, {
+                  filter: create(DocumentFilterSchema, {
+                    concept: create(ConceptFilterSchema, {
+                      concept: create(ConceptRefSchema, { schemeId: 'legal', conceptId: 'contracts' }),
+                      expansion: create(ConceptExpansionSchema, { narrower: true }),
+                    }),
+                  }),
+                }),
+              },
+            }),
+          ],
+        }),
+      listBacklinks: () =>
+        create(ListBacklinksResponseSchema, {
+          backlinks: [
+            create(BacklinkSchema, {
+              address: testAddress({ docId: 'msa-2026-042' }),
+              revision: 3n,
+              fieldPath: 'structured_data.governing_nda',
+              relation: 'references',
+              pinnedRevision: 7n,
+            }),
+            create(BacklinkSchema, {
+              address: testAddress({ docId: 'dpa-2026-009' }),
+              revision: 2n,
+              fieldPath: 'structured_data.parent_agreement',
+              relation: 'amends',
+            }),
+          ],
+        }),
+      resolveLink: () =>
+        create(ResolveLinkResponseSchema, {
+          documents: [
+            create(DocumentSummarySchema, {
+              address: testAddress({ docId: 'msa-2026-042' }),
+              revision: 3n,
+              committedAt: at('2026-10-26T15:10:00Z'),
+              lookup: create(DocumentLookupSchema, { title: 'Enterprise MSA — Globex Systems' }),
+            }),
+            create(DocumentSummarySchema, {
+              address: testAddress({ docId: 'sow-2026-015' }),
+              revision: 1n,
+              committedAt: at('2026-10-28T11:00:00Z'),
+              lookup: create(DocumentLookupSchema, { title: 'Statement of Work #15 — AI Platform' }),
+            }),
+          ],
+          conceptEvidence: create(ConceptFilterEvidenceSchema, {
+            expandedConcepts: 3,
+            mountedSchemes: [create(MountedConceptSchemeSchema, { schemeId: 'legal', version: '2026.10' })],
+          }),
+        }),
       getSchemaDescriptor: (request) => {
         if (request.descriptorSha256 === hash(rootSet)) {
           return create(GetSchemaDescriptorResponseSchema, { descriptorSet: rootSet })
@@ -357,7 +480,7 @@ export async function mountDocumentImprovements(initialTab?: string) {
     .mount('#app')
 }
 
-export async function mountAccountImprovements(): Promise<{ legalTaxonomyBase64: string }> {
+export async function mountAccountImprovements(initialUrl = '/repository/accounts/acct-a'): Promise<{ legalTaxonomyBase64: string }> {
   const label = (text: string, language = 'en') => create(LangLabelSchema, { text, language })
   const legalSchemeProto = create(ConceptSchemeSchema, {
     prefLabel: [label('Legal Matter Taxonomy', 'en')],
@@ -388,6 +511,9 @@ export async function mountAccountImprovements(): Promise<{ legalTaxonomyBase64:
   for (const byte of legalBytes) binary += String.fromCharCode(byte)
   const legalTaxonomyBase64 = btoa(binary)
 
+  const extraDrives: Drive[] = []
+  const extraArchives: ReturnType<typeof create<typeof ArchiveSchema>>[] = []
+
   const clients = routerClients((router) => {
     router.service(DriveService, {
       listDrives: (r) =>
@@ -399,10 +525,65 @@ export async function mountAccountImprovements(): Promise<{ legalTaxonomyBase64:
               accountId: r.accountId,
               driveType: DriveType.INTAKE,
               status: DriveStatus.ACTIVE,
+              provider: 's3',
+              bucket: 'acme-legal-vault',
+              prefix: 'acct-a',
               createdAt: at('2026-01-15T09:00:00Z'),
             }),
+            ...extraDrives,
           ],
         }),
+      createDrive: (r) => {
+        const d = create(DriveSchema, {
+          driveId: `drv-${extraDrives.length + 2}`,
+          name: r.name,
+          accountId: r.accountId,
+          driveType: r.driveType,
+          status: DriveStatus.ACTIVE,
+          provider: r.provider || 's3',
+          bucket: r.bucket || 'acme-archive-store',
+          prefix: r.prefix || 'acct-a/archives',
+          createdAt: at('2026-10-29T18:00:00Z'),
+        })
+        extraDrives.push(d)
+        return create(CreateDriveResponseSchema, { drive: d })
+      },
+      getDrive: (r) => {
+        const name = r.coordinate.case === 'name' ? r.coordinate.value : 'legal-vault'
+        return create(GetDriveResponseSchema, {
+          drive: create(DriveSchema, {
+            driveId: 'legal-vault',
+            name,
+            accountId: r.accountId || 'acct-a',
+            driveType: DriveType.INTAKE,
+            status: DriveStatus.ACTIVE,
+            provider: 's3',
+            bucket: 'acme-legal-vault',
+            prefix: 'acct-a',
+            region: 'us-east-1',
+            credentialsRef: 'vault:aws/legal-vault-rw',
+            createdAt: at('2026-01-15T09:00:00Z'),
+            providerConfig: create(DriveProviderConfigSchema, {
+              config: {
+                case: 's3',
+                value: create(S3DriveConfigSchema, {
+                  endpointOverride: 'https://s3.us-east-1.acme.internal',
+                  forcePathStyle: true,
+                }),
+              },
+              options: {
+                'checksum.algorithm': 'SHA256',
+                'multipart.threshold': '16MB',
+              },
+            }),
+            metadata: {
+              compliance: 'SOC2-Type-II',
+              owner: 'legal-ops',
+              retention: '7-years',
+            },
+          }),
+        })
+      },
     })
     router.service(ArchiveService, {
       listArchives: (r) =>
@@ -412,11 +593,24 @@ export async function mountAccountImprovements(): Promise<{ legalTaxonomyBase64:
               name: 'executed-agreements',
               accountId: r.accountId,
               driveName: 'legal-vault',
-              versioning: VersioningPolicy.NONE,
+              versioning: VersioningPolicy.RETAINED,
               description: 'Signed agreements and OCR renditions',
             }),
+            ...extraArchives,
           ],
         }),
+      createArchive: (r) => {
+        const a = create(ArchiveSchema, {
+          name: r.archive?.name ?? 'regulatory-filings-2026',
+          accountId: r.archive?.accountId ?? 'acct-a',
+          driveName: r.archive?.driveName ?? 'legal-vault',
+          versioning: r.archive?.versioning ?? VersioningPolicy.RETAINED,
+          description: r.archive?.description ?? '2026 regulatory filings corpus',
+          createdAt: at('2026-10-29T18:01:00Z'),
+        })
+        extraArchives.push(a)
+        return create(CreateArchiveResponseSchema, { archive: a })
+      },
     })
     router.service(DocumentService, {
       listDocuments: (r) =>
@@ -472,7 +666,7 @@ export async function mountAccountImprovements(): Promise<{ legalTaxonomyBase64:
   })
 
   const router = repositoryRouter()
-  await router.push('/repository/accounts/acct-a')
+  await router.push(initialUrl)
   await router.isReady()
 
   const app = createApp({
@@ -494,7 +688,10 @@ export async function mountAccountImprovements(): Promise<{ legalTaxonomyBase64:
   return { legalTaxonomyBase64 }
 }
 
-export async function mountArchiveEntryImprovements() {
+export const archivePutRequests: Uint8Array[] = []
+
+export async function mountArchiveEntryImprovements(loseFirstPutAnswer = false) {
+  archivePutRequests.length = 0
   const addr = create(EntryAddressSchema, { accountId: 'acct-a', archive: 'executed-agreements', entryId: 'nda-2026-001' })
   const origDesc = create(RenditionDescriptorSchema, { name: 'original', mediaType: 'application/pdf' })
   const ocrDesc = create(RenditionDescriptorSchema, { name: 'ocr', subKey: 'page-1', mediaType: 'text/plain' })
@@ -589,6 +786,52 @@ export async function mountArchiveEntryImprovements() {
         create(ListVersionsResponseSchema, {
           versions: [makeManifest(3n), makeManifest(2n), makeManifest(1n)],
         }),
+      classifyEntry: (req) =>
+        create(ClassifyEntryResponseSchema, {
+          classification: create(ClassificationSchema, {
+            state: ClassificationState.VERIFIED,
+            declared:
+              req.declared ??
+              create(FormatFactSchema, { format: { case: 'pdf', value: create(PdfDocumentSchema, { filename: 'acme-mutual-nda-signed.pdf' }) } }),
+            identified: create(FormatFactSchema, {
+              format: { case: 'pdf', value: create(PdfDocumentSchema, { filename: 'acme-mutual-nda-signed.pdf' }) },
+            }),
+            evidence: [
+              create(CharacterizationEvidenceSchema, { signal: 'magic-bytes', observation: '%PDF-1.7 header at offset 0' }),
+              create(CharacterizationEvidenceSchema, { signal: 'probe', observation: '14 pages, xref table intact, linearized=true' }),
+            ],
+          }),
+        }),
+      bridgeEntry: () =>
+        create(BridgeEntryResponseSchema, {
+          version: 4n,
+          outcomes: [
+            create(BridgeOutcomeSchema, {
+              bridge: BridgeKind.DOCUMENT_TEXT,
+              rendition: 'original',
+              status: BridgeStatus.PRODUCED,
+              detail: 'Extracted 14 pages (42,180 UTF-8 bytes)',
+            }),
+            create(BridgeOutcomeSchema, {
+              bridge: BridgeKind.OCR_TEXT,
+              rendition: 'ocr / page-1',
+              status: BridgeStatus.UNCHANGED,
+              detail: 'Matches existing SHA-256 e3b0c44298fc1c14',
+            }),
+          ],
+        }),
+      putEntry: (req) => {
+        archivePutRequests.push(toBinary(PutEntryRequestSchema, req))
+        if (loseFirstPutAnswer && archivePutRequests.length === 1) throw new ConnectError('Response lost', Code.Unavailable)
+        return create(PutEntryResponseSchema, {
+          version: 4n,
+          rootChecksum: 'e4d909c290d0fb1ca068ffaddf22cbd0a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4',
+          totalBytes: 249_024n,
+          deduplicated: false,
+          replayed: false,
+          operationId: req.operationId || '018f4063-7d4b-7000-8000-000000000694',
+        })
+      },
     }),
   )
 
@@ -610,5 +853,194 @@ export async function mountArchiveEntryImprovements() {
     .use(router)
     .provide(REPOSITORY_CLIENTS, clients)
     .provide(REPOSITORY_SIGN_IN, () => {})
+    .mount('#app')
+}
+
+export async function mountArchiveImprovements(
+  initialQuery: Record<string, string> = { account: 'acct-a', archive: 'executed-agreements' },
+) {
+  const clients = routerClients((router) =>
+    router.service(ArchiveService, {
+      getArchive: (r) =>
+        create(GetArchiveResponseSchema, {
+          archive: create(ArchiveSchema, {
+            name: r.archive,
+            accountId: r.accountId,
+            driveName: 'legal-vault',
+            versioning: VersioningPolicy.RETAINED,
+            description: 'Signed agreements and OCR renditions',
+            createdAt: at('2026-01-15T09:00:00Z'),
+          }),
+        }),
+      getArchiveStats: (r) =>
+        create(GetArchiveStatsResponseSchema, {
+          stats: create(ArchiveStatsSchema, {
+            archive: r.archive,
+            entries: 3n,
+            versions: 8n,
+            currentBytes: 492_512n,
+            retainedBytes: 980_000n,
+          }),
+        }),
+      listEntries: () =>
+        create(ListEntriesResponseSchema, {
+          entries: [
+            create(EntryInfoSchema, {
+              address: create(EntryAddressSchema, { accountId: 'acct-a', archive: 'executed-agreements', entryId: 'nda-2026-001' }),
+              currentVersion: 3n,
+              title: 'Master Mutual NDA — Acme Corp',
+              filename: 'acme-mutual-nda-signed.pdf',
+              contentType: 'application/pdf',
+              updatedAt: at('2026-10-23T14:20:00Z'),
+              classification: create(ClassificationSchema, {
+                state: ClassificationState.VERIFIED,
+                declared: create(FormatFactSchema, { format: { case: 'pdf', value: create(PdfDocumentSchema, { filename: 'acme-mutual-nda-signed.pdf' }) } }),
+                identified: create(FormatFactSchema, { format: { case: 'pdf', value: create(PdfDocumentSchema, { filename: 'acme-mutual-nda-signed.pdf' }) } }),
+              }),
+            }),
+            create(EntryInfoSchema, {
+              address: create(EntryAddressSchema, { accountId: 'acct-a', archive: 'executed-agreements', entryId: 'msa-2026-042' }),
+              currentVersion: 2n,
+              title: 'Enterprise MSA — Globex Systems',
+              filename: 'globex-msa-2026.pdf',
+              contentType: 'application/pdf',
+              updatedAt: at('2026-10-26T15:10:00Z'),
+              classification: create(ClassificationSchema, {
+                state: ClassificationState.VERIFIED,
+                declared: create(FormatFactSchema, { format: { case: 'pdf', value: create(PdfDocumentSchema, { filename: 'globex-msa-2026.pdf' }) } }),
+                identified: create(FormatFactSchema, { format: { case: 'pdf', value: create(PdfDocumentSchema, { filename: 'globex-msa-2026.pdf' }) } }),
+              }),
+            }),
+          ],
+          totalCount: 2n,
+        }),
+    }),
+  )
+
+  const router = repositoryRouter()
+  await router.push({ name: 'repository-archive', query: initialQuery })
+  await router.isReady()
+
+  const app = createApp({
+    render: () =>
+      h(components.VApp, {}, () =>
+        h(components.VMain, { style: 'padding: 24px; max-width: 1240px; margin: auto;' }, () => h(RepositoryArchiveView)),
+      ),
+  })
+  app
+    .use(buildVuetify())
+    .use(router)
+    .provide(REPOSITORY_CLIENTS, clients)
+    .provide(REPOSITORY_SIGN_IN, () => {})
+    .mount('#app')
+}
+
+export async function mountLookupImprovements(
+  initialQuery: Record<string, string> = { account: 'acct-a', op: '018f4063-7d4b-7000-8000-000000000199' },
+) {
+  const clients = routerClients((router) =>
+    router.service(DocumentService, {
+      getOperationOutcome: () =>
+        create(GetOperationOutcomeResponseSchema, {
+          state: {
+            case: 'committed',
+            value: create(RecordedOutcomeSchema, {
+              result: {
+                case: 'accession',
+                value: create(AccessionSchema, {
+                  address: {
+                    accountId: 'acct-a',
+                    graphId: 'intake:acct-a',
+                    graphAddressId: 'ds-legal',
+                    docId: 'nda-2026-001',
+                  },
+                  revision: 7n,
+                  committedAt: at('2026-10-27T18:30:00Z'),
+                }),
+              },
+              recordedAt: at('2026-10-27T18:30:00Z'),
+            }),
+          },
+        }),
+    }),
+  )
+
+  const sessionStatus = create(ConsoleSessionStatusSchema, {
+    authenticated: true,
+    principal: 'legal-ops@acme.example',
+    accountIds: ['acct-a'],
+    intakeWriters: [
+      create(IntakeWriterScopeSchema, {
+        accountId: 'acct-a',
+        datasourceId: 'ds-legal',
+      }),
+    ],
+  })
+
+  const router = repositoryRouter()
+  await router.push({ name: 'repository-lookup', query: initialQuery })
+  await router.isReady()
+
+  const app = createApp({
+    render: () =>
+      h(components.VApp, {}, () =>
+        h(components.VMain, { style: 'padding: 24px; max-width: 1240px; margin: auto;' }, () => h(RepositoryLookupView)),
+      ),
+  })
+  app
+    .use(buildVuetify())
+    .use(router)
+    .provide(REPOSITORY_CLIENTS, clients)
+    .provide(REPOSITORY_SIGN_IN, () => {})
+    .provide(REPOSITORY_SESSION, {
+      status: async () => sessionStatus,
+    })
+    .mount('#app')
+}
+
+export async function mountUploadImprovements() {
+  const clients = routerClients((router) => {
+    router.service(DriveService, {
+      listDrives: () =>
+        create(ListDrivesResponseSchema, {
+          drives: [create(DriveSchema, { driveId: 'legal-vault', name: 'legal-vault', accountId: 'acct-a' })],
+        }),
+    })
+    router.service(DocumentService, {
+      getOperationOutcome: () => create(GetOperationOutcomeResponseSchema),
+    })
+  })
+
+  const sessionStatus = create(ConsoleSessionStatusSchema, {
+    authenticated: true,
+    principal: 'legal-ops@acme.example',
+    accountIds: ['acct-a'],
+    intakeWriters: [
+      create(IntakeWriterScopeSchema, {
+        accountId: 'acct-a',
+        datasourceId: 'ds-legal',
+        allowCreate: true,
+      }),
+    ],
+  })
+
+  const router = repositoryRouter()
+  await router.push({ name: 'repository-upload', query: { account: 'acct-a', datasource: 'ds-legal' } })
+  await router.isReady()
+
+  const app = createApp({
+    render: () =>
+      h(components.VApp, {}, () =>
+        h(components.VMain, { style: 'padding: 24px; max-width: 1240px; margin: auto;' }, () => h(RepositoryUploadView)),
+      ),
+  })
+  app
+    .use(buildVuetify())
+    .use(router)
+    .provide(REPOSITORY_CLIENTS, clients)
+    .provide(REPOSITORY_SIGN_IN, () => {})
+    .provide(REPOSITORY_SESSION, {
+      status: async () => sessionStatus,
+    })
     .mount('#app')
 }

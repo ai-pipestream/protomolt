@@ -22,7 +22,16 @@
               <div class="text-caption text-medium-emphasis">after {{ row.previousRevision }}</div>
             </td>
             <td class="text-mono text-caption">{{ row.committedAt ?? '' }}</td>
-            <td class="text-mono text-caption">{{ row.operationId }}</td>
+            <td class="text-mono text-caption">
+              <router-link
+                v-if="row.operationId"
+                :to="{ name: 'repository-lookup', query: { account: props.address.accountId, op: row.operationId } }"
+                :data-testid="`revision-op-${row.revision}`"
+                class="text-mono text-caption"
+              >
+                {{ row.operationId }}
+              </router-link>
+            </td>
             <td class="text-caption">{{ row.owner }}</td>
             <td class="text-caption">{{ row.validation }}</td>
             <td class="text-caption">

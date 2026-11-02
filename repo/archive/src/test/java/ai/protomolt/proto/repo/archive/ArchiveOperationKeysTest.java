@@ -28,6 +28,13 @@ import org.junit.jupiter.params.provider.CsvSource;
  */
 class ArchiveOperationKeysTest {
 
+    @Test
+    void deleteReceiptLogicalCommandMatchesTheConsoleGoldenVector() {
+        var address = EntryAddress.newBuilder().setAccountId("acct-a").setArchive("papers").setEntryId("e-1").build();
+        assertThat(ArchiveOperationKeys.deleteEntryCommandSha256(address))
+                .isEqualTo("8f98947ff1ae6a17435d9e48c584364593181ff83f1667d3af525067b9a081fe");
+    }
+
     private static String sha256(String text) throws Exception {
         return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256")
                 .digest(text.getBytes(StandardCharsets.UTF_8)));
