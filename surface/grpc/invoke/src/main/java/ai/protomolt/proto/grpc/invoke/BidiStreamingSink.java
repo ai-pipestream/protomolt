@@ -45,10 +45,8 @@ final class BidiStreamingSink {
                     full = responses.size() >= maxResponses;
                 }
                 if (full) {
-                    ClientCallStreamObserver<DynamicMessage> active = call;
-                    if (active != null) {
-                        active.cancel("bounded response limit reached", null);
-                    }
+                    // Wake the sending thread; only it may cancel after its last
+                    // send/half-close, so cancellation cannot race an outbound call.
                     done.countDown();
                     synchronized (readiness) {
                         readiness.notifyAll();
@@ -84,6 +82,18 @@ final class BidiStreamingSink {
 
     boolean isDone() {
         return done.getCount() == 0;
+    }
+
+    /** Called by the sending thread after all outbound operations have stopped. */
+    void cancelAfterLimit() {
+        boolean full;
+        synchronized (responsesLock) {
+            full = responses.size() >= maxResponses;
+        }
+        ClientCallStreamObserver<DynamicMessage> active = call;
+        if (full && active != null) {
+            active.cancel("bounded response limit reached", null);
+        }
     }
 
     void awaitReady() {

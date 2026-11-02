@@ -7,6 +7,9 @@ import com.google.protobuf.Descriptors.FileDescriptor;
 import com.google.protobuf.Descriptors.ServiceDescriptor;
 import com.google.protobuf.DynamicMessage;
 import io.grpc.CallOptions;
+import io.grpc.Channel;
+import io.grpc.ClientCall;
+import io.grpc.MethodDescriptor;
 import io.grpc.ManagedChannel;
 import io.grpc.Metadata;
 import io.grpc.Server;
@@ -298,6 +301,101 @@ class DynamicGrpcStreamTest {
                 CallOptions.DEFAULT, new Metadata(), 5);
 
         assertThat(responses).hasSize(5);
+    }
+
+    @Test
+    void bidiLimitArrivingInsideNextDoesNotCancelAnOutboundSend() {
+        var controlled = new ControlledChannel();
+        List<DynamicMessage> responses = DynamicGrpcCalls.callBidiStreaming(controlled,
+                file.findServiceByName("Feed").findMethodByName("Echo"),
+                requestsWithSecondNext(() -> controlled.call.listener.onMessage(tick(0, ""))),
+                CallOptions.DEFAULT, new Metadata(), 1);
+
+        assertThat(responses).extracting(DynamicGrpcStreamTest::seqOf).containsExactly(0L);
+        assertThat(controlled.call.cancelled).isTrue();
+        assertThat(controlled.call.halfClosed).isFalse();
+    }
+
+    @Test
+    void bidiLimitArrivingInsideHalfCloseDoesNotCancelThatHalfClose() {
+        var controlled = new ControlledChannel();
+        controlled.call.beforeHalfClose = () -> controlled.call.listener.onMessage(tick(0, ""));
+        List<DynamicMessage> responses = DynamicGrpcCalls.callBidiStreaming(controlled,
+                file.findServiceByName("Feed").findMethodByName("Echo"),
+                List.of(tick(0, "")).iterator(), CallOptions.DEFAULT, new Metadata(), 1);
+        assertThat(responses).extracting(DynamicGrpcStreamTest::seqOf).containsExactly(0L);
+        assertThat(controlled.call.halfClosed).isTrue();
+        assertThat(controlled.call.cancelled).isTrue();
+    }
+
+    @Test
+    void bidiIteratorFailureIsNotHiddenByAnArrivingBoundedPrefix() {
+        var controlled = new ControlledChannel();
+        var brokenIterator = new IllegalStateException("iterator failed independently");
+        assertThatThrownBy(() -> DynamicGrpcCalls.callBidiStreaming(controlled,
+                file.findServiceByName("Feed").findMethodByName("Echo"),
+                requestsWithSecondNext(() -> {
+                    controlled.call.listener.onMessage(tick(0, ""));
+                    throw brokenIterator;
+                }), CallOptions.DEFAULT, new Metadata(), 1)).isSameAs(brokenIterator);
+        assertThat(controlled.call.cancelled).isTrue();
+    }
+
+    @Test
+    void bidiRemoteFailureBeforeTheLimitKeepsItsStatus() {
+        var controlled = new ControlledChannel();
+        assertThatThrownBy(() -> DynamicGrpcCalls.callBidiStreaming(controlled,
+                file.findServiceByName("Feed").findMethodByName("Echo"),
+                requestsWithSecondNext(() -> controlled.call.listener.onClose(
+                        Status.DATA_LOSS.withDescription("remote corruption"), new Metadata())),
+                CallOptions.DEFAULT, new Metadata(), 2))
+                .isInstanceOf(StatusRuntimeException.class).hasMessageContaining("DATA_LOSS: remote corruption");
+    }
+
+    private static Iterator<DynamicMessage> requestsWithSecondNext(Runnable beforeSecondValue) {
+        return new Iterator<>() {
+            private int index;
+            @Override public boolean hasNext() { return index < 2; }
+            @Override public DynamicMessage next() {
+                if (index == 1) beforeSecondValue.run();
+                return tick(index++, "");
+            }
+        };
+    }
+
+    // Real ClientCalls/ClientCallStreamObserver adapter, controlled transport:
+    // inject a response after the caller's isDone check but before onNext sends.
+    private static final class ControlledChannel extends Channel {
+        final ControlledCall call = new ControlledCall();
+        @Override public String authority() { return "controlled"; }
+        @Override @SuppressWarnings("unchecked")
+        public <Q, S> ClientCall<Q, S> newCall(MethodDescriptor<Q, S> method, CallOptions options) {
+            return (ClientCall<Q, S>) call;
+        }
+    }
+
+    private static final class ControlledCall extends ClientCall<DynamicMessage, DynamicMessage> {
+        Listener<DynamicMessage> listener;
+        boolean cancelled;
+        boolean halfClosed;
+        Runnable beforeHalfClose = () -> { };
+        @Override public void start(Listener<DynamicMessage> listener, Metadata headers) { this.listener = listener; }
+        @Override public void request(int count) { }
+        @Override public boolean isReady() { return true; }
+        @Override public void sendMessage(DynamicMessage request) {
+            // ClientCallImpl rejects both sendMessage and halfClose after cancel.
+            if (cancelled) throw new IllegalStateException("call was cancelled");
+        }
+        @Override public void halfClose() {
+            beforeHalfClose.run();
+            if (cancelled) throw new IllegalStateException("call was cancelled");
+            halfClosed = true;
+            listener.onClose(Status.OK, new Metadata());
+        }
+        @Override public void cancel(String message, Throwable cause) {
+            cancelled = true;
+            listener.onClose(Status.CANCELLED.withDescription(message).withCause(cause), new Metadata());
+        }
     }
 
     @Test

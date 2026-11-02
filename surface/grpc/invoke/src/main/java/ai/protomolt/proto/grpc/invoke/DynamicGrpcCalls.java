@@ -202,23 +202,27 @@ public final class DynamicGrpcCalls {
                 decorate(channel, headers).newCall(methodDescriptor(method), options),
                 sink.observer());
         try {
-            while (requests.hasNext() && !sink.isDone()) {
-                sink.awaitReady();
-                if (!sink.isDone()) {
-                    upstream.onNext(requests.next());
+            try {
+                while (!sink.isDone() && requests.hasNext()) {
+                    sink.awaitReady();
+                    if (!sink.isDone()) {
+                        upstream.onNext(requests.next());
+                    }
                 }
+                if (!sink.isDone()) {
+                    upstream.onCompleted();
+                }
+            } catch (RuntimeException e) {
+                upstream.onError(Status.CANCELLED
+                        .withDescription("request iterator failed: " + e.getMessage())
+                        .withCause(e)
+                        .asRuntimeException());
+                throw e;
             }
-            if (!sink.isDone()) {
-                upstream.onCompleted();
-            }
-        } catch (RuntimeException e) {
-            upstream.onError(Status.CANCELLED
-                    .withDescription("request iterator failed: " + e.getMessage())
-                    .withCause(e)
-                    .asRuntimeException());
-            throw e;
+            return sink.awaitResponses();
+        } finally {
+            sink.cancelAfterLimit();
         }
-        return sink.awaitResponses();
     }
 
     private static Channel decorate(Channel channel, Metadata headers) {
