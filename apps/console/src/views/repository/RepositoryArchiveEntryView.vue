@@ -988,5 +988,14 @@ function closeVersionCompare() {
   void router.push({ name: 'repository-archive-entry', query })
 }
 
-watch(() => route.fullPath, () => void load(), { immediate: true })
+watch(() => route.fullPath, () => {
+  // A refresh after ClassifyEntry keeps its result. Navigation does not: even
+  // an answer that arrives after the new manifest must belong to its old route.
+  classifyScope.next()
+  classifyResolved.value = null
+  classifyFailure.value = null
+  classifyInputError.value = null
+  classifyBusy.value = false
+  void load()
+}, { immediate: true })
 </script>
