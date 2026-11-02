@@ -10,6 +10,7 @@ import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
 import { create, toBinary } from '@bufbuild/protobuf'
+import { Code, ConnectError } from '@connectrpc/connect'
 import { anyPack, StringValueSchema } from '@bufbuild/protobuf/wkt'
 import { CharacterizationEvidenceSchema, ClassificationSchema, ClassificationState } from '@/gen/ai/protomolt/proto/asset/v1/classification_pb'
 import { BridgeKind, BridgeStatus } from '@/gen/ai/protomolt/proto/asset/v1/bridge_pb'
@@ -30,6 +31,8 @@ import {
   ListArchivesResponseSchema,
   ListEntriesResponseSchema,
   ListVersionsResponseSchema,
+  PutEntryRequestSchema,
+  PutEntryResponseSchema,
 } from '@/gen/ai/protomolt/proto/repo/archive/v1/archive_service_pb'
 import {
   EntryAddressSchema,
@@ -41,17 +44,33 @@ import {
   WriteAttributionSchema,
 } from '@/gen/ai/protomolt/proto/repo/archive/v1/entry_pb'
 import { BlobBagSchema, BlobSchema, BlobsSchema, DocumentSchema, SearchMetadataSchema } from '@/gen/ai/protomolt/proto/repo/v1/document_pb'
-import { CreateDriveResponseSchema, DriveSchema, DriveService, DriveStatus, DriveType, ListDrivesResponseSchema, type Drive } from '@/gen/ai/protomolt/proto/repo/v1/drive_pb'
 import {
+  CreateDriveResponseSchema,
+  DriveProviderConfigSchema,
+  DriveSchema,
+  DriveService,
+  DriveStatus,
+  DriveType,
+  GetDriveResponseSchema,
+  ListDrivesResponseSchema,
+  S3DriveConfigSchema,
+  type Drive,
+} from '@/gen/ai/protomolt/proto/repo/v1/drive_pb'
+import {
+  BacklinkSchema,
   BlobHeaderSchema,
   ConceptFilterEvidenceSchema,
+  ConceptFilterSchema,
+  DocumentFilterSchema,
   DocumentLookupSchema,
   DocumentService,
   DocumentSummarySchema,
+  DynamicLinkSelectorSchema,
   GetDocumentResponseSchema,
   GetManifestResponseSchema,
   GetOperationOutcomeResponseSchema,
   GetSchemaDescriptorResponseSchema,
+  ListBacklinksResponseSchema,
   ListDocumentsResponseSchema,
   ListLinksResponseSchema,
   ListRevisionsResponseSchema,
@@ -59,7 +78,10 @@ import {
   ReadBlobResponseSchema,
   ReadDocumentResponseSchema,
   RecordedOutcomeSchema,
+  ResolveLinkResponseSchema,
+  ResolvedLinkSchema,
   RevisionSummarySchema,
+  StaticLinkStateSchema,
 } from '@/gen/ai/protomolt/proto/repo/v2/document_service_pb'
 import {
   AccessionSchema,
@@ -71,7 +93,9 @@ import {
   ValidationStatus,
 } from '@/gen/ai/protomolt/proto/repo/v2/manifest_pb'
 import {
+  ConceptExpansionSchema,
   ConceptNotationSchema,
+  ConceptRefSchema,
   ConceptSchema,
   ConceptSchemeSchema,
   LangLabelSchema,
@@ -303,7 +327,94 @@ export async function mountDocumentImprovements(initialTab?: string) {
             }),
           ],
         }),
-      listLinks: () => create(ListLinksResponseSchema),
+      listLinks: () =>
+        create(ListLinksResponseSchema, {
+          revision: 7n,
+          links: [
+            create(ResolvedLinkSchema, {
+              fieldPath: 'structured_data.supersedes',
+              ordinal: 0,
+              relation: 'supersedes',
+              label: 'Prior Mutual NDA (2024)',
+              target: {
+                case: 'staticTarget',
+                value: create(StaticLinkStateSchema, {
+                  address: testAddress({ docId: 'nda-2024-base' }),
+                  pinnedRevision: 2n,
+                }),
+              },
+            }),
+            create(ResolvedLinkSchema, {
+              fieldPath: 'structured_data.archived_draft',
+              ordinal: 0,
+              relation: 'replaces',
+              label: 'Retired Early Draft',
+              target: {
+                case: 'staticTarget',
+                value: create(StaticLinkStateSchema, {
+                  address: testAddress({ docId: 'legacy-draft-001' }),
+                  targetTombstoned: true,
+                }),
+              },
+            }),
+            create(ResolvedLinkSchema, {
+              fieldPath: 'structured_data.related_agreements',
+              ordinal: 0,
+              relation: 'related',
+              label: 'Active Commercial Contracts',
+              target: {
+                case: 'dynamicTarget',
+                value: create(DynamicLinkSelectorSchema, {
+                  filter: create(DocumentFilterSchema, {
+                    concept: create(ConceptFilterSchema, {
+                      concept: create(ConceptRefSchema, { schemeId: 'legal', conceptId: 'contracts' }),
+                      expansion: create(ConceptExpansionSchema, { narrower: true }),
+                    }),
+                  }),
+                }),
+              },
+            }),
+          ],
+        }),
+      listBacklinks: () =>
+        create(ListBacklinksResponseSchema, {
+          backlinks: [
+            create(BacklinkSchema, {
+              address: testAddress({ docId: 'msa-2026-042' }),
+              revision: 3n,
+              fieldPath: 'structured_data.governing_nda',
+              relation: 'references',
+              pinnedRevision: 7n,
+            }),
+            create(BacklinkSchema, {
+              address: testAddress({ docId: 'dpa-2026-009' }),
+              revision: 2n,
+              fieldPath: 'structured_data.parent_agreement',
+              relation: 'amends',
+            }),
+          ],
+        }),
+      resolveLink: () =>
+        create(ResolveLinkResponseSchema, {
+          documents: [
+            create(DocumentSummarySchema, {
+              address: testAddress({ docId: 'msa-2026-042' }),
+              revision: 3n,
+              committedAt: at('2026-10-26T15:10:00Z'),
+              lookup: create(DocumentLookupSchema, { title: 'Enterprise MSA — Globex Systems' }),
+            }),
+            create(DocumentSummarySchema, {
+              address: testAddress({ docId: 'sow-2026-015' }),
+              revision: 1n,
+              committedAt: at('2026-10-28T11:00:00Z'),
+              lookup: create(DocumentLookupSchema, { title: 'Statement of Work #15 — AI Platform' }),
+            }),
+          ],
+          conceptEvidence: create(ConceptFilterEvidenceSchema, {
+            expandedConcepts: 3,
+            mountedSchemes: [create(MountedConceptSchemeSchema, { schemeId: 'legal', version: '2026.10' })],
+          }),
+        }),
       getSchemaDescriptor: (request) => {
         if (request.descriptorSha256 === hash(rootSet)) {
           return create(GetSchemaDescriptorResponseSchema, { descriptorSet: rootSet })
@@ -437,6 +548,42 @@ export async function mountAccountImprovements(initialUrl = '/repository/account
         extraDrives.push(d)
         return create(CreateDriveResponseSchema, { drive: d })
       },
+      getDrive: (r) => {
+        const name = r.coordinate.case === 'name' ? r.coordinate.value : 'legal-vault'
+        return create(GetDriveResponseSchema, {
+          drive: create(DriveSchema, {
+            driveId: 'legal-vault',
+            name,
+            accountId: r.accountId || 'acct-a',
+            driveType: DriveType.INTAKE,
+            status: DriveStatus.ACTIVE,
+            provider: 's3',
+            bucket: 'acme-legal-vault',
+            prefix: 'acct-a',
+            region: 'us-east-1',
+            credentialsRef: 'vault:aws/legal-vault-rw',
+            createdAt: at('2026-01-15T09:00:00Z'),
+            providerConfig: create(DriveProviderConfigSchema, {
+              config: {
+                case: 's3',
+                value: create(S3DriveConfigSchema, {
+                  endpointOverride: 'https://s3.us-east-1.acme.internal',
+                  forcePathStyle: true,
+                }),
+              },
+              options: {
+                'checksum.algorithm': 'SHA256',
+                'multipart.threshold': '16MB',
+              },
+            }),
+            metadata: {
+              compliance: 'SOC2-Type-II',
+              owner: 'legal-ops',
+              retention: '7-years',
+            },
+          }),
+        })
+      },
     })
     router.service(ArchiveService, {
       listArchives: (r) =>
@@ -541,7 +688,10 @@ export async function mountAccountImprovements(initialUrl = '/repository/account
   return { legalTaxonomyBase64 }
 }
 
-export async function mountArchiveEntryImprovements() {
+export const archivePutRequests: Uint8Array[] = []
+
+export async function mountArchiveEntryImprovements(loseFirstPutAnswer = false) {
+  archivePutRequests.length = 0
   const addr = create(EntryAddressSchema, { accountId: 'acct-a', archive: 'executed-agreements', entryId: 'nda-2026-001' })
   const origDesc = create(RenditionDescriptorSchema, { name: 'original', mediaType: 'application/pdf' })
   const ocrDesc = create(RenditionDescriptorSchema, { name: 'ocr', subKey: 'page-1', mediaType: 'text/plain' })
@@ -670,6 +820,18 @@ export async function mountArchiveEntryImprovements() {
             }),
           ],
         }),
+      putEntry: (req) => {
+        archivePutRequests.push(toBinary(PutEntryRequestSchema, req))
+        if (loseFirstPutAnswer && archivePutRequests.length === 1) throw new ConnectError('Response lost', Code.Unavailable)
+        return create(PutEntryResponseSchema, {
+          version: 4n,
+          rootChecksum: 'e4d909c290d0fb1ca068ffaddf22cbd0a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4',
+          totalBytes: 249_024n,
+          deduplicated: false,
+          replayed: false,
+          operationId: req.operationId || '018f4063-7d4b-7000-8000-000000000694',
+        })
+      },
     }),
   )
 

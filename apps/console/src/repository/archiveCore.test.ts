@@ -12,12 +12,20 @@ import {
   ArchiveService,
   BridgeEntryResponseSchema,
   BridgeOutcomeSchema,
+  PutEntryResponseSchema,
   ReadRenditionResponseSchema,
   RenditionReadHeaderSchema,
   UploadRenditionResponseSchema,
   type ReadRenditionRequest,
   type ReadRenditionResponse,
 } from '@/gen/ai/protomolt/proto/repo/archive/v1/archive_service_pb'
+import {
+  DriveProviderConfigSchema,
+  DriveSchema,
+  DriveStatus,
+  DriveType,
+  S3DriveConfigSchema,
+} from '@/gen/ai/protomolt/proto/repo/v1/drive_pb'
 import {
   EntryAddressSchema,
   EntryInfoSchema,
@@ -36,10 +44,15 @@ import {
   buildClassifyEntryRequest,
   buildCreateArchiveRequest,
   buildDeclaredFormatFact,
+  buildPutEntryRequest,
   classificationEvidenceRows,
   classificationLabel,
   contentProfileLabel,
+  describeDriveDetails,
+  describePutEntryOutcome,
   entryAddress,
+  entryCallNumber,
+  entryNodeAddress,
   entryRow,
   parseVersion,
   planRenditionUpload,
@@ -408,6 +421,160 @@ describe('rows and labels', () => {
     expect(suggestEntryIdFromFilename('Quarterly Report (Final).pdf')).toBe('quarterly-report-final')
   })
 
+  it('builds PutEntry requests with metadata validation and inline renditions, and summarizes outcomes (#694, #696)', () => {
+    const req = buildPutEntryRequest(
+      ADDRESS,
+      {
+        title: 'Paper 1 (Revised)',
+        filename: 'p1-rev.pdf',
+        contentType: 'application/pdf',
+        sourceUri: 's3://corpus/p1.pdf',
+        expectedVersion: 3n,
+        producingModule: 'console-editor',
+        metadata: [
+          { key: 'department', value: 'research' },
+          { key: ' ', value: ' ' },
+        ],
+        renditions: [
+          {
+            name: 'notes',
+            subKey: 'summary',
+            mediaType: 'text/markdown',
+            schemaSubject: '',
+            text: '# Executive Summary\nVerified.',
+          },
+        ],
+      },
+      '018f4063-7d4b-7000-8000-000000000111',
+    )
+    expect(req.title).toBe('Paper 1 (Revised)')
+    expect(req.expectedVersion).toBe(3n)
+    expect(req.metadata).toEqual({ department: 'research' })
+    expect(req.renditions).toHaveLength(1)
+    expect(req.renditions[0].rendition).toMatchObject({
+      name: 'notes',
+      subKey: 'summary',
+      mediaType: 'text/markdown',
+    })
+    expect(new TextDecoder().decode(req.renditions[0].data)).toBe('# Executive Summary\nVerified.')
+
+    expect(() =>
+      buildPutEntryRequest(ADDRESS, {
+        title: 'T',
+        filename: '',
+        contentType: '',
+        sourceUri: '',
+        expectedVersion: 0n,
+        producingModule: '',
+        metadata: [{ key: 'archive.internal', value: 'x' }],
+        renditions: [],
+      }),
+    ).toThrow('reserved by the archive service')
+
+    expect(() =>
+      buildPutEntryRequest(ADDRESS, {
+        title: 'T',
+        filename: '',
+        contentType: '',
+        sourceUri: '',
+        expectedVersion: 0n,
+        producingModule: '',
+        metadata: [],
+        renditions: [{ name: 'parsed', subKey: 'p1', mediaType: '', schemaSubject: '', text: 'hi' }],
+      }),
+    ).toThrow('requires an encoded PARSED protobuf fragment')
+
+    const created = describePutEntryOutcome(
+      create(PutEntryResponseSchema, {
+        version: 4n,
+        rootChecksum: 'abc123',
+        totalBytes: 512n,
+        deduplicated: false,
+        replayed: false,
+        operationId: 'op-4',
+      }),
+    )
+    expect(created).toMatchObject({ statusLabel: 'CREATED', version: 4n, operationId: 'op-4' })
+
+    const dedup = describePutEntryOutcome(
+      create(PutEntryResponseSchema, {
+        version: 3n,
+        rootChecksum: 'abc123',
+        totalBytes: 512n,
+        deduplicated: true,
+        replayed: false,
+      }),
+    )
+    expect(dedup.statusLabel).toBe('DEDUPLICATED')
+
+    expect(entryCallNumber(ADDRESS)).toEqual({
+      accountId: 'acct-a',
+      graphId: 'archive:acct-a',
+      graphAddressId: 'papers',
+      docId: 'e-1',
+    })
+    expect(entryNodeAddress(ADDRESS)).toMatchObject({
+      accountId: 'acct-a',
+      graphId: 'archive:acct-a',
+      graphAddressId: 'papers',
+      docId: 'e-1',
+    })
+
+    const driveView = describeDriveDetails(
+      create(DriveSchema, {
+        driveId: 'drv-1',
+        name: 'intake',
+        accountId: 'acct-a',
+        driveType: DriveType.INTAKE,
+        status: DriveStatus.ACTIVE,
+        provider: 's3',
+        bucket: 'corpus-bucket',
+        prefix: 'acct-a/raw',
+        region: 'us-east-1',
+        providerConfig: create(DriveProviderConfigSchema, {
+          config: {
+            case: 's3',
+            value: create(S3DriveConfigSchema, {
+              endpointOverride: 'http://minio:9000',
+              forcePathStyle: true,
+            }),
+          },
+          options: { 'multipart.threshold': '16MB' },
+        }),
+        metadata: { tier: 'hot' },
+      }),
+    )
+    expect(driveView).toMatchObject({
+      name: 'intake',
+      location: 'corpus-bucket/acct-a/raw',
+      providerSummary: 'S3 · endpoint http://minio:9000 · path-style=true',
+      providerOptions: [{ key: 'multipart.threshold', value: '16MB' }],
+      metadata: [{ key: 'tier', value: 'hot' }],
+    })
+  })
+})
+
+
+describe('inline rendition admission', () => {
+  const form = (name: string, subKey = '') => ({ title: '', filename: '', contentType: '', sourceUri: '',
+    expectedVersion: 0n, producingModule: 'console', metadata: [],
+    renditions: [{ name, subKey, mediaType: 'text/plain', schemaSubject: '', text: '' }] })
+
+  it.each(['.hidden', '_notes', '-notes', 'x'.repeat(201), 'parsed'])(
+    'refuses an inline rendition the archive cannot accept: %s', name => {
+      expect(() => buildPutEntryRequest(ADDRESS, form(name))).toThrow()
+    },
+  )
+  it.each(['.part', 'x'.repeat(201)])('refuses an invalid sub-key: %s', subKey => {
+    expect(() => buildPutEntryRequest(ADDRESS, form('notes', subKey))).toThrow()
+  })
+  it('accepts the 200-character boundary and an intentionally empty payload', () => {
+    const request = buildPutEntryRequest(ADDRESS, form('x'.repeat(200), 'p'.repeat(200)))
+    expect(request.renditions[0].data).toHaveLength(0)
+  })
+})
+
+describe('archive upload refusals', () => {
   it('decodes a refusal as google.rpc.Status, details included', async () => {
     const body = new TextEncoder().encode('rendition payload')
     const plan = planRenditionUpload(

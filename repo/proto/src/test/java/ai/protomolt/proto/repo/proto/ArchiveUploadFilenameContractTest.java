@@ -30,7 +30,9 @@ class ArchiveUploadFilenameContractTest {
 
     @Test
     void pinsUploadHeaderClosureIncludingFilenameAndItsHouseRule() {
+        // The closure includes archive_service.proto, including DeleteEntryRequest's
+        // optional expected_version guard added by #742; filename rules are unchanged.
         assertThat(DescriptorFingerprints.fingerprintOf(UploadRenditionHeader.getDescriptor()))
-                .isEqualTo("120cc1579b39dabbfb248b25f04d9e867d02d2c9ba356bd240c76e7a136df90c");
+                .isEqualTo("64be438a84dccc95cd6e12a5cb4085d089c7378df409e187e128582a4efff2ef");
     }
 }

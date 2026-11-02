@@ -18,10 +18,12 @@ import {
   GetEntryManifestResponseSchema,
   ListEntriesResponseSchema,
   ListVersionsResponseSchema,
+  PutEntryResponseSchema,
   ReadRenditionResponseSchema,
   RenditionReadHeaderSchema,
   type GetEntryManifestRequest,
   type ListEntriesRequest,
+  type PutEntryRequest,
   type ReadRenditionRequest,
 } from '@/gen/ai/protomolt/proto/repo/archive/v1/archive_service_pb'
 import {
@@ -32,6 +34,12 @@ import {
   RenditionState,
   VersionManifestSchema,
 } from '@/gen/ai/protomolt/proto/repo/archive/v1/entry_pb'
+import {
+  DocumentService,
+  PurgeDocumentResponseSchema,
+} from '@/gen/ai/protomolt/proto/repo/v2/document_service_pb'
+import { ArchiveMutationService, ArchiveMutationResponseSchema } from '@/gen/ai/protomolt/proto/repo/archive/v1/archive_mutation_service_pb'
+import { ArchiveMutationReceiptSchema, ArchiveMutationKind, ArchiveMutationState, type ArchiveMutationRequest } from '@/gen/ai/protomolt/proto/repo/archive/v1/archive_mutation_pb'
 import { at } from '@/repository/repositoryTestKit'
 import { mountRepositoryView, settle } from '@/repository/repositoryViewKit'
 import RepositoryArchiveEntryView from './RepositoryArchiveEntryView.vue'
@@ -489,4 +497,323 @@ describe('RepositoryArchiveEntryView', () => {
     expect(wrapper.find('[data-testid="archive-active-filters"]').exists()).toBe(false)
     wrapper.unmount()
   })
+
+  it.each([false, true])('metadata edits preserve markdown unless an empty replacement is explicitly added (%s)', async (replace) => {
+    const calls: PutEntryRequest[] = []
+    const { wrapper } = await mountRepositoryView(RepositoryArchiveEntryView, ENTRY, (r) => {
+      archives(seen())(r)
+      r.service(ArchiveService, {
+        getEntryManifest: () => {
+          const stored = manifest(3n)
+          stored.renditions.push(create(RenditionManifestEntrySchema, {
+            rendition: create(RenditionDescriptorSchema, { name: 'markdown', mediaType: 'text/markdown' }),
+            state: RenditionState.PRESENT, sizeBytes: 42n, sha256: 'a'.repeat(64),
+          }))
+          return create(GetEntryManifestResponseSchema, {
+            info: create(EntryInfoSchema, { address: address('e-1'), currentVersion: 3n, title: 'Original' }),
+            manifest: stored,
+          })
+        },
+        putEntry: (request) => {
+          calls.push(request)
+          return create(PutEntryResponseSchema, { version: 4n, operationId: request.operationId })
+        },
+      })
+    })
+    try {
+      await wrapper.get('[data-testid="toggle-put-entry"]').trigger('click')
+      await wrapper.get('[data-testid="put-entry-title"] input').setValue('Updated title')
+      if (replace) {
+        await wrapper.get('[data-testid="put-entry-add-rendition"]').trigger('click')
+        await wrapper.get('[data-testid="put-rendition-name-0"] input').setValue('markdown')
+      }
+      await wrapper.get('[data-testid="put-entry-submit"]').trigger('click')
+      await settle()
+      expect(calls).toHaveLength(1)
+      expect(calls[0].title).toBe('Updated title')
+      expect(calls[0].renditions).toHaveLength(replace ? 1 : 0)
+      if (replace) {
+        expect(calls[0].renditions[0].rendition?.name).toBe('markdown')
+        expect(calls[0].renditions[0].data).toEqual(new Uint8Array())
+      }
+    } finally {
+      wrapper.unmount()
+    }
+  })
+
+  it('commits atomic metadata and inline renditions via ArchiveService.PutEntry and bridges to the v2 document view (#694, #696)', async () => {
+    const s = seen()
+    const putCalls: PutEntryRequest[] = []
+    const { wrapper, router } = await mountRepositoryView(RepositoryArchiveEntryView, ENTRY, (r) => {
+      archives(s)(r)
+      r.service(ArchiveService, {
+        getEntryManifest: (req) =>
+          create(GetEntryManifestResponseSchema, {
+            info: create(EntryInfoSchema, { address: address('e-1'), currentVersion: 3n, title: 'Paper 1', filename: 'p1.pdf', contentType: 'application/pdf' }),
+            manifest: manifest(req.version === 0n ? 3n : req.version),
+          }),
+        listVersions: () => create(ListVersionsResponseSchema, { versions: [manifest(3n)] }),
+        putEntry(request) {
+          putCalls.push(request)
+          return create(PutEntryResponseSchema, {
+            version: 4n,
+            rootChecksum: 'd4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5',
+            totalBytes: 150_512n,
+            deduplicated: false,
+            replayed: false,
+            operationId: request.operationId || '018f4063-7d4b-7000-8000-000000000111',
+          })
+        },
+      })
+    })
+
+    await wrapper.get('[data-testid="toggle-put-entry"]').trigger('click')
+    await settle()
+    expect(wrapper.find('[data-testid="put-entry-panel"]').exists()).toBe(true)
+
+    await wrapper.get('[data-testid="put-entry-title"] input').setValue('Paper 1 — Annotated')
+    await wrapper.get('[data-testid="put-entry-add-meta"]').trigger('click')
+    await settle()
+    await wrapper.get('[data-testid="put-entry-meta-key-0"] input').setValue('reviewer')
+    await wrapper.get('[data-testid="put-entry-meta-val-0"] input').setValue('ada')
+
+    await wrapper.get('[data-testid="put-entry-add-rendition"]').trigger('click')
+    await wrapper.get('[data-testid="put-rendition-name-0"] input').setValue('notes')
+    await wrapper.get('[data-testid="put-rendition-subkey-0"] input').setValue('v1')
+    await wrapper.get('[data-testid="put-rendition-text-0"] textarea').setValue('Verified inline notes')
+
+    await wrapper.get('[data-testid="put-entry-submit"]').trigger('click')
+    await settle()
+
+    expect(putCalls).toHaveLength(1)
+    expect(putCalls[0].title).toBe('Paper 1 — Annotated')
+    expect(putCalls[0].metadata).toEqual({ reviewer: 'ada' })
+    expect(putCalls[0].renditions).toHaveLength(1)
+    expect(putCalls[0].renditions[0].rendition?.name).toBe('notes')
+    expect(wrapper.get('[data-testid="put-entry-outcome"]').text()).toContain('Committed new version 4')
+    expect(wrapper.get('[data-testid="put-entry-status-chip"]').text()).toBe('CREATED')
+
+    await wrapper.get('[data-testid="open-entry-v2-document"]').trigger('click')
+    await settle()
+    expect(router.currentRoute.value.query).toEqual({
+      account: 'acct-a',
+      graph: 'archive:acct-a',
+      node: 'papers',
+      doc: 'e-1',
+      revision: '3',
+    })
+    wrapper.unmount()
+  })
+
+  it('deletes through ArchiveMutation with the observed version and displays its receipt, never direct document deletion', async () => {
+    const deletes: ArchiveMutationRequest[] = []
+    let shortcuts = 0
+    const { wrapper, router } = await mountRepositoryView(RepositoryArchiveEntryView, ENTRY, (r) => {
+      archives(seen())(r)
+      r.service(DocumentService, {
+        deleteDocument() { shortcuts++; throw new Error('No direct document delete') },
+        purgeDocument() { shortcuts++; return create(PurgeDocumentResponseSchema) },
+      })
+      r.service(ArchiveMutationService, {
+        archiveMutation(request) {
+          deletes.push(request)
+          return create(ArchiveMutationResponseSchema, { receipt: create(ArchiveMutationReceiptSchema, {
+            operationId: request.operationId, address: address('e-1'), kind: ArchiveMutationKind.DELETE_ENTRY,
+            state: ArchiveMutationState.COMPLETED, entryDeleted: true,
+            commandSha256: '8f98947ff1ae6a17435d9e48c584364593181ff83f1667d3af525067b9a081fe',
+          }) })
+        },
+      })
+    })
+    await wrapper.get('[data-testid="delete-archive-entry"]').trigger('click')
+    await settle()
+    expect(document.body.querySelector('[data-testid="delete-archive-address"]')!.textContent).toBe('acct-a / papers / e-1')
+    expect(document.body.querySelector('[data-testid="delete-archive-version"]')!.textContent).toBe('3')
+    ;(document.body.querySelector('[data-testid="delete-archive-confirm"]') as HTMLElement).click()
+    await settle()
+    expect(deletes).toHaveLength(1)
+    expect(deletes[0].mutation).toMatchObject({ case: 'deleteEntry', value: { address: address('e-1'), expectedVersion: 3n } })
+    expect(shortcuts).toBe(0)
+    expect(document.body.querySelector('[data-testid="delete-archive-receipt"]')!.textContent).toContain(deletes[0].operationId)
+    ;(document.body.querySelector('[data-testid="delete-archive-close"]') as HTMLElement).click()
+    await settle()
+    expect(router.currentRoute.value.name).toBe('repository-archive')
+    expect(router.currentRoute.value.query).toEqual({ account: 'acct-a', archive: 'papers' })
+    wrapper.unmount()
+  })
+
+  it('offers Delete entry only on the current version', async () => {
+    const { wrapper } = await mountRepositoryView(
+      RepositoryArchiveEntryView,
+      { name: 'repository-archive-entry', query: { account: 'acct-a', archive: 'papers', entry: 'e-1', version: '2' } },
+      archives(seen()),
+    )
+    await settle()
+    expect(wrapper.find('[data-testid="version-chip"]').text()).toContain('version 2')
+    expect(wrapper.find('[data-testid="delete-archive-entry"]').exists()).toBe(false)
+    wrapper.unmount()
+  })
+})
+
+
+describe('PutEntry draft and retry identity', () => {
+  async function putView(failures: Code[] = [], held?: Promise<void>) {
+    const calls: PutEntryRequest[] = []
+    const mounted = await mountRepositoryView(RepositoryArchiveEntryView, ENTRY, r => {
+      archives(seen())(r)
+      r.service(ArchiveService, {
+        getEntryManifest: req => create(GetEntryManifestResponseSchema, {
+          info: create(EntryInfoSchema, { address: req.address, currentVersion: 3n, title: `Title ${req.address?.entryId}` }),
+          manifest: create(VersionManifestSchema, { ...manifest(3n), address: req.address }),
+        }),
+        listVersions: () => create(ListVersionsResponseSchema),
+        async putEntry(req) {
+          calls.push(req)
+          if (held) await held
+          const failure = failures.shift()
+          if (failure !== undefined) throw new ConnectError('Save did not return success', failure)
+          return create(PutEntryResponseSchema, { version: 4n, operationId: req.operationId })
+        },
+      })
+    })
+    return { ...mounted, calls }
+  }
+
+  it('metadata-only edit sends no rendition replacement', async () => {
+    const { wrapper, calls } = await putView()
+    try {
+      await wrapper.get('[data-testid="toggle-put-entry"]').trigger('click')
+      await wrapper.get('[data-testid="put-entry-title"] input').setValue('Title edited only')
+      await wrapper.get('[data-testid="put-entry-submit"]').trigger('click')
+      await settle()
+      expect(calls).toHaveLength(1)
+      expect(calls[0].renditions).toHaveLength(0)
+    } finally { wrapper.unmount() }
+  })
+
+  it('navigating to a different entry cannot submit the old entry draft there', async () => {
+    const { wrapper, router, calls } = await putView()
+    try {
+      await wrapper.get('[data-testid="toggle-put-entry"]').trigger('click')
+      await wrapper.get('[data-testid="put-entry-title"] input').setValue('Draft for e-1')
+      await wrapper.get('[data-testid="put-entry-add-rendition"]').trigger('click')
+      await wrapper.get('[data-testid="put-rendition-name-0"] input').setValue('notes')
+      await wrapper.get('[data-testid="put-rendition-text-0"] textarea').setValue('Only for e-1')
+      await router.push({ name: 'repository-archive-entry', query: { account: 'acct-a', archive: 'papers', entry: 'e-2' } })
+      await settle()
+      expect(wrapper.text()).toContain('Title e-2')
+      expect(wrapper.find('[data-testid="put-entry-panel"]').exists()).toBe(false)
+      expect(calls).toHaveLength(0)
+      await wrapper.get('[data-testid="toggle-put-entry"]').trigger('click')
+      await wrapper.get('[data-testid="put-entry-submit"]').trigger('click')
+      await settle()
+      expect(calls).toHaveLength(1)
+      expect(calls[0]).toMatchObject({ address: { entryId: 'e-2' }, title: 'Title e-2', renditions: [] })
+    } finally { wrapper.unmount() }
+  })
+
+  it('retry of an unsettled unchanged PutEntry retains its operation ID', async () => {
+    const { wrapper, calls } = await putView([Code.Unavailable])
+    try {
+      await wrapper.get('[data-testid="toggle-put-entry"]').trigger('click')
+      await wrapper.get('[data-testid="put-entry-expected-version"] input').setValue('0')
+      await wrapper.get('[data-testid="put-entry-submit"]').trigger('click')
+      await settle()
+      await wrapper.get('[data-testid="put-entry-submit"]').trigger('click')
+      await settle()
+      expect(calls).toHaveLength(2)
+      expect(calls[0].operationId).not.toBe('')
+      expect(calls[1].operationId).toBe(calls[0].operationId)
+    } finally { wrapper.unmount() }
+  })
+
+  it.each([Code.Unavailable, Code.DeadlineExceeded, Code.Internal, Code.ResourceExhausted])(
+    'keeps the exact bytes and expected revision through an uncertain %s answer and panel reopen', async code => {
+      const { wrapper, calls } = await putView([code])
+      try {
+        await wrapper.get('[data-testid="toggle-put-entry"]').trigger('click')
+        await wrapper.get('[data-testid="put-entry-title"] input').setValue('Original intent')
+        await wrapper.get('[data-testid="put-entry-add-rendition"]').trigger('click')
+        await wrapper.get('[data-testid="put-rendition-name-0"] input').setValue('notes')
+        await wrapper.get('[data-testid="put-rendition-text-0"] textarea').setValue('Exact bytes π')
+        await wrapper.get('[data-testid="put-entry-submit"]').trigger('click')
+        await settle()
+        expect(wrapper.get('[data-testid="put-entry-unsettled"]').text()).toContain(calls[0].operationId)
+        expect(wrapper.get('fieldset').attributes('disabled')).toBeDefined()
+        await wrapper.get('[data-testid="toggle-put-entry"]').trigger('click')
+        await wrapper.get('[data-testid="toggle-put-entry"]').trigger('click')
+        await wrapper.get('[data-testid="put-entry-submit"]').trigger('click')
+        await settle()
+        expect(calls).toHaveLength(2)
+        expect(calls[1]).toEqual(calls[0])
+        expect(calls[1].expectedVersion).toBe(3n)
+        expect(new TextDecoder().decode(calls[1].renditions[0].data)).toBe('Exact bytes π')
+        expect(wrapper.find('[data-testid="put-entry-unsettled"]').exists()).toBe(false)
+        expect(wrapper.get('fieldset').attributes('disabled')).toBeUndefined()
+      } finally { wrapper.unmount() }
+    },
+  )
+
+  it.each([Code.InvalidArgument, Code.Aborted, Code.PermissionDenied])(
+    'allows a corrected fresh intent after a definite %s refusal', async code => {
+      const { wrapper, calls } = await putView([code])
+      try {
+        await wrapper.get('[data-testid="toggle-put-entry"]').trigger('click')
+        await wrapper.get('[data-testid="put-entry-submit"]').trigger('click')
+        await settle()
+        expect(wrapper.find('[data-testid="put-entry-unsettled"]').exists()).toBe(false)
+        expect(wrapper.get('fieldset').attributes('disabled')).toBeUndefined()
+        await wrapper.get('[data-testid="put-entry-title"] input').setValue('Corrected intent')
+        await wrapper.get('[data-testid="put-entry-submit"]').trigger('click')
+        await settle()
+        expect(calls).toHaveLength(2)
+        expect(calls[1].operationId).not.toBe(calls[0].operationId)
+        expect(calls[1].title).toBe('Corrected intent')
+      } finally { wrapper.unmount() }
+    },
+  )
+
+  it('restores an uncertain attempt only for its original entry after navigating away and back', async () => {
+    const { wrapper, router, calls } = await putView([Code.Unavailable])
+    try {
+      await wrapper.get('[data-testid="toggle-put-entry"]').trigger('click')
+      await wrapper.get('[data-testid="put-entry-title"] input').setValue('Unsettled e-1')
+      await wrapper.get('[data-testid="put-entry-submit"]').trigger('click')
+      await settle()
+      await router.push({ name: 'repository-archive-entry', query: { account: 'acct-a', archive: 'papers', entry: 'e-2' } })
+      await settle()
+      await wrapper.get('[data-testid="toggle-put-entry"]').trigger('click')
+      expect(wrapper.find('[data-testid="put-entry-unsettled"]').exists()).toBe(false)
+      expect((wrapper.get('[data-testid="put-entry-title"] input').element as HTMLInputElement).value).toBe('Title e-2')
+      await router.push(ENTRY)
+      await settle()
+      await wrapper.get('[data-testid="toggle-put-entry"]').trigger('click')
+      expect(wrapper.get('[data-testid="put-entry-unsettled"]').text()).toContain(calls[0].operationId)
+      await wrapper.get('[data-testid="put-entry-submit"]').trigger('click')
+      await settle()
+      expect(calls).toHaveLength(2)
+      expect(calls[1]).toEqual(calls[0])
+    } finally { wrapper.unmount() }
+  })
+
+  it('ignores a late save answer after navigating to another entry', async () => {
+    let release!: () => void
+    const held = new Promise<void>(resolve => { release = resolve })
+    const { wrapper, router, calls } = await putView([], held)
+    try {
+      await wrapper.get('[data-testid="toggle-put-entry"]').trigger('click')
+      await wrapper.get('[data-testid="put-entry-submit"]').trigger('click')
+      await settle()
+      expect(calls).toHaveLength(1)
+      await router.push({ name: 'repository-archive-entry', query: { account: 'acct-a', archive: 'papers', entry: 'e-2' } })
+      await settle()
+      await wrapper.get('[data-testid="toggle-put-entry"]').trigger('click')
+      release()
+      await settle()
+      expect(wrapper.find('[data-testid="put-entry-outcome"]').exists()).toBe(false)
+      expect((wrapper.get('[data-testid="put-entry-expected-version"] input').element as HTMLInputElement).value).toBe('3')
+      expect(wrapper.text()).toContain('Title e-2')
+    } finally { release(); wrapper.unmount() }
+  })
+
 })
