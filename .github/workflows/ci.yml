@@ -16,6 +16,8 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
+# Bound Gradle workers to two on shared CI runners; keep all test suites enabled.
+# The same bound is used by local qualification under /work/.gradle-krick.lock.
 jobs:
   # Compilation is pinned to --release 25, and the test JVM runs on that same baseline.
   # The matrix stays a matrix so a newer JDK can be added beside it without reshaping
@@ -138,6 +140,9 @@ jobs:
       - name: Authoring starter configuration
         run: deploy/authoring/check-static.sh
 
+      - name: Test protobuf compatibility gate
+        run: python3 scripts/test_proto_compatibility.py
+
       - name: Buf breaking (PRs)
         if: github.event_name == 'pull_request'
         env:
@@ -217,6 +222,21 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
+      - name: Reserve disk for registry integration fixtures
+        # Hosted images carry Android and .NET SDKs this JVM job never uses.
+        # Their space is needed by the registry images and Gradle outputs:
+        # Redpanda refuses writes under disk pressure even while it is healthy.
+        # Preserve that protection and fail before tests if capacity is inadequate.
+        run: |
+          df -h /var/lib/docker
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet
+          available_kib=$(df -Pk /var/lib/docker | awk 'NR == 2 {print $4}')
+          if [ "$available_kib" -lt 31457280 ]; then
+            echo "::error::Registry integration needs at least 30 GiB free before pulling fixtures; found ${available_kib} KiB."
+            exit 1
+          fi
+          df -h /var/lib/docker
 
       - uses: actions/setup-java@v4
         with:
