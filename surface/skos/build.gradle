@@ -1,0 +1,15 @@
+plugins {
+    id 'application'
+}
+
+description = 'Optional strict SKOS RDF edge conversion to and from ConceptScheme protobuf'
+
+dependencies {
+    api project(':protomolt-protobuf-types')
+    implementation project(':protomolt-formats')
+    implementation libs.jena.arq
+}
+
+application {
+    mainClass = 'ai.protomolt.proto.skos.SkosMain'
+}
