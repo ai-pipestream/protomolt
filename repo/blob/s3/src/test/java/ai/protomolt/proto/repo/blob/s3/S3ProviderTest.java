@@ -47,6 +47,21 @@ class S3ProviderTest {
                 .isInstanceOf(IllegalArgumentException.class).hasMessageNotContaining("secret");
     }
 
+    @Test void explicitProfileRequiresItsNameAndRejectsMixedCredentialModes() throws Exception {
+        var selected = options();
+        selected.remove("access-key"); selected.remove("secret-key");
+        selected.put("credentials-mode", "profile");
+        assertThatThrownBy(() -> BlobStores.discover().open("s3", selected))
+                .isInstanceOf(IllegalArgumentException.class).hasMessage("Missing S3 option: profile-name");
+        selected.put("profile-name", "repository-archive");
+        try (var opened = BlobStores.discover().open("s3", selected)) {
+            assertThat(opened.store()).isInstanceOf(S3BlobStore.class);
+        }
+        selected.put("access-key", "must-not-be-used");
+        assertThatThrownBy(() -> BlobStores.discover().open("s3", selected))
+                .isInstanceOf(IllegalArgumentException.class).hasMessage("Invalid S3 option set");
+    }
+
     @org.junit.jupiter.params.ParameterizedTest
     @org.junit.jupiter.params.provider.ValueSource(strings = {"credentials-mode", "api-call-timeout-ms",
             "api-attempt-timeout-ms", "connection-timeout-ms", "socket-timeout-ms", "region", "path-style"})

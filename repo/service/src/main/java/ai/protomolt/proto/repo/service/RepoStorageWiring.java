@@ -28,7 +28,8 @@ final class RepoStorageWiring {
     }
 
     /** What the storage selection produced. */
-    record Wired(BlobStore blobStore, NamespaceProvisioner namespaces, UUID readerIncarnation) {
+    record Wired(BlobStore blobStore, NamespaceProvisioner namespaces, UUID readerIncarnation,
+            ai.protomolt.proto.repo.blob.spi.ObjectReclaimer reclaimer) {
     }
 
     /**
@@ -91,7 +92,7 @@ final class RepoStorageWiring {
                 ReaderRegistration.register(tx, readerIncarnation, readerHost.execution());
             }
         }
-        return new Wired(blobStore, namespaces, readerIncarnation);
+        return new Wired(blobStore, namespaces, readerIncarnation, selectedBacking.reclaimer());
     }
 
     private static Map<String, String> redisOptions(RepoServiceConfig config, boolean bounded) {
@@ -106,7 +107,7 @@ final class RepoStorageWiring {
                 "write-policy", "replace");
     }
 
-    private static Map<String, String> s3Options(RepoServiceConfig config) {
+    static Map<String, String> s3Options(RepoServiceConfig config) {
         var options = new HashMap<String, String>();
         options.put("endpoint", config.s3Endpoint() == null ? "" : config.s3Endpoint());
         options.put("region", config.s3Region());

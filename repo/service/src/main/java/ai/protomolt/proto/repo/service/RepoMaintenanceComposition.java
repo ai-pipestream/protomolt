@@ -42,16 +42,15 @@ final class RepoMaintenanceComposition implements AutoCloseable {
         try {
             var database = owned.add(new LedgerDatabase(config.ledger()));
             openedTx = new Tx(database.entityManagerFactory());
-            var driveLedger = new DriveLedger(openedTx, new SelectedDriveBackend(config));
             var storage = RepoStorageWiring.wire(config, providers, false, owned, openedTx, null);
             startingReader = storage.readerIncarnation();
+            var pool = owned.add(new DriveBackingPool(config, providers, storage));
+            var driveLedger = new DriveLedger(openedTx, pool::resolve);
             var catalog = owned.add(new PostgresCatalog(
                     new CatalogConfig(config.ledger().jdbcUrl(),
                             config.ledger().username(), config.ledger().password(), config.ledger().maxPoolSize()),
                     CATALOG_SCHEMA));
-            String selectedDriveProvider = RepoServiceConfig.BLOB_STORE_S3_REDIS_CACHE.equals(config.blobStore())
-                    ? "s3" : config.blobStore();
-            var drives = RepoV2Wiring.drives(config, catalog, driveLedger, storage.blobStore(), selectedDriveProvider);
+            var drives = RepoV2Wiring.drives(catalog, driveLedger, pool);
             var reads = new DocumentReads(catalog, drives, ai.protomolt.proto.repo.admission.DocumentSchemaAdmission.Limits.SERVICE_DEFAULTS,
                     new ReadByteBudget(config.readBudgetBytes()), Clock.systemUTC());
             this.rebuild = new CatalogEntryRebuild(catalog, reads);

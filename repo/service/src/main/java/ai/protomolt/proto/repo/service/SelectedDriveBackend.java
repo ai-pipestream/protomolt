@@ -6,7 +6,7 @@ import ai.protomolt.proto.repo.spi.RepositoryException;
 import java.util.Objects;
 import java.util.function.Consumer;
 
-/** Verifies stored drive settings describe the one backend this service actually uses. */
+/** Verifies inherited host-default settings; explicit drive backends use {@link DriveBackingPool}. */
 final class SelectedDriveBackend implements Consumer<DriveRecord> {
     private final RepoServiceConfig config;
     private final String provider;
@@ -18,7 +18,9 @@ final class SelectedDriveBackend implements Consumer<DriveRecord> {
 
     @Override public void accept(DriveRecord drive) {
         var stored = drive.readProviderConfig();
-        DriveProvisioner.requireSelectedProvider(provider, drive.provider, stored);
+        DriveProvisioner.requireSelectedProvider(!config.hasS3Backing()
+                && ("redis".equals(drive.provider) || "valkey".equals(drive.provider))
+                ? drive.provider : provider, drive.provider, stored);
         if (drive.credentialsRef != null && !drive.credentialsRef.isBlank()) {
             throw new RepositoryException(RepositoryException.Code.FAILED_PRECONDITION, "Per-drive credential resolution is not configured");
         }

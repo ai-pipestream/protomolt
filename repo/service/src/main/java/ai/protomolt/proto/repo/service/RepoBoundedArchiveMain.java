@@ -23,7 +23,10 @@ public final class RepoBoundedArchiveMain {
                     CreateDriveRequest.newBuilder().setAccountId(settings.account).setName(settings.drive).build()).getDrive();
             if (drive.getStatus() != DriveStatus.DRIVE_STATUS_ACTIVE)
                 throw new IllegalStateException("Archive bootstrap drive must be active");
-            if (!drive.getProvider().equals(settings.config.driveProvider()))
+            boolean providerMatches = settings.config.hasS3Backing()
+                    ? "s3".equals(drive.getProvider())
+                    : "redis".equals(drive.getProvider()) || "valkey".equals(drive.getProvider());
+            if (!providerMatches)
                 throw new IllegalStateException("Archive bootstrap drive does not match selected provider");
             hook = new Thread(() -> drain(() -> services.close(Duration.ofSeconds(10))), "bounded-archive-shutdown");
             Runtime.getRuntime().addShutdownHook(hook);

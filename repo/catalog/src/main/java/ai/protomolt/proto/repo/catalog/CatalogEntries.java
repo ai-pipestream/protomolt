@@ -84,6 +84,27 @@ public final class CatalogEntries {
         return name.isEmpty() ? Optional.empty() : Optional.of(name);
     }
 
+    /** A storage identity must fit the catalog's composite btree index, independent of payload size. */
+    public static final int MAX_STACK_KEY_BYTES = 2048;
+
+    /** A configured stack identity is invalid before any catalog registration or part write. */
+    public static final class InvalidStackIdentity extends IllegalArgumentException {
+        public InvalidStackIdentity(String message) { super(message); }
+    }
+
+    /** Applies the StackRecord namespace contract and a UTF-8 bound for its indexed physical identity. */
+    public static void requireStorableStack(ai.protomolt.proto.repo.v2.StackRecord record) {
+        long bytes = 0;
+        for (String value : List.of(record.getProvider(), record.getEndpoint(), record.getNamespace())) {
+            if (value.indexOf('\0') >= 0) throw new InvalidStackIdentity("Drive storage identity contains NUL");
+            bytes += utf8Length(value);
+        }
+        if (record.getNamespace().codePointCount(0, record.getNamespace().length()) > 1024)
+            throw new InvalidStackIdentity("Drive storage namespace exceeds 1024 characters");
+        if (bytes > MAX_STACK_KEY_BYTES)
+            throw new InvalidStackIdentity("Drive indexed storage identity exceeds " + MAX_STACK_KEY_BYTES + " UTF-8 bytes");
+    }
+
     /** The longest title the catalog stores, in UTF-8 bytes: it sits in a btree index row. */
     public static final int MAX_TITLE_BYTES = 2000;
     /** The longest metadata key the catalog stores, in UTF-8 bytes: it is half of a primary key. */
