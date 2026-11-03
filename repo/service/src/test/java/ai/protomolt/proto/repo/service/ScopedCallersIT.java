@@ -72,6 +72,16 @@ import io.grpc.stub.AbstractStub;
 import io.grpc.stub.StreamObserver;
 import io.grpc.stub.MetadataUtils;
 import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+import ai.protomolt.proto.http.connect.ConnectGateway;
+import ai.protomolt.proto.repo.archive.v1.ArchiveMutationResponse;
+import ai.protomolt.proto.repo.archive.v1.GetArchiveMutationResponse;
+import ai.protomolt.proto.repo.archive.v1.GetEntryManifestRequest;
 import java.util.UUID;
 import java.util.function.Supplier;
 import org.assertj.core.api.ThrowableAssert.ThrowingCallable;
@@ -124,9 +134,10 @@ class ScopedCallersIT {
     static RepoServices services;
     static ManagedChannel channel;
     static String driveOfB;
+    static String httpBase;
 
     @BeforeAll
-    static void boot() {
+    static void boot() throws Exception {
         RepoServiceConfig config = new RepoServiceConfig(
                 0,
                 new LedgerConfig(POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword()),
@@ -159,6 +170,9 @@ class ScopedCallersIT {
         services = RepoServices.build(config).withAccountBindings(AccountBindingResolver.of(bindings));
         int port = services.startNetty(0, OPERATOR, new AccessPolicyCallers(policy)).getPort();
         channel = NettyChannelBuilder.forAddress("localhost", port).usePlaintext().build();
+        var http = services.startHttp(0, OPERATOR, RepositoryConsole.notConfigured(), Map.of(),
+                RepoServices.requestCallers(OPERATOR, new AccessPolicyCallers(policy), Optional.empty()));
+        httpBase = "http://127.0.0.1:" + http.port();
 
         var operatorDrives = as(OPERATOR, DriveServiceGrpc.newBlockingStub(channel));
         var operatorArchives = as(OPERATOR, ArchiveServiceGrpc.newBlockingStub(channel));
@@ -559,6 +573,75 @@ class ScopedCallersIT {
         assertThat(as(OPERATOR, ArchiveServiceGrpc.newBlockingStub(channel))
                 .getEntry(GetEntryRequest.newBuilder().setAddress(entry(ACCOUNT_A)).build())
                 .getInfo().getAddress().getEntryId()).isEqualTo("entry-1");
+    }
+
+    @Test
+    void connectArchiveDeletePreservesObservedVersionAuthorizationAndReplay() throws Exception {
+        var operator = as(OPERATOR, ArchiveServiceGrpc.newBlockingStub(channel));
+        var target = entry(ACCOUNT_A).toBuilder().setEntryId("connect-delete-guard").build();
+        operator.putEntry(PutEntryRequest.newBuilder().setAddress(target)
+                .addRenditions(rendition("original", "text/plain", "before")).build());
+        setEntryAccess(target, ERIN_UPN, Access.ACCESS_WRITE);
+        long observed = operator.getEntryManifest(GetEntryManifestRequest.newBuilder().setAddress(target).build())
+                .getManifest().getVersion();
+        var request = deleteEntry(UUID.randomUUID().toString(), target).toBuilder()
+                .setDeleteEntry(DeleteEntryRequest.newBuilder().setAddress(target).setExpectedVersion(observed)).build();
+        String procedure = ArchiveMutationServiceGrpc.getArchiveMutationMethod().getFullMethodName();
+        assertThat(connectArchive(null, procedure, request).statusCode()).isEqualTo(401);
+        assertThat(connectArchive(BOB, procedure, request).statusCode()).isEqualTo(403);
+        assertThat(connectArchive(ALICE, procedure, request).statusCode()).isEqualTo(403);
+        var missingAccount = request.toBuilder().setDeleteEntry(request.getDeleteEntry().toBuilder()
+                .setAddress(target.toBuilder().clearAccountId())).build();
+        assertThat(connectArchive(ERIN, procedure, missingAccount).statusCode()).isEqualTo(403);
+        var zeroVersion = request.toBuilder().setDeleteEntry(request.getDeleteEntry().toBuilder().setExpectedVersion(0)).build();
+        assertThat(connectArchive(ERIN, procedure, zeroVersion).statusCode()).isEqualTo(400);
+
+        operator.putEntry(PutEntryRequest.newBuilder().setAddress(target).setTitle("updated after confirmation").build());
+        setEntryAccess(target, ERIN_UPN, Access.ACCESS_WRITE);
+        var stale = connectArchive(ERIN, procedure, request);
+        assertThat(stale.statusCode()).as(new String(stale.body(), java.nio.charset.StandardCharsets.UTF_8)).isEqualTo(409);
+        long current = operator.getEntryManifest(GetEntryManifestRequest.newBuilder().setAddress(target).build())
+                .getManifest().getVersion();
+        assertThat(current).isGreaterThan(observed);
+        var fresh = request.toBuilder().setOperationId(UUID.randomUUID().toString())
+                .setDeleteEntry(request.getDeleteEntry().toBuilder().setExpectedVersion(current)).build();
+        var deleted = connectArchive(ERIN, procedure, fresh);
+        assertThat(deleted.statusCode()).as(new String(deleted.body(), java.nio.charset.StandardCharsets.UTF_8)).isEqualTo(200);
+        var receipt = ArchiveMutationResponse.parseFrom(deleted.body()).getReceipt();
+        assertThat(receipt.getEntryDeleted()).isTrue();
+        var replay = connectArchive(ERIN, procedure, fresh);
+        assertThat(replay.statusCode()).isEqualTo(200);
+        assertThat(ArchiveMutationResponse.parseFrom(replay.body()).getReceipt()).isEqualTo(receipt);
+        var changedGuard = fresh.toBuilder().setDeleteEntry(fresh.getDeleteEntry().toBuilder()
+                .setExpectedVersion(observed)).build();
+        assertThat(connectArchive(ERIN, procedure, changedGuard).statusCode()).isEqualTo(409);
+        var lookup = connectArchive(ERIN, ArchiveMutationServiceGrpc.getGetArchiveMutationMethod().getFullMethodName(),
+                GetArchiveMutationRequest.newBuilder().setAccountId(ACCOUNT_A).setOperationId(fresh.getOperationId()).build());
+        assertThat(lookup.statusCode()).isEqualTo(200);
+        assertThat(GetArchiveMutationResponse.parseFrom(lookup.body()).getReceipt()).isEqualTo(receipt);
+        // The tombstone does not purge retained document manifests. Archive current-entry
+        // admission refuses a tombstoned entry even for a pinned archive read.
+        var documents = as(OPERATOR, DocumentServiceGrpc.newBlockingStub(channel));
+        var node = ai.protomolt.proto.repo.archive.ArchiveCoordinates.address(target);
+        var revision = ai.protomolt.proto.repo.v2.RevisionSelector.newBuilder().setRevision(current).build();
+        var retained = documents.getDocument(GetDocumentRequest.newBuilder().setAddress(node).setRevision(revision).build());
+        assertThat(retained.getManifest().getRevision()).isEqualTo(current);
+        var bag = retained.getDocument().getBlobBag();
+        var blob = bag.hasBlob() ? bag.getBlob() : bag.getBlobs().getBlob(0);
+        var frames = documents.readBlob(ai.protomolt.proto.repo.v2.ReadBlobRequest.newBuilder()
+                .setAddress(node).setRevision(revision).setBlobId(blob.getBlobId()).build());
+        var bytes = new java.io.ByteArrayOutputStream();
+        frames.forEachRemaining(frame -> { if (frame.hasData()) bytes.writeBytes(frame.getData().toByteArray()); });
+        assertThat(bytes.toString(java.nio.charset.StandardCharsets.UTF_8)).isEqualTo("before");
+    }
+
+    private static HttpResponse<byte[]> connectArchive(String credential, String procedure,
+            com.google.protobuf.Message request) throws Exception {
+        var builder = HttpRequest.newBuilder(URI.create(httpBase + ConnectGateway.PATH + "/" + procedure))
+                .header("Content-Type", ConnectGateway.UNARY_CONTENT_TYPE).header("Connect-Protocol-Version", "1")
+                .POST(HttpRequest.BodyPublishers.ofByteArray(request.toByteArray()));
+        if (credential != null) builder.header("Authorization", "Bearer " + credential);
+        return HttpClient.newHttpClient().send(builder.build(), HttpResponse.BodyHandlers.ofByteArray());
     }
 
     private static ArchiveMutationRequest deleteEntry(String operationId, EntryAddress target) {

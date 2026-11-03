@@ -298,6 +298,12 @@ class RepoConnectGatewayIT {
                 ListVersionsRequest.newBuilder().setAddress(entry()).setLimit(10).build());
         requests.put(ArchiveServiceGrpc.getReadRenditionMethod().getFullMethodName(),
                 ReadRenditionRequest.newBuilder().setAddress(entry()).setRendition("original").build());
+        requests.put(ai.protomolt.proto.repo.archive.v1.ArchiveMutationServiceGrpc.getArchiveMutationMethod().getFullMethodName(),
+                ai.protomolt.proto.repo.archive.v1.ArchiveMutationRequest.newBuilder().setOperationId(java.util.UUID.randomUUID().toString())
+                        .setDeleteEntry(ai.protomolt.proto.repo.archive.v1.DeleteEntryRequest.newBuilder().setAddress(entry()).setExpectedVersion(1)).build());
+        requests.put(ai.protomolt.proto.repo.archive.v1.ArchiveMutationServiceGrpc.getGetArchiveMutationMethod().getFullMethodName(),
+                ai.protomolt.proto.repo.archive.v1.GetArchiveMutationRequest.newBuilder().setAccountId(ACCOUNT)
+                        .setOperationId(java.util.UUID.randomUUID().toString()).build());
         return requests;
     }
 

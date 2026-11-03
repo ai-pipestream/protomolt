@@ -625,6 +625,11 @@ message DeleteEntryRequest {
   EntryAddress address = 1 [
     (ai.protomolt.proto.validate.v1.field) = {required: true}
   ];
+  // Delete only the entry version the caller observed. When absent, retain the
+  // existing delete-current behavior. Presence requires a positive version.
+  optional int64 expected_version = 2 [
+    (ai.protomolt.proto.validate.v1.field).int64.gt = 0
+  ];
 }
 
 // Request to remove one rendition's bytes from EVERY retained version of

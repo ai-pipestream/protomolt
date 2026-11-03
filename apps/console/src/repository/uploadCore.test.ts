@@ -17,6 +17,7 @@ import { FakeUploadRequest, at, routerClients, testAddress, type FakeAnswer } fr
 import {
   HASH_SLICE_BYTES,
   UploadInputError,
+  deriveDocIdFromFilename,
   emptyUploadForm,
   fileSha256,
   followOutcome,
@@ -272,5 +273,13 @@ describe('followOutcome', () => {
     const last = await followOutcome(client, 'acct-a', 'op-1', new AbortController().signal, (a) => seen.push(a.state), noSleep)
     expect(seen).toEqual(['unavailable', 'unavailable', 'unavailable'])
     expect(last.state).toBe('unavailable')
+  })
+})
+
+describe('deriveDocIdFromFilename', () => {
+  it('slugifies filenames and joins optional path prefixes cleanly', () => {
+    expect(deriveDocIdFromFilename('', 'Q4 Financial Summary (Draft).pdf')).toBe('q4-financial-summary-draft-.pdf'.replace('-.pdf', '.pdf'))
+    expect(deriveDocIdFromFilename('/reports/2026/', 'Annual Report.PDF')).toBe('reports/2026/annual-report.pdf')
+    expect(deriveDocIdFromFilename('intake', 'nested/path/notes_v1.md')).toBe('intake/notes_v1.md')
   })
 })

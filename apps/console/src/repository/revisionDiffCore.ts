@@ -269,6 +269,22 @@ export function sectionDiff(base: string[], target: string[]): SectionDiff {
   return { lines, stats: diffStats(lines) }
 }
 
+/**
+ * Filters a section diff by line substring and/or changed-only operations.
+ */
+export function filterSectionDiff(diff: SectionDiff, query: string, changedOnly: boolean): SectionDiff {
+  const needle = query.trim().toLowerCase()
+  if (needle === '' && !changedOnly) {
+    return diff
+  }
+  const lines = diff.lines.filter((line) => {
+    if (changedOnly && line.op === 'same') return false
+    if (needle !== '' && !line.text.toLowerCase().includes(needle)) return false
+    return true
+  })
+  return { lines, stats: diffStats(lines) }
+}
+
 /** A fragment read for comparison: its flattened lines, or why it has none. */
 export type FragmentSide =
   | { kind: 'absent'; reason: string }

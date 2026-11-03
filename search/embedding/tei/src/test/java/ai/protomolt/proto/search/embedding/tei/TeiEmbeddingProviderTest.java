@@ -75,6 +75,85 @@ class TeiEmbeddingProviderTest {
     }
 
     @Test
+    void completedFakeCallIsReleasedBeforeItsReplacementArrives() {
+        var responses = new java.util.ArrayList<EmbedResponse>();
+        StreamObserver<EmbedResponse> replacement = new StreamObserver<>() {
+            @Override public void onNext(EmbedResponse value) { responses.add(value); }
+            @Override public void onError(Throwable failure) { throw new AssertionError(failure); }
+            @Override public void onCompleted() { }
+        };
+        fake.embed(EmbedRequest.newBuilder().setInputs("first").build(), new StreamObserver<>() {
+            @Override public void onNext(EmbedResponse value) { responses.add(value); }
+            @Override public void onError(Throwable failure) { throw new AssertionError(failure); }
+            @Override public void onCompleted() {
+                // The client can start another RPC as soon as completion is delivered,
+                // before the previous server handler returns from onCompleted().
+                fake.embed(EmbedRequest.newBuilder().setInputs("next").build(), replacement);
+            }
+        });
+        assertThat(responses).hasSize(2);
+        assertThat(fake.requests).extracting(EmbedRequest::getInputs).containsExactly("first", "next");
+        assertThat(fake.inFlight.get()).isZero();
+        assertThat(fake.peakInFlight()).isEqualTo(1);
+    }
+
+    @Test
+    void overlappingInstancesAndAllEntryPointsShareProcessCap() throws Exception {
+        var config = Map.of(TeiEmbeddingProvider.MAX_IN_FLIGHT_ENVIRONMENT_VARIABLE, "2");
+        try (var first = new TeiEmbeddingProvider(channel, config);
+             var second = new TeiEmbeddingProvider(channel, config);
+             var executor = java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor()) {
+            fake.hold = true;
+            var calls = List.of(
+                    executor.submit(() -> first.embedAll(List.of("a", "b", "c"))),
+                    executor.submit(() -> second.embedAll(List.of("d", "e", "f"))),
+                    executor.submit(() -> first.embedAllDocuments(List.of("g", "h"))),
+                    executor.submit(() -> second.embedAllQueries(List.of("i", "j"))),
+                    executor.submit(() -> first.embed("k")),
+                    executor.submit(second::dimension));
+            for (int answered = 0; answered < 12; answered++) {
+                awaitHeld(1);
+                Thread.sleep(30);
+                assertThat(fake.peakInFlight()).isLessThanOrEqualTo(2);
+                fake.answerOneHeld();
+            }
+            for (var call : calls) {
+                assertThat(call.get(10, TimeUnit.SECONDS)).isNotNull();
+            }
+            assertThat(fake.peakInFlight()).isEqualTo(2);
+        }
+    }
+
+    @Test
+    void interruptedBatchCancelsActiveRpcAndReleasesAdmission() throws Exception {
+        try (var provider = new TeiEmbeddingProvider(channel,
+                Map.of(TeiEmbeddingProvider.MAX_IN_FLIGHT_ENVIRONMENT_VARIABLE, "1"))) {
+            var failure = new java.util.concurrent.atomic.AtomicReference<Throwable>();
+            var interrupted = new java.util.concurrent.atomic.AtomicBoolean();
+            Thread caller = Thread.ofVirtual().start(() -> {
+                try {
+                    provider.embedAll(List.of("hang", "never"));
+                } catch (Throwable problem) {
+                    failure.set(problem);
+                    interrupted.set(Thread.currentThread().isInterrupted());
+                }
+            });
+            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+            while (fake.requests.isEmpty() && System.nanoTime() < deadline) {
+                Thread.sleep(5);
+            }
+            assertThat(fake.requests).hasSize(1);
+            caller.interrupt();
+            caller.join(5000);
+            assertThat(caller.isAlive()).isFalse();
+            assertThat(failure.get()).hasCauseInstanceOf(InterruptedException.class);
+            assertThat(interrupted).isTrue();
+            assertThat(provider.embed("recovered")).containsExactly(FakeEmbed.vectorFor("recovered"));
+            assertThat(fake.requests).extracting(EmbedRequest::getInputs).doesNotContain("never");
+        }
+    }
+
+    @Test
     void embedAllKeepsAtMostTheConfiguredCallsInFlight() throws Exception {
         TeiEmbeddingProvider provider = new TeiEmbeddingProvider(channel,
                 Map.of(TeiEmbeddingProvider.MAX_IN_FLIGHT_ENVIRONMENT_VARIABLE, "2"));
@@ -397,8 +476,10 @@ class TeiEmbeddingProviderTest {
             }
             Runnable answer = () -> {
                 observer.onNext(response.build());
-                observer.onCompleted();
+                // Completion can release the client and admit its next request before
+                // onCompleted returns. Stop counting this response before publishing it.
                 inFlight.decrementAndGet();
+                observer.onCompleted();
             };
             track();
             if (hold) {

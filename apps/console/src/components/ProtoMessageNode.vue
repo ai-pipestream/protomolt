@@ -18,7 +18,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import type { ViewNode } from '@/lib/message-view/messageTree'
 
 const props = defineProps<{
@@ -26,7 +26,13 @@ const props = defineProps<{
   depth: number
 }>()
 
-const open = ref(props.depth < 2)
+const open = ref(props.node.defaultOpen ?? props.depth < 2)
+watch(
+  () => props.node.defaultOpen,
+  (val) => {
+    if (val !== undefined) open.value = val
+  },
+)
 const hasChildren = computed(
   () => props.node.loadChildren !== undefined || (props.node.children?.length ?? 0) > 0,
 )

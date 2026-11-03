@@ -18,6 +18,7 @@ import {
 } from '@/gen/ai/protomolt/proto/repo/v2/document_service_pb'
 import {
   backlinkRow,
+  buildLinkNeighborhoodGraph,
   documentRoute,
   evidenceView,
   filterConditions,
@@ -216,5 +217,50 @@ describe('backlinkRow', () => {
     expect(row).toMatchObject({ revision: 5n, fieldPath: 'structured_data.cites', relationHref: null, pinnedRevision: 2n })
     expect(row.call.docId).toBe('src')
     expect(() => backlinkRow(create(BacklinkSchema, { revision: 1n }))).toThrow('without a linking address')
+  })
+})
+
+describe('buildLinkNeighborhoodGraph (#695)', () => {
+  it('lays out inbound backlinks, the current document, and outbound static/dynamic targets in 3 columns', () => {
+    const current = { accountId: 'acct-a', graphId: 'intake:acct-a', graphAddressId: 'ds-files', docId: 'doc-1' }
+    const staticOut = linkRow(staticLink({ pinned: 3n }))
+    const dynamicOut = linkRow(
+      create(ResolvedLinkSchema, {
+        fieldPath: 'structured_data.related',
+        ordinal: 0,
+        relation: 'related',
+        target: {
+          case: 'dynamicTarget',
+          value: create(DynamicLinkSelectorSchema, {
+            filter: create(DocumentFilterSchema, { documentType: 'report' }),
+          }),
+        },
+      }),
+    )
+    const inbound = backlinkRow(
+      create(BacklinkSchema, {
+        address: testAddress({ docId: 'citing-doc' }),
+        revision: 4n,
+        fieldPath: 'structured_data.cites',
+        relation: 'references',
+      }),
+    )
+
+    const beforeResolve = buildLinkNeighborhoodGraph(current, 3n, [staticOut, dynamicOut], [inbound])
+    expect(beforeResolve.nodes.map((n) => ({ docId: n.docId, column: n.column, status: n.status }))).toEqual([
+      { docId: 'citing-doc', column: 'inbound', status: 'RESOLVED' },
+      { docId: 'doc-1', column: 'current', status: 'CURRENT' },
+      { docId: 'doc-2', column: 'outbound', status: 'RESOLVED' },
+      { docId: 'structured_data.related[0]', column: 'outbound', status: 'DYNAMIC' },
+    ])
+    expect(beforeResolve.edges).toHaveLength(3)
+
+    const afterResolve = buildLinkNeighborhoodGraph(current, 3n, [staticOut, dynamicOut], [inbound], {
+      [dynamicOut.key]: [{ graphId: 'intake:acct-a', graphAddressId: 'ds-files', docId: 'solar-report', revision: '2' }],
+    })
+    expect(afterResolve.nodes.find((n) => n.docId === 'solar-report')).toMatchObject({
+      column: 'outbound',
+      status: 'RESOLVED',
+    })
   })
 })

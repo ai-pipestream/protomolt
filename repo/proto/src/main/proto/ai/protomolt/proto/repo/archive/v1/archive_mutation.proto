@@ -24,7 +24,7 @@ message ArchiveMutationRequest {
   string operation_id = 1 [(ai.protomolt.proto.validate.v1.field) = {required: true, string: {uuid: true}}];
   // Protobuf enforces exclusivity. CEL requires a selection.
   oneof mutation {
-    // Remove the entry and all retained versions.
+    // Tombstone the entry. Under v2 keep-forever, retained versions and bytes remain.
     DeleteEntryRequest delete_entry = 2;
     // Tombstone one rendition across retained versions.
     DeleteRenditionRequest delete_rendition = 3;
@@ -87,7 +87,9 @@ message ArchiveMutationReceipt {
   ArchiveMutationKind kind = 3 [(ai.protomolt.proto.validate.v1.field) = {required: true, enum: {defined_only: true, not_in: 0}}];
   // Physical cleanup observation, not a new logical execution.
   ArchiveMutationState state = 4 [(ai.protomolt.proto.validate.v1.field) = {required: true, enum: {defined_only: true, not_in: 0}}];
-  // SHA-256 of the canonical command, excluding runtime revisions/timestamps.
+  // SHA-256 of the canonical logical command, excluding runtime revisions/timestamps.
+  // DeleteEntry retains the address-only logical-delete digest; expected_version
+  // is enforced separately against the recorded accession on replay.
   string command_sha256 = 5 [(ai.protomolt.proto.validate.v1.field) = {required: true, string: {pattern: "^[0-9a-f]{64}$"}}];
   // True only when this command removed the entry.
   bool entry_deleted = 6;
