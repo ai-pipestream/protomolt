@@ -465,9 +465,9 @@ public final class RenditionUploads {
         private void sendInline() {
             ByteString body = inline.toByteString();
             inline = null;
-            UploadHeader header = pending.header(pending.needsWindows()
-                            ? ByteWindows.ofWhole(body.toByteArray())
-                            : ByteWindows.EMPTY)
+            UploadHeader header = (pending.needsWindows()
+                            ? pending.header(ArchiveClassifications.windowsOf(body), RenditionReads.sha256Hex(body))
+                            : pending.header(ByteWindows.EMPTY))
                     .toBuilder()
                     .setInlineData(body)
                     .build();

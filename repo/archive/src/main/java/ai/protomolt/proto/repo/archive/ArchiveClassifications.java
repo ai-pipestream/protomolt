@@ -4,6 +4,7 @@ import ai.protomolt.proto.asset.bridge.Bridges;
 import ai.protomolt.proto.asset.characterize.ByteWindows;
 import ai.protomolt.proto.asset.characterize.Characterizer;
 import ai.protomolt.proto.asset.characterize.Classifications;
+import ai.protomolt.proto.asset.characterize.WindowCapture;
 import ai.protomolt.proto.asset.v1.Attribution;
 import ai.protomolt.proto.asset.v1.Classification;
 import ai.protomolt.proto.asset.v1.ContentProfile;
@@ -15,10 +16,12 @@ import ai.protomolt.proto.repo.archive.v1.RenditionDescriptor;
 import ai.protomolt.proto.repo.archive.v1.WriteAttribution;
 import ai.protomolt.proto.repo.v1.Blob;
 import ai.protomolt.proto.repo.v2.GetDocumentResponse;
+import com.google.protobuf.ByteString;
 import com.google.protobuf.Descriptors;
 import com.google.protobuf.InvalidProtocolBufferException;
 import com.google.protobuf.Message;
 import com.google.protobuf.Value;
+import java.nio.ByteBuffer;
 import java.time.Instant;
 import java.util.Base64;
 import java.util.Comparator;
@@ -97,6 +100,19 @@ final class ArchiveClassifications {
                                 + "' are reserved by the archive: " + key);
             }
         }
+    }
+
+    /**
+     * The identification windows of content already in memory: the same head and tail a
+     * streamed upload captures, so a format is identified from what it could see in either
+     * path and an offset in neither window reports that it was not observed.
+     */
+    static ByteWindows windowsOf(ByteString content) {
+        WindowCapture capture = new WindowCapture();
+        for (ByteBuffer chunk : content.asReadOnlyByteBufferList()) {
+            capture.update(chunk);
+        }
+        return capture.windows();
     }
 
     /**
