@@ -231,6 +231,26 @@ class SnapshotProjectorTest {
             assertThat(read(dataset, SnapshotProjector.graphIri(ADDRESS)).isIsomorphicWith(graph)).isTrue();
         }
     }
+    @Test void schemeLiteralsThatTurtleEscapesSurviveTheProjectionExactly() {
+        String label = "She said \"caf\u00e9\"\nline two \u2713 \ud83d\ude00";
+        var converter = new SkosConverter("subjects", "https://example.org/scheme", Map.of());
+        var scheme = converter.read(new ByteArrayInputStream(("""
+                @prefix skos: <http://www.w3.org/2004/02/skos/core#> .
+                <https://example.org/scheme> a skos:ConceptScheme; skos:prefLabel "Subjects"@en .
+                <https://example.org/a> a skos:Concept; skos:inScheme <https://example.org/scheme>;
+                    skos:prefLabel "She said \\"caf\u00e9\\"\\nline two \u2713 \ud83d\ude00"@en .
+                """).getBytes(StandardCharsets.UTF_8)), SkosConverter.Format.TURTLE);
+        var occurrence = ResolvedOccurrence.newBuilder().setSchema(SCHEMA.toBuilder().setTypeUrl("type.googleapis.com/" + ConceptScheme.getDescriptor().getFullName()))
+                .setOccurrence(OccurrenceLocator.newBuilder().setPart(CORE).addSteps(RepositorySchemaOccurrenceStep.newBuilder().setFieldNumber(1)))
+                .setPayloadSha256(MessageFingerprints.fingerprint(scheme)).setPayloadLength(scheme.getSerializedSize()).build();
+        var evidence = new SnapshotProjector.Evidence(EVIDENCE.core(), List.of(occurrence));
+        try (var scope = new DatasetScope()) {
+            projector(scope.value).replaceScheme(source(1), scheme, evidence, occurrence, converter);
+            var graph = read(scope.value, SnapshotProjector.graphIri(ADDRESS));
+            assertThat(graph.contains(ResourceFactory.createResource("https://example.org/a"),
+                    ResourceFactory.createProperty("http://www.w3.org/2004/02/skos/core#prefLabel"), label, "en")).isTrue();
+        }
+    }
     @Test void concurrentReaderSeesWholeOldSnapshotUntilCommitThenWholeNewSnapshot() throws Exception {
         try (var scope = new DatasetScope(); var executor = Executors.newSingleThreadExecutor()) {
             var real = scope.value;
