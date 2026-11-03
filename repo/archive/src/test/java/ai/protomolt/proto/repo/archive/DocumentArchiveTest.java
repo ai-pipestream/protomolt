@@ -262,6 +262,199 @@ class DocumentArchiveTest {
     }
 
     @Test
+    void statsBoundsCurrentAndHistoricalReadsAcrossPagesAndKeepsExactAccounting() throws Exception {
+        ControlledArchiveReads reads = new ControlledArchiveReads();
+        startService(reads);
+        var result = CompletableFuture.supplyAsync(() -> archive(channel).getArchiveStats(
+                GetArchiveStatsRequest.newBuilder().setAccountId(ACCOUNT).setArchive(ARCHIVE).build()));
+        // Current page, two revision pages (current revision and tombstone are not fetched), next page.
+        for (int batch : new int[] {16, 1, 16, 4, 14, 16, 2}) {
+            reads.completeBatch(batch);
+        }
+        ArchiveStats stats = result.get(5, TimeUnit.SECONDS).getStats();
+        assertThat(reads.peak.get()).isEqualTo(16);
+        assertThat(reads.requests).hasSize(69);
+        assertThat(reads.requests.stream().filter(r -> r.getAddress().getDocId().equals("scan-0"))
+                .map(r -> r.getRevision().getRevision()).toList())
+                .containsExactlyInAnyOrderElementsOf(java.util.stream.LongStream.rangeClosed(1, 35).boxed().toList());
+        assertThat(reads.revisionTokens).containsExactly("", "history-next");
+        assertThat(stats.getEntries()).isEqualTo(35);
+        assertThat(stats.getVersions()).isEqualTo(69);
+        assertThat(stats.getCurrentBytes()).isEqualTo(35);
+        assertThat(stats.getRetainedBytes()).isEqualTo(37); // three distinct blobs for scan-0
+        assertThat(stats.getRenditions(0).getObjectCount()).isEqualTo(37);
+        assertThat(stats.getClassificationStates(0).getCount()).isEqualTo(35);
+        assertThat(reads.requests).allSatisfy(r -> assertThat(r.getRevision().getRevision()).isPositive());
+    }
+
+    @Test
+    void continuedListCountsEveryPageWithFilterAndBoundsManifestReadsInRowOrder() throws Exception {
+        ControlledArchiveReads reads = new ControlledArchiveReads();
+        startService(reads);
+        var result = CompletableFuture.supplyAsync(() -> archive(channel).listEntries(
+                ListEntriesRequest.newBuilder().setAccountId(ACCOUNT).setArchive(ARCHIVE)
+                        .setContinuationToken("next").setIncludeManifests(true)
+                        .setClassificationState(ClassificationState.CLASSIFICATION_STATE_UNCLASSIFIED).build()));
+        reads.completeBatch(16);
+        reads.completeBatch(2);
+        var response = result.get(5, TimeUnit.SECONDS);
+        assertThat(response.getTotalCount()).isEqualTo(35);
+        assertThat(response.getEntriesCount()).isEqualTo(18);
+        assertThat(response.getManifestsCount()).isEqualTo(18);
+        assertThat(response.getNextContinuationToken()).isEmpty();
+        assertThat(reads.listRequests).extracting(ListDocumentsRequest::getPageToken)
+                .containsExactly("next", "", "next");
+        assertThat(reads.listRequests).allSatisfy(r -> {
+            assertThat(r.getAccountId()).isEqualTo(ACCOUNT);
+            assertThat(r.getGraphAddressId()).isEqualTo(ARCHIVE);
+            assertThat(r.getFilter().getMetadata(0).getValue())
+                    .isEqualTo(ClassificationState.CLASSIFICATION_STATE_UNCLASSIFIED.name());
+        });
+        assertThat(reads.requests).extracting(r -> r.getAddress().getDocId())
+                .containsExactlyElementsOf(java.util.stream.IntStream.range(17, 35)
+                        .mapToObj(n -> "scan-" + n).toList());
+        assertThat(response.getManifestsList()).extracting(m -> m.getAddress().getEntryId())
+                .containsExactlyElementsOf(response.getEntriesList().stream()
+                        .map(e -> e.getAddress().getEntryId()).toList());
+        assertThat(reads.peak.get()).isEqualTo(16);
+    }
+
+    @Test
+    void failedManifestReadCancelsBatchAndDoesNotDispatchRemainingRows() throws Exception {
+        ControlledArchiveReads reads = new ControlledArchiveReads();
+        startService(reads);
+        var result = CompletableFuture.supplyAsync(() -> archive(channel).listEntries(
+                ListEntriesRequest.newBuilder().setAccountId(ACCOUNT).setArchive(ARCHIVE)
+                        .setIncludeManifests(true).build()));
+        List<PendingArchiveRead> batch = reads.takeBatch(16);
+        batch.getLast().response().onError(Status.UNAVAILABLE.withDescription("storage offline").asRuntimeException());
+        assertThatThrownBy(() -> result.get(5, TimeUnit.SECONDS))
+                .hasCauseInstanceOf(StatusRuntimeException.class).hasMessageContaining("storage offline");
+        assertThat(reads.cancelled.get()).isEqualTo(15);
+        assertThat(reads.requests).hasSize(16);
+    }
+
+    @Test
+    void failedHistoricalReadCancelsPeersWithoutScanningLaterRevisionsOrDocuments() throws Exception {
+        ControlledArchiveReads reads = new ControlledArchiveReads();
+        startService(reads);
+        var result = CompletableFuture.supplyAsync(() -> archive(channel).getArchiveStats(
+                GetArchiveStatsRequest.newBuilder().setAccountId(ACCOUNT).setArchive(ARCHIVE).build()));
+        reads.completeBatch(16);
+        reads.completeBatch(1);
+        List<PendingArchiveRead> history = reads.takeBatch(16);
+        history.getLast().response().onError(Status.DATA_LOSS.withDescription("corrupt retained blob").asRuntimeException());
+        assertThatThrownBy(() -> result.get(5, TimeUnit.SECONDS))
+                .hasCauseInstanceOf(StatusRuntimeException.class).hasMessageContaining("corrupt retained blob");
+        assertThat(reads.cancelled.get()).isEqualTo(15);
+        assertThat(reads.requests).hasSize(33);
+        assertThat(reads.revisionTokens).containsExactly("");
+        assertThat(reads.listRequests).extracting(ListDocumentsRequest::getPageToken).containsExactly("");
+    }
+
+    @Test
+    void interruptedStatsCancelsOutstandingReadsAndPreservesInterrupt() throws Exception {
+        ControlledArchiveReads reads = new ControlledArchiveReads();
+        startService(reads);
+        var outcome = new CompletableFuture<Status.Code>();
+        var interrupted = new java.util.concurrent.atomic.AtomicBoolean();
+        Thread worker = new Thread(() -> {
+            try {
+                archive(channel).getArchiveStats(GetArchiveStatsRequest.newBuilder()
+                        .setAccountId(ACCOUNT).setArchive(ARCHIVE).build());
+                outcome.completeExceptionally(new AssertionError("expected cancellation"));
+            } catch (StatusRuntimeException failure) {
+                interrupted.set(Thread.currentThread().isInterrupted());
+                outcome.complete(failure.getStatus().getCode());
+            }
+        });
+        worker.start();
+        try {
+            reads.takeBatch(16);
+            worker.interrupt();
+            assertThat(outcome.get(5, TimeUnit.SECONDS)).isEqualTo(Status.Code.CANCELLED);
+            assertThat(interrupted.get()).isTrue();
+            assertThat(reads.cancelled.get()).isEqualTo(16);
+            assertThat(reads.requests).hasSize(16);
+        } finally {
+            worker.interrupt();
+            worker.join(5000);
+        }
+    }
+
+    private record PendingArchiveRead(GetDocumentRequest request, StreamObserver<GetDocumentResponse> response) {}
+
+    private static final class ControlledArchiveReads extends DocumentServiceGrpc.DocumentServiceImplBase {
+        final java.util.concurrent.BlockingQueue<PendingArchiveRead> pending =
+                new java.util.concurrent.LinkedBlockingQueue<>();
+        final List<GetDocumentRequest> requests = new java.util.concurrent.CopyOnWriteArrayList<>();
+        final List<ListDocumentsRequest> listRequests = new java.util.concurrent.CopyOnWriteArrayList<>();
+        final List<String> revisionTokens = new java.util.concurrent.CopyOnWriteArrayList<>();
+        final AtomicInteger active = new AtomicInteger();
+        final AtomicInteger peak = new AtomicInteger();
+        final AtomicInteger cancelled = new AtomicInteger();
+
+        @Override public void listDocuments(ListDocumentsRequest request, StreamObserver<ListDocumentsResponse> out) {
+            listRequests.add(request);
+            int from = request.getPageToken().isEmpty() ? 0 : 17;
+            int to = from == 0 ? 17 : 35;
+            var page = ListDocumentsResponse.newBuilder();
+            for (int n = from; n < to; n++) {
+                page.addDocuments(summary(entryNode("scan-" + n), n == 0 ? 35 : 1, "Scan " + n));
+            }
+            if (from == 0) page.setNextPageToken("next");
+            out.onNext(page.build());
+            out.onCompleted();
+        }
+
+        @Override public void listRevisions(ListRevisionsRequest request, StreamObserver<ListRevisionsResponse> out) {
+            revisionTokens.add(request.getPageToken());
+            var page = ListRevisionsResponse.newBuilder();
+            int from = request.getPageToken().isEmpty() ? 1 : 21;
+            int to = from == 1 ? 20 : 35;
+            for (int n = from; n <= to; n++) page.addRevisions(RevisionSummary.newBuilder().setRevision(n));
+            if (from == 1) page.setNextPageToken("history-next");
+            else page.addRevisions(RevisionSummary.newBuilder().setRevision(36).setTombstone(true));
+            out.onNext(page.build());
+            out.onCompleted();
+        }
+
+        @Override public void getDocument(GetDocumentRequest request, StreamObserver<GetDocumentResponse> out) {
+            requests.add(request);
+            peak.accumulateAndGet(active.incrementAndGet(), Math::max);
+            ((io.grpc.stub.ServerCallStreamObserver<GetDocumentResponse>) out).setOnCancelHandler(() -> {
+                active.decrementAndGet();
+                cancelled.incrementAndGet();
+            });
+            pending.add(new PendingArchiveRead(request, out));
+        }
+
+        List<PendingArchiveRead> takeBatch(int size) throws Exception {
+            List<PendingArchiveRead> batch = new ArrayList<>();
+            for (int n = 0; n < size; n++) {
+                var read = pending.poll(5, TimeUnit.SECONDS);
+                assertThat(read).as("pending read %s of %s", n, size).isNotNull();
+                batch.add(read);
+            }
+            assertThat(active.get()).isLessThanOrEqualTo(16);
+            return batch;
+        }
+
+        void completeBatch(int size) throws Exception {
+            List<PendingArchiveRead> batch = takeBatch(size);
+            // Reverse completion order: projection must still match the original row order.
+            for (var read : batch.reversed()) {
+                active.decrementAndGet();
+                read.response().onNext(documentWithBlob(read.request().getAddress(),
+                        read.request().getRevision().getRevision(), "original", ByteString.copyFromUtf8(
+                                read.request().getSelection().getSelectorsCount() == 1
+                                        ? (read.request().getRevision().getRevision() <= 20 ? "y" : "z") : "x")));
+                read.response().onCompleted();
+            }
+        }
+    }
+
+    @Test
     void createGetListArchivesAndStatsOverInMemoryDocumentService() throws Exception {
         Map<NodeAddress, Document> definitions = new LinkedHashMap<>();
         List<SaveDocumentRequest> entrySaves = new ArrayList<>();

@@ -186,6 +186,8 @@ public final class DocumentArchive {
 
     static final int DEFAULT_PAGE_SIZE = 100;
     private static final int STATS_SCAN_PAGE_SIZE = 500;
+    /** Maximum concurrent document reads within one stats or listing call. */
+    static final int MAX_CONCURRENT_DOCUMENT_READS = 16;
     private static final String DEFAULT_DATASOURCE_ID = "ds-archive";
     private static final String MUTATION_GRAPH_PREFIX = "archive-mutation:";
     private static final String DELETE_RENDITION_REFUSAL =
@@ -448,21 +450,21 @@ public final class DocumentArchive {
                     .setPageSize(STATS_SCAN_PAGE_SIZE)
                     .setPageToken(pageToken)
                     .build());
-            List<ListenableFuture<GetDocumentResponse>> historicalReads = new ArrayList<>();
+            List<GetDocumentRequest> historicalReads = new ArrayList<>();
             for (RevisionSummary rev : revisions.getRevisionsList()) {
                 if (rev.getTombstone()) {
                     continue;
                 }
                 versions++;
                 if (rev.getRevision() != currentRevision) {
-                    historicalReads.add(futureDocuments.getDocument(GetDocumentRequest.newBuilder()
+                    historicalReads.add(GetDocumentRequest.newBuilder()
                             .setAddress(address)
                             .setRevision(revision(rev.getRevision()))
                             .setSelection(BLOBS_ONLY)
-                            .build()));
+                            .build());
                 }
             }
-            for (GetDocumentResponse historical : awaitAll(historicalReads)) {
+            for (GetDocumentResponse historical : fetchDocuments(historicalReads)) {
                 indexPresentRenditions(unique, views.manifest(historical));
             }
             pageToken = revisions.getNextPageToken();
@@ -694,46 +696,61 @@ public final class DocumentArchive {
         if (rows.isEmpty()) {
             return List.of();
         }
-        List<ListenableFuture<GetDocumentResponse>> futures = new ArrayList<>(rows.size());
+        List<GetDocumentRequest> requests = new ArrayList<>(rows.size());
         for (DocumentSummary row : rows) {
-            futures.add(futureDocuments.getDocument(GetDocumentRequest.newBuilder()
+            requests.add(GetDocumentRequest.newBuilder()
                     .setAddress(row.getAddress())
                     .setRevision(revision(row.getRevision()))
                     .setSelection(CORE_AND_BLOBS)
-                    .build()));
+                    .build());
         }
-        return awaitAll(futures);
+        return fetchDocuments(requests);
+    }
+
+    // Bound both current and historical reads, retaining request order for row projection.
+    // Pages still scan in full: this limits fan-out, not the cost of exact accounting.
+    private List<GetDocumentResponse> fetchDocuments(List<GetDocumentRequest> requests) {
+        List<GetDocumentResponse> results = new ArrayList<>(requests.size());
+        for (int offset = 0; offset < requests.size(); offset += MAX_CONCURRENT_DOCUMENT_READS) {
+            List<ListenableFuture<GetDocumentResponse>> batch = new ArrayList<>();
+            try {
+                int end = Math.min(requests.size(), offset + MAX_CONCURRENT_DOCUMENT_READS);
+                for (int i = offset; i < end; i++) {
+                    batch.add(futureDocuments.getDocument(requests.get(i)));
+                }
+                results.addAll(awaitAll(batch));
+            } finally {
+                // Also covers synchronous dispatch failure and cancelled futures.
+                for (ListenableFuture<GetDocumentResponse> future : batch) {
+                    if (!future.isDone()) {
+                        future.cancel(true);
+                    }
+                }
+            }
+        }
+        return results;
     }
 
     private static List<GetDocumentResponse> awaitAll(
             List<ListenableFuture<GetDocumentResponse>> futures) {
-        List<GetDocumentResponse> results = new ArrayList<>(futures.size());
-        for (int i = 0; i < futures.size(); i++) {
-            try {
-                results.add(futures.get(i).get());
-            } catch (InterruptedException interrupted) {
-                for (int j = i; j < futures.size(); j++) {
-                    futures.get(j).cancel(true);
-                }
-                Thread.currentThread().interrupt();
-                throw Status.CANCELLED
-                        .withDescription("Interrupted while reading archive entry manifests")
-                        .withCause(interrupted)
-                        .asRuntimeException();
-            } catch (ExecutionException failure) {
-                for (int j = i + 1; j < futures.size(); j++) {
-                    futures.get(j).cancel(true);
-                }
-                if (failure.getCause() instanceof StatusRuntimeException status) {
-                    throw status;
-                }
-                if (failure.getCause() instanceof RuntimeException runtime) {
-                    throw runtime;
-                }
-                throw Status.INTERNAL.withCause(failure.getCause()).asRuntimeException();
+        try {
+            // Fail on any completed error, even if an earlier read is still pending.
+            return com.google.common.util.concurrent.Futures.allAsList(futures).get();
+        } catch (InterruptedException interrupted) {
+            Thread.currentThread().interrupt();
+            throw Status.CANCELLED
+                    .withDescription("Interrupted while reading archive entry manifests")
+                    .withCause(interrupted)
+                    .asRuntimeException();
+        } catch (ExecutionException failure) {
+            if (failure.getCause() instanceof StatusRuntimeException status) {
+                throw status;
             }
+            if (failure.getCause() instanceof RuntimeException runtime) {
+                throw runtime;
+            }
+            throw Status.INTERNAL.withCause(failure.getCause()).asRuntimeException();
         }
-        return results;
     }
 
     // ---------------------------------------------------------------- writes

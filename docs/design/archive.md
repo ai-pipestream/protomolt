@@ -255,6 +255,16 @@ over the live v2 documents in the `archive:<account_id>` graph (`graph_address_i
   documents. If `ListDocumentsResponse` later adds a `total_matching` field,
   `listEntries` can read it directly from the first page without extra page
   scans.
+- **Bounded document reads (#769).** Each `GetArchiveStats` or manifest-inclusive
+  `ListEntries` call dispatches at most 16 `GetDocument` RPCs at once, in batches.
+  This applies to both current page documents and historical revision pages.
+  Each batch completes before another starts; response order stays aligned with
+  the listed rows and every read remains pinned to its listed revision. Failed
+  or interrupted batches cancel unfinished reads and do not dispatch later
+  batches. The limit is per call, not a process-wide or cross-request quota.
+  Exact statistics still scan all live documents and retained revisions, and a
+  continued listing still scans every matching list page for `total_count`.
+  No durable counters or snapshot isolation across pages are introduced.
 - **Cost and telemetry separation.** Because the retired pre-cutover ledger
   counter tables are gone, `GetArchiveStats` derives its numbers from live v2
   document and revision manifest reads; its work scales with the archive's live
