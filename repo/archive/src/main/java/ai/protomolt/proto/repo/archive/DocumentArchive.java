@@ -1072,7 +1072,7 @@ public final class DocumentArchive {
             RenditionDescriptor descriptor = derivedDescriptor(kind);
             produced.put(
                     ArchiveCoordinates.blobId(descriptor.getName(), descriptor.getSubKey()),
-                    new DerivedRendition(descriptor, derivation, outcome));
+                    DerivedRendition.of(descriptor, derivation, outcome));
             if (kind == BridgeKind.BRIDGE_KIND_DOCUMENT_TEXT
                     && derivation.content().length == 0
                     && !run.contains(BridgeKind.BRIDGE_KIND_OCR_TEXT)
@@ -1136,10 +1136,16 @@ public final class DocumentArchive {
                 .build();
     }
 
-    private record DerivedRendition(
+    /** A derivation and the one {@code ByteString} of its bytes that every blob on the save path shares. */
+    record DerivedRendition(
             RenditionDescriptor descriptor,
             Bridge.Derivation derivation,
+            ByteString data,
             BridgeOutcome.Builder outcome) {
+        static DerivedRendition of(
+                RenditionDescriptor descriptor, Bridge.Derivation derivation, BridgeOutcome.Builder outcome) {
+            return new DerivedRendition(descriptor, derivation, ByteString.copyFrom(derivation.content()), outcome);
+        }
     }
 
     private static RenditionDescriptor derivedDescriptor(BridgeKind kind) {
@@ -1174,11 +1180,10 @@ public final class DocumentArchive {
         return blobs;
     }
 
-    private static Blob.Builder derivedBlob(String blobId, DerivedRendition derived) {
-        ByteString data = ByteString.copyFrom(derived.derivation().content());
+    static Blob.Builder derivedBlob(String blobId, DerivedRendition derived) {
         Blob.Builder blob = Blob.newBuilder()
                 .setBlobId(blobId)
-                .setData(data);
+                .setData(derived.data());
         RenditionDescriptor rendition = derived.descriptor();
         if (!rendition.getMediaType().isEmpty()) {
             blob.setMimeType(rendition.getMediaType());
@@ -1209,9 +1214,9 @@ public final class DocumentArchive {
         }
     }
 
-    private static boolean derivedRenditionUnchanged(
+    static boolean derivedRenditionUnchanged(
             String blobId, DerivedRendition item, List<Blob> currentBlobs) {
-        ByteString data = ByteString.copyFrom(item.derivation().content());
+        ByteString data = item.data();
         String sha = RenditionReads.sha256Hex(data);
         Blob candidateMeta = derivedBlob(blobId, item).clearData().build();
         for (Blob current : currentBlobs) {

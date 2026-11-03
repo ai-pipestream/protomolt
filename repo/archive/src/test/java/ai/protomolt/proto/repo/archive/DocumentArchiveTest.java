@@ -1849,6 +1849,44 @@ class DocumentArchiveTest {
 
     private static final int LARGER_THAN_THE_WINDOWS = 512 * 1024;
 
+    private static DocumentArchive.DerivedRendition derivedRendition(byte[] content) {
+        return DocumentArchive.DerivedRendition.of(
+                ai.protomolt.proto.repo.archive.v1.RenditionDescriptor.newBuilder()
+                        .setName("parsed-text").setMediaType("text/plain").build(),
+                new ai.protomolt.proto.asset.bridge.Bridge.Derivation(content, null, List.of()),
+                ai.protomolt.proto.repo.archive.v1.BridgeOutcome.newBuilder());
+    }
+
+    @Test
+    void everyBlobOfADerivedRenditionSharesOneCopyOfItsBytes() {
+        byte[] content = "derived".getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        var item = derivedRendition(content);
+
+        assertThat(item.data().toByteArray()).isEqualTo(content);
+        assertThat(DocumentArchive.derivedBlob("b", item).getData()).isSameAs(item.data());
+        assertThat(DocumentArchive.derivedBlob("b", item).build().getData()).isSameAs(item.data());
+    }
+
+    @Test
+    void theDerivedUnchangedCheckComparesWithoutAllocatingTheBytes() {
+        var item = derivedRendition(new byte[16 * 1024 * 1024]);
+        var stored = DocumentArchive.derivedBlob("b", item).clearData()
+                .setSizeBytes(item.data().size())
+                .setChecksum(RenditionReads.sha256Hex(item.data()))
+                .build();
+        var threads = (com.sun.management.ThreadMXBean) java.lang.management.ManagementFactory.getThreadMXBean();
+        long thread = Thread.currentThread().threadId();
+        long before = threads.getThreadAllocatedBytes(thread);
+
+        boolean same = DocumentArchive.derivedRenditionUnchanged("b", item, List.of(stored));
+
+        assertThat(threads.getThreadAllocatedBytes(thread) - before).isLessThan(1024 * 1024);
+        assertThat(same).isTrue();
+        assertThat(DocumentArchive.derivedRenditionUnchanged(
+                "b", item, List.of(stored.toBuilder().setChecksum("0".repeat(64)).build()))).isFalse();
+        assertThat(DocumentArchive.derivedRenditionUnchanged("other", item, List.of(stored))).isFalse();
+    }
+
     private static ByteString pdfBytes(int size) {
         byte[] bytes = new byte[size];
         byte[] head = "%PDF-1.7\n".getBytes(java.nio.charset.StandardCharsets.US_ASCII);
