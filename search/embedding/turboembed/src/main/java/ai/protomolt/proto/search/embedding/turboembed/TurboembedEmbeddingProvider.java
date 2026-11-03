@@ -1,6 +1,7 @@
 package ai.protomolt.proto.search.embedding.turboembed;
 
 import ai.protomolt.proto.search.embedding.EmbeddingProvider;
+import ai.protomolt.proto.search.embedding.EmbeddingInFlightLimit;
 import ai.protomolt.proto.search.embedding.ovms.KserveTensors;
 import com.google.protobuf.ByteString;
 import inference.GRPCInferenceServiceGrpc;
@@ -29,6 +30,12 @@ import java.util.concurrent.TimeUnit;
 public final class TurboembedEmbeddingProvider implements EmbeddingProvider {
     private static final String PREFIX = "PROTOMOLT_TURBOEMBED_";
     private static final int MAX_BATCH = 32;
+    /** Process-wide RPC cap; system property overrides the environment, default 8. */
+    public static final String MAX_IN_FLIGHT_PROPERTY = "protomolt.embeddings.turboembed.max-in-flight";
+    /** Environment fallback for the process-wide RPC cap. */
+    public static final String MAX_IN_FLIGHT_ENVIRONMENT_VARIABLE = PREFIX + "MAX_IN_FLIGHT";
+    private static final EmbeddingInFlightLimit IN_FLIGHT = new EmbeddingInFlightLimit();
+    private Integer maxInFlight;
     private final Map<String, String> environment;
     private Session session;
     private boolean closed;
@@ -138,8 +145,11 @@ public final class TurboembedEmbeddingProvider implements EmbeddingProvider {
                     .putParameters("normalize", parameter("NORMALIZE_MODEL"))
                     .putParameters("quantization", parameter("QUANTIZE_NONE"))
                     .build();
-            ModelInferResponse response = GRPCInferenceServiceGrpc.newBlockingStub(active.channel())
-                    .withDeadlineAfter(30, TimeUnit.SECONDS).modelInfer(request);
+            ModelInferResponse response = IN_FLIGHT.execute(maxInFlight(), () -> {
+                configured(); // Refuse queued calls if this provider was closed while waiting.
+                return GRPCInferenceServiceGrpc.newBlockingStub(active.channel())
+                        .withDeadlineAfter(30, TimeUnit.SECONDS).modelInfer(request);
+            });
             if (!response.getModelName().equals(model.name())
                     || !response.getModelVersion().equals(model.revision())
                     || !model.manifestSha256().equals(response.getParametersOrDefault(
@@ -160,6 +170,30 @@ public final class TurboembedEmbeddingProvider implements EmbeddingProvider {
             vectors.addAll(decoded);
         }
         return vectors;
+    }
+
+    private synchronized int maxInFlight() {
+        if (maxInFlight == null) {
+            String value = System.getProperty(MAX_IN_FLIGHT_PROPERTY);
+            if (value == null) {
+                value = environment.get(MAX_IN_FLIGHT_ENVIRONMENT_VARIABLE);
+            }
+            int parsed = 8;
+            if (value != null) {
+                try {
+                    parsed = Integer.parseInt(value.trim());
+                } catch (NumberFormatException failure) {
+                    throw new IllegalStateException("Invalid " + MAX_IN_FLIGHT_PROPERTY + " / "
+                            + MAX_IN_FLIGHT_ENVIRONMENT_VARIABLE + ": " + value, failure);
+                }
+            }
+            if (parsed < 1) {
+                throw new IllegalStateException(MAX_IN_FLIGHT_PROPERTY + " / "
+                        + MAX_IN_FLIGHT_ENVIRONMENT_VARIABLE + " must be positive: " + value);
+            }
+            maxInFlight = parsed;
+        }
+        return maxInFlight;
     }
 
     private static InferParameter parameter(String value) {
