@@ -424,17 +424,19 @@ public final class RepoServices implements AutoCloseable {
                 // A duplicate or uncertain reply must not fence another live execution.
                 registeredHostTx = tx;
             }
-            String selectedDriveProvider = config.driveProvider();
-            var driveGate = new SelectedDriveBackend(config);
-            this.driveLedger = new DriveLedger(tx, driveGate);
+            String selectedDriveProvider = config.hasS3Backing() ? "s3" : config.redisCompatibleProvider();
             var storage = RepoStorageWiring.wire(config, providers, bounded != null, owned, tx, readerHost);
-            this.blobStore = storage.blobStore();
             this.readerIncarnation = startingReader = storage.readerIncarnation();
+            var pool = owned.add(new DriveBackingPool(config, providers, storage, bounded != null, System::getenv));
+            java.util.function.Consumer<ai.protomolt.proto.repo.container.ledger.DriveRecord> driveGate =
+                    record -> pool.requireStorable(record, pool.resolve(record));
+            this.driveLedger = new DriveLedger(tx, pool::resolve);
+            this.blobStore = storage.blobStore();
             this.driveProvisioner = new DriveProvisioner(driveLedger,
-                    storage.namespaces(),
-                    config.defaultBucketBase(), config.s3Region(), selectedDriveProvider, driveGate);
+                    config.defaultBucketBase(), config.s3Region(), selectedDriveProvider, driveGate,
+                    record -> pool.resolve(record).namespaces());
             this.driveOperations = new ai.protomolt.proto.repo.engine.DriveOperations(driveLedger, driveProvisioner);
-            RepoV2Wiring.Wired v2 = RepoV2Wiring.wire(config, owned, driveLedger, blobStore, selectedDriveProvider,
+            RepoV2Wiring.Wired v2 = RepoV2Wiring.wire(config, owned, driveLedger, pool,
                     V2_CATALOG_SCHEMA, () -> admittedSchemas, auth -> ArchiveCallerHandoff.bindCaller(auth, stepSave::bindCaller), readBudget,
                     () -> conceptSchemes);
             this.catalog = v2.catalog();

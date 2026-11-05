@@ -36,8 +36,8 @@ import java.util.function.Supplier;
 
 /**
  * Builds the parts-based v2 document stack: the catalog in its own schema on
- * the ledger database, the dynamic per-account drive resolution onto this
- * host's blob store, the save/read/delete/list/purge operations, the
+ * the ledger database, the dynamic per-account drive resolution onto pooled
+ * provider backends, the save/read/delete/list/purge operations, the
  * accession service, the internal step credential, and the Kafka outbox
  * relay when eventing is configured. A builder only: the catalog and the
  * publisher register with the caller's {@link OwnedResources} in the same
@@ -69,7 +69,7 @@ final class RepoV2Wiring {
      *        concept-filtered page; {@link ConceptSchemeMounts#empty()} when none are configured
      */
     static Wired wire(RepoServiceConfig config, OwnedResources owned, DriveLedger driveLedger,
-            BlobStore blobStore, String selectedDriveProvider, String catalogSchema,
+            DriveBackingPool pool, String catalogSchema,
             Supplier<Map<String, DocumentSchemaAdmission.Definition>> admittedSchemas,
             Function<AuthenticatedCaller, RepositoryCaller> bindCaller, ReadByteBudget readBudget,
             Supplier<ConceptSchemeMounts> conceptSchemes) {
@@ -80,7 +80,7 @@ final class RepoV2Wiring {
                 new CatalogConfig(config.ledger().jdbcUrl(),
                         config.ledger().username(), config.ledger().password(), config.ledger().maxPoolSize()),
                 catalogSchema));
-        var v2Drives = drives(config, catalog, driveLedger, blobStore, selectedDriveProvider);
+        var v2Drives = drives(catalog, driveLedger, pool);
         var limits = DocumentSchemaAdmission.Limits.SERVICE_DEFAULTS;
         DocumentSchemaAdmission.Resolver builtinSchemas =
                 selection -> {
@@ -143,18 +143,30 @@ final class RepoV2Wiring {
     }
 
     /**
-     * The per-account drive resolution onto this host's blob store, shared by the
+     * The per-account drive resolution onto pooled provider backends, shared by the
      * serving composition and the local maintenance composition so both resolve a
      * revision's stack the same way. A drive resolves by name per save and by
      * recorded stack id per read; the catalog stays the namespace authority.
      */
-    static DocumentSaves.Drives drives(RepoServiceConfig config, PostgresCatalog catalog, DriveLedger driveLedger,
-            BlobStore blobStore, String selectedDriveProvider) {
+    static DocumentSaves.Drives drives(PostgresCatalog catalog, DriveLedger driveLedger,
+            DriveBackingPool pool) {
         var v2Stacks = new ConcurrentHashMap<String, Stack>();
-        BlobStore stackStore = new StackBlobStore(blobStore);
         Function<DriveRecord, Stack> stackForDrive = driveStacks(catalog::registerStack,
-                (id, record, prefix) -> new BlobStoreStack(id, stackStore, record.bucket, prefix),
-                selectedDriveProvider, config.s3Endpoint(), v2Stacks);
+                (id, record, prefix) -> {
+                    var backing = pool.resolve(record);
+                    return new BlobStoreStack(id, new StackBlobStore(backing.store(), backing.reclaimer()),
+                            record.bucket, prefix);
+                }, pool::resolve, v2Stacks, (drive, backing, prefix, current) -> {
+                    var legacy = pool.legacyIdentity(drive, backing, prefix);
+                    if (legacy == null || legacy.equals(current)) return current;
+                    // Only an exact pre-existing host-default identity qualifies. No
+                    // inferred endpoint or namespace migration of retained references.
+                    var existing = catalog.stack(legacy.getStackId())
+                            .or(() -> catalog.stack(legacy.getProvider(), legacy.getEndpoint(), legacy.getNamespace()));
+                    return existing.filter(row -> row.getProvider().equals(legacy.getProvider())
+                            && row.getEndpoint().equals(legacy.getEndpoint())
+                            && row.getNamespace().equals(legacy.getNamespace())).orElse(current);
+                });
         return DocumentSaves.Drives.dynamic("intake",
                 (accountId, driveName) -> driveLedger.findByName(accountId, driveName)
                         .or(() -> "default".equals(driveName) ? driveLedger.findByName(accountId, "intake")
@@ -165,12 +177,13 @@ final class RepoV2Wiring {
                     if (cached != null) return Optional.of(cached);
                     // A peer host may have written the revision; resolve the drive directly by primary key.
                     if (!stackId.startsWith("stack-")) return Optional.empty();
+                    final UUID driveId;
                     try {
-                        var driveId = UUID.fromString(stackId.substring("stack-".length()));
-                        return driveLedger.findById(driveId).map(stackForDrive);
+                        driveId = UUID.fromString(stackId.substring("stack-".length()));
                     } catch (IllegalArgumentException malformed) {
                         return Optional.empty();
                     }
+                    return driveLedger.findById(driveId).map(stackForDrive);
                 });
     }
 
@@ -192,16 +205,37 @@ final class RepoV2Wiring {
     static Function<DriveRecord, Stack> driveStacks(Function<StackRecord, String> registerStack,
             StackOpener openStack, String selectedDriveProvider, String s3Endpoint,
             ConcurrentHashMap<String, Stack> stacksById) {
+        return driveStacks(registerStack, openStack,
+                record -> new DriveBackingPool.Backing(selectedDriveProvider,
+                        s3Endpoint == null ? "" : s3Endpoint, null, null, null), stacksById);
+    }
+
+    static Function<DriveRecord, Stack> driveStacks(Function<StackRecord, String> registerStack,
+            StackOpener openStack, Function<DriveRecord, DriveBackingPool.Backing> backings,
+            ConcurrentHashMap<String, Stack> stacksById) {
+        return driveStacks(registerStack, openStack, backings, stacksById,
+                (drive, backing, prefix, current) -> current);
+    }
+
+    @FunctionalInterface
+    interface StackIdentity {
+        StackRecord resolve(DriveRecord drive, DriveBackingPool.Backing backing, String prefix, StackRecord current);
+    }
+
+    static Function<DriveRecord, Stack> driveStacks(Function<StackRecord, String> registerStack,
+            StackOpener openStack, Function<DriveRecord, DriveBackingPool.Backing> backings,
+            ConcurrentHashMap<String, Stack> stacksById, StackIdentity identity) {
         var stacksByDrive = new ConcurrentHashMap<UUID, Stack>();
         return record -> stacksByDrive.computeIfAbsent(record.driveId, driveId -> {
             String prefix = RepositoryNamespaces.under(
                     record.prefix == null ? "" : stripLeadingSlashes(record.prefix), "documents");
-            String stackId = registerStack.apply(StackRecord.newBuilder()
+            var backing = backings.apply(record);
+            String stackId = registerStack.apply(identity.resolve(record, backing, prefix, StackRecord.newBuilder()
                     .setStackId("stack-" + record.driveId)
-                    .setProvider(selectedDriveProvider)
-                    .setEndpoint(s3Endpoint == null ? "" : s3Endpoint)
-                    .setNamespace(record.bucket + "/" + prefix)
-                    .build());
+                    .setProvider(backing.provider())
+                    .setEndpoint(backing.endpoint())
+                    .setNamespace(backing.namespace(record.bucket, prefix))
+                    .build()));
             return stacksById.computeIfAbsent(stackId,
                     id -> openStack.open(id, record, prefix));
         });
@@ -231,7 +265,10 @@ final class RepoV2Wiring {
     private static final class StackBlobStore implements BlobStore {
         private final BlobStore delegate;
 
-        StackBlobStore(BlobStore delegate) {
+        private final ai.protomolt.proto.repo.blob.spi.ObjectReclaimer reclaimer;
+
+        StackBlobStore(BlobStore delegate, ai.protomolt.proto.repo.blob.spi.ObjectReclaimer reclaimer) {
+            this.reclaimer = reclaimer;
             this.delegate = java.util.Objects.requireNonNull(delegate, "delegate");
         }
 
@@ -313,7 +350,9 @@ final class RepoV2Wiring {
 
         @Override
         public boolean delete(String bucket, String key) {
-            return delegate.delete(bucket, key);
+            if (!reclaimer.reclaim(bucket, key))
+                throw new IllegalStateException("Physical reclamation requires another pass");
+            return true;
         }
 
         @Override

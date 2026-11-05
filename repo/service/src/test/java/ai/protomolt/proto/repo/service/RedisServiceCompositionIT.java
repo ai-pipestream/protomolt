@@ -77,14 +77,14 @@ class RedisServiceCompositionIT {
             try {
                 var drive = DriveServiceGrpc.newBlockingStub(channel).createDrive(
                         CreateDriveRequest.newBuilder().setAccountId(mode + "-account").setName("input").build()).getDrive();
-                assertThat(drive.getProvider()).isEqualTo("redis");
+                assertThat(drive.getProvider()).isEqualTo(mode);
                 services.blobStore().headBucket(drive.getBucket());
                 for (String requestedName : java.util.List.of("input", "wrong-endpoint")) {
                 assertThatThrownBy(() -> DriveServiceGrpc.newBlockingStub(channel).createDrive(
                         CreateDriveRequest.newBuilder().setAccountId(mode + "-account").setName(requestedName)
                                 .setProviderConfig(ai.protomolt.proto.repo.v1.DriveProviderConfig.newBuilder()
                                         .setRedis(ai.protomolt.proto.repo.v1.RedisDriveConfig.newBuilder()
-                                                .setUri("redis://127.0.0.1:1"))).build()))
+                                                .setUri("redis://127.0.0.1:1").setTtlSeconds(1))).build()))
                         .isInstanceOf(io.grpc.StatusRuntimeException.class).hasMessageContaining("FAILED_PRECONDITION");
                 }
                 assertThat(services.driveLedger().findByName(mode + "-account", "wrong-endpoint")).isEmpty();

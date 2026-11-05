@@ -539,3 +539,73 @@ The storage layer still splits into `repo/blob-store/spi` (the port),
 `repo/blob-store/s3`, `repo/blob-store/redis` etc. — one new implementation
 per backend, no sweep through the handlers — when the next real backend
 (Azure) lands.
+
+### Multiple drive backends
+
+One service can provision and route multiple `s3`, `valkey`, and `redis` drives.
+`CreateDrive` remains restricted to process authority. Its `provider_config`
+selects the endpoint and provider settings; a drive without that configuration
+inherits the host backing, including an optional S3 read-through cache. New
+explicit configurations share a provider handle when their complete resolved
+options match. The host closes pooled handles once, after request processing
+stops, including cleanup after partial startup failure.
+
+S3 uses `s3.endpoint_override`, `s3.force_path_style`, and the drive's `region`.
+A different endpoint requires an explicit `credentials_ref`; host credentials
+are never implicitly sent to another endpoint. Supported references are:
+
+| Reference | Resolution |
+| --- | --- |
+| `host:default` | Explicitly use this host's configured S3 static credentials or default SDK chain. |
+| `env:ARCHIVE` on S3 | Read `ARCHIVE_ACCESS_KEY_ID` and `ARCHIVE_SECRET_ACCESS_KEY` from the host environment. Both are required. |
+| `profile:archive` on S3 | Select the named AWS SDK host credential profile. |
+| `env:SCRATCH` on Redis/Valkey | Read required `SCRATCH_PASSWORD` and optional `SCRATCH_USERNAME`; inject them only into the private provider connection options. |
+
+Missing or unsupported references fail; there is no credential fallback. A
+per-drive Redis URI must not contain user information or a password, because
+provider configuration is returned by the drive metadata API. Secrets resolved
+from references are neither written into drive records nor catalog endpoints.
+S3 `options` may set `conditional-writes` and the four existing provider timeout
+options (`api-call-timeout-ms`, `api-attempt-timeout-ms`,
+`connection-timeout-ms`, `socket-timeout-ms`); other keys are refused.
+
+New stack records use the resolved provider and endpoint. S3 namespaces include
+the region and addressing mode, so SDK-default endpoints in different regions
+cannot alias a stack. Redis namespaces also
+encode the configured key prefix and write policy, with the database in the
+endpoint, so two physical namespaces cannot
+share a stack accidentally. Existing host-default stack records retain their
+original IDs and identities, including the older Redis identity emitted by the
+single-backend host. Compatibility applies only to the exact host-default
+backing and exact old recorded namespace; it does not authorize repointing a
+retained stack. Changing an endpoint or physical namespace requires a new drive
+and an explicit data migration. New Redis/Valkey endpoints normalize equivalent
+host, port, and database spellings; both provider aliases register one catalog
+stack for the same physical namespace, including concurrent registration.
+Indexed stack identities are bounded to 2,048 UTF-8 bytes and namespaces to
+1,024 characters before catalog writes; these are configuration bounds, not
+document payload limits, and
+oversized per-drive configuration is refused as invalid input.
+
+Selected-part saves retain untouched part and raw-blob references across drives.
+A fresh host resolves historical objects from their recorded stack IDs. Purge
+uses each stack's provider reclamation port; incomplete physical cleanup leaves
+the durable purge pending for retry. Versioned S3 cleanup includes old versions
+and delete markers. Shared references remain readable until their final owner
+is purged.
+
+This implementation preserves keep-until-administrator-purge semantics.
+Explicit Redis/Valkey repository drives require `ttl_seconds = 0`, non-expiring
+writes, and physical reclamation. Managed streaming hosts also require streaming
+write capability; Redis/Valkey do not advertise it and cannot replace qualified
+S3 archival backing there. Redis object limits still apply. A non-expiring Redis
+configuration alone is not a durability guarantee: the operator must configure
+persistence and an eviction policy consistent with retaining repository bytes.
+The existing host-default and cache configuration paths retain their prior
+behavior; this feature does not newly qualify expiring host defaults for archival
+retention.
+
+Temporary TTL drives from issue #775 remain separate design work: their expiry
+contract must define reads after expiry, catalog cleanup, retained references,
+and promotion to durable storage before the repository's keep-forever contract
+can be changed. No temporary-retention exception is implemented here.

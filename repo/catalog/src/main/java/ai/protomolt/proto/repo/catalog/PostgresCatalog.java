@@ -142,9 +142,79 @@ public final class PostgresCatalog implements Catalog {
 
     // ------------------------------------------------------------------ stacks
 
+    /** Reads a retained stack by ID without changing its physical identity. */
+    public Optional<StackRecord> stack(String stackId) {
+        return inTransaction("Stack lookup", connection -> {
+            try (var query = connection.prepareStatement(
+                    "SELECT record, stack_id, provider, endpoint, namespace FROM catalog_stacks WHERE stack_id = ?")) {
+                query.setString(1, stackId);
+                try (var rows = query.executeQuery()) { return readStack(rows); }
+            }
+        });
+    }
+
+    /** Finds the canonical retained stack for an exact physical namespace. */
+    public Optional<StackRecord> stack(String provider, String endpoint, String namespace) {
+        return inTransaction("Stack namespace lookup", connection -> {
+            try (var query = connection.prepareStatement(
+                    "SELECT record, stack_id, provider, endpoint, namespace FROM catalog_stacks WHERE provider = ? AND endpoint = ? AND namespace = ?")) {
+                query.setString(1, provider); query.setString(2, endpoint); query.setString(3, namespace);
+                try (var rows = query.executeQuery()) { return readStack(rows); }
+            }
+        });
+    }
+
+    private static Optional<StackRecord> readStack(java.sql.ResultSet rows) throws java.sql.SQLException {
+        if (!rows.next()) return Optional.empty();
+        final StackRecord record;
+        try { record = StackRecord.parseFrom(rows.getBytes(1)); }
+        catch (com.google.protobuf.InvalidProtocolBufferException invalid) {
+            throw new CatalogDataLoss("Invalid retained stack record", invalid);
+        }
+        if (!record.getStackId().equals(rows.getString(2)) || !record.getProvider().equals(rows.getString(3))
+                || !record.getEndpoint().equals(rows.getString(4)) || !record.getNamespace().equals(rows.getString(5)))
+            throw new CatalogDataLoss("Retained stack identity differs from catalog columns");
+        return Optional.of(record);
+    }
+
     /** Returns the stack ID recorded for this namespace, recording it on first use. */
     @Override public String registerStack(StackRecord record) {
+        CatalogEntries.requireStorableStack(record);
         return inTransaction("Stack registration", connection -> {
+            if (record.getProvider().equals("redis") || record.getProvider().equals("valkey")) {
+                // Both installed factories use RedisObjectKeys. Serialize alias
+                // registrations across hosts before choosing the canonical row.
+                try (var lock = connection.prepareStatement("SELECT pg_advisory_xact_lock(hashtextextended(?, 0))")) {
+                    lock.setString(1, "redis-stack:" + record.getEndpoint().length() + ":"
+                            + record.getEndpoint() + record.getNamespace());
+                    lock.execute();
+                }
+                try (var existing = connection.prepareStatement(
+                        "SELECT record, stack_id, provider, endpoint, namespace FROM catalog_stacks WHERE stack_id = ?")) {
+                    existing.setString(1, record.getStackId());
+                    try (var rows = existing.executeQuery()) {
+                        var retained = readStack(rows);
+                        if (retained.isPresent()) {
+                            var row = retained.get();
+                            if ((row.getProvider().equals("redis") || row.getProvider().equals("valkey"))
+                                    && row.getEndpoint().equals(record.getEndpoint())
+                                    && row.getNamespace().equals(record.getNamespace())) return row.getStackId();
+                            throw new IllegalStateException("Stack ID " + record.getStackId() + " already names another namespace");
+                        }
+                    }
+                }
+                try (var existing = connection.prepareStatement(
+                        "SELECT record, stack_id, provider, endpoint, namespace FROM catalog_stacks WHERE provider IN ('redis', 'valkey') AND endpoint = ? AND namespace = ?")) {
+                    existing.setString(1, record.getEndpoint()); existing.setString(2, record.getNamespace());
+                    try (var rows = existing.executeQuery()) {
+                        var retained = readStack(rows);
+                        if (retained.isPresent()) {
+                            if (rows.next()) throw new CatalogDataLoss("Multiple stacks name one Redis-compatible namespace");
+                            return retained.get().getStackId();
+                        }
+                    }
+                }
+            }
             try (var insert = connection.prepareStatement("""
                     INSERT INTO catalog_stacks (stack_id, provider, endpoint, namespace, record, created_at)
                     VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING""")) {
@@ -155,6 +225,16 @@ public final class PostgresCatalog implements Catalog {
                 insert.setBytes(5, record.toByteArray());
                 insert.setTimestamp(6, Timestamp.from(Instant.now()));
                 insert.executeUpdate();
+            }
+            try (var existing = connection.prepareStatement(
+                    "SELECT provider, endpoint, namespace FROM catalog_stacks WHERE stack_id = ?")) {
+                existing.setString(1, record.getStackId());
+                try (var rows = existing.executeQuery()) {
+                    if (rows.next() && (!record.getProvider().equals(rows.getString(1))
+                            || !record.getEndpoint().equals(rows.getString(2))
+                            || !record.getNamespace().equals(rows.getString(3))))
+                        throw new IllegalStateException("Stack ID " + record.getStackId() + " already names another namespace");
+                }
             }
             try (var select = connection.prepareStatement(
                     "SELECT stack_id FROM catalog_stacks WHERE provider = ? AND endpoint = ? AND namespace = ?")) {

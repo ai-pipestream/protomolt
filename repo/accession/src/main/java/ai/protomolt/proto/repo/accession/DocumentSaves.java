@@ -191,8 +191,12 @@ public final class DocumentSaves {
 
         Stack resolve(String account, String drive) {
             var target = drive.isEmpty() ? defaultDrive : drive;
-            return byAccountAndDrive.apply(account, target)
-                    .orElseThrow(() -> malformedException("Unknown drive " + drive));
+            try {
+                return byAccountAndDrive.apply(account, target)
+                        .orElseThrow(() -> malformedException("Unknown drive " + drive));
+            } catch (CatalogEntries.InvalidStackIdentity invalid) {
+                throw rejectionException(rejection(RejectionReason.REJECTION_REASON_VALIDATION_FAILED, invalid.getMessage()));
+            }
         }
 
         Stack byId(String stackId) {

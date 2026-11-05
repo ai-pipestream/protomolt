@@ -23,7 +23,8 @@ public final class DriveProvisioner {
     static final String STATUS_ACTIVE = "ACTIVE";
 
     private final DriveLedger drives;
-    private final NamespaceProvisioner namespaces;
+    private final java.util.function.Function<DriveRecord, NamespaceProvisioner> namespaces;
+    private final boolean multipleBackends;
     private final String defaultProvider;
     private final java.util.function.Consumer<DriveRecord> recordGate;
     private final String defaultBucketBase;
@@ -37,11 +38,27 @@ public final class DriveProvisioner {
     public DriveProvisioner(DriveLedger drives, NamespaceProvisioner namespaces, String defaultBucketBase,
             String defaultRegion, String defaultProvider, java.util.function.Consumer<DriveRecord> recordGate) {
         this.drives = drives;
-        this.namespaces = java.util.Objects.requireNonNull(namespaces);
+        java.util.Objects.requireNonNull(namespaces);
+        this.namespaces = record -> namespaces;
+        this.multipleBackends = false;
         this.defaultProvider = java.util.Objects.requireNonNull(defaultProvider);
         this.recordGate = java.util.Objects.requireNonNull(recordGate);
         this.defaultBucketBase = defaultBucketBase;
         this.defaultRegion = defaultRegion;
+    }
+
+    /** Provision each drive through the same resolver used by its read and write paths. */
+    public DriveProvisioner(DriveLedger drives,
+            String defaultBucketBase, String defaultRegion, String defaultProvider,
+            java.util.function.Consumer<DriveRecord> recordGate,
+            java.util.function.Function<DriveRecord, NamespaceProvisioner> namespaces) {
+        this.drives = drives;
+        this.namespaces = java.util.Objects.requireNonNull(namespaces);
+        this.multipleBackends = true;
+        this.defaultBucketBase = defaultBucketBase;
+        this.defaultRegion = defaultRegion;
+        this.defaultProvider = defaultProvider;
+        this.recordGate = recordGate;
     }
 
     /**
@@ -111,7 +128,7 @@ public final class DriveProvisioner {
             return existing.get();
         }
 
-        ensureBucket(resolvedBucket);
+        namespaces.apply(record).ensureNamespace(resolvedBucket);
         try {
             drives.insert(record);
         } catch (PersistenceException race) {
@@ -133,7 +150,7 @@ public final class DriveProvisioner {
     }
 
     private void requireSelectedProvider(String provider, DriveProviderConfig config) {
-        requireSelectedProvider(defaultProvider, provider, config);
+        requireSelectedProvider(multipleBackends ? provider : defaultProvider, provider, config);
     }
 
     public static void requireSelectedProvider(String defaultProvider, String provider, DriveProviderConfig config) {
@@ -143,19 +160,11 @@ public final class DriveProvisioner {
         if (config == null) return;
         boolean mismatch = switch (config.getConfigCase()) {
             case S3 -> !"s3".equals(defaultProvider);
-            case REDIS -> !"redis".equals(defaultProvider);
+            case REDIS -> !("redis".equals(defaultProvider) || "valkey".equals(defaultProvider));
             case CONFIG_NOT_SET -> false;
             default -> true;
         };
         if (mismatch) throw new RepositoryException(RepositoryException.Code.FAILED_PRECONDITION, "Drive configuration does not match the selected storage backend");
-    }
-
-    /**
-     * Create the drive's bucket when absent, then verify reachability. The one
-     * admin-plane operation is delegated to the selected namespace provider.
-     */
-    private void ensureBucket(String bucket) {
-        namespaces.ensureNamespace(bucket);
     }
 
     /** Maps the wire enum to the row's check-constrained string; UNSPECIFIED → CUSTOM. */

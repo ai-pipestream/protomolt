@@ -37,12 +37,13 @@ public final class S3BlobStoreProvider implements BlobStoreProvider {
     @Override public OpenedBlobStore open(Map<String, String> options) {
         String mode = options.get("credentials-mode");
         if (mode == null) throw new IllegalArgumentException("Missing S3 option: credentials-mode");
-        if (!Set.of("static", "default-chain").contains(mode)) {
-            throw new IllegalArgumentException("S3 credentials-mode must be static or default-chain");
+        if (!Set.of("static", "default-chain", "profile").contains(mode)) {
+            throw new IllegalArgumentException("S3 credentials-mode must be static, default-chain or profile");
         }
         var keys = new HashSet<>(Set.of("endpoint", "region", "path-style", "conditional-writes", "credentials-mode"));
         keys.addAll(TIMEOUTS);
         if (mode.equals("static")) keys.addAll(Set.of("access-key", "secret-key"));
+        if (mode.equals("profile")) keys.add("profile-name");
         for (String key : keys) {
             if (!options.containsKey(key)) throw new IllegalArgumentException("Missing S3 option: " + key);
         }
@@ -74,7 +75,10 @@ public final class S3BlobStoreProvider implements BlobStoreProvider {
         Region region = Region.of(options.get("region"));
         AwsCredentialsProvider credentials = mode.equals("static")
                 ? StaticCredentialsProvider.create(AwsBasicCredentials.create(options.get("access-key"), options.get("secret-key")))
-                : DefaultCredentialsProvider.builder().build();
+                : mode.equals("profile")
+                    ? software.amazon.awssdk.auth.credentials.ProfileCredentialsProvider.builder()
+                            .profileName(options.get("profile-name")).build()
+                    : DefaultCredentialsProvider.builder().build();
         S3Client acquired = null;
         try {
             var builder = S3Client.builder().region(region).credentialsProvider(credentials)
