@@ -61,6 +61,10 @@ class WellKnownFormatRulesTest {
     void decimalIsUnsignedAndExponentFree() {
         assertThat(ruleIds(WellKnownDoc.newBuilder().setAmount("42").build()))
                 .doesNotContain("string.decimal", "string.decimal_empty");
+        // Boundary: longer than any binary numeric type, still a decimal string.
+        assertThat(ruleIds(WellKnownDoc.newBuilder()
+                        .setAmount("12345678901234567890.5").build()))
+                .doesNotContain("string.decimal", "string.decimal_empty");
         for (String bad : List.of("-5", "+5", "1e3", "19.99.", "12.34.56", " 42")) {
             assertThat(ruleIds(WellKnownDoc.newBuilder().setAmount(bad).build()))
                     .as("decimal must refuse %s", bad)
@@ -68,6 +72,22 @@ class WellKnownFormatRulesTest {
         }
         assertThat(ruleIds(WellKnownDoc.getDefaultInstance()))
                 .contains("string.decimal_empty");
+    }
+
+    @Test
+    void decimalClassificationProducesOrdinaryViolationsWithoutCompilationOrEvaluationExceptions() {
+        // StringFormat.DECIMAL is backed by the deterministic Decimals character scanner and has
+        // no compilation or runtime evaluation exception path: malformed inputs always classify
+        // as ordinary ValidationResult violations rather than throwing RuleCompilationException
+        // or RuleEvaluationException.
+        for (String input : List.of("", "-5", "1e3", "not-a-decimal", "\u0000")) {
+            ValidationResult result = VALIDATOR.validate(
+                    WellKnownDoc.newBuilder().setAmount(input).build());
+            assertThat(result.valid()).isFalse();
+            assertThat(result.violations())
+                    .extracting(ValidationResult.Violation::ruleId)
+                    .contains(input.isEmpty() ? "string.decimal_empty" : "string.decimal");
+        }
     }
 
     @Test
