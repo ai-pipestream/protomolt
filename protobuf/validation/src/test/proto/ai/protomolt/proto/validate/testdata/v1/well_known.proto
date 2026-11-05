@@ -39,4 +39,7 @@ message WellKnownDoc {
       string: {hex: true, len: 32}
     }
   ];
+  // Unsigned exponent-free decimal string (money-in-a-string); protomolt-only,
+  // no buf.validate counterpart at the pinned upstream commit.
+  string amount = 12 [(ai.protomolt.proto.validate.v1.field).string.decimal = true];
 }
