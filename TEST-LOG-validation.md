@@ -48,4 +48,5 @@ test was corrected (no production change).
 - `./gradlew :protomolt-protobuf-validation-protovalidate:test` — 40 tests, 0 failures.
 
 ## Commits
-- (to be filled on commit)
+- `011a59a17` test(validation): cover CEL error paths (unknown fn, type mismatch,
+  bad format, isInf(0)) — CelErrorPathsTest (6) + MaterializeJsonNamesTest (4) + this log
