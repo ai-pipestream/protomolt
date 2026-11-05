@@ -127,10 +127,10 @@ final class ValueChecks {
             List<ValidationResult.Violation> violations) {
         String typeUrl = (String) any.getField(any.getDescriptorForType().findFieldByNumber(1));
         if (!rules.in().isEmpty() && !rules.in().contains(typeUrl)) {
-            violations.add(violation(path, "any.in", "type URL must be one of the allowed values"));
+            violations.add(violation(path, "any.in", "type URL must be in the allow list"));
         }
         if (!rules.notIn().isEmpty() && rules.notIn().contains(typeUrl)) {
-            violations.add(violation(path, "any.not_in", "type URL must not be a forbidden value"));
+            violations.add(violation(path, "any.not_in", "type URL must not be in the block list"));
         }
     }
 
@@ -141,7 +141,8 @@ final class ValueChecks {
         @SuppressWarnings("unchecked")
         List<String> paths = (List<String>) mask.getField(mask.getDescriptorForType().findFieldByNumber(1));
         if (rules.constant().isPresent() && !String.join(",", paths).equals(rules.constant().get())) {
-            violations.add(violation(path, "field_mask.const", "must equal the required field mask"));
+            violations.add(violation(path, "field_mask.const",
+                    "must equal paths [" + rules.constant().get() + "]"));
         }
         // in / not_in test each path against the rule paths by prefix coverage: a mask path "a.foo"
         // is covered by the entry "a". Every path must be covered by some in entry; no path may be
@@ -202,15 +203,15 @@ final class ValueChecks {
         long len = value.codePointCount(0, value.length());
         if (rules.constant().isPresent() && !value.equals(rules.constant().get())) {
             violations.add(violation(path, "string.const",
-                    "must equal \"" + rules.constant().get() + "\""));
+                    "must equal `" + rules.constant().get() + "`"));
         }
         if (rules.len().isPresent() && len != rules.len().getAsLong()) {
             violations.add(violation(path, "string.len",
-                    "length must be exactly " + rules.len().getAsLong()));
+                    "must be " + rules.len().getAsLong() + " characters"));
         }
         if (rules.minLen().isPresent() && len < rules.minLen().getAsLong()) {
             violations.add(violation(path, "string.min_len",
-                    "length must be at least " + rules.minLen().getAsLong()));
+                    "must be at least " + rules.minLen().getAsLong() + " characters"));
         }
         if (rules.maxLen().isPresent() && len > rules.maxLen().getAsLong()) {
             violations.add(violation(path, "string.max_len",
@@ -233,7 +234,8 @@ final class ValueChecks {
         }
         if (rules.pattern().isPresent()
                 && !compiledPattern(rules.pattern().get()).matcher(value).find()) {
-            violations.add(violation(path, "string.pattern", "value does not match pattern"));
+            violations.add(violation(path, "string.pattern",
+                    "does not match regex pattern `" + rules.pattern().get() + "`"));
         }
         if (rules.prefix().isPresent() && !value.startsWith(rules.prefix().get())) {
             violations.add(violation(path, "string.prefix",
@@ -241,7 +243,7 @@ final class ValueChecks {
         }
         if (rules.suffix().isPresent() && !value.endsWith(rules.suffix().get())) {
             violations.add(violation(path, "string.suffix",
-                    "must end with \"" + rules.suffix().get() + "\""));
+                    "does not have suffix `" + rules.suffix().get() + "`"));
         }
         if (rules.contains().isPresent() && !value.contains(rules.contains().get())) {
             violations.add(violation(path, "string.contains",
@@ -252,10 +254,10 @@ final class ValueChecks {
                     "must not contain \"" + rules.notContains().get() + "\""));
         }
         if (!rules.in().isEmpty() && !rules.in().contains(value)) {
-            violations.add(violation(path, "string.in", "must be one of " + rules.in()));
+            violations.add(violation(path, "string.in", "must be in list " + rules.in()));
         }
         if (!rules.notIn().isEmpty() && rules.notIn().contains(value)) {
-            violations.add(violation(path, "string.not_in", "must not be one of " + rules.notIn()));
+            violations.add(violation(path, "string.not_in", "must not be in list " + rules.notIn()));
         }
         for (StringFormat format : rules.formats()) {
             if (value.isEmpty()) {
@@ -287,10 +289,10 @@ final class ValueChecks {
                 boxed(rules.gt()), boxed(rules.gte()), boxed(rules.lt()), boxed(rules.lte()),
                 order, v -> fmt(v, unsigned), violations);
         if (!rules.in().isEmpty() && !rules.in().contains(value)) {
-            violations.add(violation(path, prefix + ".in", "must be one of the allowed values"));
+            violations.add(violation(path, prefix + ".in", "must be in list " + rules.in()));
         }
         if (!rules.notIn().isEmpty() && rules.notIn().contains(value)) {
-            violations.add(violation(path, prefix + ".not_in", "must not be one of the forbidden values"));
+            violations.add(violation(path, prefix + ".not_in", "must not be in list " + rules.notIn()));
         }
     }
 
@@ -318,10 +320,14 @@ final class ValueChecks {
             Comparator<T> order, Function<T, String> fmt,
             List<ValidationResult.Violation> violations) {
         T lower = gt != null ? gt : gte;
-        String lowerName = gt != null ? "gt" : (gte != null ? "gte" : null);
+        String lowerId = gt != null ? "gt" : (gte != null ? "gte" : null);
+        String lowerName = gt != null ? "greater than"
+                : (gte != null ? "greater than or equal to" : null);
         boolean lowerInclusive = gt == null && gte != null;
         T upper = lt != null ? lt : lte;
-        String upperName = lt != null ? "lt" : (lte != null ? "lte" : null);
+        String upperId = lt != null ? "lt" : (lte != null ? "lte" : null);
+        String upperName = lt != null ? "less than"
+                : (lte != null ? "less than or equal to" : null);
         boolean upperInclusive = lt == null && lte != null;
 
         if (lower != null && upper != null) {
@@ -332,7 +338,7 @@ final class ValueChecks {
             boolean exclusive = order.compare(upper, lower) < 0;
             boolean ok = exclusive ? (satLower || satUpper) : (satLower && satUpper);
             if (!ok) {
-                String ruleId = prefix + "." + lowerName + "_" + upperName + (exclusive ? "_exclusive" : "");
+                String ruleId = prefix + "." + lowerId + "_" + upperId + (exclusive ? "_exclusive" : "");
                 violations.add(violation(path, ruleId, exclusive
                         ? "must be " + lowerName + " " + fmt.apply(lower) + " or " + upperName + " " + fmt.apply(upper)
                         : "must be " + lowerName + " " + fmt.apply(lower) + " and " + upperName + " " + fmt.apply(upper)));
@@ -341,15 +347,15 @@ final class ValueChecks {
             boolean sat = lowerInclusive
                     ? order.compare(value, lower) >= 0 : order.compare(value, lower) > 0;
             if (!sat) {
-                violations.add(violation(path, prefix + "." + lowerName,
-                        "must be " + (lowerInclusive ? ">= " : "> ") + fmt.apply(lower)));
+                violations.add(violation(path, prefix + "." + lowerId,
+                        "must be " + lowerName + " " + fmt.apply(lower)));
             }
         } else if (upper != null) {
             boolean sat = upperInclusive
                     ? order.compare(value, upper) <= 0 : order.compare(value, upper) < 0;
             if (!sat) {
-                violations.add(violation(path, prefix + "." + upperName,
-                        "must be " + (upperInclusive ? "<= " : "< ") + fmt.apply(upper)));
+                violations.add(violation(path, prefix + "." + upperId,
+                        "must be " + upperName + " " + fmt.apply(upper)));
             }
         }
     }
@@ -363,10 +369,14 @@ final class ValueChecks {
             String prefix, String path, double value, Double gt, Double gte, Double lt, Double lte,
             List<ValidationResult.Violation> violations) {
         Double lower = gt != null ? gt : gte;
-        String lowerName = gt != null ? "gt" : (gte != null ? "gte" : null);
+        String lowerId = gt != null ? "gt" : (gte != null ? "gte" : null);
+        String lowerName = gt != null ? "greater than"
+                : (gte != null ? "greater than or equal to" : null);
         boolean lowerInclusive = gt == null && gte != null;
         Double upper = lt != null ? lt : lte;
-        String upperName = lt != null ? "lt" : (lte != null ? "lte" : null);
+        String upperId = lt != null ? "lt" : (lte != null ? "lte" : null);
+        String upperName = lt != null ? "less than"
+                : (lte != null ? "less than or equal to" : null);
         boolean upperInclusive = lt == null && lte != null;
 
         if (lower != null && upper != null) {
@@ -375,22 +385,85 @@ final class ValueChecks {
             boolean exclusive = upper < lower;
             boolean ok = exclusive ? (satLower || satUpper) : (satLower && satUpper);
             if (!ok) {
-                String ruleId = prefix + "." + lowerName + "_" + upperName + (exclusive ? "_exclusive" : "");
-                violations.add(violation(path, ruleId, "must be within " + lowerName + "/" + upperName + " range"));
+                String ruleId = prefix + "." + lowerId + "_" + upperId + (exclusive ? "_exclusive" : "");
+                violations.add(violation(path, ruleId, exclusive
+                        ? "must be " + lowerName + " " + fmtDouble(lower)
+                                + " or " + upperName + " " + fmtDouble(upper)
+                        : "must be " + lowerName + " " + fmtDouble(lower)
+                                + " and " + upperName + " " + fmtDouble(upper)));
             }
         } else if (lower != null) {
             boolean sat = lowerInclusive ? value >= lower : value > lower;
             if (!sat) {
-                violations.add(violation(path, prefix + "." + lowerName,
-                        "must be " + (lowerInclusive ? ">= " : "> ") + lower));
+                violations.add(violation(path, prefix + "." + lowerId,
+                        "must be " + lowerName + " " + fmtDouble(lower)));
             }
         } else if (upper != null) {
             boolean sat = upperInclusive ? value <= upper : value < upper;
             if (!sat) {
-                violations.add(violation(path, prefix + "." + upperName,
-                        "must be " + (upperInclusive ? "<= " : "< ") + upper));
+                violations.add(violation(path, prefix + "." + upperId,
+                        "must be " + upperName + " " + fmtDouble(upper)));
             }
         }
+    }
+
+    /**
+     * Formats a float/double bound the way protovalidate does: integral values print without a
+     * decimal point ({@code 123} rather than {@code 123.0}).
+     */
+    static String fmtDouble(double value) {
+        if (Double.isFinite(value) && value == Math.rint(value)
+                && Math.abs(value) < 1e15) {
+            return Long.toString((long) value);
+        }
+        return Double.toString(value);
+    }
+
+    /** Formats a list of durations the way protovalidate does. */
+    private static String fmtDurations(List<Duration> values) {
+        StringBuilder sb = new StringBuilder("[");
+        for (int i = 0; i < values.size(); i++) {
+            if (i > 0) {
+                sb.append(", ");
+            }
+            sb.append(fmtDuration(values.get(i)));
+        }
+        return sb.append("]").toString();
+    }
+
+    /** Lowercase hex of the bytes, matching protovalidate's bytes messages. */
+    private static String hex(ByteString value) {
+        StringBuilder sb = new StringBuilder(value.size() * 2);
+        for (int i = 0; i < value.size(); i++) {
+            sb.append(Character.forDigit((value.byteAt(i) >> 4) & 0xF, 16));
+            sb.append(Character.forDigit(value.byteAt(i) & 0xF, 16));
+        }
+        return sb.toString();
+    }
+
+    /** Formats a duration in protobuf canonical form ({@code 3s}, {@code 0.001s}). */
+    static String fmtDuration(Duration value) {
+        long seconds = value.getSeconds();
+        int nanos = value.getNano();
+        String sign = "";
+        if (value.isNegative()) {
+            sign = "-";
+            if (seconds < 0 && nanos > 0) {
+                seconds += 1;
+                nanos = 1_000_000_000 - nanos;
+            }
+            seconds = Math.abs(seconds);
+            nanos = Math.abs(nanos);
+        }
+        if (nanos == 0) {
+            return sign + seconds + "s";
+        }
+        String fraction = String.format("%09d", nanos);
+        int end = fraction.length();
+        while (fraction.charAt(end - 1) == '0') {
+            end--;
+        }
+        return sign + seconds + "." + fraction.substring(0, end) + "s";
     }
 
     private static void applyFloating(
@@ -399,16 +472,17 @@ final class ValueChecks {
         String prefix = rules.ruleIdPrefix();
         if (rules.constant().isPresent() && value != rules.constant().getAsDouble()) {
             violations.add(violation(path, prefix + ".const",
-                    "must equal " + rules.constant().getAsDouble()));
+                    "must equal " + fmtDouble(rules.constant().getAsDouble())));
         }
         applyDoubleRange(prefix, path, value,
                 boxed(rules.gt()), boxed(rules.gte()), boxed(rules.lt()), boxed(rules.lte()),
                 violations);
         if (!rules.in().isEmpty() && !containsNumeric(rules.in(), value)) {
-            violations.add(violation(path, prefix + ".in", "must be one of the allowed values"));
+            violations.add(violation(path, prefix + ".in", "must be in list " + fmtDoubles(rules.in())));
         }
         if (!rules.notIn().isEmpty() && containsNumeric(rules.notIn(), value)) {
-            violations.add(violation(path, prefix + ".not_in", "must not be one of the forbidden values"));
+            violations.add(violation(path, prefix + ".not_in",
+                    "must not be in list " + fmtDoubles(rules.notIn())));
         }
         if (rules.finite() && !Double.isFinite(value)) {
             violations.add(violation(path, prefix + ".finite", "must be finite"));
@@ -419,6 +493,18 @@ final class ValueChecks {
      * Membership by IEEE numeric equality, matching CEL: {@code -0.0} equals {@code 0.0} and
      * {@code NaN} equals nothing — boxed {@link Double#equals} gets both edge cases wrong.
      */
+    /** Formats a list of float/double membership values the way protovalidate does. */
+    private static String fmtDoubles(List<Double> values) {
+        StringBuilder sb = new StringBuilder("[");
+        for (int i = 0; i < values.size(); i++) {
+            if (i > 0) {
+                sb.append(", ");
+            }
+            sb.append(fmtDouble(values.get(i)));
+        }
+        return sb.append("]").toString();
+    }
+
     private static boolean containsNumeric(List<Double> values, double value) {
         for (double candidate : values) {
             if (candidate == value) {
@@ -441,7 +527,8 @@ final class ValueChecks {
             List<ValidationResult.Violation> violations) {
         int size = value.size();
         if (rules.constant().isPresent() && !value.equals(rules.constant().get())) {
-            violations.add(violation(path, "bytes.const", "must equal the required bytes"));
+            violations.add(violation(path, "bytes.const",
+                    "must be " + hex(rules.constant().get())));
         }
         if (rules.len().isPresent() && size != rules.len().getAsLong()) {
             violations.add(violation(path, "bytes.len",
@@ -449,20 +536,23 @@ final class ValueChecks {
         }
         if (rules.minLen().isPresent() && size < rules.minLen().getAsLong()) {
             violations.add(violation(path, "bytes.min_len",
-                    "length must be at least " + rules.minLen().getAsLong() + " bytes"));
+                    "must be at least " + rules.minLen().getAsLong() + " bytes"));
         }
         if (rules.maxLen().isPresent() && size > rules.maxLen().getAsLong()) {
             violations.add(violation(path, "bytes.max_len",
-                    "length must be at most " + rules.maxLen().getAsLong() + " bytes"));
+                    "must be at most " + rules.maxLen().getAsLong() + " bytes"));
         }
         if (rules.prefix().isPresent() && !value.startsWith(rules.prefix().get())) {
-            violations.add(violation(path, "bytes.prefix", "must start with the required bytes"));
+            violations.add(violation(path, "bytes.prefix",
+                    "does not have prefix " + hex(rules.prefix().get())));
         }
         if (rules.suffix().isPresent() && !value.endsWith(rules.suffix().get())) {
-            violations.add(violation(path, "bytes.suffix", "must end with the required bytes"));
+            violations.add(violation(path, "bytes.suffix",
+                    "does not have suffix " + hex(rules.suffix().get())));
         }
         if (rules.contains().isPresent() && !bytesContain(value, rules.contains().get())) {
-            violations.add(violation(path, "bytes.contains", "must contain the required bytes"));
+            violations.add(violation(path, "bytes.contains",
+                    "does not contain " + hex(rules.contains().get())));
         }
         if (rules.pattern().isPresent()) {
             // protovalidate applies the pattern to the value decoded as UTF-8; non-UTF-8 bytes are a
@@ -472,7 +562,8 @@ final class ValueChecks {
                         "bytes.pattern", "value must be valid UTF-8 to apply regexp", null);
             }
             if (!compiledPattern(rules.pattern().get()).matcher(value.toStringUtf8()).find()) {
-                violations.add(violation(path, "bytes.pattern", "value does not match pattern"));
+                violations.add(violation(path, "bytes.pattern",
+                        "must match regex pattern `" + rules.pattern().get() + "`"));
             }
         }
         if (!rules.in().isEmpty() && !rules.in().contains(value)) {
@@ -532,13 +623,13 @@ final class ValueChecks {
         // Unknown numbers surface as synthetic value descriptors with index -1.
         if (rules.definedOnly() && value.getIndex() < 0) {
             violations.add(violation(path, "enum.defined_only",
-                    "must be a defined enum value, got " + number));
+                    "value must be one of the defined enum values"));
         }
         if (!rules.in().isEmpty() && !rules.in().contains(number)) {
-            violations.add(violation(path, "enum.in", "must be one of the allowed values"));
+            violations.add(violation(path, "enum.in", "must be in list " + rules.in()));
         }
         if (!rules.notIn().isEmpty() && rules.notIn().contains(number)) {
-            violations.add(violation(path, "enum.not_in", "must not be one of the forbidden values"));
+            violations.add(violation(path, "enum.not_in", "must not be in list " + rules.notIn()));
         }
     }
 
@@ -574,17 +665,18 @@ final class ValueChecks {
             List<ValidationResult.Violation> violations) {
         if (rules.constant().isPresent() && !value.equals(rules.constant().get())) {
             violations.add(violation(path, "duration.const",
-                    "must equal " + rules.constant().get()));
+                    "must equal " + fmtDuration(rules.constant().get())));
         }
         applyRange("duration", path, value,
                 rules.gt().orElse(null), rules.gte().orElse(null),
                 rules.lt().orElse(null), rules.lte().orElse(null),
-                Comparator.naturalOrder(), Duration::toString, violations);
+                Comparator.naturalOrder(), ValueChecks::fmtDuration, violations);
         if (!rules.in().isEmpty() && !rules.in().contains(value)) {
-            violations.add(violation(path, "duration.in", "must be one of the allowed values"));
+            violations.add(violation(path, "duration.in", "must be in list " + fmtDurations(rules.in())));
         }
         if (!rules.notIn().isEmpty() && rules.notIn().contains(value)) {
-            violations.add(violation(path, "duration.not_in", "must not be one of the forbidden values"));
+            violations.add(violation(path, "duration.not_in",
+                    "must not be in list " + fmtDurations(rules.notIn())));
         }
     }
 }

@@ -167,6 +167,17 @@ identical violation prose, and an expected compilation error may match a
 runtime error. A claim about either strict mode needs a separate recorded
 run. See the pinned upstream [comparison implementation](https://github.com/bufbuild/protovalidate/blob/04cd1e0187b7e570f3bb0f86a31daf1f2ad7237e/tools/protovalidate-conformance/internal/results/result.go).
 
+Recorded `--strict_message` run: PASS 2880/2880 against upstream pin
+`04cd1e0187b7` (see ticket #796). Violation prose follows the upstream
+wording for every rule the suite pins a message for. Deliberately unchanged
+(no upstream message expectation in the corpus, so strict mode does not
+compare them): `string.prefix` / `string.contains` / `string.not_contains`,
+`string.len_bytes` / `string.min_bytes` / `string.max_bytes`,
+`string.max_len`, `bytes.len`, `bytes.in` / `bytes.not_in`,
+`field_mask.in` / `field_mask.not_in`, `timestamp.within` /
+`timestamp.lt_now` / `timestamp.gt_now`, and the non-UUID/IP string and
+`bytes.uuid` format messages.
+
 This is separate from `buf lint`, which applies the `STANDARD` and
 `COMMENTS` schema-style rules configured in `buf.yaml`, and from
 `buf breaking`, which checks schema compatibility. Neither establishes
