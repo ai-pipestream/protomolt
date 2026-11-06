@@ -34,8 +34,8 @@ class MultiDriveStorageIT {
             DockerImageName.parse("localstack/localstack:3.8")).withServices("s3");
     @Container static final LocalStackContainer S3_B = new LocalStackContainer(
             DockerImageName.parse("localstack/localstack:3.8")).withServices("s3");
-    @Container static final GenericContainer<?> VALKEY = new GenericContainer<>(RedisTestServers.image())
-            .withExposedPorts(6379).withCommand(RedisTestServers.server(), "--appendonly", "yes");
+    @Container static final GenericContainer<?> VALKEY = RedisTestServers.container()
+            .withCommand(RedisTestServers.server(), "--appendonly", "yes");
     private static final ByteString RAW = ByteString.copyFromUtf8("retained source bytes across drives");
 
     @Test void twoS3EndpointsCarryForwardSurviveRestartAndReclaimAllVersions() throws Exception {

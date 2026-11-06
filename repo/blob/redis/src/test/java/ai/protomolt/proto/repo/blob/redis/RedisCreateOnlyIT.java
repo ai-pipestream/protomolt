@@ -12,7 +12,7 @@ import static org.assertj.core.api.Assertions.*;
 
 @Testcontainers
 class RedisCreateOnlyIT {
-    @Container static final GenericContainer<?> REDIS = new GenericContainer<>(RedisTestServers.image()).withExposedPorts(6379);
+    @Container static final GenericContainer<?> REDIS = RedisTestServers.container();
     private static String uri() { return "redis://" + REDIS.getHost() + ":" + REDIS.getMappedPort(6379); }
     private static RedisBlobStore store(String prefix, RedisWritePolicy policy) {
         return new RedisBlobStore(new RedisBlobStoreConfig(uri(), 0, 0, prefix, policy));

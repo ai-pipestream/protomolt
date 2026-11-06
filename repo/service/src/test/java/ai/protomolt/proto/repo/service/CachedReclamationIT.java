@@ -19,7 +19,7 @@ import static org.assertj.core.api.Assertions.*;
 class CachedReclamationIT {
     @Container static final LocalStackContainer S3 = new LocalStackContainer(
             DockerImageName.parse("localstack/localstack:3.8")).withServices("s3");
-    @Container static final GenericContainer<?> REDIS = new GenericContainer<>(RedisTestServers.image()).withExposedPorts(6379);
+    @Container static final GenericContainer<?> REDIS = RedisTestServers.container();
     static OpenedBlobStore backing;
     static OpenedBlobStore cache;
     static CachingBlobStore composed;

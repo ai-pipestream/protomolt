@@ -22,9 +22,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
- * {@link RedisBlobStore} against a real Redis (testcontainers
- * {@link RedisTestServers#image()} — no special module needed, a plain container with a
- * mapped port). Exercises the port contracts the in-memory fake cannot:
+ * {@link RedisBlobStore} against a real Redis (the shared {@link RedisTestServers#container()}
+ * — no special module needed, a plain container that is ready only once it answers RESP
+ * PING with PONG). Exercises the port contracts the in-memory fake cannot:
  * the client-side verified write, the two-entries-per-object key mapping,
  * the 1000-key pipelined {@code deleteAll}, SCAN listing across bucket
  * namespaces, and real TTL expiry. Skips cleanly without docker.
@@ -33,8 +33,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 class RedisBlobStoreIT {
 
     @Container
-    static final GenericContainer<?> REDIS = new GenericContainer<>(RedisTestServers.image())
-            .withExposedPorts(6379);
+    static final GenericContainer<?> REDIS = RedisTestServers.container();
 
     static RedisBlobStore store;
     static ai.protomolt.proto.repo.blob.spi.OpenedBlobStore handle;

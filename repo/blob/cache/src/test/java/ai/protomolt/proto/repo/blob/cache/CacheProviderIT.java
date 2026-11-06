@@ -48,7 +48,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 class CacheProviderIT {
 
     @Container
-    static final GenericContainer<?> REDIS = new GenericContainer<>(RedisTestServers.image()).withExposedPorts(6379);
+    static final GenericContainer<?> REDIS = RedisTestServers.container();
 
     @Container
     static final LocalStackContainer LOCALSTACK =
