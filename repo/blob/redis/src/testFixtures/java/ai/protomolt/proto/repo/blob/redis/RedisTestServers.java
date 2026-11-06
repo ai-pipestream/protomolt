@@ -50,8 +50,7 @@ public final class RedisTestServers {
     }
 
     /**
-     * One readiness probe; the seam shared by the container wait and any restart wait.
-     * Success is exactly a {@code PONG} answer. A connection-level failure or the
+     * One readiness probe. Success is exactly a {@code PONG} answer. A connection-level failure or the
      * explicit transient {@code LOADING} reply means the server is not serving yet;
      * any other reply is a refusal and must surface instead of polling into a pass.
      */
