@@ -68,9 +68,25 @@ Profile names and endpoint names are stable identifiers. Each endpoint makes
 the transport explicit and separates `host` from `port`. TLS uses the JDK's
 normal trust configuration when no custom reference is present. Credential,
 custom-trust, and client-certificate fields contain only opaque host references,
-never secrets. The default host currently refuses those references until a
-credential resolver is configured, so it cannot accidentally treat them as
-credential material.
+never secrets.
+
+A host supplies `EnvProfileCredentialResolver` to
+`ServiceWorkspaceActions.register` or `ProtoMoltCatalog`. Each allowed binding
+pins the profile name, endpoint name, host, port, transport, and `env:`
+reference; changing any of them requires a new host-approved binding. The
+resolver reuses the inference SPI's environment resolver and bearer validation.
+Without a host resolver, or when the referenced environment variable is unset,
+empty, or invalid, `credential_ref` fails closed with `credential-unavailable`
+before a channel opens. Custom trust and client-certificate references still
+fail with `unsupported-transport`.
+
+Registration, refresh, unary and server-streaming `service-invoke`, and the
+reflected verbs attach the bearer token through gRPC `CallCredentials`, which
+re-resolves the reference on every call, so rotated material is picked up and
+nothing is cached on a channel. A server that rejects the token fails the call
+with `UNAUTHENTICATED`; there is no anonymous fallback. Credential values never
+appear in profiles, descriptor artifacts, replies, or errors — only the opaque
+reference does.
 
 ## Inspect and refresh
 
@@ -88,7 +104,11 @@ is the `service-list` input. To filter by name:
 
 is the `service-inspect` input. Inspection returns the persisted connection
 profile plus each reflected method's fully qualified name, streaming flags,
-input and output types, and top-level field shapes.
+input and output types, and top-level field shapes. It still never contacts the
+target, but it resolves each endpoint's credential reference locally, so a
+profile whose reference no longer resolves fails inspection with
+`credential-unavailable` instead of describing a service the next call cannot
+reach.
 
 Refresh only when the deployed schema may have changed:
 

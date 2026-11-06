@@ -20,12 +20,9 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.google.protobuf.util.JsonFormat;
+import io.grpc.CallCredentials;
 import io.grpc.ManagedChannel;
 import io.grpc.Channel;
-import io.grpc.ClientInterceptors;
-import io.grpc.Metadata;
-import io.grpc.stub.MetadataUtils;
-
 import java.io.IOException;
 import java.util.Optional;
 
@@ -105,7 +102,8 @@ final class ServiceActionSupport {
             throw invalid(e.getMessage(), "/profile");
         }
         ServiceEndpoint endpoint = endpoint(profile, endpointName);
-        Metadata headers = ProfileCredentials.headers(profile, endpoint, credentials);
+        CallCredentials callCredentials =
+                ProfileCredentials.callCredentials(profile, endpoint, credentials);
         String target = target(endpoint);
         boolean tls = endpoint.getTransport() == Transport.TRANSPORT_TLS;
         try {
@@ -123,9 +121,8 @@ final class ServiceActionSupport {
         }
         ReflectionClient.Result reflected;
         try {
-            Channel reflectedChannel = headers.keys().isEmpty() ? channel
-                    : ClientInterceptors.intercept(channel,
-                            MetadataUtils.newAttachHeadersInterceptor(headers));
+            Channel reflectedChannel = callCredentials == null ? channel
+                    : ProfileCredentials.decorate(channel, callCredentials);
             reflected = channels.policy() == null
                     ? ReflectionClient.discover(reflectedChannel, deadlineMs)
                     : ReflectionClient.discover(reflectedChannel, deadlineMs, channels.policy());
