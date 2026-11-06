@@ -144,10 +144,12 @@ public final class GrpcInvokeAction implements StreamingAction {
                         .set("description", String.join("; ", failures));
             }
         } catch (StatusRuntimeException e) {
-            result.set("ok", false).set("status", e.getStatus().getCode().name());
-            String description = e.getStatus().getDescription();
-            if (description != null) {
-                result.set("description", description);
+            // Credentialed calls surface the code only; the upstream text may echo the
+            // credential that was presented.
+            Status status = UpstreamStatus.reply(e.getStatus(), plan.credentials());
+            result.set("ok", false).set("status", status.getCode().name());
+            if (status.getDescription() != null) {
+                result.set("description", status.getDescription());
             }
         } finally {
             channel.shutdownNow();
@@ -216,14 +218,14 @@ public final class GrpcInvokeAction implements StreamingAction {
                     }
                     Status terminal = stream.terminalStatus();
                     if (terminal != null && !terminal.isOk()) {
-                        emitter.emit(terminal(terminal));
+                        emitter.emit(terminal(UpstreamStatus.reply(terminal, plan.credentials())));
                         return;
                     }
                 }
             }
             emitter.emit(okTerminal());
         } catch (StatusRuntimeException e) {
-            emitter.emit(terminal(e.getStatus()));
+            emitter.emit(terminal(UpstreamStatus.reply(e.getStatus(), plan.credentials())));
         } finally {
             channel.shutdownNow();
         }

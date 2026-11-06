@@ -3,11 +3,14 @@ package ai.protomolt.proto.grpc.workspace;
 import ai.protomolt.proto.actions.ActionCatalog;
 import ai.protomolt.proto.actions.ActionContext;
 import ai.protomolt.proto.actions.ActionException;
+import ai.protomolt.proto.actions.CatalogContract;
+import ai.protomolt.proto.actions.StreamingAction;
 import ai.protomolt.proto.grpc.profile.FileSystemServiceProfileRepository;
 import ai.protomolt.proto.grpc.profile.v1.Transport;
 import ai.protomolt.proto.inference.spi.EnvCredentialResolver;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.google.protobuf.Message;
 import io.grpc.ManagedChannel;
 import io.grpc.Metadata;
 import io.grpc.Server;
@@ -22,6 +25,8 @@ import io.grpc.protobuf.services.ChannelzService;
 import io.grpc.protobuf.services.HealthStatusManager;
 import io.grpc.protobuf.services.ProtoReflectionServiceV1;
 import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicReference;
@@ -65,10 +70,16 @@ class EnvBearerCallCredentialsTest {
             public <ReqT, RespT> ServerCall.Listener<ReqT> interceptCall(
                     ServerCall<ReqT, RespT> call, Metadata headers,
                     ServerCallHandler<ReqT, RespT> next) {
-                seenAuthorization.set(headers.get(AUTHORIZATION));
+                String presented = headers.get(AUTHORIZATION);
+                seenAuthorization.set(presented);
                 String token = requiredToken.get();
-                if (token != null && !("Bearer " + token).equals(headers.get(AUTHORIZATION))) {
-                    call.close(Status.UNAUTHENTICATED, new Metadata());
+                if (token != null && !("Bearer " + token).equals(presented)) {
+                    // An endpoint can echo the presented credential in its refusal; both the
+                    // status text and the trailers carry it so tests can prove nothing leaks.
+                    Metadata trailers = new Metadata();
+                    trailers.put(AUTHORIZATION, presented == null ? "" : presented);
+                    call.close(Status.UNAUTHENTICATED
+                            .withDescription("presented credential: " + presented), trailers);
                     return new ServerCall.Listener<>() {
                     };
                 }
@@ -173,7 +184,7 @@ class EnvBearerCallCredentialsTest {
         ObjectNode stale = catalog.execute("service-refresh",
                 MAPPER.createObjectNode().put("name", "secure-health"));
         assertThat(stale.path("ok").asBoolean()).isFalse();
-        assertThat(stale.path("error").asText()).contains("UNAUTHENTICATED");
+        assertThat(stale.path("error").asText()).contains("withheld");
         assertThat(stale.toString()).doesNotContain("token-two");
     }
 
@@ -231,7 +242,7 @@ class EnvBearerCallCredentialsTest {
         envValue.set("wrong-token");
         ObjectNode rejected = catalog.execute("service-register", registerInput());
         assertThat(rejected.path("ok").asBoolean()).isFalse();
-        assertThat(rejected.path("error").asText()).contains("UNAUTHENTICATED");
+        assertThat(rejected.path("error").asText()).contains("withheld");
         assertThat(rejected.toString()).doesNotContain("wrong-token");
 
         // Register with working material, then rotate to a wrong value: the stored profile
@@ -250,13 +261,63 @@ class EnvBearerCallCredentialsTest {
         ObjectNode result = catalog.execute("service-invoke", invocation);
         assertThat(result.path("ok").asBoolean()).isFalse();
         assertThat(result.path("status").asText()).isEqualTo("UNAUTHENTICATED");
+        assertThat(result.path("description").asText())
+                .as("authenticated calls surface the code, not the upstream echo").isEmpty();
         assertThat(result.toString()).doesNotContain("wrong-token");
+
+        // The server-streaming path withholds the echo the same way, on the terminal event.
+        // (The JSON streaming edge converts envelopes upstream of this test, so this drives
+        // the verb's typed streaming path directly.)
+        ObjectNode streaming = MAPPER.createObjectNode()
+                .put("name", "secure-health")
+                .put("method", "grpc.channelz.v1.Channelz/GetTopChannels");
+        streaming.putObject("request");
+        StreamingAction serviceInvoke = (StreamingAction) catalog.get("service-invoke");
+        Message request = ServiceActionJson.parse(
+                streaming, "ServiceInvokeRequest", "service-invoke");
+        List<Message> emitted = new ArrayList<>();
+        serviceInvoke.executeStreaming(request, ActionContext.create(), emitted::add);
+        assertThat(emitted).isNotEmpty();
+        ObjectNode terminal = CatalogContract.toReply(
+                emitted.get(emitted.size() - 1), "service-invoke");
+        assertThat(terminal.path("ok").asBoolean()).isFalse();
+        assertThat(terminal.path("status").asText()).isEqualTo("UNAUTHENTICATED");
+        assertThat(terminal.path("description").asText()).isEmpty();
+        assertThat(emitted.toString()).doesNotContain("wrong-token");
 
         assertThatThrownBy(() -> catalog.execute("secure-health-check", MAPPER.createObjectNode()))
                 .isInstanceOfSatisfying(ActionException.class, e -> {
                     assertThat(e.code()).isEqualTo("upstream-unauthenticated");
                     assertThat(e.getMessage()).doesNotContain("wrong-token");
                 });
+    }
+
+    @Test
+    void unauthenticatedCallsKeepUpstreamDiagnostics() throws Exception {
+        // A profile with no credential reference: the same echoing refusal keeps its
+        // diagnostics, because there is no presented credential to protect.
+        requiredToken.set("token-one");
+        ActionCatalog anonymous = ServiceWorkspaceActions.register(
+                ActionCatalog.defaults(ActionContext.create()), repository, null,
+                (target, tls) -> channel());
+        ObjectNode plain = registerInput();
+        ((ObjectNode) plain.path("profile").path("endpoints").get(0)).remove("credentialRef");
+
+        ObjectNode rejected = anonymous.execute("service-register", plain);
+        assertThat(rejected.path("ok").asBoolean()).isFalse();
+        assertThat(rejected.path("error").asText()).contains("presented credential");
+
+        requiredToken.set(null);
+        assertThat(anonymous.execute("service-register", plain).path("ok").asBoolean()).isTrue();
+        requiredToken.set("token-one");
+        ObjectNode invocation = MAPPER.createObjectNode()
+                .put("name", "secure-health")
+                .put("method", "grpc.health.v1.Health/Check");
+        invocation.putObject("request");
+        ObjectNode result = anonymous.execute("service-invoke", invocation);
+        assertThat(result.path("ok").asBoolean()).isFalse();
+        assertThat(result.path("status").asText()).isEqualTo("UNAUTHENTICATED");
+        assertThat(result.path("description").asText()).contains("presented credential");
     }
 
     @Test

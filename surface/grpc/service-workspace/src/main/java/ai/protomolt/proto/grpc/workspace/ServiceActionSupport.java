@@ -126,6 +126,14 @@ final class ServiceActionSupport {
             reflected = channels.policy() == null
                     ? ReflectionClient.discover(reflectedChannel, deadlineMs)
                     : ReflectionClient.discover(reflectedChannel, deadlineMs, channels.policy());
+        } catch (ReflectionException e) {
+            // The upstream refusal can carry the presented credential in its status text;
+            // authenticated reflection keeps the failure class, not the diagnostics.
+            if (callCredentials != null) {
+                throw new ReflectionException("reflection failed against the authenticated "
+                        + "endpoint (upstream status withheld)");
+            }
+            throw e;
         } finally {
             channel.shutdownNow();
         }

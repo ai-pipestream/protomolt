@@ -139,9 +139,12 @@ final class ReflectedMethodAction implements ProtoAction {
             }
             return response;
         } catch (StatusRuntimeException e) {
+            // Credentialed verbs surface the code only; the upstream text may echo the
+            // credential that was presented. Unauthenticated verbs keep their diagnostics.
+            String detail = callCredentials == null ? ": " + e.getStatus().getDescription() : "";
             throw new ActionException("upstream-" + e.getStatus().getCode().name()
                     .toLowerCase(java.util.Locale.ROOT).replace('_', '-'),
-                    method.getFullName() + " failed: " + e.getStatus().getDescription());
+                    method.getFullName() + " failed" + detail);
         } finally {
             channel.shutdownNow();
         }
