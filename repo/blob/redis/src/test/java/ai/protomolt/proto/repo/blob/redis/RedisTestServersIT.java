@@ -22,7 +22,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  * proxy does before the server starts — must not count as ready (ticket #792's
  * "Unexpected end of stream").
  */
-class RedisTestServersTest {
+class RedisTestServersIT {
 
     @Test void pongMeansServing() throws Exception {
         try (var server = new FakeServer(reply("+PONG\r\n"))) {
