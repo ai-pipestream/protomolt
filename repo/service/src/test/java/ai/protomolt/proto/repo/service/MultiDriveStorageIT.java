@@ -9,6 +9,7 @@ import ai.protomolt.proto.repo.spi.*;
 import ai.protomolt.proto.repo.v1.*;
 import ai.protomolt.proto.repo.v2.*;
 import ai.protomolt.proto.repo.v2.DocumentPart;
+import ai.protomolt.proto.repo.v2.DocumentEvent;
 import com.google.protobuf.ByteString;
 import io.grpc.*;
 import io.grpc.inprocess.*;
@@ -37,6 +38,117 @@ class MultiDriveStorageIT {
     @Container static final GenericContainer<?> VALKEY = new GenericContainer<>(RedisTestServers.image())
             .withExposedPorts(6379).withCommand(RedisTestServers.server(), "--appendonly", "yes");
     private static final ByteString RAW = ByteString.copyFromUtf8("retained source bytes across drives");
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"s3", "valkey"})
+    void promotionMaterializesEveryObjectAndRetainsHistoryAndRetryIdentity(String provider) throws Exception {
+        String account = "promote-" + UUID.randomUUID();
+        String bucket = "promote-" + UUID.randomUUID();
+        var address = address(account, "source");
+        var sourceConfig = provider.equals("s3")
+                ? DriveProviderConfig.newBuilder().setS3(S3DriveConfig.newBuilder()
+                        .setEndpointOverride(S3_B.getEndpoint().toString()).setForcePathStyle(true)).build()
+                : DriveProviderConfig.newBuilder().setRedis(RedisDriveConfig.newBuilder()
+                        .setUri("redis://" + VALKEY.getHost() + ":" + VALKEY.getMappedPort(6379) + "/0")
+                        .setKeyPrefix(account)).build();
+        StoredManifest original;
+        StoredManifest promoted;
+        SaveDocumentRequest promotion;
+        try (var source = probe(provider, sourceConfig); var target = s3(S3_A)) {
+            try (var services = RepoServices.build(config())) {
+                String name = "promotion-" + UUID.randomUUID(); services.startInProcess(name);
+                var channel = InProcessChannelBuilder.forName(name).directExecutor().build();
+                try {
+                    var drives = DriveServiceGrpc.newBlockingStub(channel);
+                    drives.createDrive(CreateDriveRequest.newBuilder().setAccountId(account).setName("source")
+                            .setProvider(provider).setBucket(bucket).setPrefix("source")
+                            .setCredentialsRef(provider.equals("s3") ? "host:default" : "")
+                            .setProviderConfig(sourceConfig).build());
+                    drives.createDrive(CreateDriveRequest.newBuilder().setAccountId(account).setName("durable")
+                            .setProvider("s3").setBucket(bucket).setPrefix("durable").build());
+                    var docs = DocumentServiceGrpc.newBlockingStub(channel);
+                    docs.saveDocument(save(address, "before", "source", 0, core(account, "kept").toBuilder()
+                            .setBlobBag(BlobBag.newBuilder().setBlob(Blob.newBuilder().setBlobId("source").setData(RAW))))
+                            .addWrites(write(DocumentPart.DOCUMENT_PART_BLOBS)).build());
+                    original = services.v2Composition().catalog().manifest(address, 1).orElseThrow();
+                    promotion = SaveDocumentRequest.newBuilder().setOperationId("promotion-" + account)
+                            .setTarget(DocumentTarget.newBuilder().setAddress(address))
+                            .setExpected(ExpectedRevision.newBuilder().setRevision(1)).setDrive("durable")
+                            .setOwner(SaveOwner.newBuilder().setIntake(IntakeOrigin.newBuilder().setDatasourceId("source")))
+                            .setStoragePlacement(StoragePlacement.STORAGE_PLACEMENT_SELECTED_DRIVE).build();
+                    var saved = docs.saveDocument(promotion);
+                    assertThat(saved.getAccession().getRevision()).isEqualTo(2);
+                    promoted = services.v2Composition().catalog().manifest(address, 2).orElseThrow();
+                    assertThat(services.v2Composition().catalog().manifest(address, 1)).contains(original);
+                    assertThat(promoted.getValidation().getPartSchemasList()).isEqualTo(original.getValidation().getPartSchemasList());
+                    assertThat(promoted.getValidation().getCandidateSha256()).isEqualTo(original.getValidation().getCandidateSha256());
+                    for (int i = 0; i < original.getPartsCount(); i++) {
+                        var oldPart = original.getParts(i); var newPart = promoted.getParts(i);
+                        assertThat(newPart.getEntry()).isEqualTo(oldPart.getEntry());
+                        assertThat(newPart.getRef().getStackId()).isNotEqualTo(oldPart.getRef().getStackId());
+                        assertThat(newPart.getRef().getSha256()).isEqualTo(oldPart.getRef().getSha256());
+                        for (int j = 0; j < oldPart.getBlobRefsCount(); j++) {
+                            assertThat(newPart.getBlobRefs(j).getWritten()).isEqualTo(oldPart.getBlobRefs(j).getWritten());
+                            assertThat(newPart.getBlobRefs(j).getRef().getStackId()).isEqualTo(newPart.getRef().getStackId());
+                            assertThat(newPart.getBlobRefs(j).getRef().getSha256()).isEqualTo(oldPart.getBlobRefs(j).getRef().getSha256());
+                        }
+                    }
+                    int objects = target.listObjectsV2(r -> r.bucket(bucket).prefix("durable/")).contents().size();
+                    assertThat(docs.saveDocument(promotion).getAccession()).isEqualTo(saved.getAccession());
+                    assertThat(target.listObjectsV2(r -> r.bucket(bucket).prefix("durable/")).contents()).hasSize(objects);
+                    assertThatThrownBy(() -> docs.saveDocument(promotion.toBuilder().setDrive("source").build()))
+                            .isInstanceOf(StatusRuntimeException.class).hasMessageContaining("ALREADY_EXISTS");
+                    assertRead(docs, address, "kept");
+                } finally { channel.shutdownNow(); }
+            }
+            try (var services = RepoServices.build(config())) {
+                String name = "promotion-restart-" + UUID.randomUUID(); services.startInProcess(name);
+                var channel = InProcessChannelBuilder.forName(name).directExecutor().build();
+                try {
+                    var docs = DocumentServiceGrpc.newBlockingStub(channel);
+                    assertRead(docs, address, "kept");
+                    assertThat(docs.getDocument(GetDocumentRequest.newBuilder().setAddress(address)
+                            .setRevision(RevisionSelector.newBuilder().setRevision(1)).build()).getDocument()
+                            .getSearchMetadata().getTitle()).isEqualTo("kept");
+                    // Promotion did not clean up any byte required by retained history.
+                    assertThat(source.store().list(bucket, "source/documents/")).hasSize(3);
+                    docs.deleteDocument(DeleteDocumentRequest.newBuilder().setAddress(address).setOperationId("delete-" + account)
+                            .setExpected(ExpectedRevision.newBuilder().setRevision(2)).build());
+                    assertThat(source.store().list(bucket, "source/documents/")).hasSize(3);
+                    assertThat(target.listObjectsV2(r -> r.bucket(bucket).prefix("durable/")).contents()).hasSize(3);
+                    var request = PurgeDocumentRequest.newBuilder().setAddress(address).setPurgeId("purge-" + account).build();
+                    // Inject an incomplete provider reclamation after a real destination delete.
+                    // Exercise the serving resolver and StackBlobStore's boolean completion gate.
+                    var deleted = new java.util.concurrent.atomic.AtomicInteger();
+                    var realReclaimer = new ai.protomolt.proto.repo.blob.s3.S3ObjectReclaimer(target);
+                    var defaults = new RepoStorageWiring.Wired(
+                            new ai.protomolt.proto.repo.blob.s3.S3BlobStore(target), ignored -> {}, null,
+                            (namespace, key) -> { realReclaimer.reclaim(namespace, key); deleted.incrementAndGet(); return false; });
+                    try (var pool = new DriveBackingPool(config(),
+                            ai.protomolt.proto.repo.blob.spi.BlobStores.discover(), defaults);
+                         var purge = new PurgeEndpoint(services, account,
+                                 RepoV2Wiring.drives(services.v2Composition().catalog(), services.driveLedger(), pool))) {
+                        assertThatThrownBy(() -> purge.stub.purgeDocument(request))
+                                .isInstanceOf(StatusRuntimeException.class).hasMessageContaining("UNAVAILABLE");
+                        assertThat(deleted).hasValue(1);
+                        assertThat(services.v2Composition().catalog().events(address).stream()
+                                .filter(DocumentEvent::hasPurgeCompleted)).isEmpty();
+                    }
+                    // Reopen the serving composition to discard its drive/provider caches. The
+                    // next host must recover the same pending plan and resolve both providers.
+                } finally { channel.shutdownNow(); }
+            }
+            try (var services = RepoServices.build(config()); var purge = new PurgeEndpoint(services, account)) {
+                var request = PurgeDocumentRequest.newBuilder().setAddress(address).setPurgeId("purge-" + account).build();
+                var purged = purge.stub.purgeDocument(request);
+                assertThat(purge.stub.purgeDocument(request)).isEqualTo(purged);
+                assertThat(services.v2Composition().catalog().events(address).stream()
+                        .filter(DocumentEvent::hasPurgeCompleted)).hasSize(1);
+                assertThat(source.store().list(bucket, "source/documents/")).isEmpty();
+                assertThat(target.listObjectsV2(r -> r.bucket(bucket).prefix("durable/")).contents()).isEmpty();
+            }
+        }
+    }
 
     @Test void twoS3EndpointsCarryForwardSurviveRestartAndReclaimAllVersions() throws Exception {
         exercise("s3", DriveProviderConfig.newBuilder().setS3(S3DriveConfig.newBuilder()
@@ -364,11 +476,14 @@ class MultiDriveStorageIT {
     private static final class PurgeEndpoint implements AutoCloseable {
         final Server server; final ManagedChannel channel; final DocumentServiceGrpc.DocumentServiceBlockingStub stub;
         PurgeEndpoint(RepoServices services, String account) throws Exception {
+            this(services, account, services.v2Composition().drives());
+        }
+        PurgeEndpoint(RepoServices services, String account, DocumentSaves.Drives drives) throws Exception {
             var v2 = services.v2Composition(); var clock = Clock.systemUTC();
             var saves = new DocumentSaves(v2.catalog(), v2.drives(), v2.resolver(), v2.limits(), ReadByteBudget.forSaves(64 * 1024 * 1024), clock);
             var service = new AccessionGrpcService(saves, new DocumentUploads(saves),
                     new DocumentReads(v2.catalog(), v2.drives(), v2.limits(), new ReadByteBudget(64 * 1024 * 1024), clock), null, null,
-                    new DocumentPurges(v2.catalog(), v2.drives(), (caller, tenant) -> new PurgeAuthorization.Decision(true, true), clock),
+                    new DocumentPurges(v2.catalog(), drives, (caller, tenant) -> new PurgeAuthorization.Decision(true, true), clock),
                     auth -> new RepositoryCaller("mesh-admin", false, Set.of(account), Set.of()));
             var interceptor = new ServerInterceptor() {
                 public <Q, R> ServerCall.Listener<Q> interceptCall(ServerCall<Q, R> call, Metadata headers, ServerCallHandler<Q, R> next) {

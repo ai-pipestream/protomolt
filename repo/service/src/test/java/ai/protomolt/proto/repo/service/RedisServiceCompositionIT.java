@@ -18,6 +18,17 @@ class RedisServiceCompositionIT {
     @Container static final PostgreSQLContainer POSTGRES = new PostgreSQLContainer("postgres:18-alpine");
     @Container static final GenericContainer<?> REDIS = new GenericContainer<>(RedisTestServers.image()).withExposedPorts(6379);
 
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"valkey", "redis"})
+    void authoritativeHostDefaultCannotExpireRetainedDocumentBytes(String mode) {
+        var config = new RepoServiceConfig(0,
+                new LedgerConfig(POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword()),
+                null, null, null, null, "expiry-refusal", 0,
+                mode, "redis://" + REDIS.getHost() + ":" + REDIS.getMappedPort(6379), 60, 1024);
+        assertThatThrownBy(() -> RepoServices.build(config))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("retain bytes until explicit purge");
+    }
+
     @Container static final org.testcontainers.localstack.LocalStackContainer S3 =
             new org.testcontainers.localstack.LocalStackContainer(
                     org.testcontainers.utility.DockerImageName.parse("localstack/localstack:3.8")).withServices("s3");
