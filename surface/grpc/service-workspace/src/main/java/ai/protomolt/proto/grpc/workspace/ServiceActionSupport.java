@@ -23,6 +23,7 @@ import com.google.protobuf.util.JsonFormat;
 import io.grpc.CallCredentials;
 import io.grpc.ManagedChannel;
 import io.grpc.Channel;
+import io.grpc.Status;
 import java.io.IOException;
 import java.util.Optional;
 
@@ -128,10 +129,11 @@ final class ServiceActionSupport {
                     : ReflectionClient.discover(reflectedChannel, deadlineMs, channels.policy());
         } catch (ReflectionException e) {
             // The upstream refusal can carry the presented credential in its status text;
-            // authenticated reflection keeps the failure class, not the diagnostics.
+            // authenticated reflection keeps the status code, not the diagnostics.
             if (callCredentials != null) {
-                throw new ReflectionException("reflection failed against the authenticated "
-                        + "endpoint (upstream status withheld)");
+                String code = Status.fromThrowable(e).getCode().name();
+                throw new ReflectionException("reflection failed against the authenticated endpoint: "
+                        + code + " (upstream status withheld)");
             }
             throw e;
         } finally {

@@ -242,7 +242,7 @@ class EnvBearerCallCredentialsTest {
         envValue.set("wrong-token");
         ObjectNode rejected = catalog.execute("service-register", registerInput());
         assertThat(rejected.path("ok").asBoolean()).isFalse();
-        assertThat(rejected.path("error").asText()).contains("withheld");
+        assertThat(rejected.path("error").asText()).contains("UNAUTHENTICATED", "withheld");
         assertThat(rejected.toString()).doesNotContain("wrong-token");
 
         // Register with working material, then rotate to a wrong value: the stored profile
