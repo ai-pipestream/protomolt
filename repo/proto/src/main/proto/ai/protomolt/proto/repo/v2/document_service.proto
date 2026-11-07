@@ -12,6 +12,7 @@ import "ai/protomolt/proto/projection/v1/projection.proto";
 import "ai/protomolt/proto/types/v1/concepts.proto";
 import "ai/protomolt/proto/validate/v1/validate.proto";
 import "google/protobuf/timestamp.proto";
+import "buf/validate/validate.proto";
 
 option java_multiple_files = true;
 option java_outer_classname = "DocumentServiceProto";
@@ -165,7 +166,8 @@ message PartWrite {
 }
 
 // Take one part from an exact revision of a document. The new accession
-// references the same stack object; nothing is copied. The source must have
+// normally references the same stack object; selected-drive placement copies
+// off-drive objects. The source must have
 // the saving document's doc_id, or the request is malformed. It must also be
 // in the saving document's account, and the caller must be able to read the
 // source document's current revision, or the save is rejected with
@@ -212,6 +214,16 @@ message OpaqueAttestation {
 // One save.
 message SaveDocumentRequest {
   option (ai.protomolt.proto.validate.v1.message).cel = {
+    id: "explicit-storage-placement"
+    message: "selected-drive placement requires an explicit drive and a new accession"
+    expression: "this.storage_placement != 1 || (size(this.drive) > 0 && this.unchanged == 0)"
+  };
+  option (buf.validate.message).cel = {
+    id: "explicit-storage-placement"
+    message: "selected-drive placement requires an explicit drive and a new accession"
+    expression: "this.storage_placement != 1 || (size(this.drive) > 0 && this.unchanged == 0)"
+  };
+  option (ai.protomolt.proto.validate.v1.message).cel = {
     id: "explicit-opaque-mode"
     message: "opaque attestations require OPAQUE_ALLOWED"
     expression: "size(this.opaque_attestations) == 0 || this.validation_mode == 2"
@@ -254,9 +266,25 @@ message SaveDocumentRequest {
   repeated SourceRevision derived_from = 11;
   // What a save that changes nothing does. Part of the retry identity.
   UnchangedPolicy unchanged = 12 [(ai.protomolt.proto.validate.v1.field).enum.defined_only = true];
+  // Explicitly materialize all candidate part and raw-blob objects on drive.
+  // Earlier revisions retain their original references. Part of retry identity.
+  StoragePlacement storage_placement = 13 [
+    (ai.protomolt.proto.validate.v1.field).enum.defined_only = true,
+    (buf.validate.field).enum.defined_only = true
+  ];
   // Persisted request metadata; part of the retry identity. Transport tracing
   // belongs in request context, not here.
   map<string, string> metadata = 99;
+}
+
+// Physical placement of the composed candidate; independent of content changes.
+enum StoragePlacement {
+  // New objects go to drive; carried and sourced objects keep their references.
+  STORAGE_PLACEMENT_UNSPECIFIED = 0;
+  // Stream every off-drive part and raw blob to drive before the atomic commit.
+  // A placement-only save may omit writes/sources and requires an existing
+  // expected revision. Original provenance and retained schemas are preserved.
+  STORAGE_PLACEMENT_SELECTED_DRIVE = 1;
 }
 
 // What a save whose candidate equals its expected revision does.

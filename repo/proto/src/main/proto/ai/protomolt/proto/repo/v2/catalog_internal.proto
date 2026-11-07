@@ -9,6 +9,7 @@ import "ai/protomolt/proto/repo/v2/manifest.proto";
 import "ai/protomolt/proto/validate/v1/validate.proto";
 import "google/protobuf/timestamp.proto";
 import "ai/protomolt/proto/projection/v1/projection.proto";
+import "buf/validate/validate.proto";
 
 option java_multiple_files = true;
 option java_outer_classname = "CatalogInternalProto";
@@ -297,6 +298,11 @@ message SaveIntent {
   // The request's unchanged policy; unset for UNCHANGED_POLICY_UNSPECIFIED, so
   // intents recorded before the field existed keep their encoding.
   UnchangedPolicy unchanged = 13;
+  // Zero preserves the encoding of intents recorded before promotion existed.
+  StoragePlacement storage_placement = 14 [
+    (ai.protomolt.proto.validate.v1.field).enum.defined_only = true,
+    (buf.validate.field).enum.defined_only = true
+  ];
 }
 
 // One part of a composed candidate, for RevisionValidation.candidate_sha256.

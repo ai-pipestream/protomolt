@@ -663,7 +663,7 @@ public final class ProtoValidator {
         boolean hasField = isPresent(message, field);
 
         if (constraints.stream().anyMatch(FieldConstraints::required) && !hasField) {
-            violations.add(new ValidationResult.Violation(path, "required", "field is required"));
+            violations.add(new ValidationResult.Violation(path, "required", "value is required"));
             return;
         }
 
@@ -749,11 +749,11 @@ public final class ProtoValidator {
             }
             if (r.minItems().isPresent() && count < r.minItems().getAsLong()) {
                 violations.add(violation(path, "repeated.min_items",
-                        "must have at least " + r.minItems().getAsLong() + " items"));
+                        "must contain at least " + r.minItems().getAsLong() + " item(s)"));
             }
             if (r.maxItems().isPresent() && count > r.maxItems().getAsLong()) {
                 violations.add(violation(path, "repeated.max_items",
-                        "must have at most " + r.maxItems().getAsLong() + " items"));
+                        "must contain no more than " + r.maxItems().getAsLong() + " item(s)"));
             }
             if (r.unique()) {
                 Set<Object> seen = new HashSet<>();
@@ -762,7 +762,7 @@ public final class ProtoValidator {
                     if (element != null && !seen.add(element)) {
                         // A single violation on the repeated field itself, not per duplicate element.
                         violations.add(violation(path, "repeated.unique",
-                                "repeated values must be unique"));
+                                "repeated value must contain unique items"));
                         break;
                     }
                 }
@@ -924,11 +924,11 @@ public final class ProtoValidator {
             }
             if (m.minPairs().isPresent() && count < m.minPairs().getAsLong()) {
                 violations.add(violation(path, "map.min_pairs",
-                        "must have at least " + m.minPairs().getAsLong() + " entries"));
+                        "map must be at least " + m.minPairs().getAsLong() + " entries"));
             }
             if (m.maxPairs().isPresent() && count > m.maxPairs().getAsLong()) {
                 violations.add(violation(path, "map.max_pairs",
-                        "must have at most " + m.maxPairs().getAsLong() + " entries"));
+                        "map must be at most " + m.maxPairs().getAsLong() + " entries"));
             }
         }
         Descriptor entryType = field.getMessageType();

@@ -29,15 +29,21 @@ import org.junit.jupiter.api.Test;
 /** Protocol integration fixtures, not a certification of a live Turboembed deployment. */
 class TurboembedEmbeddingProviderIT {
     private static final String DIGEST = "a".repeat(64);
-    private final List<ModelInferRequest> requests = new ArrayList<>();
+    private final List<ModelInferRequest> requests = new java.util.concurrent.CopyOnWriteArrayList<>();
     private UnaryOperator<ModelInferResponse> transform = UnaryOperator.identity();
     private Server server;
     private ManagedChannel channel;
     private TurboembedEmbeddingProvider provider;
     private Status failure;
+    private String savedCap;
+    private volatile boolean hold;
+    private final java.util.concurrent.LinkedBlockingQueue<Runnable> held = new java.util.concurrent.LinkedBlockingQueue<>();
+    private final java.util.concurrent.atomic.AtomicInteger inFlight = new java.util.concurrent.atomic.AtomicInteger();
+    private final java.util.concurrent.atomic.AtomicInteger peak = new java.util.concurrent.atomic.AtomicInteger();
 
     @BeforeEach
     void start() throws Exception {
+        savedCap = System.clearProperty(TurboembedEmbeddingProvider.MAX_IN_FLIGHT_PROPERTY);
         String name = InProcessServerBuilder.generateName();
         server = InProcessServerBuilder.forName(name).directExecutor()
                 .addService(new GRPCInferenceServiceGrpc.GRPCInferenceServiceImplBase() {
@@ -53,13 +59,22 @@ class TurboembedEmbeddingProviderIT {
                         for (int i = 0; i < count; i++) {
                             raw.putFloat(request.getInputs(0).getContents().getBytesContents(i).size()).putFloat(1);
                         }
-                        observer.onNext(transform.apply(ModelInferResponse.newBuilder()
-                                .setModelName("bundle").setModelVersion("revision-1")
-                                .putParameters("manifest_sha256", InferParameter.newBuilder().setStringParam(DIGEST).build())
-                                .addOutputs(ModelInferResponse.InferOutputTensor.newBuilder()
-                                        .setName("vectors").setDatatype("FP32").addShape(count).addShape(2))
-                                .addRawOutputContents(ByteString.copyFrom(raw.array())).build()));
-                        observer.onCompleted();
+                        Runnable answer = () -> {
+                            observer.onNext(transform.apply(ModelInferResponse.newBuilder()
+                                    .setModelName("bundle").setModelVersion("revision-1")
+                                    .putParameters("manifest_sha256", InferParameter.newBuilder().setStringParam(DIGEST).build())
+                                    .addOutputs(ModelInferResponse.InferOutputTensor.newBuilder()
+                                            .setName("vectors").setDatatype("FP32").addShape(count).addShape(2))
+                                    .addRawOutputContents(ByteString.copyFrom(raw.array())).build()));
+                            inFlight.decrementAndGet();
+                            observer.onCompleted();
+                        };
+                        peak.accumulateAndGet(inFlight.incrementAndGet(), Math::max);
+                        if (hold) {
+                            held.add(answer);
+                        } else {
+                            answer.run();
+                        }
                     }
                 }).build().start();
         channel = InProcessChannelBuilder.forName(name).directExecutor().build();
@@ -69,9 +84,116 @@ class TurboembedEmbeddingProviderIT {
 
     @AfterEach
     void close() {
+        if (savedCap == null) {
+            System.clearProperty(TurboembedEmbeddingProvider.MAX_IN_FLIGHT_PROPERTY);
+        } else {
+            System.setProperty(TurboembedEmbeddingProvider.MAX_IN_FLIGHT_PROPERTY, savedCap);
+        }
         provider.close();
         channel.shutdownNow();
         server.shutdownNow();
+    }
+
+    @Test
+    void overlappingInstancesAndEveryEntryPointShareCap() throws Exception {
+        System.setProperty(TurboembedEmbeddingProvider.MAX_IN_FLIGHT_PROPERTY, "2");
+        hold = true;
+        try (var second = new TurboembedEmbeddingProvider(channel,
+                new TurboembedEmbeddingProvider.Model("bundle", "revision-1", DIGEST, 2));
+             var executor = java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor()) {
+            var calls = List.of(
+                    executor.submit(() -> provider.embedAll(java.util.Collections.nCopies(33, "a"))),
+                    executor.submit(() -> second.embedAll(java.util.Collections.nCopies(33, "b"))),
+                    executor.submit(() -> provider.embedAllDocuments(List.of("c"))),
+                    executor.submit(() -> second.embedAllQueries(List.of("d"))),
+                    executor.submit(() -> provider.embed("e")),
+                    executor.submit(() -> second.embedDocument("f")),
+                    executor.submit(() -> second.embedQuery("g")));
+            for (int answered = 0; answered < 9; answered++) {
+                Runnable answer = held.poll(10, java.util.concurrent.TimeUnit.SECONDS);
+                assertThat(answer).isNotNull();
+                Thread.sleep(30);
+                assertThat(peak.get()).isLessThanOrEqualTo(2);
+                answer.run();
+            }
+            for (var call : calls) {
+                assertThat(call.get(10, java.util.concurrent.TimeUnit.SECONDS)).isNotNull();
+            }
+            assertThat(peak.get()).isEqualTo(2);
+        }
+    }
+
+    @Test
+    void closeRefusesQueuedCallsWithoutClosingCallerChannelOrOtherProvider() throws Exception {
+        System.setProperty(TurboembedEmbeddingProvider.MAX_IN_FLIGHT_PROPERTY, "1");
+        hold = true;
+        try (var other = new TurboembedEmbeddingProvider(channel,
+                new TurboembedEmbeddingProvider.Model("bundle", "revision-1", DIGEST, 2));
+             var executor = java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor()) {
+            var active = executor.submit(() -> other.embed("active"));
+            Runnable answer = held.poll(10, java.util.concurrent.TimeUnit.SECONDS);
+            assertThat(answer).isNotNull();
+            var queued = executor.submit(() -> provider.embed("queued"));
+            Thread.sleep(100);
+            provider.close();
+            assertThat(channel.isShutdown()).isFalse();
+            hold = false;
+            answer.run();
+            active.get(10, java.util.concurrent.TimeUnit.SECONDS);
+            assertThatThrownBy(() -> queued.get(5, java.util.concurrent.TimeUnit.SECONDS))
+                    .hasCauseInstanceOf(IllegalStateException.class)
+                    .hasStackTraceContaining("provider is closed");
+            assertThat(requests).hasSize(1);
+            assertThat(other.embed("survives")).containsExactly(8, 1);
+        }
+    }
+
+    @Test
+    void invalidCapRefusesBeforeSendingAnyRpc() {
+        for (String value : List.of("0", "-1", "invalid")) {
+            System.setProperty(TurboembedEmbeddingProvider.MAX_IN_FLIGHT_PROPERTY, value);
+            assertThatThrownBy(() -> provider.embed("x"))
+                    .hasMessageContaining(TurboembedEmbeddingProvider.MAX_IN_FLIGHT_PROPERTY)
+                    .hasMessageContaining(TurboembedEmbeddingProvider.MAX_IN_FLIGHT_ENVIRONMENT_VARIABLE);
+        }
+        assertThat(requests).isEmpty();
+        System.setProperty(TurboembedEmbeddingProvider.MAX_IN_FLIGHT_PROPERTY, "1");
+        assertThat(provider.embed("valid")).containsExactly(5, 1);
+    }
+
+    @Test
+    void waitingCallCanBeInterruptedWithoutConsumingAPermit() throws Exception {
+        System.setProperty(TurboembedEmbeddingProvider.MAX_IN_FLIGHT_PROPERTY, "1");
+        hold = true;
+        try (var executor = java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor()) {
+            var active = executor.submit(() -> provider.embed("active"));
+            Runnable answer = held.poll(10, java.util.concurrent.TimeUnit.SECONDS);
+            assertThat(answer).isNotNull();
+            var problem = new java.util.concurrent.atomic.AtomicReference<Throwable>();
+            var interrupted = new java.util.concurrent.atomic.AtomicBoolean();
+            Thread waiting = Thread.ofVirtual().start(() -> {
+                try {
+                    provider.embedAllQueries(List.of("cancelled"));
+                } catch (Throwable failure) {
+                    problem.set(failure);
+                    interrupted.set(Thread.currentThread().isInterrupted());
+                }
+            });
+            Thread.sleep(100);
+            waiting.interrupt();
+            waiting.join(5000);
+            assertThat(waiting.isAlive()).isFalse();
+            assertThat(problem.get()).hasCauseInstanceOf(InterruptedException.class);
+            assertThat(interrupted).isTrue();
+            assertThat(requests).hasSize(1);
+            hold = false;
+            answer.run();
+            active.get(10, java.util.concurrent.TimeUnit.SECONDS);
+            failure = Status.UNAVAILABLE;
+            assertThatThrownBy(() -> provider.embed("fail")).hasMessageContaining("UNAVAILABLE");
+            failure = null;
+            assertThat(provider.embed("recovered")).containsExactly(9, 1);
+        }
     }
 
     @Test

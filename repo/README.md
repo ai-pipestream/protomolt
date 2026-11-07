@@ -601,11 +601,54 @@ write capability; Redis/Valkey do not advertise it and cannot replace qualified
 S3 archival backing there. Redis object limits still apply. A non-expiring Redis
 configuration alone is not a durability guarantee: the operator must configure
 persistence and an eviction policy consistent with retaining repository bytes.
-The existing host-default and cache configuration paths retain their prior
-behavior; this feature does not newly qualify expiring host defaults for archival
-retention.
+Host-default authoritative providers must also advertise non-expiring writes
+and physical reclamation. An expiring Valkey/Redis host default is refused at
+startup. Expiring caches over durable S3 backing remain supported.
 
-Temporary TTL drives from issue #775 remain separate design work: their expiry
-contract must define reads after expiry, catalog cleanup, retained references,
-and promotion to durable storage before the repository's keep-forever contract
-can be changed. No temporary-retention exception is implemented here.
+### Promoting a document to another durable drive
+
+Setting `drive` alone sends new PUT objects to that drive and preserves carried
+references. To materialize the complete candidate, set
+`storage_placement = STORAGE_PLACEMENT_SELECTED_DRIVE` on the canonical
+`DocumentService.SaveDocument` request. For a placement-only accession:
+
+```java
+var request = SaveDocumentRequest.newBuilder()
+        .setOperationId(operationId) // retain this ID and request for retries
+        .setTarget(DocumentTarget.newBuilder().setAddress(address))
+        .setExpected(ExpectedRevision.newBuilder().setRevision(currentRevision))
+        .setOwner(owner) // the caller's authorized intake or step owner
+        .setDrive("durable")
+        .setStoragePlacement(StoragePlacement.STORAGE_PLACEMENT_SELECTED_DRIVE)
+        .build();
+var result = documents.saveDocument(request);
+```
+
+The destination must exist in the same account. The caller needs the normal
+write ACL and writer authority. Placement can also accompany selected writes
+and sources: it applies to the entire resulting candidate, including chunk and
+embedding sets and raw blobs. Leave `unchanged` unset; promotion always records a
+new accession. The default placement value preserves normal carry-forward.
+
+The server streams each distinct off-drive object, verifies length and digest,
+and then atomically publishes the new manifest and operation outcome. It reuses
+already-local objects and preserves carried bytes, retained schemas, Any payloads
+and writer stamps. A retry with the same operation and request replays its
+accession; changing the destination or placement conflicts. Transfer failure,
+corrupt/missing retained bytes, or a revision race cannot publish a partial
+candidate. Cancellation is best effort; look up the operation outcome before
+assuming it did not commit.
+
+Exact historical reads keep using the original drive and retained schema.
+Missing retained bytes are `DATA_LOSS`; an unavailable provider is
+`UNAVAILABLE`. Promoting the current revision does **not** authorize deleting the
+source drive: earlier revisions and other documents may still reference it.
+Tombstoning also retains bytes. Administrator purge reclaims only objects with
+no remaining unpurged references, across all recorded drives. Failed physical
+reclamation remains pending and the same purge ID resumes it after restart.
+Failed promotion/save attempts can leave unreferenced objects; there is no age
+sweep because in-flight writes are not fenced for safe orphan collection.
+
+Temporary TTL repository drives and revision pruning are not enabled. Issue
+#775's temporary staging and per-drive cache work remain separate; a staging
+expiry contract must never expire a retained revision's authoritative bytes.
