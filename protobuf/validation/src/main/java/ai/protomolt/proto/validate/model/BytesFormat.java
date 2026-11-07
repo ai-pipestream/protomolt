@@ -7,9 +7,9 @@ import java.util.function.IntPredicate;
  * checks on the packed byte length: an IPv4 address is 4 bytes, an IPv6 address and a UUID are 16.
  */
 public enum BytesFormat {
-    IP("bytes.ip", "value must be a valid IP address", n -> n == 4 || n == 16),
-    IPV4("bytes.ipv4", "value must be a valid IPv4 address", n -> n == 4),
-    IPV6("bytes.ipv6", "value must be a valid IPv6 address", n -> n == 16),
+    IP("bytes.ip", "must be a valid IP address", n -> n == 4 || n == 16),
+    IPV4("bytes.ipv4", "must be a valid IPv4 address", n -> n == 4),
+    IPV6("bytes.ipv6", "must be a valid IPv6 address", n -> n == 16),
     UUID("bytes.uuid", "value must be a valid UUID", n -> n == 16);
 
     private final String ruleId;
