@@ -16,9 +16,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 /** Both names acquire the real server and retain the same physical objects and identities. */
 @Testcontainers
 class ValkeyProviderIT {
-    @Container static final GenericContainer<?> SERVER = new GenericContainer<>(
-            RedisTestServers.image())
-            .withExposedPorts(6379);
+    @Container static final GenericContainer<?> SERVER = RedisTestServers.container();
 
     @ParameterizedTest
     @ValueSource(strings = {"replace", "create-only"})

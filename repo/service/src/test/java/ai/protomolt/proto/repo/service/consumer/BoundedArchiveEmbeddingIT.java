@@ -27,7 +27,7 @@ import static org.assertj.core.api.Assertions.*;
 @Testcontainers
 class BoundedArchiveEmbeddingIT {
     @Container static final PostgreSQLContainer POSTGRES = new PostgreSQLContainer("postgres:18-alpine");
-    @Container static final GenericContainer<?> REDIS = new GenericContainer<>(RedisTestServers.image()).withExposedPorts(6379);
+    @Container static final GenericContainer<?> REDIS = RedisTestServers.container();
 
     @Test void publicFactorySupportsLocalAndAuthenticatedRemoteArchiveUse() throws Exception {
         var config = new RepoServiceConfig(0,

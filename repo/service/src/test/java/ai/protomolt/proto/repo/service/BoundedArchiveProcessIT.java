@@ -26,7 +26,7 @@ import static org.assertj.core.api.Assertions.*;
 @Testcontainers
 class BoundedArchiveProcessIT {
     @Container static final PostgreSQLContainer POSTGRES = new PostgreSQLContainer("postgres:18-alpine");
-    @Container static final GenericContainer<?> REDIS = new GenericContainer<>(RedisTestServers.image()).withExposedPorts(6379);
+    @Container static final GenericContainer<?> REDIS = RedisTestServers.container();
     @TempDir Path directory;
 
     @Test void productionProcessRestartsWithoutRelocatingDriveAndRetainsExactRetry() throws Exception {

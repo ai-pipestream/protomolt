@@ -25,7 +25,7 @@ import static org.assertj.core.api.Assertions.*;
 @Testcontainers
 class BoundedArchiveHostIT {
     @Container static final PostgreSQLContainer POSTGRES = new PostgreSQLContainer("postgres:18-alpine");
-    @Container static final GenericContainer<?> REDIS = new GenericContainer<>(RedisTestServers.image()).withExposedPorts(6379);
+    @Container static final GenericContainer<?> REDIS = RedisTestServers.container();
     static final RepositoryCaller CALLER = new RepositoryCaller("bounded-host", true);
 
     private RepoServiceConfig config() { return config(0); }

@@ -7,6 +7,8 @@ dependencies {
     api project(':protomolt-repo-blob-spi')
     implementation libs.jedis
     testImplementation project(':protomolt-repo-codec')
+    testFixturesApi libs.testcontainers.junit.jupiter
+    testFixturesImplementation libs.jedis
     testImplementation libs.testcontainers.junit.jupiter
     testRuntimeOnly libs.slf4j.simple
 }
