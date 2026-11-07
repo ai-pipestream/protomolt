@@ -291,8 +291,54 @@ shared objects survive while any unpurged reference remains. Incomplete physical
 reclamation keeps the purge pending, and retry resumes its recorded targets.
 An interrupted promotion may leave unreferenced destination objects, as an
 interrupted save may. They are not age-swept: safe orphan collection requires
-catalogued, fenced in-flight attempts. Temporary TTL drives and revision pruning
-are not enabled by promotion or by this durable-drive contract.
+catalogued, fenced in-flight attempts.
+
+### Temporary drives
+
+An explicit Redis/Valkey drive configuration with a positive per-object TTL is
+a temporary drive: the objects it writes expire after the configured TTL unless
+purge removes them first. Only explicit per-drive Redis/Valkey configurations
+qualify. The host default and zero-TTL drives remain durable and keep the
+`NON_EXPIRING_WRITES + PHYSICAL_RECLAMATION` gate; a temporary handle qualifies
+on `OBJECT_EXPIRY + PHYSICAL_RECLAMATION` instead, and the configured TTL is
+propagated to every write, never replaced with zero. Retention-qualified
+managed storage refuses temporary drives at drive admission and again at every
+resolve, because expiring bytes are not qualified for retained ingestion.
+Bounded create-only layouts also refuse them because that provider layout
+requires zero TTL.
+
+A temporary drive's provider key prefix combines its TTL with an encoded
+configured prefix under a reserved scheme. Durable configurations cannot use
+that scheme. Its catalog namespace also records the expiring identity, including
+when two drives alias one stack. Thus configurations with different TTLs, or
+with one durable and one temporary drive, cannot alias physical keys or catalog
+namespaces. Zero-TTL namespace identities are unchanged: existing durable stacks
+keep their recorded identity byte-for-byte.
+
+Ordinary saves may target a temporary drive and may mix durable and temporary
+references; expiry is per object, never a fabricated revision-wide expiry. An
+ordinary save into a durable destination is held to the durable contract: any
+carried, sourced or blob-level-carried reference on a temporary stack is
+refused before the revision publishes, and the refusal names the explicit
+placement save as the supported escape hatch. That `STORAGE_PLACEMENT_SELECTED_DRIVE`
+save streams every temporary part and blob reference through the verified copy
+path onto the durable destination before the one commit; placement to a
+temporary destination is refused before any copying. Temporary-stack
+classification reaches the save machinery through the drive resolver's
+backward-compatible query, not through a changed public stack contract.
+
+After expiry the manifests remain, but their expired bytes are unreadable:
+an exact read of an expired object fails `DATA_LOSS` through the existing
+`StackDataLoss` handling, never an empty part, another revision or another
+provider. Promoting the latest revision copies only that revision's references;
+it does not make historical temporary revisions durable. Delete and purge stay
+reference-aware; an expired object is physically absent, and purge treats it as
+already reclaimed, so delete and purge work identically before and after
+expiry. Retiring a temporary drive therefore needs no byte migration: purge
+the documents and let the remaining objects expire.
+
+Revision pruning remains a later feature: it is not enabled by promotion or by
+this durable-drive contract.
 
 ## 7. Catalog and commit
 
