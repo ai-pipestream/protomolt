@@ -3,6 +3,7 @@ package ai.protomolt.proto.helpers;
 import com.google.protobuf.DescriptorProtos;
 import com.google.protobuf.Descriptors.Descriptor;
 import com.google.protobuf.Descriptors.FileDescriptor;
+import com.google.protobuf.InvalidProtocolBufferException;
 import com.google.protobuf.Struct;
 import com.google.protobuf.Value;
 import org.junit.jupiter.api.Test;
@@ -15,12 +16,12 @@ import static org.junit.jupiter.api.Assertions.*;
 
 class HelpersEdgeCasesTest {
 
-    @Test void validatorRejectsNullAndEmptyAndGarbage() {
+    @Test void validatorAcceptsNullAndEmptyAndRejectsGarbage() {
         // Null proto is documented as a no-op.
         assertDoesNotThrow(() -> BinaryProtobufIdentifierValidator.validate("s", null));
         // Empty bytes parse to the default FileDescriptorProto, which has nothing invalid.
         assertDoesNotThrow(() -> BinaryProtobufIdentifierValidator.validateBytes("s", new byte[0]));
-        assertThrows(Exception.class,
+        assertThrows(InvalidProtocolBufferException.class,
                 () -> BinaryProtobufIdentifierValidator.validateBytes("s", new byte[]{1, 2, 3}));
         assertThrows(NullPointerException.class,
                 () -> BinaryProtobufIdentifierValidator.validateBytes("s", null));
@@ -56,8 +57,11 @@ class HelpersEdgeCasesTest {
                 .build();
         DescriptorProtos.FileDescriptorProto a = DescriptorProtos.FileDescriptorProto.newBuilder()
                 .setName("a.proto").setPackage("dup").addMessageType(msg).build();
+        DescriptorProtos.FileDescriptorProto sameAsA = DescriptorProtos.FileDescriptorProto.newBuilder()
+                .setName("a2.proto").setPackage("dup").addMessageType(msg).build();
         DescriptorProtos.FileDescriptorProto b = DescriptorProtos.FileDescriptorProto.newBuilder()
                 .setName("b.proto").setPackage("dup").addMessageType(changed).build();
+        assertDoesNotThrow(() -> ProtoFqnConflictDetector.assertNoConflicts(Map.of("a", a, "a2", sameAsA)));
         Map<String, DescriptorProtos.FileDescriptorProto> sources = Map.of("a", a, "b", b);
         assertThrows(ProtoSchemaValidationException.class,
                 () -> ProtoFqnConflictDetector.assertNoConflicts(sources));
@@ -66,7 +70,7 @@ class HelpersEdgeCasesTest {
     @Test void typeConverterBoundaryAndInvalid() throws Exception {
         TypeConverter converter = new TypeConverter();
         Value maxLong = converter.toValue(Long.MAX_VALUE);
-        assertEquals((double) Long.MAX_VALUE, maxLong.getNumberValue(), 1e6);
+        assertEquals((double) Long.MAX_VALUE, maxLong.getNumberValue());
         assertNull(converter.fromValue(
                 Value.newBuilder().setNullValue(com.google.protobuf.NullValue.NULL_VALUE).build()));
         assertNull(converter.fromValue(null));

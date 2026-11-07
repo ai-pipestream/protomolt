@@ -34,7 +34,7 @@ class PayloadCodecEdgeCasesTest {
         assertNull(new PayloadCodec().unpackSafe(Any.getDefaultInstance()));
     }
 
-    @Test void unpackToStructRoundTrip() throws Exception {
+    @Test void unpackToStructOfAStructPayloadGivesTheReflectiveView() throws Exception {
         DescriptorRegistry registry = DescriptorRegistry.create();
         registry.register(Struct.getDescriptor());
         PayloadCodec codec = new PayloadCodec(registry);
