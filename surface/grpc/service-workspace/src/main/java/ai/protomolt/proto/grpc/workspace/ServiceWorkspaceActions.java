@@ -43,7 +43,7 @@ public final class ServiceWorkspaceActions {
         return catalog
                 .register(new ServiceRegisterAction(repository, registry, channels, reflected, credentials))
                 .register(new ServiceListAction(repository))
-                .register(new ServiceInspectAction(repository, registry))
+                .register(new ServiceInspectAction(repository, registry, credentials))
                 .register(new ServiceRefreshAction(repository, registry, channels, reflected, credentials))
                 .register(new ServiceInvokeAction(repository, registry, channels, credentials));
     }

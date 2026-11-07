@@ -17,6 +17,7 @@ import com.google.protobuf.Descriptors.Descriptor;
 import com.google.protobuf.Descriptors.MethodDescriptor;
 import com.google.protobuf.DynamicMessage;
 import com.google.protobuf.Message;
+import io.grpc.CallCredentials;
 import io.grpc.CallOptions;
 import io.grpc.ManagedChannel;
 import io.grpc.Metadata;
@@ -106,7 +107,8 @@ final class ReflectedMethodAction implements ProtoAction {
         var policy = ProfileMethodPolicy.find(profile, policyMethod);
         ProfileMethodPolicy.requireAllowed(policy, policyMethod);
         int deadline = ProfileMethodPolicy.deadline(policy, 0);
-        Metadata headers = ProfileCredentials.headers(profile, endpoint, credentials);
+        CallCredentials callCredentials =
+                ProfileCredentials.callCredentials(profile, endpoint, credentials);
         try {
             channels.validateDeadline(deadline);
         } catch (IllegalArgumentException invalid) {
@@ -115,11 +117,15 @@ final class ReflectedMethodAction implements ProtoAction {
         ManagedChannel channel = channels.open(ServiceActionSupport.target(endpoint),
                 endpoint.getTransport() == Transport.TRANSPORT_TLS);
         try {
+            CallOptions options =
+                    CallOptions.DEFAULT.withDeadlineAfter(deadline, TimeUnit.MILLISECONDS);
+            if (callCredentials != null) {
+                options = options.withCallCredentials(callCredentials);
+            }
             List<DynamicMessage> responses = DynamicGrpcCalls.call(channel, method,
                     CatalogContract.as(input, DynamicMessage.getDefaultInstance(
                             method.getInputType()), name),
-                    CallOptions.DEFAULT.withDeadlineAfter(deadline, TimeUnit.MILLISECONDS),
-                    headers, 1);
+                    options, new Metadata(), 1);
             if (responses.isEmpty()) {
                 throw new ActionException("empty-response",
                         method.getFullName() + " answered with no message");
@@ -133,9 +139,12 @@ final class ReflectedMethodAction implements ProtoAction {
             }
             return response;
         } catch (StatusRuntimeException e) {
+            // Credentialed verbs surface the code only; the upstream text may echo the
+            // credential that was presented. Unauthenticated verbs keep their diagnostics.
+            String detail = callCredentials == null ? ": " + e.getStatus().getDescription() : "";
             throw new ActionException("upstream-" + e.getStatus().getCode().name()
                     .toLowerCase(java.util.Locale.ROOT).replace('_', '-'),
-                    method.getFullName() + " failed: " + e.getStatus().getDescription());
+                    method.getFullName() + " failed" + detail);
         } finally {
             channel.shutdownNow();
         }

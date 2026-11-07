@@ -7,6 +7,7 @@ import ai.protomolt.proto.actions.ProtoAction;
 import ai.protomolt.proto.actions.Reply;
 import ai.protomolt.proto.actions.Scopes;
 import ai.protomolt.proto.grpc.profile.ServiceProfileRepository;
+import ai.protomolt.proto.grpc.profile.v1.ServiceEndpoint;
 import ai.protomolt.proto.grpc.profile.v1.ServiceProfile;
 import ai.protomolt.proto.registry.SchemaRegistryStore;
 import com.google.protobuf.Message;
@@ -19,10 +20,18 @@ public final class ServiceInspectAction implements ProtoAction {
 
     private final ServiceProfileRepository repository;
     private final SchemaRegistryStore registry;
+    private final ProfileCredentialResolver credentials;
 
     public ServiceInspectAction(ServiceProfileRepository repository, SchemaRegistryStore registry) {
+        this(repository, registry, null);
+    }
+
+    /** Host credentials resolve endpoint references locally; inspection still never dials out. */
+    ServiceInspectAction(ServiceProfileRepository repository, SchemaRegistryStore registry,
+                         ProfileCredentialResolver credentials) {
         this.repository = repository;
         this.registry = registry;
+        this.credentials = credentials;
     }
 
     @Override
@@ -38,7 +47,9 @@ public final class ServiceInspectAction implements ProtoAction {
     @Override
     public String description() {
         return "Inspects one registered service: connection profile, method names, streaming shapes, "
-                + "request/response types, and their top-level fields, without copying descriptor bytes.";
+                + "request/response types, and their top-level fields, without copying descriptor "
+                + "bytes. Endpoint credential references resolve locally; an unresolvable "
+                + "reference fails the inspection explicitly.";
     }
 
     @Override
@@ -60,6 +71,11 @@ public final class ServiceInspectAction implements ProtoAction {
             profile = store.find(name).orElseThrow(() -> ServiceActionSupport.notFound(name));
         } catch (IOException e) {
             throw ServiceActionSupport.storage("read service profile '" + name + "'", e);
+        }
+        // A profile whose credential reference does not resolve is reported here rather
+        // than at the next call; the reference stays opaque and the value is never rendered.
+        for (ServiceEndpoint endpoint : profile.getEndpointsList()) {
+            ProfileCredentials.requireResolvable(profile, endpoint, credentials);
         }
         Reply result = Reply.of(responseType()).set("profile", profile);
         ServiceActionSupport.writeServices(result, "services", profile, store, registry);

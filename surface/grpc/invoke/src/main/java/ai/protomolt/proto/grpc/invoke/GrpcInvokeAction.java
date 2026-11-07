@@ -14,6 +14,7 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.google.protobuf.Descriptors;
 import com.google.protobuf.DynamicMessage;
 import com.google.protobuf.Message;
+import io.grpc.CallCredentials;
 import io.grpc.CallOptions;
 import io.grpc.ManagedChannel;
 import io.grpc.Metadata;
@@ -96,7 +97,19 @@ public final class GrpcInvokeAction implements StreamingAction {
     /** Host-only metadata stays outside the caller's protobuf action request. */
     public Message execute(Message input, ActionContext context, Metadata hostHeaders)
             throws ActionException {
-        CallPlan plan = prepare(input, context, hostHeaders);
+        return execute(input, context, hostHeaders, null);
+    }
+
+    /** Host-only call credentials stay outside the caller's protobuf action request. */
+    public Message execute(Message input, ActionContext context, CallCredentials hostCredentials)
+            throws ActionException {
+        return execute(input, context, new Metadata(), hostCredentials);
+    }
+
+    /** Full host seam: static headers and per-call credentials both stay host-owned. */
+    public Message execute(Message input, ActionContext context, Metadata hostHeaders,
+                           CallCredentials hostCredentials) throws ActionException {
+        CallPlan plan = prepare(input, context, hostHeaders, hostCredentials);
 
         Reply result = Reply.of(responseType())
                 .set("method", plan.method().getFullName())
@@ -131,10 +144,12 @@ public final class GrpcInvokeAction implements StreamingAction {
                         .set("description", String.join("; ", failures));
             }
         } catch (StatusRuntimeException e) {
-            result.set("ok", false).set("status", e.getStatus().getCode().name());
-            String description = e.getStatus().getDescription();
-            if (description != null) {
-                result.set("description", description);
+            // Credentialed calls surface the code only; the upstream text may echo the
+            // credential that was presented.
+            Status status = UpstreamStatus.reply(e.getStatus(), plan.credentials());
+            result.set("ok", false).set("status", status.getCode().name());
+            if (status.getDescription() != null) {
+                result.set("description", status.getDescription());
             }
         } finally {
             channel.shutdownNow();
@@ -157,7 +172,20 @@ public final class GrpcInvokeAction implements StreamingAction {
     /** Streaming sibling of the host-only metadata seam. */
     public void executeStreaming(Message input, ActionContext context, StreamEmitter emitter,
                                  Metadata hostHeaders) throws ActionException {
-        CallPlan plan = prepare(input, context, hostHeaders);
+        executeStreaming(input, context, emitter, hostHeaders, null);
+    }
+
+    /** Streaming sibling of the host-only call-credentials seam. */
+    public void executeStreaming(Message input, ActionContext context, StreamEmitter emitter,
+                                 CallCredentials hostCredentials) throws ActionException {
+        executeStreaming(input, context, emitter, new Metadata(), hostCredentials);
+    }
+
+    /** Streaming full host seam: static headers and per-call credentials stay host-owned. */
+    public void executeStreaming(Message input, ActionContext context, StreamEmitter emitter,
+                                 Metadata hostHeaders, CallCredentials hostCredentials)
+            throws ActionException {
+        CallPlan plan = prepare(input, context, hostHeaders, hostCredentials);
         ManagedChannel channel;
         try {
             channel = channelFactory.open(plan.target(), plan.tls());
@@ -190,14 +218,14 @@ public final class GrpcInvokeAction implements StreamingAction {
                     }
                     Status terminal = stream.terminalStatus();
                     if (terminal != null && !terminal.isOk()) {
-                        emitter.emit(terminal(terminal));
+                        emitter.emit(terminal(UpstreamStatus.reply(terminal, plan.credentials())));
                         return;
                     }
                 }
             }
             emitter.emit(okTerminal());
         } catch (StatusRuntimeException e) {
-            emitter.emit(terminal(e.getStatus()));
+            emitter.emit(terminal(UpstreamStatus.reply(e.getStatus(), plan.credentials())));
         } finally {
             channel.shutdownNow();
         }
@@ -234,8 +262,8 @@ public final class GrpcInvokeAction implements StreamingAction {
         return terminal.build();
     }
 
-    private CallPlan prepare(Message input, ActionContext context, Metadata hostHeaders)
-            throws ActionException {
+    private CallPlan prepare(Message input, ActionContext context, Metadata hostHeaders,
+                             CallCredentials hostCredentials) throws ActionException {
         String target = Fields.string(input, "target");
         String methodName = Fields.string(input, "method");
         // The request is a structure: its shape is the callee's input type, which this
@@ -274,8 +302,8 @@ public final class GrpcInvokeAction implements StreamingAction {
             throw invalidInput("Nested request violates " + method.getInputType().getFullName()
                     + ": " + nested.violations().getFirst().path(), "/request");
         }
-        return new CallPlan(method, request, headers(input, hostHeaders), deadlineMs, maxResponses,
-                target, tls);
+        return new CallPlan(method, request, headers(input, hostHeaders, hostCredentials),
+                deadlineMs, maxResponses, target, tls, hostCredentials);
     }
 
     /** Zero means the caller said nothing, which the message documents as the default. */
@@ -290,10 +318,13 @@ public final class GrpcInvokeAction implements StreamingAction {
             int deadlineMs,
             int maxResponses,
             String target,
-            boolean tls) {
+            boolean tls,
+            CallCredentials credentials) {
 
         CallOptions options() {
-            return CallOptions.DEFAULT.withDeadlineAfter(deadlineMs, TimeUnit.MILLISECONDS);
+            CallOptions options =
+                    CallOptions.DEFAULT.withDeadlineAfter(deadlineMs, TimeUnit.MILLISECONDS);
+            return credentials == null ? options : options.withCallCredentials(credentials);
         }
     }
 
@@ -325,11 +356,14 @@ public final class GrpcInvokeAction implements StreamingAction {
                 "/method");
     }
 
-    private static Metadata headers(Message input, Metadata hostHeaders) throws ActionException {
+    private static Metadata headers(Message input, Metadata hostHeaders,
+                                    CallCredentials hostCredentials) throws ActionException {
         Metadata headers = new Metadata();
+        boolean hostCredentialsPresent =
+                !hostHeaders.keys().isEmpty() || hostCredentials != null;
         for (var entry : Fields.map(input, "metadata").entrySet()) {
             String key = entry.getKey();
-            if (!hostHeaders.keys().isEmpty()
+            if (hostCredentialsPresent
                     && (key.equalsIgnoreCase("authorization") || key.equalsIgnoreCase("api_token"))) {
                 throw invalidInput("caller cannot override profile credentials", "/metadata/" + key);
             }

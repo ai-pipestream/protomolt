@@ -18,7 +18,7 @@ import ai.protomolt.proto.grpc.profile.v1.Transport;
 import ai.protomolt.proto.registry.SchemaRegistryStore;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.google.protobuf.Message;
-import io.grpc.Metadata;
+import io.grpc.CallCredentials;
 
 import com.google.protobuf.Descriptors.Descriptor;
 import java.io.IOException;
@@ -81,7 +81,8 @@ public final class ServiceInvokeAction implements StreamingAction {
         // The reply is the delegate's plus what only this verb knows: which stored profile
         // and endpoint the call went to, and the descriptor it was typed against.
         return Reply.of(responseType())
-                .copyFrom(delegate.execute(invocation.delegateRequest(), context, invocation.headers()))
+                .copyFrom(delegate.execute(invocation.delegateRequest(), context,
+                        invocation.credentials()))
                 .set("serviceProfile", invocation.profile().getName())
                 .set("endpoint", invocation.endpoint().getName())
                 .set("descriptorFingerprint",
@@ -94,7 +95,7 @@ public final class ServiceInvokeAction implements StreamingAction {
             throws ActionException {
         Invocation invocation = prepare(input, context);
         delegate.executeStreaming(invocation.delegateRequest(), context, emitter,
-                invocation.headers());
+                invocation.credentials());
     }
 
     private Invocation prepare(Message input, ActionContext context) throws ActionException {
@@ -114,7 +115,8 @@ public final class ServiceInvokeAction implements StreamingAction {
         ServiceEndpoint endpoint = ServiceActionSupport.endpoint(profile, endpointName);
         MethodPolicy policy = ProfileMethodPolicy.find(profile, method);
         ProfileMethodPolicy.requireAllowed(policy, method);
-        Metadata headers = ProfileCredentials.headers(profile, endpoint, credentials);
+        CallCredentials callCredentials =
+                ProfileCredentials.callCredentials(profile, endpoint, credentials);
 
         DescriptorArtifact artifact;
         try {
@@ -135,7 +137,7 @@ public final class ServiceInvokeAction implements StreamingAction {
                 .set("descriptorSetBase64", Base64.getEncoder()
                         .encodeToString(artifact.getDescriptorSet().toByteArray()))
                 .build();
-        return new Invocation(profile, endpoint, delegated.build(), headers);
+        return new Invocation(profile, endpoint, delegated.build(), callCredentials);
     }
 
 
@@ -151,6 +153,6 @@ public final class ServiceInvokeAction implements StreamingAction {
     }
 
     private record Invocation(ServiceProfile profile, ServiceEndpoint endpoint,
-                              Message delegateRequest, Metadata headers) {
+                              Message delegateRequest, CallCredentials credentials) {
     }
 }
