@@ -4,6 +4,7 @@ import ai.protomolt.proto.descriptors.ClosedDescriptorSet;
 import ai.protomolt.proto.repo.v1.PublicationSchemaCondition;
 import com.google.protobuf.ByteString;
 import com.google.protobuf.Descriptors.Descriptor;
+import com.google.protobuf.UnsafeByteOperations;
 
 import java.util.LinkedHashMap;
 import java.util.Objects;
@@ -82,8 +83,9 @@ final class DocumentSchemaTypeCache {
             artifactBytes -= iterator.next().artifact().size();
             iterator.remove();
         }
-        // Keep a compact copy: the presented bytes may be a slice of a larger buffer.
-        entries.put(key, new Linked(type, ByteString.copyFrom(linked.artifact().toByteArray()), artifactSha256));
+        // Keep a compact copy: the presented bytes may be a slice of a larger buffer. This
+        // array is new and nothing else holds it, so one copy is enough.
+        entries.put(key, new Linked(type, UnsafeByteOperations.unsafeWrap(linked.artifact().toByteArray()), artifactSha256));
         artifactBytes += artifact.size();
         return type;
     }
