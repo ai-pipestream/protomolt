@@ -356,6 +356,45 @@ class ScopedCallersIT {
     }
 
     @Test
+    void everyArchiveReadRefusesABlankAccountIdAsAMutationDoes() {
+        var alice = as(ALICE, ArchiveServiceGrpc.newBlockingStub(channel));
+        for (String blank : List.of("", "   ")) {
+            String refusal = "The caller is not bound to account '" + blank + "'";
+            for (ThrowingCallable read : List.<ThrowingCallable>of(
+                    () -> alice.getArchive(GetArchiveRequest.newBuilder().setAccountId(blank).setArchive("docs").build()),
+                    () -> alice.listArchives(ListArchivesRequest.newBuilder().setAccountId(blank).build()),
+                    () -> alice.getArchiveStats(GetArchiveStatsRequest.newBuilder().setAccountId(blank).setArchive("docs").build()),
+                    () -> alice.listEntries(ListEntriesRequest.newBuilder().setAccountId(blank).setArchive("docs").build()),
+                    () -> alice.getEntry(GetEntryRequest.newBuilder().setAddress(entry(blank)).build()),
+                    () -> alice.getEntryManifest(GetEntryManifestRequest.newBuilder().setAddress(entry(blank)).build()),
+                    () -> alice.listVersions(ListVersionsRequest.newBuilder().setAddress(entry(blank)).build()),
+                    () -> alice.readRendition(ai.protomolt.proto.repo.archive.v1.ReadRenditionRequest.newBuilder().setAddress(entry(blank)).setRendition("original").build()).hasNext())) {
+                assertDenied(read, refusal);
+            }
+        }
+    }
+
+    @Test
+    void theInProcessArchiveDoorRefusesABlankAccountIdOnReads() {
+        var repository = services.archiveRepository();
+        var bound = new ai.protomolt.proto.repo.spi.RepositoryCaller("alice", false, java.util.Set.of(ACCOUNT_A), java.util.Set.of());
+        for (String blank : List.of("", "   ")) {
+            for (ThrowingCallable read : List.<ThrowingCallable>of(
+                    () -> repository.getArchive(bound, GetArchiveRequest.newBuilder().setAccountId(blank).setArchive("docs").build()),
+                    () -> repository.listArchives(bound, ListArchivesRequest.newBuilder().setAccountId(blank).build()),
+                    () -> repository.listEntries(bound, ListEntriesRequest.newBuilder().setAccountId(blank).setArchive("docs").build()),
+                    () -> repository.getEntry(bound, GetEntryRequest.newBuilder().setAddress(entry(blank)).build()))) {
+                assertThatThrownBy(read).isInstanceOfSatisfying(ai.protomolt.proto.repo.spi.RepositoryException.class, failure -> {
+                    assertThat(failure.code()).isEqualTo(ai.protomolt.proto.repo.spi.RepositoryException.Code.PERMISSION_DENIED);
+                    assertThat(failure.getMessage()).isEqualTo("The caller is not bound to account '" + blank + "'");
+                });
+            }
+        }
+        assertThat(repository.getArchive(bound, GetArchiveRequest.newBuilder().setAccountId(ACCOUNT_A).setArchive("docs").build())
+                .getArchive().getAccountId()).isEqualTo(ACCOUNT_A);
+    }
+
+    @Test
     void archiveWritesStayProcessAuthority() {
         var alice = as(ALICE, ArchiveServiceGrpc.newBlockingStub(channel));
         assertDenied(() -> alice.putEntry(PutEntryRequest.newBuilder().setAddress(entry(ACCOUNT_A))

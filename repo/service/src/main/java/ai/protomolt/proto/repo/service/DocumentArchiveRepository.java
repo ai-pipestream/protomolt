@@ -445,10 +445,19 @@ final class DocumentArchiveRepository implements ArchiveRepository, ArchiveMutat
         if (!consoleSessionMutation(request)) {
             return "Repository account policy is not configured for this principal";
         }
+        return scopedAccountRefusal(caller, extractAccountId(request));
+    }
+
+    /**
+     * The one account rule for a scoped caller, on reads and mutations alike: the caller
+     * must be bound to the named account, and a null or blank account id names none.
+     *
+     * @return the refusal to report, or null when the caller may use the account
+     */
+    static String scopedAccountRefusal(RepositoryCaller caller, String accountId) {
         if (caller.accountIds().isEmpty()) {
             return "The caller is bound to no account";
         }
-        String accountId = extractAccountId(request);
         if (accountId == null || accountId.trim().isEmpty() || !caller.accountIds().contains(accountId)) {
             return "The caller is not bound to account '" + (accountId == null ? "" : accountId) + "'";
         }
@@ -460,15 +469,9 @@ final class DocumentArchiveRepository implements ArchiveRepository, ArchiveMutat
         if (caller.processAuthority()) {
             return;
         }
-        if (caller.accountIds().isEmpty()) {
-            throw new RepositoryException(
-                    RepositoryException.Code.PERMISSION_DENIED,
-                    "The caller is bound to no account");
-        }
-        if (accountId != null && !accountId.trim().isEmpty() && !caller.accountIds().contains(accountId)) {
-            throw new RepositoryException(
-                    RepositoryException.Code.PERMISSION_DENIED,
-                    "The caller is not bound to account '" + accountId + "'");
+        String refusal = scopedAccountRefusal(caller, accountId);
+        if (refusal != null) {
+            throw new RepositoryException(RepositoryException.Code.PERMISSION_DENIED, refusal);
         }
     }
 
@@ -613,24 +616,14 @@ final class DocumentArchiveRepository implements ArchiveRepository, ArchiveMutat
                             return;
                         }
                         if (!isWrite && !caller.processAuthority()) {
-                            if (isMutationService) {
-                                // The console-session door: the same rule as the in-process SPI,
-                                // including the refusal of an empty account id.
-                                String refusal = scopedMutationRefusal(caller, message);
-                                if (refusal != null) {
-                                    closed = true;
-                                    call.close(Status.PERMISSION_DENIED.withDescription(refusal), new Metadata());
-                                    return;
-                                }
-                            }
-                            String accountId = extractAccountId(message);
-                            if (accountId != null && !accountId.trim().isEmpty()
-                                    && !caller.accountIds().contains(accountId)) {
+                            // One rule for both services and for the in-process SPI, including
+                            // the refusal of an empty account id.
+                            String refusal = isMutationService
+                                    ? scopedMutationRefusal(caller, message)
+                                    : scopedAccountRefusal(caller, extractAccountId(message));
+                            if (refusal != null) {
                                 closed = true;
-                                call.close(
-                                        Status.PERMISSION_DENIED.withDescription(
-                                                "The caller is not bound to account '" + accountId + "'"),
-                                        new Metadata());
+                                call.close(Status.PERMISSION_DENIED.withDescription(refusal), new Metadata());
                                 return;
                             }
                         }

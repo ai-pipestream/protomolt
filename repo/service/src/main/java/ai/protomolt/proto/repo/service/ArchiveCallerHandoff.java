@@ -238,18 +238,10 @@ final class ArchiveCallerHandoff {
                         if (caller == null || caller.processAuthority()) {
                             return;
                         }
-                        if (caller.accountIds().isEmpty()) {
+                        String refusal = DocumentArchiveRepository.scopedAccountRefusal(caller, accountId);
+                        if (refusal != null) {
                             cancel("permission denied", null);
-                            throw Status.PERMISSION_DENIED
-                                    .withDescription("The caller is bound to no account")
-                                    .asRuntimeException();
-                        }
-                        if (accountId != null && !accountId.trim().isEmpty()
-                                && !caller.accountIds().contains(accountId)) {
-                            cancel("permission denied", null);
-                            throw Status.PERMISSION_DENIED
-                                    .withDescription("The caller is not bound to account '" + accountId + "'")
-                                    .asRuntimeException();
+                            throw Status.PERMISSION_DENIED.withDescription(refusal).asRuntimeException();
                         }
                     }
 
