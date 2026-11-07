@@ -51,6 +51,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -119,9 +120,12 @@ public final class DocumentSaves {
         private final Map<String, Stack> stacks;
         private final java.util.function.BiFunction<String, String, Optional<Stack>> byAccountAndDrive;
         private final java.util.function.Function<String, Optional<Stack>> byStackId;
+        private final java.util.function.Function<String, Optional<Boolean>> temporaryByStackId;
 
         /**
-         * Creates a static drive table shared across all accounts.
+         * Creates a static drive table shared across all accounts. Static tables
+         * classify every stack as durable; temporary classification needs the
+         * dynamic resolver backed by a drive ledger.
          *
          * @param defaultDrive the drive name used when a save request leaves {@code drive} empty
          * @param stacks the configured drive-name to {@link Stack} mappings
@@ -136,12 +140,21 @@ public final class DocumentSaves {
             this.byStackId = stackId -> this.stacks.values().stream()
                     .filter(stack -> stack.stackId().equals(stackId))
                     .findFirst();
+            this.temporaryByStackId = stackId -> Optional.empty();
         }
 
         private Drives(
                 String defaultDrive,
                 java.util.function.BiFunction<String, String, Optional<Stack>> byAccountAndDrive,
                 java.util.function.Function<String, Optional<Stack>> byStackId) {
+            this(defaultDrive, byAccountAndDrive, byStackId, stackId -> Optional.empty());
+        }
+
+        private Drives(
+                String defaultDrive,
+                java.util.function.BiFunction<String, String, Optional<Stack>> byAccountAndDrive,
+                java.util.function.Function<String, Optional<Stack>> byStackId,
+                java.util.function.Function<String, Optional<Boolean>> temporaryByStackId) {
             if (defaultDrive == null || defaultDrive.isBlank()) {
                 throw new IllegalArgumentException("Default drive must not be blank");
             }
@@ -149,6 +162,7 @@ public final class DocumentSaves {
             this.stacks = Map.of();
             this.byAccountAndDrive = Objects.requireNonNull(byAccountAndDrive, "byAccountAndDrive");
             this.byStackId = Objects.requireNonNull(byStackId, "byStackId");
+            this.temporaryByStackId = Objects.requireNonNull(temporaryByStackId, "temporaryByStackId");
         }
 
         /**
@@ -165,6 +179,25 @@ public final class DocumentSaves {
                 java.util.function.BiFunction<String, String, Optional<Stack>> byAccountAndDrive,
                 java.util.function.Function<String, Optional<Stack>> byStackId) {
             return new Drives(defaultDrive, byAccountAndDrive, byStackId);
+        }
+
+        /**
+         * Creates a dynamic drive resolver that also classifies recorded stacks as
+         * temporary (object-expiring) or durable.
+         *
+         * @param defaultDrive the drive name used when a save request leaves {@code drive} empty
+         * @param byAccountAndDrive resolves an account ID and effective drive name to a {@link Stack}
+         * @param byStackId resolves a recorded stack ID to a {@link Stack}
+         * @param temporaryByStackId resolves a recorded stack ID to whether its objects expire;
+         *        an unclassified stack is treated as durable
+         * @return the dynamic drive resolver
+         */
+        public static Drives dynamic(
+                String defaultDrive,
+                java.util.function.BiFunction<String, String, Optional<Stack>> byAccountAndDrive,
+                java.util.function.Function<String, Optional<Stack>> byStackId,
+                java.util.function.Function<String, Optional<Boolean>> temporaryByStackId) {
+            return new Drives(defaultDrive, byAccountAndDrive, byStackId, temporaryByStackId);
         }
 
         /**
@@ -203,6 +236,22 @@ public final class DocumentSaves {
             return byStackId.apply(stackId)
                     .orElseThrow(() -> new AccessionException(Status.Code.UNAVAILABLE,
                             "Stack " + stackId + " is not configured on this host", null));
+        }
+
+        /**
+         * Whether the given stack is temporary: its objects expire per drive
+         * configuration. Stacks this resolver cannot classify are durable, so a
+         * static table never reports a temporary stack.
+         *
+         * @param stack the stack to classify
+         * @return true when the stack's objects expire
+         */
+        public boolean temporary(Stack stack) {
+            return temporary(stack.stackId());
+        }
+
+        boolean temporary(String stackId) {
+            return temporaryByStackId.apply(stackId).orElse(false);
         }
     }
 
@@ -1218,6 +1267,14 @@ public final class DocumentSaves {
             return reject(caller, request, address, intentSha, authorized, RejectionReason.REJECTION_REASON_VALIDATION_FAILED,
                     "A concept tag does not fit the catalog", unstorableTags);
 
+        boolean promotion = request.getStoragePlacement() == StoragePlacement.STORAGE_PLACEMENT_SELECTED_DRIVE;
+        Stack resolvedStack = promotion ? drives.resolve(account, request.getDrive()) : null;
+        if (promotion && drives.temporary(resolvedStack))
+            return rejectWithUploadCleanup(caller, request, address, intentSha, authorized, resolvedStack, preUploadedBlobs,
+                    RejectionReason.REJECTION_REASON_VALIDATION_FAILED,
+                    "Selected-drive placement cannot target temporary drive '" + request.getDrive()
+                            + "'; its objects expire, so a durable destination is required", List.of());
+
         // Prerequisite 6: a save whose candidate equals the expected revision records
         // only its outcome, after the same authorization and checks as any save.
         if (request.getUnchanged() == UnchangedPolicy.UNCHANGED_POLICY_RECORD_OUTCOME
@@ -1226,7 +1283,43 @@ public final class DocumentSaves {
 
         // S12: write new bytes to the drive's stack, before the commit transaction. Each raw
         // blob is its own object, bound to its blob ID on the BLOBS entry (decision 45).
-        var stack = drives.resolve(account, request.getDrive());
+        var stack = resolvedStack == null ? drives.resolve(account, request.getDrive()) : resolvedStack;
+        if (!promotion && !drives.temporary(stack)) {
+            // An ordinary save into a durable destination must not inherit expiring bytes.
+            // Carried, sourced and blob-level-carried references on temporary stacks are
+            // refused here, before any further object is written or the revision is published;
+            // the explicit placement save is the supported way to copy them first.
+            var temporarySelectors = new LinkedHashSet<PartSelector>();
+            var temporaryStacks = new LinkedHashSet<String>();
+            for (var part : parts.values()) {
+                if (part.hasRef() && !part.getRef().getStackId().equals(stack.stackId())
+                        && drives.temporary(part.getRef().getStackId())) {
+                    temporarySelectors.add(part.getEntry().getSelector());
+                    temporaryStacks.add(part.getRef().getStackId());
+                }
+                for (var blob : part.getBlobRefsList())
+                    if (!blob.getRef().getStackId().equals(stack.stackId())
+                            && drives.temporary(blob.getRef().getStackId())) {
+                        temporarySelectors.add(part.getEntry().getSelector());
+                        temporaryStacks.add(blob.getRef().getStackId());
+                    }
+            }
+            for (var blob : carriedBlobs)
+                if (!blob.getRef().getStackId().equals(stack.stackId()) && drives.temporary(blob.getRef().getStackId())) {
+                    temporarySelectors.add(PartSelector.newBuilder().setPart(DocumentPart.DOCUMENT_PART_BLOBS).build());
+                    temporaryStacks.add(blob.getRef().getStackId());
+                }
+            if (!temporaryStacks.isEmpty())
+                return rejectWithUploadCleanup(caller, request, address, intentSha, authorized, stack, preUploadedBlobs,
+                        RejectionReason.REJECTION_REASON_VALIDATION_FAILED,
+                        "The save carries or sources bytes on temporary stack(s) " + temporaryStacks
+                                + " whose objects expire; an ordinary durable save cannot inherit them."
+                                + " Use STORAGE_PLACEMENT_SELECTED_DRIVE with an explicit durable drive to copy them first",
+                        temporarySelectors.stream().map(selector -> FieldViolation.newBuilder().setPart(selector)
+                                .setRuleId("storage-temporary-reference")
+                                .setMessage("References a temporary stack whose objects expire: " + temporaryStacks)
+                                .build()).toList());
+        }
         var newObjects = new ArrayList<StackRef>();
         var blobRefs = new ArrayList<BlobObjectRef>();
         for (var uploaded : preUploadedBlobs) {
@@ -1259,10 +1352,15 @@ public final class DocumentSaves {
             if (selector.equals(BLOBS_SELECTOR)) entry.addAllBlobRefs(blobRefs);
             parts.put(selector, entry.build());
         }
+        // Promotion changes placement explicitly; ordinary saves keep reference-only carry-forward.
+        // Originals remain in the commit's purge fence even after their verified bytes were copied.
+        var placementSources = request.getStoragePlacement() == StoragePlacement.STORAGE_PLACEMENT_SELECTED_DRIVE
+                ? DocumentPlacement.materialize(parts, stack, drives::byId, newObjects) : List.<StackRef>of();
         // Carried and sourced parts reference their objects, raw blobs included, without re-upload.
         // An explicit carried_from source part joins them so a purge of it fails the
         // commit as SOURCE_PURGED instead of qualifying vanished opaque bytes.
         var carriedObjects = new ArrayList<StackRef>();
+        carriedObjects.addAll(placementSources);
         for (var part : parts.values()) {
             if (part.hasRef() && !newObjects.contains(part.getRef())) carriedObjects.add(part.getRef());
             for (var blob : part.getBlobRefsList())
@@ -1496,6 +1594,22 @@ public final class DocumentSaves {
         return SaveIntents.sha256(SaveIntents.intent(p.request(), p.address(), contents));
     }
 
+    private SaveDocumentResponse rejectWithUploadCleanup(RepositoryCaller caller, SaveDocumentRequest request,
+            NodeAddress address, String intentSha, WriterAuthority.Authorized authorized, Stack stack,
+            List<BlobObjectRef> preUploadedBlobs, RejectionReason reason, String message,
+            List<FieldViolation> violations) {
+        Exception cleanupFailure = null;
+        for (var uploaded : preUploadedBlobs) {
+            var next = deleteUnreferenced(stack, uploaded.getRef());
+            if (next != null) {
+                if (cleanupFailure == null) cleanupFailure = next;
+                else cleanupFailure.addSuppressed(next);
+            }
+        }
+        return withCleanupSuppressed(cleanupFailure,
+                () -> reject(caller, request, address, intentSha, authorized, reason, message, violations));
+    }
+
     private static Exception deleteUnreferenced(Stack stack, StackRef ref) {
         try {
             stack.delete(ref);
@@ -1575,7 +1689,14 @@ public final class DocumentSaves {
             if (!attestedLocators.add(attestation.getOccurrence()))
                 throw malformedException("Duplicate opaque attestation occurrence");
         }
-        if (writes.isEmpty() && sourced.isEmpty()) throw malformedException("A save writes or sources at least one part");
+        if (request.getStoragePlacement() == StoragePlacement.STORAGE_PLACEMENT_SELECTED_DRIVE) {
+            if (request.getDrive().isBlank() || request.getUnchanged() != UnchangedPolicy.UNCHANGED_POLICY_UNSPECIFIED)
+                throw malformedException("Selected-drive placement requires an explicit drive and a new accession");
+            if (writes.isEmpty() && sourced.isEmpty() && !request.getExpected().hasRevision())
+                throw malformedException("Placement-only saves require an existing expected revision");
+        } else if (writes.isEmpty() && sourced.isEmpty()) {
+            throw malformedException("A save writes or sources at least one part");
+        }
         return writes;
     }
 

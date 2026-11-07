@@ -167,4 +167,45 @@ class ArchiveOperationKeysTest {
         assertThat(ArchiveOperationKeys.operationId(pinned, digest))
                 .isNotEqualTo(ArchiveOperationKeys.operationId(header, digest));
     }
+
+    @Test
+    void bridgeContentHashStaysTheDigestOfTheDeterministicBytes() throws Exception {
+        // A recorded operation ID is derived from this hash, so the bytes it covers cannot change.
+        var request = ai.protomolt.proto.repo.archive.v1.BridgeEntryRequest.newBuilder()
+                .setAddress(EntryAddress.newBuilder().setAccountId("a").setArchive("b").setEntryId("c"))
+                .build();
+        var derived = new java.util.ArrayList<ai.protomolt.proto.repo.v1.Blob>();
+        for (int size : new int[] {0, 16, 4096, 300_000}) {
+            derived.add(ai.protomolt.proto.repo.v1.Blob.newBuilder()
+                    .setBlobId("derived-" + size)
+                    .setMimeType("text/plain")
+                    .setData(ByteString.copyFrom(new byte[size]))
+                    .setMetadata(com.google.protobuf.Struct.newBuilder()
+                            .putFields("z", com.google.protobuf.Value.newBuilder().setStringValue("1").build())
+                            .putFields("a", com.google.protobuf.Value.newBuilder().setNumberValue(2).build()))
+                    .build());
+        }
+        MessageDigest expected = MessageDigest.getInstance("SHA-256");
+        expected.update(ai.protomolt.proto.descriptors.MessageFingerprints.deterministicBytes(request));
+        for (var blob : derived) {
+            expected.update(ai.protomolt.proto.descriptors.MessageFingerprints.deterministicBytes(blob));
+        }
+
+        assertThat(ArchiveOperationKeys.bridgeEntryContentSha256(request, derived))
+                .isEqualTo(HexFormat.of().formatHex(expected.digest()));
+    }
+
+    @Test
+    void bridgeContentHashDoesNotCopyDerivedBytes() {
+        var request = ai.protomolt.proto.repo.archive.v1.BridgeEntryRequest.getDefaultInstance();
+        var blob = ai.protomolt.proto.repo.v1.Blob.newBuilder()
+                .setBlobId("derived").setData(ByteString.copyFrom(new byte[16 * 1024 * 1024])).build();
+        var threads = (com.sun.management.ThreadMXBean) java.lang.management.ManagementFactory.getThreadMXBean();
+        long thread = Thread.currentThread().threadId();
+        long before = threads.getThreadAllocatedBytes(thread);
+
+        ArchiveOperationKeys.bridgeEntryContentSha256(request, java.util.List.of(blob));
+
+        assertThat(threads.getThreadAllocatedBytes(thread) - before).isLessThan(1024 * 1024);
+    }
 }

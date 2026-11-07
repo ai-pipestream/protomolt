@@ -15,9 +15,12 @@ import java.util.function.Function;
 
 /** Process-owned provider handles, shared by complete resolved backend configuration. */
 final class DriveBackingPool implements AutoCloseable {
+    private static final String TEMPORARY_PREFIX = "protomolt:temporary:v1:";
+    private static final String TEMPORARY_NAMESPACE = "redis-expiring:";
+
     record Backing(String provider, String endpoint, BlobStore store,
             NamespaceProvisioner namespaces, ObjectReclaimer reclaimer, String keyPrefix, String writePolicy,
-            String region, boolean pathStyle) {
+            String region, boolean pathStyle, int ttlSeconds) {
         Backing(String provider, String endpoint, BlobStore store,
                 NamespaceProvisioner namespaces, ObjectReclaimer reclaimer) {
             this(provider, endpoint, store, namespaces, reclaimer, "", "replace", "", false);
@@ -26,16 +29,18 @@ final class DriveBackingPool implements AutoCloseable {
                 ObjectReclaimer reclaimer, String keyPrefix, String writePolicy) {
             this(provider, endpoint, store, namespaces, reclaimer, keyPrefix, writePolicy, "", false);
         }
+        Backing(String provider, String endpoint, BlobStore store, NamespaceProvisioner namespaces,
+                ObjectReclaimer reclaimer, String keyPrefix, String writePolicy, String region, boolean pathStyle) {
+            this(provider, endpoint, store, namespaces, reclaimer, keyPrefix, writePolicy, region, pathStyle, 0);
+        }
+        boolean temporary() {
+            return ttlSeconds > 0;
+        }
         String namespace(String bucket, String prefix) {
             if ("s3".equals(provider)) return region.isEmpty() ? bucket + "/" + prefix
                     : "s3:" + encode(region) + ":" + (pathStyle ? "path:" : "virtual:") + bucket + "/" + prefix;
-            // Encode each physical namespace dimension independently; separators in
-            // user-provided prefixes or bucket names cannot alias another tuple.
-            return "redis:" + writePolicy + ":" + encode(keyPrefix) + ":" + encode(bucket) + ":" + encode(prefix);
-        }
-        private static String encode(String value) {
-            return java.util.Base64.getUrlEncoder().withoutPadding().encodeToString(
-                    value.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            String retention = temporary() ? TEMPORARY_NAMESPACE + ttlSeconds + ":" : "redis:";
+            return retention + writePolicy + ":" + encode(keyPrefix) + ":" + encode(bucket) + ":" + encode(prefix);
         }
     }
     private record Key(String provider, Map<String, String> options) {}
@@ -123,12 +128,21 @@ final class DriveBackingPool implements AutoCloseable {
                 if (!Set.of("redis", "valkey").contains(provider))
                     throw invalid("Redis configuration requires redis or valkey provider");
                 var redis = stored.getRedis();
-                if (redis.getTtlSeconds() != 0)
-                    throw invalid("Repository drives must retain bytes until explicit purge; expiring drives are not qualified");
+                int ttl = redis.getTtlSeconds();
+                if (ttl < 0)
+                    throw invalid("Redis ttl_seconds must not be negative");
+                boolean temporary = ttl > 0;
+                if (!temporary && redis.getKeyPrefix().startsWith(TEMPORARY_PREFIX))
+                    throw invalid("Redis key_prefix uses the reserved temporary-drive prefix");
+                if (temporary && config.managedStorage().retentionQualified() && !bounded)
+                    throw invalid("Retention-qualified managed storage refuses expiring drives; "
+                            + "temporary drives are not qualified for retained ingestion");
+                if (temporary && bounded)
+                    throw invalid("Bounded create-only storage requires zero TTL; temporary drives are not supported");
                 options.put("uri", redisCredentials(redis.getUri(), drive.credentialsRef));
-                options.put("ttl-seconds", "0");
+                options.put("ttl-seconds", Integer.toString(ttl));
                 options.put("max-object-bytes", Long.toString(redis.getMaxObjectBytes()));
-                options.put("key-prefix", redis.getKeyPrefix());
+                options.put("key-prefix", temporary ? temporaryKeyPrefix(redis.getKeyPrefix(), ttl) : redis.getKeyPrefix());
                 options.put("write-policy", bounded ? "create-only" : "replace");
             }
             default -> throw invalid("A drive must explicitly select its provider configuration");
@@ -155,10 +169,17 @@ final class DriveBackingPool implements AutoCloseable {
     private Backing open(Key key) {
         var handle = providers.open(key.provider(), key.options());
         try {
-            var required = config.managedStorage().retentionQualified() && !bounded
-                    ? Set.of(BlobCapability.NON_EXPIRING_WRITES, BlobCapability.PHYSICAL_RECLAMATION,
-                            BlobCapability.STREAMING_WRITE)
-                    : Set.of(BlobCapability.NON_EXPIRING_WRITES, BlobCapability.PHYSICAL_RECLAMATION);
+            // A positive per-drive TTL selects a temporary drive: its writes expire, so
+            // OBJECT_EXPIRY replaces NON_EXPIRING_WRITES in the qualification gate. The
+            // host default and zero-TTL drives keep the durable retention gate.
+            int ttlSeconds = "s3".equals(key.provider()) ? 0
+                    : Integer.parseInt(key.options().getOrDefault("ttl-seconds", "0"));
+            var required = ttlSeconds > 0
+                    ? Set.of(BlobCapability.OBJECT_EXPIRY, BlobCapability.PHYSICAL_RECLAMATION)
+                    : config.managedStorage().retentionQualified() && !bounded
+                            ? Set.of(BlobCapability.NON_EXPIRING_WRITES, BlobCapability.PHYSICAL_RECLAMATION,
+                                    BlobCapability.STREAMING_WRITE)
+                            : Set.of(BlobCapability.NON_EXPIRING_WRITES, BlobCapability.PHYSICAL_RECLAMATION);
             if (!handle.capabilities().containsAll(required))
                 throw invalid("Drive provider lacks required repository retention capabilities");
             var backing = new Backing(key.provider(), "s3".equals(key.provider())
@@ -166,7 +187,8 @@ final class DriveBackingPool implements AutoCloseable {
                             Boolean.parseBoolean(key.options().get("path-style"))) : endpoint(key.options().get("uri")),
                     handle.store(), handle::ensureNamespace, handle.reclaimer(),
                     key.options().getOrDefault("key-prefix", ""), key.options().getOrDefault("write-policy", "replace"),
-                    key.options().getOrDefault("region", ""), Boolean.parseBoolean(key.options().get("path-style")));
+                    key.options().getOrDefault("region", ""), Boolean.parseBoolean(key.options().get("path-style")),
+                    ttlSeconds);
             owned.add(handle);
             return backing;
         } catch (RuntimeException | Error failure) {
@@ -240,6 +262,21 @@ final class DriveBackingPool implements AutoCloseable {
                 ai.protomolt.proto.repo.v2.StackRecord.newBuilder().setStackId("stack-" + drive.driveId)
                         .setProvider(backing.provider()).setEndpoint(backing.endpoint())
                         .setNamespace(backing.namespace(drive.bucket, prefix)).build());
+    }
+
+    /** Encodes temporary identity under a prefix rejected for durable drive configurations. */
+    static String temporaryKeyPrefix(String configuredPrefix, int ttlSeconds) {
+        if (ttlSeconds <= 0) throw new IllegalArgumentException("Temporary drives need a positive TTL");
+        return TEMPORARY_PREFIX + ttlSeconds + ":" + encode(configuredPrefix);
+    }
+
+    static boolean temporaryNamespace(String namespace) {
+        return namespace.startsWith(TEMPORARY_NAMESPACE);
+    }
+
+    private static String encode(String value) {
+        return java.util.Base64.getUrlEncoder().withoutPadding().encodeToString(
+                value.getBytes(java.nio.charset.StandardCharsets.UTF_8));
     }
 
     private static String text(String value) { return value == null ? "" : value; }
