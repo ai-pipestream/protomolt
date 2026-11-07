@@ -35,7 +35,12 @@ the purpose. Ordinary `embed`/`embedAll` explicitly select no prefix.
 A ModelInfer call sends raw UTF-8 text in the standard BYTES tensor `texts`,
 requests no truncation and unquantized vectors, and accepts only finite FP32
 `vectors` matching the declared dimension. Calls have 30-second deadlines and
-batches of every purpose split at 32 texts. A server with a smaller capacity refuses;
+batches of every purpose split at 32 texts. All instances share a process-wide
+RPC cap, default 8, configured by `protomolt.embeddings.turboembed.max-in-flight`
+or `PROTOMOLT_TURBOEMBED_MAX_IN_FLIGHT`. Admission has a separate interruptible
+30-second timeout. Overlapping configurations must agree; see the
+[configuration and lifecycle contract](../../../docs/search/embeddings.md#process-wide-tei-and-turboembed-admission).
+A server with a smaller capacity refuses;
 there is no client retry that changes the input, model, purpose or precision.
 The constructor taking a ManagedChannel leaves credentials and channel lifetime
 with its caller. Environment-configured plaintext must be chosen explicitly.
