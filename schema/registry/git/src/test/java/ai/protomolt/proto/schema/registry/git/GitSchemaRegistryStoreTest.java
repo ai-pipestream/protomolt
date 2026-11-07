@@ -77,6 +77,7 @@ class GitSchemaRegistryStoreTest extends SchemaRegistryStoreContractTest {
         Path dir = tempDir.resolve("corrupt-global");
         try (GitSchemaRegistryStore store = storeAt(dir)) {
             Files.writeString(dir.resolve("registry.json"), metadata);
+            RegistryGitTestSupport.commitWorkingTree(dir, "Commit corrupt registry metadata");
             assertThatThrownBy(store::globalCompatibilityMode)
                     .isInstanceOf(ai.protomolt.proto.registry.RegistryStoreException.class)
                     .hasMessageContaining("registry.json");
@@ -89,7 +90,10 @@ class GitSchemaRegistryStoreTest extends SchemaRegistryStoreContractTest {
         Path dir = tempDir.resolve("corrupt-subject");
         try (GitSchemaRegistryStore store = storeAt(dir)) {
             store.register("sample.proto", CORE_PROTO, List.of());
-            Files.writeString(dir.resolve("subjects/sample.proto/config.json"), metadata);
+            Path subjectDir = dir.resolve("subjects").resolve("sample.proto");
+            Files.createDirectories(subjectDir);
+            Files.writeString(subjectDir.resolve("config.json"), metadata);
+            RegistryGitTestSupport.commitWorkingTree(dir, "Commit corrupt subject policy");
             store.refresh();
             assertThatThrownBy(() -> store.compatibilityMode("sample.proto"))
                     .isInstanceOf(ai.protomolt.proto.registry.RegistryStoreException.class)
@@ -107,7 +111,8 @@ class GitSchemaRegistryStoreTest extends SchemaRegistryStoreContractTest {
             assertThat(store.descriptorSet(fingerprint)).isEmpty();
             Files.move(dir, tempDir.resolve("descriptor-moved"));
             assertThatThrownBy(() -> store.descriptorSet(fingerprint))
-                    .isInstanceOf(ai.protomolt.proto.registry.RegistryStoreException.class);
+                    .isInstanceOf(ai.protomolt.proto.registry.RegistryStoreException.class)
+                    .hasMessageContaining("unavailable");
         }
     }
 
@@ -116,9 +121,14 @@ class GitSchemaRegistryStoreTest extends SchemaRegistryStoreContractTest {
         Path dir = tempDir.resolve("descriptor-directory");
         String fingerprint = "a".repeat(64);
         try (GitSchemaRegistryStore store = storeAt(dir)) {
-            Files.createDirectories(dir.resolve("descriptors/sha256/" + fingerprint + ".pb"));
+            // A committed tree where the artifact blob belongs is corruption, not absence.
+            Path artifact = dir.resolve("descriptors/sha256/" + fingerprint + ".pb");
+            Files.createDirectories(artifact);
+            Files.writeString(artifact.resolve("inner.bin"), "noise");
+            RegistryGitTestSupport.commitWorkingTree(dir, "Commit a tree at the artifact path");
             assertThatThrownBy(() -> store.descriptorSet(fingerprint))
-                    .isInstanceOf(ai.protomolt.proto.registry.RegistryStoreException.class);
+                    .isInstanceOf(ai.protomolt.proto.registry.RegistryStoreException.class)
+                    .hasMessageContaining(fingerprint);
         }
     }
 
@@ -127,27 +137,52 @@ class GitSchemaRegistryStoreTest extends SchemaRegistryStoreContractTest {
         Path dir = tempDir.resolve("descriptor-parent-file");
         String fingerprint = "a".repeat(64);
         try (GitSchemaRegistryStore store = storeAt(dir)) {
+            // A committed blob where the descriptors directory belongs is corruption.
             Files.writeString(dir.resolve("descriptors"), "not a directory");
+            RegistryGitTestSupport.commitWorkingTree(dir, "Commit a file at the descriptors path");
             assertThatThrownBy(() -> store.descriptorSet(fingerprint))
-                    .isInstanceOf(ai.protomolt.proto.registry.RegistryStoreException.class);
+                    .isInstanceOf(ai.protomolt.proto.registry.RegistryStoreException.class)
+                    .hasMessageContaining(fingerprint);
         }
     }
 
     @Test
-    void descriptorSymlinkAndMissingGitMetadataAreNotAuthoritativeAbsence() throws Exception {
+    void committedDescriptorReadsFailLoudlyWhenTheRepositoryIsUnavailable() throws Exception {
         Path dir = tempDir.resolve("descriptor-link");
-        String fingerprint = "a".repeat(64);
+        var bytes = descriptorSet();
+        String fingerprint = HexFormat.of().formatHex(
+                MessageDigest.getInstance("SHA-256").digest(bytes.toByteArray()));
         try (GitSchemaRegistryStore store = storeAt(dir)) {
-            Path parent = Files.createDirectories(dir.resolve("descriptors/sha256"));
-            Path link = parent.resolve(fingerprint + ".pb");
-            Files.createSymbolicLink(link, tempDir.resolve("missing-target"));
+            store.putDescriptorSet(fingerprint, bytes);
+            assertThat(store.descriptorSet(fingerprint)).contains(bytes);
+            Files.move(dir, tempDir.resolve("descriptor-moved"));
             assertThatThrownBy(() -> store.descriptorSet(fingerprint))
-                    .isInstanceOf(ai.protomolt.proto.registry.RegistryStoreException.class);
-            Files.delete(link);
-            assertThat(store.descriptorSet(fingerprint)).isEmpty();
-            Files.move(dir.resolve(".git"), dir.resolve(".git-unavailable"));
+                    .isInstanceOf(ai.protomolt.proto.registry.RegistryStoreException.class)
+                    .hasMessageContaining("unavailable");
+        }
+    }
+
+    @Test
+    void oversizedCommittedDescriptorIsCorruptionNotAnOutage() throws Exception {
+        Path dir = tempDir.resolve("descriptor-oversized");
+        var bytes = descriptorSet();
+        String fingerprint = HexFormat.of().formatHex(
+                MessageDigest.getInstance("SHA-256").digest(bytes.toByteArray()));
+        try (GitSchemaRegistryStore store = storeAt(dir)) {
+            store.register(CORE_SUBJECT, CORE_PROTO, List.of());
+            RegistryGitTestSupport.checkoutHead(dir);
+            String relative = "descriptors/sha256/" + fingerprint + ".pb";
+            Path artifact = dir.resolve(relative);
+            Files.createDirectories(artifact.getParent());
+            Files.write(artifact, new byte[ai.protomolt.proto.registry.DescriptorSetArtifacts.MAX_BYTES + 1]);
+            RegistryGitTestSupport.commitWorkingTree(dir, "Oversize descriptor");
+
             assertThatThrownBy(() -> store.descriptorSet(fingerprint))
-                    .isInstanceOf(ai.protomolt.proto.registry.RegistryStoreException.class);
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessage("descriptor set exceeds the 16 MiB limit");
+            assertThatThrownBy(() -> store.putDescriptorSet(fingerprint, bytes))
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessage("descriptor set exceeds the 16 MiB limit");
         }
     }
 
@@ -163,8 +198,8 @@ class GitSchemaRegistryStoreTest extends SchemaRegistryStoreContractTest {
         try (GitSchemaRegistryStore reopened = storeAt(dir)) {
             assertThat(reopened.descriptorSet(fingerprint)).contains(bytes);
         }
-        assertThat(Files.isRegularFile(dir.resolve(
-                "descriptors/sha256/" + fingerprint + ".pb"))).isTrue();
+        assertThat(RegistryGitTestSupport.headBlob(
+                dir, "descriptors/sha256/" + fingerprint + ".pb")).isEqualTo(bytes.toByteArray());
     }
 
     @Test
@@ -207,12 +242,15 @@ class GitSchemaRegistryStoreTest extends SchemaRegistryStoreContractTest {
             store.register(CORE_SUBJECT, CORE_PROTO, List.of());
             store.setCompatibilityMode(CORE_SUBJECT, "FULL");
         }
-        Path subjectDir = dir.resolve("subjects")
-                .resolve(URLEncoder.encode(CORE_SUBJECT, StandardCharsets.UTF_8));
-        assertThat(subjectDir.resolve("v1.proto")).content().isEqualTo(CORE_PROTO);
-        assertThat(subjectDir.resolve("v1.json")).exists();
-        assertThat(subjectDir.resolve("config.json")).exists();
-        assertThat(dir.resolve("registry.json")).exists();
+        // The layout is pinned against the committed tree, not the (never written) worktree.
+        String encoded = URLEncoder.encode(CORE_SUBJECT, StandardCharsets.UTF_8);
+        assertThat(RegistryGitTestSupport.headBlob(dir, "subjects/" + encoded + "/v1.proto"))
+                .isEqualTo(CORE_PROTO.getBytes(StandardCharsets.UTF_8));
+        assertThat(RegistryGitTestSupport.headBlob(dir, "subjects/" + encoded + "/v1.json"))
+                .isNotNull();
+        assertThat(RegistryGitTestSupport.headBlob(dir, "subjects/" + encoded + "/config.json"))
+                .isNotNull();
+        assertThat(RegistryGitTestSupport.headBlob(dir, "registry.json")).isNotNull();
     }
 
     @Test
@@ -270,7 +308,7 @@ class GitSchemaRegistryStoreTest extends SchemaRegistryStoreContractTest {
 
             // v2 lands with globalId 5 while registry.json still claims the next id is 2.
             commitVersionExternally(dir, CORE_SUBJECT, 2, CORE_PROTO_V2, 5, 2);
-            assertThat(nextGlobalIdOnDisk(dir)).isEqualTo(2);
+            assertThat(nextGlobalIdCommitted(dir)).isEqualTo(2);
 
             StoredSchema v3 = store.register(CORE_SUBJECT, CORE_PROTO_V3, List.of());
 
@@ -281,7 +319,7 @@ class GitSchemaRegistryStoreTest extends SchemaRegistryStoreContractTest {
                     .map(StoredSchema::schemaText)
                     .contains(CORE_PROTO_V2);
             assertThat(store.byGlobalId(6)).contains(v3);
-            assertThat(nextGlobalIdOnDisk(dir)).isEqualTo(7);
+            assertThat(nextGlobalIdCommitted(dir)).isEqualTo(7);
         }
     }
 
@@ -308,6 +346,66 @@ class GitSchemaRegistryStoreTest extends SchemaRegistryStoreContractTest {
         assertThat(commitMessages(dir)).hasSize(2 * perStore);
     }
 
+    @Test
+    void writesLeaveTheWorkingTreeUntouched() throws Exception {
+        Path dir = tempDir.resolve("untouched-worktree");
+        try (GitSchemaRegistryStore store = storeAt(dir)) {
+            store.register(CORE_SUBJECT, CORE_PROTO, List.of());
+            store.putWorkflow("ingest.v1", "{\"steps\":[]}");
+            store.putConfig("limits", "{}");
+        }
+        try (var files = Files.list(dir)) {
+            assertThat(files.map(path -> path.getFileName().toString()))
+                    .containsExactlyInAnyOrder(".git", RegistryLayout.LOCK_FILE);
+        }
+    }
+
+    @Test
+    void workingTreeFilesAreNotAuthoritative() throws Exception {
+        Path dir = tempDir.resolve("stale-worktree");
+        try (GitSchemaRegistryStore store = storeAt(dir)) {
+            StoredSchema v1 = store.register(CORE_SUBJECT, CORE_PROTO, List.of());
+            // A stale or corrupt working-tree copy of a committed document changes nothing.
+            Path subjectDir = dir.resolve("subjects")
+                    .resolve(URLEncoder.encode(CORE_SUBJECT, StandardCharsets.UTF_8));
+            Files.createDirectories(subjectDir);
+            Path proto = subjectDir.resolve("v1.proto");
+            Files.writeString(proto, "this is not the committed schema");
+            assertThat(store.latest(CORE_SUBJECT)).contains(v1);
+
+            Files.delete(proto);
+            Files.delete(subjectDir);
+            assertThat(store.latest(CORE_SUBJECT)).contains(v1);
+            assertThat(store.subjects()).containsExactly(CORE_SUBJECT);
+        }
+    }
+
+    @Test
+    void executableModesAndUntouchedFilesSurviveTreeReconstruction() throws Exception {
+        Path dir = tempDir.resolve("executable-modes");
+        try (GitSchemaRegistryStore store = storeAt(dir)) {
+            store.register(CORE_SUBJECT, CORE_PROTO, List.of());
+            // An external tool checks out the registry and adds an executable helper.
+            RegistryGitTestSupport.checkoutHead(dir);
+            Path tool = dir.resolve("tool.sh");
+            Files.writeString(tool, "#!/bin/sh\nexit 0\n");
+            Files.setPosixFilePermissions(tool,
+                    java.nio.file.attribute.PosixFilePermissions.fromString("rwxr-xr-x"));
+            RegistryGitTestSupport.commitWorkingTree(dir, "Add executable helper");
+
+            // The next registry write rebuilds the trees it touches; everything else
+            // carries over byte- and mode-identical.
+            store.register(CORE_SUBJECT, CORE_PROTO_V2, List.of());
+
+            String encoded = URLEncoder.encode(CORE_SUBJECT, StandardCharsets.UTF_8);
+            assertThat(RegistryGitTestSupport.headBlobMode(dir, "tool.sh"))
+                    .isEqualTo(org.eclipse.jgit.lib.FileMode.EXECUTABLE_FILE);
+            assertThat(RegistryGitTestSupport.headBlob(dir, "subjects/" + encoded + "/v1.proto"))
+                    .isEqualTo(CORE_PROTO.getBytes(StandardCharsets.UTF_8));
+            assertThat(store.versions(CORE_SUBJECT)).containsExactly(1, 2);
+        }
+    }
+
     // ---------------------------------------------------------------- workflows
 
     @Test
@@ -320,7 +418,9 @@ class GitSchemaRegistryStoreTest extends SchemaRegistryStoreContractTest {
 
             assertThat(store.workflow("ingest.v1")).contains(workflowJson);
         }
-        assertThat(dir.resolve("workflows").resolve("ingest.v1.json")).content().isEqualTo(workflowJson);
+        // The document is pinned in the committed tree.
+        assertThat(RegistryGitTestSupport.headBlob(dir, "workflows/ingest.v1.json"))
+                .isEqualTo(workflowJson.getBytes(StandardCharsets.UTF_8));
         assertThat(commitMessages(dir)).containsExactly("Put workflow ingest.v1");
     }
 
@@ -416,7 +516,9 @@ class GitSchemaRegistryStoreTest extends SchemaRegistryStoreContractTest {
                                                 String schemaText, int globalId,
                                                 int nextGlobalId) throws Exception {
         String encoded = URLEncoder.encode(subject, StandardCharsets.UTF_8);
+        RegistryGitTestSupport.checkoutHead(repoDir); // porcelain stages the index: materialize it
         Path subjectDir = repoDir.resolve("subjects").resolve(encoded);
+        Files.createDirectories(subjectDir);
         Files.writeString(subjectDir.resolve("v" + version + ".proto"), schemaText);
         var meta = JSON.createObjectNode()
                 .put("globalId", globalId)
@@ -437,9 +539,9 @@ class GitSchemaRegistryStoreTest extends SchemaRegistryStoreContractTest {
         }
     }
 
-    private static int nextGlobalIdOnDisk(Path repoDir) throws Exception {
-        return JSON.readTree(Files.readString(repoDir.resolve("registry.json")))
-                .path("nextGlobalId").asInt();
+    private static int nextGlobalIdCommitted(Path repoDir) throws Exception {
+        byte[] bytes = RegistryGitTestSupport.headBlob(repoDir, "registry.json");
+        return JSON.readTree(new String(bytes, StandardCharsets.UTF_8)).path("nextGlobalId").asInt();
     }
 
     private static List<String> commitMessages(Path repoDir) throws Exception {

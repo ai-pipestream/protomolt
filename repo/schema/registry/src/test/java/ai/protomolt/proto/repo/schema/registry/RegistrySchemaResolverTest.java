@@ -8,6 +8,8 @@ import ai.protomolt.proto.repo.codec.PartLayouts;
 import ai.protomolt.proto.repo.v1.*;
 import ai.protomolt.proto.schema.registry.git.GitSchemaRegistryStore;
 import com.google.protobuf.*;
+import org.eclipse.jgit.api.Git;
+import org.eclipse.jgit.api.ResetCommand;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.MessageDigest;
@@ -48,7 +50,7 @@ class RegistrySchemaResolverTest {
                 assertThat(host.stats().registryReads()).isEqualTo(1);
                 assertThat(host.stats().cacheMisses()).isEqualTo(1);
                 // Exact immutable bytes remain usable without another artifact read.
-                Files.delete(temp.resolve("registry/descriptors/sha256/" + d.metadata().getArtifactSha256() + ".pb"));
+                deleteCommittedDescriptor(temp.resolve("registry"), d.metadata().getArtifactSha256());
                 assertThat(attempt.select(occurrence(d)).descriptors()).isSameAs(first.descriptors());
                 assertThat(host.stats().attemptHits()).isEqualTo(1);
                 assertThatThrownBy(() -> attempt.select(occurrence(d))).isSameAs(denied);
@@ -97,8 +99,7 @@ class RegistrySchemaResolverTest {
         var reservations = new Reservations();
         try (var store = store(); var host = new RegistrySchemaResolver(store, CACHE, 1, 64)) {
             store.putDescriptorSet(payload.metadata().getArtifactSha256(), payload.descriptors());
-            var artifact = temp.resolve("registry/descriptors/sha256/" + payload.metadata().getArtifactSha256() + ".pb");
-            Files.write(artifact, new byte[] {(byte) 0x80});
+            writeCommittedDescriptor(temp.resolve("registry"), payload.metadata().getArtifactSha256(), new byte[] {(byte) 0x80});
             try (var attempt = host.open(o -> selected(payload), ACTIVE)) {
                 assertThatThrownBy(() -> DocumentSchemaAdmission.prepareAndCheck(preparation(document, container),
                         attempt, ADMISSION, reservations, ACTIVE)).isInstanceOf(IllegalArgumentException.class)
@@ -109,7 +110,7 @@ class RegistrySchemaResolverTest {
             assertThat(host.stats().retainedLoads()).isZero();
             assertThat(reservations.bytes).isZero();
             assertThat(host.stats().registryReads()).isEqualTo(1);
-            Files.write(artifact, payload.descriptors().toByteArray());
+            writeCommittedDescriptor(temp.resolve("registry"), payload.metadata().getArtifactSha256(), payload.descriptors().toByteArray());
             try (var attempt = host.open(o -> selected(payload), ACTIVE);
                  var proof = DocumentSchemaAdmission.prepareAndCheck(preparation(document, container),
                          attempt, ADMISSION, reservations, ACTIVE)) {
@@ -200,6 +201,27 @@ class RegistrySchemaResolverTest {
                 assertThat(proof.proof().document()).isEqualTo(document);
             }
             assertThat(reservations.bytes).isZero();
+        }
+    }
+
+    private static void writeCommittedDescriptor(Path registry, String fingerprint, byte[] bytes) throws Exception {
+        String relative = "descriptors/sha256/" + fingerprint + ".pb";
+        try (Git git = Git.open(registry.toFile())) {
+            git.reset().setMode(ResetCommand.ResetType.HARD).call();
+            Path artifact = registry.resolve(relative);
+            Files.createDirectories(artifact.getParent());
+            Files.write(artifact, bytes);
+            git.add().addFilepattern(relative).call();
+            git.commit().setMessage("Write test descriptor").call();
+        }
+    }
+
+    private static void deleteCommittedDescriptor(Path registry, String fingerprint) throws Exception {
+        String relative = "descriptors/sha256/" + fingerprint + ".pb";
+        try (Git git = Git.open(registry.toFile())) {
+            git.reset().setMode(ResetCommand.ResetType.HARD).call();
+            git.rm().addFilepattern(relative).call();
+            git.commit().setMessage("Delete test descriptor").call();
         }
     }
 

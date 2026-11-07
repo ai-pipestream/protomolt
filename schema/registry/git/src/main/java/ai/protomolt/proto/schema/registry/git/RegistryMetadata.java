@@ -9,8 +9,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import java.io.IOException;
-import java.nio.file.Files;
-import java.nio.file.Path;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -19,10 +18,10 @@ import java.util.List;
  * the per-version metadata document, the global registry document, and the
  * checked reads of both.
  *
- * <p>Pure document/model transformations only: file placement, index
- * assembly, locking, and commits stay in {@link GitSchemaRegistryStore},
- * so the on-disk JSON shapes here are the store's persisted formats and
- * must not drift.
+ * <p>Pure document/model transformations only: content comes from committed
+ * objects ({@link RegistryGitObjects}), and locking and commits stay in
+ * {@link GitSchemaRegistryStore}, so the JSON shapes here are the store's
+ * persisted formats and must not drift.
  */
 final class RegistryMetadata {
 
@@ -51,24 +50,24 @@ final class RegistryMetadata {
         return node.toPrettyString();
     }
 
-    /** Reads one metadata file, requiring a JSON object at its root. */
-    static JsonNode readMetadata(ObjectMapper json, Path file) {
+    /** Reads one metadata document from committed bytes, requiring a JSON object at its root. */
+    static JsonNode readMetadata(ObjectMapper json, String source, byte[] bytes) {
         try {
-            JsonNode node = json.readTree(Files.readString(file));
+            JsonNode node = json.readTree(new String(bytes, StandardCharsets.UTF_8));
             if (node == null || !node.isObject()) {
-                throw new RegistryStoreException("Expected a metadata object in " + file);
+                throw new RegistryStoreException("Expected a metadata object in " + source);
             }
             return node;
         } catch (IOException e) {
-            throw new RegistryStoreException("Cannot read registry metadata " + file, e);
+            throw new RegistryStoreException("Cannot read registry metadata " + source, e);
         }
     }
 
     /** The validated {@code compatibility} value of a metadata document. */
-    static String readCompatibility(JsonNode node, Path file) {
+    static String readCompatibility(JsonNode node, String source) {
         JsonNode value = node.path("compatibility");
         if (!value.isTextual() || !CompatibilityModes.isValid(value.textValue())) {
-            throw new RegistryStoreException("Invalid compatibility policy in " + file);
+            throw new RegistryStoreException("Invalid compatibility policy in " + source);
         }
         return value.textValue();
     }

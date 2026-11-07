@@ -34,9 +34,27 @@ var store = GitSchemaRegistryStore.builder()
 
 The Git layout is deliberately plain: `subjects/<subject>/vN.proto` with a
 small metadata file per version. The repository is legible without any
-tooling. Writes take a file lock (safe across processes sharing a
-repository), reads come from an in-memory index, and `refresh()` picks up
-commits made out of band, e.g. by a `git pull`.
+tooling: `git log` and `git show` read the registry history directly.
+
+The committed tree is the only authority. Writes insert blobs, trees and one
+commit per logical change with JGit object APIs and advance `HEAD` by a
+compare-and-swap ref update, so the working tree is never written or read:
+stale, edited or absent working-tree files change nothing, and a non-bare
+repository's working tree simply does not reflect registry state (a manual
+`git reset --hard` restores it for inspection without affecting the store).
+Reads come from an in-memory index rebuilt from `HEAD` on demand;
+`refresh()` drops the index for commits made out of band, e.g. by a
+`git pull`. Existing bare repositories are opened as-is and behave like
+non-bare registries. `bareInit(true)` initializes a new repository bare;
+non-bare remains the default.
+
+Writes take a JVM lock plus a file lock on `registry.lock` (safe across
+processes sharing a repository). The compare-and-swap refuses a write whose
+`HEAD` moved after the write read it, so an external commit is never
+overwritten. Failures before the ref update leave `HEAD` untouched
+(unreachable objects are left for normal Git GC). A failure after the ref
+update is ambiguous: re-read `HEAD` (`refresh()`) before retrying rather
+than forcing or resetting.
 
 Registration is gated three ways, in order: every schema reference must
 already exist in the store; the schema must compile (with its transitive

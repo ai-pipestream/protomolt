@@ -25,7 +25,6 @@ import io.grpc.inprocess.InProcessServerBuilder;
 import io.grpc.protobuf.ProtoFileDescriptorSupplier;
 import io.grpc.protobuf.services.ProtoReflectionServiceV1;
 import io.grpc.stub.ServerCalls;
-import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Map;
 import java.util.UUID;
@@ -111,9 +110,11 @@ class GitBackedReflectedAnyActionTest {
                 assertThat(reflectedCallsAtRegistration).isPositive();
             }
 
-            Path committedDescriptor = gitDir.resolve("descriptors/sha256/" + fingerprint + ".pb");
-            assertThat(Files.readAllBytes(committedDescriptor)).isNotEmpty();
+            byte[] committedDescriptor;
             try (Git git = Git.open(gitDir.toFile())) {
+                var blob = git.getRepository().resolve("HEAD:descriptors/sha256/" + fingerprint + ".pb");
+                committedDescriptor = git.getRepository().open(blob).getBytes();
+                assertThat(committedDescriptor).isNotEmpty();
                 assertThat(git.log().call()).extracting(commit -> commit.getFullMessage().strip())
                         .containsExactly("Store descriptor " + fingerprint);
             }
@@ -122,7 +123,7 @@ class GitBackedReflectedAnyActionTest {
                     .repositoryDir(gitDir).build()) {
                 var reopenedProfiles = new FileSystemServiceProfileRepository(profileDir);
                 assertThat(reopenedRegistry.descriptorSet(fingerprint).orElseThrow().toByteArray())
-                        .isEqualTo(Files.readAllBytes(committedDescriptor));
+                        .isEqualTo(committedDescriptor);
                 ActionCatalog restarted = ServiceWorkspaceActions.register(
                         ActionCatalog.defaults(ActionContext.create()), reopenedProfiles,
                         reopenedRegistry, channels);

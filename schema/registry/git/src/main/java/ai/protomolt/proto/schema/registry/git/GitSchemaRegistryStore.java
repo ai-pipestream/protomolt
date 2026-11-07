@@ -18,7 +18,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.protobuf.ByteString;
 import org.eclipse.jgit.api.Git;
 import org.eclipse.jgit.lib.PersonIdent;
-import org.eclipse.jgit.lib.ObjectId;
+import org.eclipse.jgit.lib.Repository;
 
 import java.io.IOException;
 import java.nio.channels.FileChannel;
@@ -26,10 +26,7 @@ import java.nio.channels.FileLock;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.LinkOption;
-import java.nio.file.NoSuchFileException;
 import java.nio.file.StandardOpenOption;
-import java.nio.file.attribute.BasicFileAttributes;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
@@ -40,12 +37,21 @@ import java.util.TreeMap;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.locks.ReentrantLock;
-import java.util.stream.Stream;
 
 /**
  * A git repository <em>is</em> the storage: every {@code register}/{@code setCompatibilityMode}
- * is one commit against a non-bare working tree, so the registry's full history is a plain git
- * log and can be pushed, pulled and reviewed like any other repo.
+ * is one commit, so the registry's full history is a plain git log and can be pushed, pulled
+ * and reviewed like any other repo.
+ *
+ * <h2>Object authority</h2>
+ * <p>All production reads answer from the committed HEAD tree through
+ * {@link RegistryGitObjects}; the working tree is never consulted, so stale, edited or
+ * absent working-tree files change nothing. All writes insert blobs, trees and one commit
+ * with {@code ObjectInserter} and advance HEAD only through a {@code RefUpdate}
+ * compare-and-swap against the exact commit HEAD named when the write started. The working
+ * tree is never written: a non-bare repository stays usable for {@code git log} and review,
+ * and its working tree simply does not reflect registry state (a manual
+ * {@code git reset --hard} restores it without affecting the store).</p>
  *
  * <h2>Layout</h2>
  * <pre>
@@ -58,30 +64,45 @@ import java.util.stream.Stream;
  * descriptors/sha256/&lt;fingerprint&gt;.pb         content-addressed descriptor set
  * </pre>
  *
- * <h2>Concurrency</h2>
+ * <h2>Bare repositories</h2>
+ * <p>An existing bare repository (a directory that already has the shape of a git directory)
+ * is opened as-is and behaves identically to a non-bare one; {@link Builder#bareInit(boolean)
+ * bareInit} initializes a new repository bare. Non-bare initialization remains the default,
+ * and the {@code git} provider configuration is unchanged.</p>
+ *
+ * <h2>Concurrency and failures</h2>
  * <p>Writes are serialized with a JVM lock (shared per lock-file path, so two stores in one
  * JVM never race or hit {@code OverlappingFileLockException}) plus a file lock on
  * {@code registry.lock} — the same idiom as the gather module's {@code GitCloneCache} — so two
  * stores on one repository, in the same JVM or different processes, cannot corrupt it. Reads
- * are lock-free off the working tree through an in-memory index rebuilt on demand; the index
- * is invalidated after every write, and {@link #refresh()} exposes the invalidation for
- * commits made externally (e.g. an out-of-band {@code git pull}).</p>
+ * are lock-free off the in-memory index rebuilt from HEAD on demand; the index is
+ * invalidated after every write, and {@link #refresh()} exposes the invalidation for commits
+ * made externally (e.g. an out-of-band {@code git pull}).</p>
+ *
+ * <p>The compare-and-swap rejects a write when anything advanced HEAD after the write read
+ * it (an external commit, another registry not honoring the lock file): the write is refused,
+ * the external commit is never overwritten, and the store drops its cached index so the next
+ * read reloads HEAD. A failure before the ref update leaves HEAD untouched; the unreachable
+ * objects a failed write inserted are harmless and left for normal Git GC. A failure after
+ * the ref update is an ambiguous outcome — the commit may or may not have landed — so the
+ * recovery is to {@link #refresh()} (re-read HEAD) before retrying, never to force or reset.</p>
  */
 public final class GitSchemaRegistryStore implements ConfigDocumentStore, WorkflowDocumentStore {
 
     private static final ConcurrentMap<Path, ReentrantLock> JVM_LOCKS = new ConcurrentHashMap<>();
-
 
     private final Path repoDir;
     private final RegistryLayout layout;
     private final Path lockFile;
     private final ReentrantLock jvmLock;
     private final Git git;
+    private final Repository repository;
     private final WriteGate writeGate;
     private final PersonIdent author;
     private final ObjectMapper json = new ObjectMapper();
 
     private volatile Index index;
+    private volatile RegistryGitObjects.WriteHook writeHook = RegistryGitObjects.WriteHook.NONE;
 
     private record Index(Map<String, SubjectEntry> subjects,
                          Map<Integer, StoredSchema> byGlobalId,
@@ -99,23 +120,33 @@ public final class GitSchemaRegistryStore implements ConfigDocumentStore, Workfl
         this.jvmLock = JVM_LOCKS.computeIfAbsent(lockFile, path -> new ReentrantLock());
         this.writeGate = builder.writeGate;
         this.author = new PersonIdent(builder.authorName, builder.authorEmail);
-        this.git = openOrInit(repoDir);
+        this.git = openOrInit(repoDir, builder.bareInit);
+        this.repository = git.getRepository();
     }
 
     public static Builder builder() {
         return new Builder();
     }
 
-    private static Git openOrInit(Path repoDir) {
+    private static Git openOrInit(Path repoDir, boolean bareInit) {
         try {
-            Files.createDirectories(repoDir);
             if (Files.isDirectory(repoDir.resolve(".git"))) {
                 return Git.open(repoDir.toFile());
             }
-            return Git.init().setDirectory(repoDir.toFile()).call();
+            if (RegistryLayout.isGitDirectory(repoDir)) {
+                return Git.open(repoDir.toFile()); // an existing bare repository
+            }
+            Files.createDirectories(repoDir);
+            return Git.init().setDirectory(repoDir.toFile()).setBare(bareInit).call();
         } catch (Exception e) {
             throw new RegistryStoreException("Failed to open git registry at " + repoDir, e);
         }
+    }
+
+    /** Test-only fault injection between the stages of one write; production uses {@code NONE}. */
+    GitSchemaRegistryStore writeHook(RegistryGitObjects.WriteHook hook) {
+        this.writeHook = Objects.requireNonNull(hook, "hook");
+        return this;
     }
 
     // ---------------------------------------------------------------- reads (lock-free)
@@ -165,42 +196,49 @@ public final class GitSchemaRegistryStore implements ConfigDocumentStore, Workfl
     @Override
     public Optional<ByteString> descriptorSet(String fingerprint) {
         DescriptorSetArtifacts.requireFingerprint(fingerprint);
-        Path path = layout.descriptorPath(fingerprint);
+        String relative = layout.descriptorRelPath(fingerprint);
+        byte[] bytes;
         try {
-            layout.requireDescriptorRepository();
-            if (!RegistryLayout.descriptorDirectoryExists(repoDir.resolve("descriptors"))
-                    || !RegistryLayout.descriptorDirectoryExists(path.getParent())) {
-                layout.requireDescriptorRepository();
-                return Optional.empty();
-            }
-            var attributes = Files.readAttributes(path, BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS);
-            if (!attributes.isRegularFile()) throw new IOException("Descriptor artifact is not a regular file: " + path);
-            return Optional.of(DescriptorSetArtifacts.read(path, fingerprint));
-        } catch (NoSuchFileException missing) {
-            // An absent artifact is meaningful only while the backing repository is available.
-            try { layout.requireDescriptorRepository(); }
-            catch (IOException unavailable) {
-                throw new RegistryStoreException("Descriptor repository is unavailable", unavailable);
+            bytes = RegistryGitObjects.headBlob(repository, relative, DescriptorSetArtifacts.MAX_BYTES);
+        } catch (RegistryGitObjects.ObjectTooLargeException invalid) {
+            throw new IllegalArgumentException("descriptor set exceeds the 16 MiB limit", invalid);
+        } catch (RegistryGitObjects.CorruptTreeException corrupt) {
+            throw new RegistryStoreException("Failed to read descriptor " + fingerprint, corrupt);
+        } catch (IOException unavailable) {
+            throw unavailableDescriptors(unavailable);
+        }
+        if (bytes == null) {
+            // An absent artifact is meaningful only while the backing repository is readable:
+            // a vanished object database (moved or deleted repository) is unavailability.
+            if (!repository.getObjectDatabase().exists()) {
+                throw unavailableDescriptors(new IOException("object database is not readable"));
             }
             return Optional.empty();
-        } catch (IOException e) {
-            throw new RegistryStoreException("Failed to read descriptor " + fingerprint, e);
         }
+        ByteString descriptorSet = ByteString.copyFrom(bytes);
+        DescriptorSetArtifacts.validate(fingerprint, descriptorSet);
+        return Optional.of(descriptorSet);
     }
 
     @Override
     public void putDescriptorSet(String fingerprint, ByteString descriptorSet) {
         DescriptorSetArtifacts.validate(fingerprint, descriptorSet);
         locked(() -> {
-            Path target = layout.descriptorPath(fingerprint);
-            if (Files.isRegularFile(target)) {
-                DescriptorSetArtifacts.read(target, fingerprint);
+            String relative = layout.descriptorRelPath(fingerprint);
+            byte[] committed;
+            try {
+                committed = RegistryGitObjects.headBlob(repository, relative, DescriptorSetArtifacts.MAX_BYTES);
+            } catch (RegistryGitObjects.ObjectTooLargeException invalid) {
+                throw new IllegalArgumentException("descriptor set exceeds the 16 MiB limit", invalid);
+            } catch (IOException e) {
+                throw new RegistryStoreException("Failed to read descriptor " + fingerprint, e);
+            }
+            if (committed != null) {
+                DescriptorSetArtifacts.validate(fingerprint, ByteString.copyFrom(committed));
                 return null;
             }
-            Files.createDirectories(target.getParent());
-            Files.write(target, descriptorSet.toByteArray());
-            String relative = RegistryLayout.DESCRIPTORS_DIR + "/" + fingerprint + ".pb";
-            commit(List.of(relative), "Store descriptor " + fingerprint);
+            commitChanges("Store descriptor " + fingerprint,
+                    Map.of(relative, Optional.of(descriptorSet.toByteArray())));
             return null;
         });
     }
@@ -230,7 +268,7 @@ public final class GitSchemaRegistryStore implements ConfigDocumentStore, Workfl
         return index().globalMode();
     }
 
-    /** Drops the in-memory index; the next read re-scans the working tree. */
+    /** Drops the in-memory index; the next read re-scans the committed HEAD tree. */
     @Override
     public void refresh() {
         index = null;
@@ -244,35 +282,40 @@ public final class GitSchemaRegistryStore implements ConfigDocumentStore, Workfl
         RegistrationSupport.requireSubject(subject);
         Objects.requireNonNull(schemaText, "schemaText");
         List<SchemaReference> refs = references == null ? List.of() : List.copyOf(references);
-        return locked(() -> {
-            Index fresh = loadIndex(); // see commits other stores made since our last read
-            index = fresh;
-            RegistrationSupport.verifyReferences(this, refs);
-            Optional<StoredSchema> existing = findByContent(subject, schemaText, refs);
-            if (existing.isPresent()) {
-                return existing.get();
-            }
-            List<StoredSchema> history = RegistrationSupport.history(this, subject);
-            RegistrationSupport.enforceWriteGate(writeGate, this, subject, history, schemaText, refs);
-            RegistrationSupport.compileCandidate(this, subject, schemaText, refs);
+        try {
+            return locked(() -> {
+                Index fresh = loadIndex(); // see commits other stores made since our last read
+                index = fresh;
+                RegistrationSupport.verifyReferences(this, refs);
+                Optional<StoredSchema> existing = findByContent(subject, schemaText, refs);
+                if (existing.isPresent()) {
+                    return existing.get();
+                }
+                List<StoredSchema> history = RegistrationSupport.history(this, subject);
+                RegistrationSupport.enforceWriteGate(writeGate, this, subject, history, schemaText, refs);
+                RegistrationSupport.compileCandidate(this, subject, schemaText, refs);
 
-            int version = history.isEmpty() ? 1 : history.getLast().version() + 1;
-            StoredSchema stored = new StoredSchema(subject, version, fresh.nextGlobalId(),
-                    schemaText, refs, SchemaContents.contentHash(schemaText, refs));
+                int version = history.isEmpty() ? 1 : history.getLast().version() + 1;
+                StoredSchema stored = new StoredSchema(subject, version, fresh.nextGlobalId(),
+                        schemaText, refs, SchemaContents.contentHash(schemaText, refs));
 
-            String subjectDir = layout.subjectDir(subject);
-            String protoPath = subjectDir + "/v" + version + ".proto";
-            String metaPath = subjectDir + "/v" + version + ".json";
-            Files.createDirectories(repoDir.resolve(subjectDir));
-            Files.writeString(repoDir.resolve(protoPath), schemaText);
-            Files.writeString(repoDir.resolve(metaPath), RegistryMetadata.metadataJson(json, stored));
-            writeRegistryFile(fresh.globalMode(), fresh.nextGlobalId() + 1);
+                String subjectDir = layout.subjectDir(subject);
+                String protoPath = subjectDir + "/v" + version + ".proto";
+                String metaPath = subjectDir + "/v" + version + ".json";
+                Map<String, Optional<byte[]>> changes = new TreeMap<>();
+                changes.put(protoPath, Optional.of(schemaText.getBytes(StandardCharsets.UTF_8)));
+                changes.put(metaPath, Optional.of(
+                        RegistryMetadata.metadataJson(json, stored).getBytes(StandardCharsets.UTF_8)));
+                changes.put(RegistryLayout.REGISTRY_FILE, Optional.of(RegistryMetadata.registryJson(
+                        json, fresh.globalMode(), fresh.nextGlobalId() + 1)
+                        .getBytes(StandardCharsets.UTF_8)));
 
-            commit(List.of(protoPath, metaPath, RegistryLayout.REGISTRY_FILE),
-                    "Register " + subject + " v" + version);
+                commitChanges("Register " + subject + " v" + version, changes);
+                return stored;
+            });
+        } finally {
             index = null;
-            return stored;
-        });
+        }
     }
 
     /**
@@ -285,54 +328,40 @@ public final class GitSchemaRegistryStore implements ConfigDocumentStore, Workfl
         Objects.requireNonNull(workflowJson, "workflowJson");
         locked(() -> {
             String path = RegistryLayout.WORKFLOWS_DIR + "/" + RegistryLayout.encode(name) + ".json";
-            Files.createDirectories(repoDir.resolve(RegistryLayout.WORKFLOWS_DIR));
-            Files.writeString(repoDir.resolve(path), workflowJson);
-            commit(List.of(path), "Put workflow " + name);
+            commitChanges("Put workflow " + name,
+                    Map.of(path, Optional.of(workflowJson.getBytes(StandardCharsets.UTF_8))));
             return null;
         });
     }
 
-    /** The named workflow's JSON document, when present. */
+    /** The named workflow's JSON document from HEAD, when present. */
     public Optional<String> workflow(String name) throws RegistryStoreException {
         RegistryLayout.requireWorkflowName(name);
-        Path path = repoDir.resolve(RegistryLayout.WORKFLOWS_DIR).resolve(RegistryLayout.encode(name) + ".json");
-        try {
-            return Files.isRegularFile(path)
-                    ? Optional.of(Files.readString(path))
-                    : Optional.empty();
-        } catch (IOException e) {
-            throw new RegistryStoreException("Failed to read workflow " + name, e);
-        }
+        String path = RegistryLayout.WORKFLOWS_DIR + "/" + RegistryLayout.encode(name) + ".json";
+        byte[] bytes = headBlobOrThrow("Failed to read workflow " + name, path);
+        return bytes == null
+                ? Optional.empty()
+                : Optional.of(new String(bytes, StandardCharsets.UTF_8));
     }
 
-    /** Every stored workflow name, sorted. */
+    /** Every stored workflow name from HEAD, sorted. */
     public List<String> workflows() throws RegistryStoreException {
-        Path dir = repoDir.resolve(RegistryLayout.WORKFLOWS_DIR);
-        if (!Files.isDirectory(dir)) {
-            return List.of();
-        }
-        try (var files = Files.list(dir)) {
-            return files.map(path -> path.getFileName().toString())
-                    .filter(fileName -> fileName.endsWith(".json"))
-                    .map(fileName -> RegistryLayout.decode(fileName.substring(0, fileName.length() - 5)))
-                    .sorted()
-                    .toList();
-        } catch (IOException e) {
-            throw new RegistryStoreException("Failed to list workflows", e);
-        }
+        return documentNames(RegistryLayout.WORKFLOWS_DIR, "Failed to list workflows");
     }
 
     // ---------------------------------------------------------------- promoted workflows
 
     /**
      * Stores one immutable promoted workflow version, one commit per version under
-     * {@code workflows/<name>/<version>.pb} (serialized {@link VersionedWorkflow}; binary, never
-     * JSON). The candidate is fully validated first: malformed identities, fingerprints, or a
-     * content fingerprint that does not match the workflow bytes are rejected before anything
-     * touches the repository.
+     * {@code workflow-versions/<name>/<version>.pb} (serialized {@link VersionedWorkflow};
+     * binary, never JSON). The candidate is fully validated first: malformed identities,
+     * fingerprints, or a content fingerprint that does not match the workflow bytes are
+     * rejected before anything touches the repository.
      *
      * <p>Promotion is immutable: saving a version that already exists is a no-op when the
-     * stored bytes are identical (idempotent re-promotion) and refused otherwise.</p>
+     * stored bytes are identical (idempotent re-promotion) and refused otherwise. The
+     * working tree is never consulted, so a working-tree file at the version path neither
+     * blocks nor alters a promotion; only HEAD is authoritative.</p>
      *
      * @throws IllegalArgumentException when the workflow violates the contract or the version
      *         already exists with different content
@@ -342,14 +371,9 @@ public final class GitSchemaRegistryStore implements ConfigDocumentStore, Workfl
         WorkflowValidation.validate(workflow);
         locked(() -> {
             String path = layout.workflowPath(workflow.getWorkflow().getName(), workflow.getVersion());
-            Path target = repoDir.resolve(path);
             byte[] bytes = workflow.toByteArray();
             byte[] committed = committedWorkflowBytes(path);
             if (committed != null) {
-                if (!Files.isRegularFile(target)
-                        || !Arrays.equals(Files.readAllBytes(target), committed)) {
-                    throw new RegistryStoreException("Promoted workflow has uncommitted changes at " + path);
-                }
                 if (Arrays.equals(committed, bytes)) {
                     return null; // idempotent re-promotion of identical content
                 }
@@ -357,14 +381,8 @@ public final class GitSchemaRegistryStore implements ConfigDocumentStore, Workfl
                         + " version " + workflow.getVersion()
                         + " is immutable: the stored content differs");
             }
-            if (Files.exists(target)) {
-                throw new RegistryStoreException("Uncommitted workflow file at " + path
-                        + "; refusing to claim it as a promoted version");
-            }
-            Files.createDirectories(target.getParent());
-            Files.write(target, bytes);
-            commit(List.of(path), "Promote workflow " + workflow.getWorkflow().getName()
-                    + " " + workflow.getVersion());
+            commitChanges("Promote workflow " + workflow.getWorkflow().getName()
+                    + " " + workflow.getVersion(), Map.of(path, Optional.of(bytes)));
             return null;
         });
     }
@@ -374,17 +392,12 @@ public final class GitSchemaRegistryStore implements ConfigDocumentStore, Workfl
             throws RegistryStoreException {
         WorkflowValidation.validateName(name, "workflow.name");
         WorkflowValidation.validateName(version, "versioned_workflow.version");
-        Path path = repoDir.resolve(layout.workflowPath(name, version));
         String relative = layout.workflowPath(name, version);
         byte[] committed = committedWorkflowBytes(relative);
         if (committed == null) {
             return Optional.empty();
         }
         try {
-            if (!Files.isRegularFile(path)
-                    || !Arrays.equals(Files.readAllBytes(path), committed)) {
-                throw new RegistryStoreException("Promoted workflow has uncommitted changes at " + relative);
-            }
             return Optional.of(readWorkflow(committed));
         } catch (IOException e) {
             throw new RegistryStoreException("Failed to read workflow " + name, e);
@@ -394,22 +407,20 @@ public final class GitSchemaRegistryStore implements ConfigDocumentStore, Workfl
     /** All promoted versions of one workflow, ascending by version name. */
     public List<VersionedWorkflow> workflowVersions(String name) throws RegistryStoreException {
         WorkflowValidation.validateName(name, "workflow.name");
-        Path dir = repoDir.resolve(RegistryLayout.WORKFLOW_VERSIONS_DIR).resolve(RegistryLayout.encode(name));
-        if (!Files.isDirectory(dir)) {
-            return List.of();
-        }
-        try (Stream<Path> files = Files.list(dir)) {
+        String dir = RegistryLayout.WORKFLOW_VERSIONS_DIR + "/" + RegistryLayout.encode(name);
+        try {
             List<VersionedWorkflow> versions = new ArrayList<>();
-            for (Path file : files.filter(Files::isRegularFile).sorted().toList()) {
-                if (file.getFileName().toString().endsWith(".pb")) {
-                    String relative = repoDir.relativize(file).toString().replace('\\', '/');
-                    byte[] committed = committedWorkflowBytes(relative);
-                    if (committed == null) continue;
-                    if (!Arrays.equals(Files.readAllBytes(file), committed)) {
-                        throw new RegistryStoreException("Promoted workflow has uncommitted changes at " + relative);
-                    }
-                    versions.add(readWorkflow(committed));
+            for (RegistryGitObjects.TreeChild child
+                    : RegistryGitObjects.headChildren(repository, dir)) {
+                if (!child.name().endsWith(".pb") || !child.isBlob()) {
+                    continue;
                 }
+                String relative = dir + "/" + child.name();
+                byte[] committed = committedWorkflowBytes(relative);
+                if (committed == null) {
+                    continue;
+                }
+                versions.add(readWorkflow(committed));
             }
             return List.copyOf(versions);
         } catch (IOException e) {
@@ -419,16 +430,19 @@ public final class GitSchemaRegistryStore implements ConfigDocumentStore, Workfl
 
     /** Every workflow holding at least one promoted version, sorted. */
     public List<String> workflowNames() throws RegistryStoreException {
-        Path dir = repoDir.resolve(RegistryLayout.WORKFLOW_VERSIONS_DIR);
-        if (!Files.isDirectory(dir)) {
-            return List.of();
-        }
-        try (Stream<Path> files = Files.list(dir)) {
-            return files.filter(Files::isDirectory)
-                    .map(path -> RegistryLayout.decode(path.getFileName().toString()))
-                    .filter(name -> !workflowVersions(name).isEmpty())
-                    .sorted()
-                    .toList();
+        try {
+            List<String> names = new ArrayList<>();
+            for (RegistryGitObjects.TreeChild child
+                    : RegistryGitObjects.headChildren(repository, RegistryLayout.WORKFLOW_VERSIONS_DIR)) {
+                if (!child.isTree()) {
+                    continue;
+                }
+                String name = RegistryLayout.decode(child.name());
+                if (!workflowVersions(name).isEmpty()) {
+                    names.add(name);
+                }
+            }
+            return names.stream().sorted().toList();
         } catch (IOException e) {
             throw new RegistryStoreException("Failed to list workflows", e);
         }
@@ -437,7 +451,7 @@ public final class GitSchemaRegistryStore implements ConfigDocumentStore, Workfl
     private static VersionedWorkflow readWorkflow(byte[] bytes) throws IOException {
         VersionedWorkflow workflow = VersionedWorkflow.parseFrom(bytes);
         // Stored bytes answer to the same contract as fresh promotions: a corrupted or
-        // hand-edited file fails loudly here instead of serving an invalid workflow.
+        // hand-edited commit fails loudly here instead of serving an invalid workflow.
         WorkflowValidation.validate(workflow);
         return workflow;
     }
@@ -445,13 +459,7 @@ public final class GitSchemaRegistryStore implements ConfigDocumentStore, Workfl
     /** HEAD, rather than a working-tree file, is the durable promotion boundary. */
     private byte[] committedWorkflowBytes(String relative) {
         try {
-            ObjectId blob = git.getRepository().resolve("HEAD:" + relative);
-            if (blob == null) return null;
-            var loader = git.getRepository().open(blob);
-            if (loader.getSize() > WorkflowValidation.MAX_WORKFLOW_BYTES) {
-                throw new RegistryStoreException("Promoted workflow exceeds size limit at " + relative);
-            }
-            return loader.getBytes();
+            return RegistryGitObjects.headBlob(repository, relative, WorkflowValidation.MAX_WORKFLOW_BYTES);
         } catch (IOException e) {
             throw new RegistryStoreException("Failed to verify committed workflow " + relative, e);
         }
@@ -473,24 +481,19 @@ public final class GitSchemaRegistryStore implements ConfigDocumentStore, Workfl
         Objects.requireNonNull(envelopeJson, "envelopeJson");
         return locked(() -> {
             String path = RegistryLayout.CONFIGS_DIR + "/" + RegistryLayout.encode(name) + ".json";
-            Files.createDirectories(repoDir.resolve(RegistryLayout.CONFIGS_DIR));
-            Files.writeString(repoDir.resolve(path), envelopeJson);
-            commit(List.of(path), "Put config " + name);
-            return git.getRepository().resolve("HEAD").getName();
+            return commitChanges("Put config " + name,
+                    Map.of(path, Optional.of(envelopeJson.getBytes(StandardCharsets.UTF_8))));
         });
     }
 
-    /** The named config document's envelope JSON, when present. */
+    /** The named config document's envelope JSON from HEAD, when present. */
     public Optional<String> config(String name) throws RegistryStoreException {
         RegistryLayout.requireDocumentName(name, "Config");
-        Path path = repoDir.resolve(RegistryLayout.CONFIGS_DIR).resolve(RegistryLayout.encode(name) + ".json");
-        try {
-            return Files.isRegularFile(path)
-                    ? Optional.of(Files.readString(path))
-                    : Optional.empty();
-        } catch (IOException e) {
-            throw new RegistryStoreException("Failed to read config " + name, e);
-        }
+        String path = RegistryLayout.CONFIGS_DIR + "/" + RegistryLayout.encode(name) + ".json";
+        byte[] bytes = headBlobOrThrow("Failed to read config " + name, path);
+        return bytes == null
+                ? Optional.empty()
+                : Optional.of(new String(bytes, StandardCharsets.UTF_8));
     }
 
     /**
@@ -500,7 +503,7 @@ public final class GitSchemaRegistryStore implements ConfigDocumentStore, Workfl
     public Optional<String> configVersion(String name) throws RegistryStoreException {
         RegistryLayout.requireDocumentName(name, "Config");
         String path = RegistryLayout.CONFIGS_DIR + "/" + RegistryLayout.encode(name) + ".json";
-        if (!Files.isRegularFile(repoDir.resolve(path))) {
+        if (headBlobOrThrow("Failed to read config version " + name, path) == null) {
             return Optional.empty();
         }
         try {
@@ -513,50 +516,44 @@ public final class GitSchemaRegistryStore implements ConfigDocumentStore, Workfl
         }
     }
 
-    /** Every stored config subject, sorted. */
+    /** Every stored config subject from HEAD, sorted. */
     public List<String> configs() throws RegistryStoreException {
-        Path dir = repoDir.resolve(RegistryLayout.CONFIGS_DIR);
-        if (!Files.isDirectory(dir)) {
-            return List.of();
-        }
-        try (var files = Files.list(dir)) {
-            return files.map(path -> path.getFileName().toString())
-                    .filter(fileName -> fileName.endsWith(".json"))
-                    .map(fileName -> RegistryLayout.decode(fileName.substring(0, fileName.length() - 5)))
-                    .sorted()
-                    .toList();
-        } catch (IOException e) {
-            throw new RegistryStoreException("Failed to list configs", e);
-        }
+        return documentNames(RegistryLayout.CONFIGS_DIR, "Failed to list configs");
     }
 
     @Override
     public void setCompatibilityMode(String subject, String mode) {
         RegistrationSupport.requireSubject(subject);
         CompatibilityModes.requireValid(mode);
-        locked(() -> {
-            index = loadIndex();
-            String subjectDir = layout.subjectDir(subject);
-            String configPath = subjectDir + "/" + RegistryLayout.CONFIG_FILE;
-            Files.createDirectories(repoDir.resolve(subjectDir));
-            Files.writeString(repoDir.resolve(configPath),
-                    json.createObjectNode().put("compatibility", mode).toPrettyString());
-            commit(List.of(configPath), "Set compatibility " + subject + " " + mode);
+        try {
+            locked(() -> {
+                index = loadIndex();
+                String subjectDir = layout.subjectDir(subject);
+                String configPath = subjectDir + "/" + RegistryLayout.CONFIG_FILE;
+                commitChanges("Set compatibility " + subject + " " + mode, Map.of(configPath,
+                        Optional.of(json.createObjectNode().put("compatibility", mode)
+                                .toPrettyString().getBytes(StandardCharsets.UTF_8))));
+                return null;
+            });
+        } finally {
             index = null;
-            return null;
-        });
+        }
     }
 
     @Override
     public void setGlobalCompatibilityMode(String mode) {
         CompatibilityModes.requireValid(mode);
-        locked(() -> {
-            Index fresh = loadIndex();
-            writeRegistryFile(mode, fresh.nextGlobalId());
-            commit(List.of(RegistryLayout.REGISTRY_FILE), "Set global compatibility " + mode);
+        try {
+            locked(() -> {
+                Index fresh = loadIndex();
+                commitChanges("Set global compatibility " + mode,
+                        Map.of(RegistryLayout.REGISTRY_FILE, Optional.of(RegistryMetadata.registryJson(
+                                json, mode, fresh.nextGlobalId()).getBytes(StandardCharsets.UTF_8))));
+                return null;
+            });
+        } finally {
             index = null;
-            return null;
-        });
+        }
     }
 
     @Override
@@ -598,23 +595,50 @@ public final class GitSchemaRegistryStore implements ConfigDocumentStore, Workfl
 
     // ---------------------------------------------------------------- git plumbing
 
-    private void commit(List<String> paths, String message) throws Exception {
-        var add = git.add();
-        paths.forEach(add::addFilepattern);
-        add.call();
-        git.commit()
-                .setMessage(message)
-                .setAuthor(author)
-                .setCommitter(author)
-                .call();
+    /**
+     * One atomic write: insert the changed blobs, rebuild the touched trees from HEAD,
+     * insert one commit, and advance HEAD by compare-and-swap. Pre-ref failures leave HEAD
+     * untouched; the store's cached index is dropped by the caller in a {@code finally}.
+     */
+    private String commitChanges(String message, Map<String, Optional<byte[]>> changes) {
+        try {
+            return RegistryGitObjects.commit(repository, author, message, changes, writeHook);
+        } catch (RegistryGitObjects.CorruptTreeException e) {
+            throw new RegistryStoreException("Registry tree is corrupt at " + repoDir, e);
+        } catch (RegistryGitObjects.HeadChangedException e) {
+            index = null; // HEAD moved externally: the next read must reload it
+            throw new RegistryStoreException("Registry write refused at " + repoDir, e);
+        } catch (IOException e) {
+            throw new RegistryStoreException("Registry write failed at " + repoDir, e);
+        }
+    }
+
+    private byte[] headBlobOrThrow(String message, String path) throws RegistryStoreException {
+        try {
+            return RegistryGitObjects.headBlob(repository, path);
+        } catch (IOException e) {
+            throw new RegistryStoreException(message, e);
+        }
+    }
+
+    private static RegistryStoreException unavailableDescriptors(IOException cause) {
+        return new RegistryStoreException("Descriptor repository is unavailable", cause);
+    }
+
+    private List<String> documentNames(String dir, String failureMessage) {
+        try {
+            return RegistryGitObjects.headChildren(repository, dir).stream()
+                    .filter(child -> child.name().endsWith(".json") && child.isBlob())
+                    .map(child -> RegistryLayout.decode(
+                            child.name().substring(0, child.name().length() - ".json".length())))
+                    .sorted()
+                    .toList();
+        } catch (IOException e) {
+            throw new RegistryStoreException(failureMessage, e);
+        }
     }
 
     // ---------------------------------------------------------------- files <-> model
-
-    private void writeRegistryFile(String globalMode, int nextGlobalId) throws IOException {
-        Files.writeString(repoDir.resolve(RegistryLayout.REGISTRY_FILE),
-                RegistryMetadata.registryJson(json, globalMode, nextGlobalId));
-    }
 
     private Index index() {
         Index current = index;
@@ -625,33 +649,43 @@ public final class GitSchemaRegistryStore implements ConfigDocumentStore, Workfl
         return current;
     }
 
-    /** Rebuilds the whole in-memory view from the working tree. */
+    /** Rebuilds the whole in-memory view from the committed HEAD tree. */
     private Index loadIndex() throws IOException {
         String globalMode = CompatibilityModes.DEFAULT_GLOBAL;
         int nextGlobalId = 1;
-        Path registryFile = repoDir.resolve(RegistryLayout.REGISTRY_FILE);
-        if (Files.exists(registryFile)) {
-            JsonNode node = RegistryMetadata.readMetadata(json, registryFile);
-            globalMode = RegistryMetadata.readCompatibility(node, registryFile);
+        byte[] registryBytes = RegistryGitObjects.headBlob(repository, RegistryLayout.REGISTRY_FILE);
+        if (registryBytes != null) {
+            JsonNode node = RegistryMetadata.readMetadata(json, RegistryLayout.REGISTRY_FILE,
+                    registryBytes);
+            globalMode = RegistryMetadata.readCompatibility(node, RegistryLayout.REGISTRY_FILE);
             JsonNode counter = node.path("nextGlobalId");
             if (!counter.isIntegralNumber() || !counter.canConvertToInt() || counter.intValue() < 1) {
-                throw new RegistryStoreException("Invalid nextGlobalId in " + registryFile);
+                throw new RegistryStoreException(
+                        "Invalid nextGlobalId in " + RegistryLayout.REGISTRY_FILE);
             }
             nextGlobalId = counter.intValue();
         }
 
+        // Subject files of the whole tree in one walk: subjects/<encoded>/<file> -> bytes.
+        Map<String, byte[]> files =
+                RegistryGitObjects.headBlobsUnder(repository, RegistryLayout.SUBJECTS_DIR);
+        Map<String, Map<String, byte[]>> bySubjectDir = new TreeMap<>();
+        for (Map.Entry<String, byte[]> file : files.entrySet()) {
+            List<String> parts = splitOnSlash(file.getKey());
+            if (parts.size() != 3 || !parts.get(0).equals(RegistryLayout.SUBJECTS_DIR)) {
+                continue; // the layout is subjects/<encoded>/<file>; anything else is noise
+            }
+            bySubjectDir.computeIfAbsent(parts.get(1), key -> new TreeMap<>())
+                    .put(parts.get(2), file.getValue());
+        }
+
         Map<String, SubjectEntry> subjects = new TreeMap<>();
         Map<Integer, StoredSchema> byGlobalId = new TreeMap<>();
-        Path subjectsDir = repoDir.resolve(RegistryLayout.SUBJECTS_DIR);
-        if (Files.isDirectory(subjectsDir)) {
-            try (Stream<Path> dirs = Files.list(subjectsDir)) {
-                for (Path dir : dirs.filter(Files::isDirectory).sorted().toList()) {
-                    String subject = RegistryLayout.decode(dir.getFileName().toString());
-                    SubjectEntry entry = loadSubject(subject, dir);
-                    subjects.put(subject, entry);
-                    entry.versions().values().forEach(s -> byGlobalId.put(s.globalId(), s));
-                }
-            }
+        for (Map.Entry<String, Map<String, byte[]>> subjectDir : bySubjectDir.entrySet()) {
+            String subject = RegistryLayout.decode(subjectDir.getKey());
+            SubjectEntry entry = loadSubject(subject, subjectDir.getKey(), subjectDir.getValue());
+            subjects.put(subject, entry);
+            entry.versions().values().forEach(s -> byGlobalId.put(s.globalId(), s));
         }
         // Guard against a stale counter after external commits: never reuse a globalId.
         for (int globalId : byGlobalId.keySet()) {
@@ -660,27 +694,51 @@ public final class GitSchemaRegistryStore implements ConfigDocumentStore, Workfl
         return new Index(Map.copyOf(subjects), Map.copyOf(byGlobalId), globalMode, nextGlobalId);
     }
 
-    private SubjectEntry loadSubject(String subject, Path dir) throws IOException {
+    private SubjectEntry loadSubject(String subject, String encodedDir, Map<String, byte[]> files)
+            throws IOException {
         TreeMap<Integer, StoredSchema> versions = new TreeMap<>();
         String mode = null;
-        Path configFile = dir.resolve(RegistryLayout.CONFIG_FILE);
-        if (Files.exists(configFile)) {
-            mode = RegistryMetadata.readCompatibility(RegistryMetadata.readMetadata(json, configFile), configFile);
+        byte[] config = files.get(RegistryLayout.CONFIG_FILE);
+        if (config != null) {
+            String source = RegistryLayout.SUBJECTS_DIR + "/" + encodedDir + "/"
+                    + RegistryLayout.CONFIG_FILE;
+            mode = RegistryMetadata.readCompatibility(
+                    RegistryMetadata.readMetadata(json, source, config), source);
         }
-        try (Stream<Path> files = Files.list(dir)) {
-            for (Path file : files.toList()) {
-                int version = RegistryLayout.versionNumber(file.getFileName().toString());
-                if (version < 0) {
-                    continue;
-                }
-                String schemaText = Files.readString(file);
-                JsonNode meta = json.readTree(
-                        Files.readString(dir.resolve("v" + version + ".json")));
-                versions.put(version,
-                        RegistryMetadata.storedSchema(subject, version, schemaText, meta));
+        for (Map.Entry<String, byte[]> file : files.entrySet()) {
+            int version = RegistryLayout.versionNumber(file.getKey());
+            if (version < 0) {
+                continue;
             }
+            String schemaText = new String(file.getValue(), StandardCharsets.UTF_8);
+            byte[] metaBytes = files.get("v" + version + ".json");
+            if (metaBytes == null) {
+                throw new RegistryStoreException("Missing metadata for " + subject + " v" + version);
+            }
+            JsonNode meta = json.readTree(new String(metaBytes, StandardCharsets.UTF_8));
+            versions.put(version, RegistryMetadata.storedSchema(subject, version, schemaText, meta));
         }
         return new SubjectEntry(versions, mode);
+    }
+
+    /**
+     * {@link String#split} on {@code '/'} without regex: one entry per segment, with
+     * trailing empty segments dropped and all others retained.
+     */
+    private static List<String> splitOnSlash(String path) {
+        List<String> parts = new ArrayList<>();
+        int start = 0;
+        int slash;
+        while ((slash = path.indexOf('/', start)) >= 0) {
+            parts.add(path.substring(start, slash));
+            start = slash + 1;
+        }
+        parts.add(path.substring(start));
+        int end = parts.size();
+        while (end > 0 && parts.get(end - 1).isEmpty()) {
+            end--;
+        }
+        return parts.subList(0, end);
     }
 
     // ---------------------------------------------------------------- builder
@@ -690,13 +748,18 @@ public final class GitSchemaRegistryStore implements ConfigDocumentStore, Workfl
 
         private Path repositoryDir;
         private WriteGate writeGate;
+        private boolean bareInit;
         private String authorName = "protomolt-registry";
         private String authorEmail = "registry@localhost";
 
         private Builder() {
         }
 
-        /** Working-tree directory of the registry repo; initialized (non-bare) when absent. */
+        /**
+         * Directory of the registry repository; initialized when absent (non-bare by
+         * default, bare with {@link #bareInit(boolean)}). An existing bare or non-bare
+         * repository is opened as-is, whatever the flag says.
+         */
         public Builder repositoryDir(Path repositoryDir) {
             this.repositoryDir = Objects.requireNonNull(repositoryDir, "repositoryDir");
             return this;
@@ -705,6 +768,12 @@ public final class GitSchemaRegistryStore implements ConfigDocumentStore, Workfl
         /** Optional compatibility write gate. */
         public Builder writeGate(WriteGate writeGate) {
             this.writeGate = writeGate;
+            return this;
+        }
+
+        /** Initializes a new repository bare when the directory is absent; default non-bare. */
+        public Builder bareInit(boolean bareInit) {
+            this.bareInit = bareInit;
             return this;
         }
 

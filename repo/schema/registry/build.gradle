@@ -4,6 +4,7 @@ dependencies {
     api project(':protomolt-registry')
     implementation project(':protomolt-descriptors')
     testImplementation project(':protomolt-schema-registry-git')
+    testImplementation libs.jgit
     testImplementation project(':protomolt-descriptors')
     testImplementation project(':protomolt-repo-codec')
 }
