@@ -21,3 +21,8 @@ The vendored file is never modified; the conformance protocol and the
 field-path grammar are defined by the upstream project. All other code in
 this module is original to protomolt and licensed under the
 repository's MIT license.
+
+Upstream review 2026-11-05: the corpus at upstream main
+04cd1e0187b7e570f3bb0f86a31daf1f2ad7237e contains no decimal cases, so this
+module needs no decimal handling; validate.v1 string.decimal is exercised by
+the validation module's own unit tests instead.

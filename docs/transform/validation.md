@@ -116,6 +116,24 @@ descriptors were built without the protovalidate extension registry, so
 schemas loaded from a registry or reflection are enforced rather than
 silently passed.
 
+### `validate.v1` `string.decimal` relationship
+
+`string.decimal` (field 34) is a ProtoMolt-only extension with no
+`buf.validate` counterpart: at the reviewed upstream commit
+`04cd1e0187b7e570f3bb0f86a31daf1f2ad7237e` (main HEAD, checked 2026-11-05;
+latest upstream tag remains v1.2.2) the only "decimal" mentions in
+`buf/validate/validate.proto` are prose about dotted-decimal IPv4 text and
+decimal port numbers — there is no decimal rule, so `FieldRuleTranslation`
+(which maps all 20 upstream well-known string cases) has nothing to map
+and the vendored `v1.2.2` schemas stay verbatim. The rule is declared in
+`ai.protomolt.proto.validate.v1`, read by `ProtomoltRuleSource` into the
+neutral model's `StringFormat.DECIMAL`, and enforced by the unsigned,
+exponent-free `Decimals` parser (`digits` or `digits.digits`, e.g. the
+schema.org price shape). Violations carry the stable `string.decimal`
+(`string.decimal_empty` when empty) rule ids. Protovalidate-annotated
+schemas are unaffected, and the upstream conformance corpus contains no
+decimal cases.
+
 Compatibility is measured against a pinned upstream suite. On 2026-11-05,
 ProtoMolt `44d61b9bac8effa0fe025cc6166e8c49af42687b` passed all **2880** cases
 at upstream `04cd1e0187b7e570f3bb0f86a31daf1f2ad7237e`, with **0 failed and
@@ -191,6 +209,7 @@ postal rules also need their own tests; the Buf corpus does not cover them.
 | Full upstream conformance runner and corpus | `04cd1e0187b7e570f3bb0f86a31daf1f2ad7237e` (CI uses `04cd1e0`) | [CI conformance job](../../.github/workflows/ci.yml) |
 | Vendored `buf/validate/validate.proto` | v1.2.2, `4baed765070e580226a0a30bf2a357cc027dc1f7` | [Dialect NOTICE](../../protobuf/validation-protovalidate/NOTICE) |
 | Vendored `buf/validate/conformance/harness/harness.proto` and field-path port provenance | v1.2.2, same commit | [Harness NOTICE](../../protobuf/validation-conformance/NOTICE) |
+| Upstream decimal-rule review (no `string.decimal` upstream; protomolt-only field 34) | upstream main `04cd1e0187b7e570f3bb0f86a31daf1f2ad7237e`, checked 2026-11-05; latest tag v1.2.2 | [Decimal relationship](#validatev1-stringdecimal-relationship) |
 | Buf CLI for lint and breaking checks | `1.70.0` | [CI](../../.github/workflows/ci.yml) and [build prerequisites](../operations/building.md#prerequisites) |
 
 These are independent pins. Installing a newer Buf CLI does not update the
