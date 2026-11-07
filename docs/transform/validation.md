@@ -116,9 +116,9 @@ descriptors were built without the protovalidate extension registry, so
 schemas loaded from a registry or reflection are enforced rather than
 silently passed.
 
-Compatibility is measured against a pinned upstream suite. On 2026-10-23,
-ProtoMolt `193ef86dde3a9493795f0ac29aa99a03c72dbf2d` passed all **2880** cases
-at upstream `63347b841120e916b4cd29de64b88548326c9a4f`, with **0 failed and
+Compatibility is measured against a pinned upstream suite. On 2026-11-05,
+ProtoMolt `44d61b9bac8effa0fe025cc6166e8c49af42687b` passed all **2880** cases
+at upstream `04cd1e0187b7e570f3bb0f86a31daf1f2ad7237e`, with **0 failed and
 0 skipped**, using the default comparison mode described below. This runner
 is newer than the vendored v1.2.2 schemas; the old 2872-case result is not the
 current CI baseline. Passing this pin does not establish compatibility with
@@ -165,7 +165,7 @@ violations, count, field path, rule path, rule ID and map-key flag. CI does
 **not** enable `--strict_message` or `--strict_error`: it does not require
 identical violation prose, and an expected compilation error may match a
 runtime error. A claim about either strict mode needs a separate recorded
-run. See the pinned upstream [comparison implementation](https://github.com/bufbuild/protovalidate/blob/63347b841120e916b4cd29de64b88548326c9a4f/tools/protovalidate-conformance/internal/results/result.go).
+run. See the pinned upstream [comparison implementation](https://github.com/bufbuild/protovalidate/blob/04cd1e0187b7e570f3bb0f86a31daf1f2ad7237e/tools/protovalidate-conformance/internal/results/result.go).
 
 This is separate from `buf lint`, which applies the `STANDARD` and
 `COMMENTS` schema-style rules configured in `buf.yaml`, and from
@@ -177,14 +177,14 @@ postal rules also need their own tests; the Buf corpus does not cover them.
 
 | Component | Pin | Maintained in |
 |---|---|---|
-| Full upstream conformance runner and corpus | `63347b841120e916b4cd29de64b88548326c9a4f` (CI uses `63347b8`) | [CI conformance job](../../.github/workflows/ci.yml) |
+| Full upstream conformance runner and corpus | `04cd1e0187b7e570f3bb0f86a31daf1f2ad7237e` (CI uses `04cd1e0`) | [CI conformance job](../../.github/workflows/ci.yml) |
 | Vendored `buf/validate/validate.proto` | v1.2.2, `4baed765070e580226a0a30bf2a357cc027dc1f7` | [Dialect NOTICE](../../protobuf/validation-protovalidate/NOTICE) |
 | Vendored `buf/validate/conformance/harness/harness.proto` and field-path port provenance | v1.2.2, same commit | [Harness NOTICE](../../protobuf/validation-conformance/NOTICE) |
 | Buf CLI for lint and breaking checks | `1.70.0` | [CI](../../.github/workflows/ci.yml) and [build prerequisites](../operations/building.md#prerequisites) |
 
 These are independent pins. Installing a newer Buf CLI does not update the
 validation suite or the vendored annotations. The runner resolves to Go
-module version `v1.2.3-0.20260903145109-63347b841120`; it is not a released
+module version `v1.2.3-0.20261023160130-04cd1e0187b7`; it is not a released
 v1.2.3 tag. The CI comment records why the runner advanced beyond v1.2.2.
 
 ### Reproduce the CI baseline locally
@@ -199,7 +199,7 @@ cannot silently supply a different suite:
 set -euo pipefail
 conformance_tools="$(mktemp -d)"
 GOBIN="$conformance_tools" go install \
-  github.com/bufbuild/protovalidate/tools/protovalidate-conformance@63347b8
+  github.com/bufbuild/protovalidate/tools/protovalidate-conformance@04cd1e0
 go version -m "$conformance_tools/protovalidate-conformance"
 
 ./gradlew :protomolt-protobuf-validation:test \
@@ -240,7 +240,7 @@ commit, not a previous green run.
    case name or move enforcement into the harness to make the score green.
 2. Before a release or a validation dependency/pin update, compare the
    pinned commit with upstream [releases](https://github.com/bufbuild/protovalidate/releases)
-   and [changes since the pin](https://github.com/bufbuild/protovalidate/compare/63347b841120e916b4cd29de64b88548326c9a4f...main).
+   and [changes since the pin](https://github.com/bufbuild/protovalidate/compare/04cd1e0187b7e570f3bb0f86a31daf1f2ad7237e...main).
    Record the check date and exact candidate SHA. A passing pinned suite
    does not detect new upstream cases; CI has no automatic pin-update job.
 3. Build a candidate runner into a separate `GOBIN` using that exact SHA
