@@ -31,7 +31,7 @@ class ValidateMessageActionTest {
         ObjectNode first = (ObjectNode) result.get("violations").get(0);
         assertThat(first.get("field").asText()).isEqualTo("name");
         assertThat(first.get("ruleId").asText()).isEqualTo("string.min_len");
-        assertThat(first.get("message").asText()).isEqualTo("length must be at least 3");
+        assertThat(first.get("message").asText()).isEqualTo("must be at least 3 characters");
         assertThat(result.get("violations").findValuesAsText("ruleId"))
                 .containsExactlyInAnyOrder("string.min_len", "int32.gte");
         assertThat(result.get("violations").findValuesAsText("field"))

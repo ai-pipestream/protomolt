@@ -92,7 +92,7 @@ class FederationActionsTest {
                 .hasMessageContaining("REMOTE_OPERATION_BOOM");
         assertThatThrownBy(() -> catalog.execute("registry-sync", input("{}")))
                 .isInstanceOf(ActionException.class)
-                .hasMessageContaining("remote field is required");
+                .hasMessageContaining("remote value is required");
     }
 
     @Test

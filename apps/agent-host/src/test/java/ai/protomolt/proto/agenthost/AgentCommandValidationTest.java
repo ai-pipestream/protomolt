@@ -139,7 +139,7 @@ class AgentCommandValidationTest {
         assertThatThrownBy(() -> AgentCommandValidation.validateRequest(
                 "delegation-cancel", arguments, 4, Map.of()))
                 .isInstanceOf(ModelReplyException.class)
-                .hasMessage("command 4 delegation-cancel: taskId value must be a valid UUID;"
-                        + " reason field is required");
+                .hasMessage("command 4 delegation-cancel: taskId must be a valid UUID;"
+                        + " reason value is required");
     }
 }

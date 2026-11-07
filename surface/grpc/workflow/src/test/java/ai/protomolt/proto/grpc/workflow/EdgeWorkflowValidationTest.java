@@ -113,7 +113,7 @@ class EdgeWorkflowValidationTest {
         }
         assertThatThrownBy(() -> WorkflowValidation.validate(
                 edgeWorkflow(WorkflowStep.newBuilder().setEdge(sixtyFive))))
-                .hasMessageContaining("at most 64 items");
+                .hasMessageContaining("must contain no more than 64 item(s)");
         // The declared annotations enforce the same bounds.
         assertThat(ProtoValidator.create().validate(sixtyFive.build()).valid())
                 .isFalse();
