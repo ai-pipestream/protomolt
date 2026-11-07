@@ -267,7 +267,7 @@ class AgentTurnTest {
                 """, AgentRole.WORKER, List.of(4L), "kimi-worker"))
                 .isInstanceOf(AgentHostException.class)
                 .hasMessageContaining("command 0 delegation-progress:")
-                .hasMessageContaining("attempt field is required");
+                .hasMessageContaining("attempt value is required");
 
         assertThatThrownBy(() -> AgentTurn.parse("""
                 {"handledEventCursors":[4],"commands":[{
@@ -309,7 +309,7 @@ class AgentTurnTest {
                 """, AgentRole.WORKER, List.of(4L), "kimi-worker"))
                 .isInstanceOf(AgentHostException.class)
                 .hasMessageContaining("command 0 delegation-accept:")
-                .hasMessageContaining("taskId value must be a valid UUID");
+                .hasMessageContaining("taskId must be a valid UUID");
     }
 
     /**

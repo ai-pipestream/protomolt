@@ -79,7 +79,7 @@ class WorkflowRunActionInputValidationTest {
     @Test
     void getJobRequiresAStringJobId() {
         assertInvalidInput(catchThrowable(() -> dispatch("get-job", envelope("{}"))),
-                "jobId field is required");
+                "jobId value is required");
         assertInvalidInput(catchThrowable(() -> dispatch("get-job", envelope("{\"jobId\": 42}"))),
                 "'jobId' must be a string");
     }
@@ -96,7 +96,7 @@ class WorkflowRunActionInputValidationTest {
                 "'limit' must be an integer");
         assertInvalidInput(
                 catchThrowable(() -> dispatch("list-jobs", envelope("{\"offset\": -1}"))),
-                "offset must be >= 0");
+                "offset must be greater than or equal to 0");
         assertInvalidInput(
                 catchThrowable(() -> dispatch("list-jobs", envelope("{\"workflowName\": 7}"))),
                 "'workflowName' must be a string");
@@ -155,13 +155,13 @@ class WorkflowRunActionInputValidationTest {
     @Test
     void completeStepRequiresAllThreeFields() {
         assertInvalidInput(catchThrowable(() -> dispatch("complete-step", envelope("{}"))),
-                "jobId field is required");
+                "jobId value is required");
         assertInvalidInput(catchThrowable(() -> dispatch("complete-step", envelope("{\"jobId\": \"" + java.util.UUID.randomUUID() + "\"}"))),
-                "stepName field is required");
+                "stepName value is required");
         assertInvalidInput(catchThrowable(() -> dispatch("complete-step", envelope(
                 "{\"jobId\": \"" + java.util.UUID.randomUUID() + "\","
                         + " \"stepName\": \"review\"}"))),
-                "response field is required");
+                "response value is required");
         assertInvalidInput(catchThrowable(() -> dispatch("complete-step", envelope(
                 "{\"jobId\": \"" + java.util.UUID.randomUUID() + "\","
                         + " \"stepName\": \"review\", \"response\": \"nope\"}"))),
@@ -169,7 +169,7 @@ class WorkflowRunActionInputValidationTest {
         assertInvalidInput(catchThrowable(() -> dispatch("complete-step", envelope(
                 "{\"jobId\": \"not-a-uuid\", \"stepName\": \"review\","
                         + " \"response\": {}}"))),
-                "jobId value must be a valid UUID");
+                "jobId must be a valid UUID");
     }
 
     @Test

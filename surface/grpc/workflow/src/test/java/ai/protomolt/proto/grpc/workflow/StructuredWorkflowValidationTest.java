@@ -247,7 +247,7 @@ class StructuredWorkflowValidationTest {
                         .addAttempts(attempt(4, AttemptOutcome.ATTEMPT_OUTCOME_SUCCEEDED, 10, 5))
                         .build()).build()))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("at most 3 items");
+                .hasMessageContaining("must contain no more than 3 item(s)");
         // Non-sequential numbering.
         assertThatThrownBy(() -> WorkflowValidation.validate(runEvidence(workflow,
                 evidence().setAttempts(1, attempt(3,
