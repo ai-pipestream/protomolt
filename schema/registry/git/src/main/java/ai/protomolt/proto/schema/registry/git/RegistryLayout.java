@@ -2,26 +2,24 @@ package ai.protomolt.proto.schema.registry.git;
 
 import ai.protomolt.proto.registry.DescriptorSetArtifacts;
 import ai.protomolt.proto.registry.RegistrationSupport;
-import java.io.IOException;
 import java.net.URLDecoder;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
-import java.nio.file.LinkOption;
-import java.nio.file.NoSuchFileException;
 import java.nio.file.Path;
-import java.nio.file.attribute.BasicFileAttributes;
 
 /**
- * Package-private working-tree layout for {@link GitSchemaRegistryStore}:
+ * Package-private repository layout for {@link GitSchemaRegistryStore}:
  * directory and file names, subject/workflow/descriptor path derivation
  * with traversal checks, stored-name URL encoding, version-file name
- * parsing, and document-name validation.
+ * parsing, document-name validation, and detection of an existing
+ * repository directory.
  *
  * <p>Pure path and name transformations only: this class never writes,
- * locks, or commits. Transaction and lock ownership stay in
- * {@link GitSchemaRegistryStore}; the layout answers where a name lives
- * and whether a repository directory is present to be read from.
+ * locks, or commits. The layout names where a document lives in the
+ * repository tree; transaction and lock ownership stay in
+ * {@link GitSchemaRegistryStore} and object access in
+ * {@link RegistryGitObjects}.
  */
 final class RegistryLayout {
 
@@ -81,15 +79,19 @@ final class RegistryLayout {
         return relative;
     }
 
-    /** The content-addressed descriptor artifact path, checked to stay inside its directory. */
-    Path descriptorPath(String fingerprint) {
+    /**
+     * The repo-relative {@code descriptors/sha256/<fingerprint>.pb} path, checked to stay
+     * inside {@link #DESCRIPTORS_DIR} — the same second line of defense as
+     * {@link #subjectDir}.
+     */
+    String descriptorRelPath(String fingerprint) {
         DescriptorSetArtifacts.requireFingerprint(fingerprint);
-        Path directory = repoDir.resolve(DESCRIPTORS_DIR).normalize();
-        Path resolved = directory.resolve(fingerprint + ".pb").normalize();
-        if (!resolved.startsWith(directory)) {
+        String relative = DESCRIPTORS_DIR + "/" + fingerprint + ".pb";
+        Path resolved = repoDir.resolve(relative).normalize();
+        if (!resolved.startsWith(repoDir.resolve(DESCRIPTORS_DIR).normalize())) {
             throw new IllegalArgumentException("descriptor fingerprint escapes registry storage");
         }
-        return resolved;
+        return relative;
     }
 
     /**
@@ -143,21 +145,14 @@ final class RegistryLayout {
         return true;
     }
 
-    /** Fails when the repository directory is not a Git working directory. */
-    void requireDescriptorRepository() throws IOException {
-        if (!Files.readAttributes(repoDir, BasicFileAttributes.class).isDirectory()
-                || !Files.readAttributes(repoDir.resolve(".git"), BasicFileAttributes.class,
-                        LinkOption.NOFOLLOW_LINKS).isDirectory())
-            throw new IOException("Descriptor repository is not a Git working directory");
-    }
-
-    static boolean descriptorDirectoryExists(Path path) throws IOException {
-        try {
-            if (!Files.readAttributes(path, BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS).isDirectory())
-                throw new IOException("Descriptor parent is not a directory: " + path);
-            return true;
-        } catch (NoSuchFileException missing) {
-            return false;
-        }
+    /**
+     * True when the directory already has the shape of a git repository directory (a
+     * {@code HEAD} file with {@code objects/} and {@code refs/}): either a bare repository
+     * or a {@code .git} directory of a non-bare one.
+     */
+    static boolean isGitDirectory(Path dir) {
+        return Files.isRegularFile(dir.resolve("HEAD"))
+                && Files.isDirectory(dir.resolve("objects"))
+                && Files.isDirectory(dir.resolve("refs"));
     }
 }

@@ -17,7 +17,8 @@ import java.util.Objects;
 /** Validation and content identity for registry-owned descriptor-set artifacts. */
 public final class DescriptorSetArtifacts {
 
-    private static final int MAX_BYTES = 16 * 1024 * 1024;
+    /** Maximum accepted descriptor-set size, checked before reading stored bytes. */
+    public static final int MAX_BYTES = 16 * 1024 * 1024;
 
     private DescriptorSetArtifacts() {
     }

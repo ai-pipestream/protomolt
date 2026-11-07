@@ -6,10 +6,8 @@ import ai.protomolt.proto.registry.StoredSchema;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
-import java.util.stream.Stream;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -54,11 +52,9 @@ class SubjectPathTraversalTest {
             assertThat(store.subjects()).isEmpty();
         }
 
-        // Nothing leaked into the repository root.
-        try (Stream<Path> rootFiles = Files.list(dir)) {
-            assertThat(rootFiles.map(path -> path.getFileName().toString()))
-                    .doesNotContain("v1.proto", "v1.json");
-        }
+        // Nothing leaked into the repository tree: no version file exists at its root.
+        assertThat(RegistryGitTestSupport.headBlobPaths(dir))
+                .noneMatch(path -> path.equals("v1.proto") || path.equals("v1.json"));
     }
 
     @Test
@@ -124,13 +120,11 @@ class SubjectPathTraversalTest {
             store.register("common.v1.Core-value", SCHEMA, List.of());
         }
 
-        Path subjects = dir.resolve("subjects");
-        assertThat(Files.isDirectory(subjects)).isTrue();
-        try (Stream<Path> tree = Files.walk(subjects)) {
-            assertThat(tree.filter(Files::isRegularFile))
-                    .isNotEmpty()
-                    .allSatisfy(path ->
-                            assertThat(path.normalize()).startsWith(subjects.normalize()));
-        }
+        // The committed tree is the layout's authority: the registry document lives at the
+        // root and every subject file stays under subjects/.
+        List<String> paths = RegistryGitTestSupport.headBlobPaths(dir);
+        assertThat(paths).contains("registry.json");
+        assertThat(paths.stream().filter(path -> !path.equals("registry.json")).toList())
+                .allSatisfy(path -> assertThat(path).startsWith("subjects/"));
     }
 }

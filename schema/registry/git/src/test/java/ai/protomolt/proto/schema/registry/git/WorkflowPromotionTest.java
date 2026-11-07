@@ -9,13 +9,11 @@ import ai.protomolt.proto.grpc.workflow.v1.StepCompletion;
 import ai.protomolt.proto.grpc.workflow.v1.VersionedWorkflow;
 import com.google.protobuf.Duration;
 import com.google.protobuf.Timestamp;
-import org.eclipse.jgit.api.Git;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.charset.StandardCharsets;
 import java.io.IOException;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -134,8 +132,11 @@ class WorkflowPromotionTest {
             WorkflowVersionRepository repository = new RegistryWorkflowVersionRepository(git);
             repository.save(versioned("v1"));
 
+            // The corruption must be committed to be authoritative: only HEAD is read.
+            RegistryGitTestSupport.checkoutHead(dir);
             Path stored = dir.resolve("workflow-versions/analyze-document/v1.pb");
             Files.write(stored, new byte[]{1, 2, 3});
+            RegistryGitTestSupport.commitWorkingTree(dir, "Commit corrupt promotion");
 
             assertThatThrownBy(() -> repository.find("analyze-document", "v1"))
                     .isInstanceOf(IOException.class)
@@ -144,51 +145,60 @@ class WorkflowPromotionTest {
     }
 
     @Test
-    void failedCommitCannotTurnAnUncommittedFileIntoAPromotion(@TempDir Path dir)
-            throws Exception {
+    void externallyCommittedPromotionIsReadable(@TempDir Path dir) throws Exception {
         try (GitSchemaRegistryStore git = store(dir)) {
             WorkflowVersionRepository repository = new RegistryWorkflowVersionRepository(git);
-            Path hook = dir.resolve(".git/hooks/pre-commit");
-            Files.createDirectories(hook.getParent());
-            Files.writeString(hook, "#!/bin/sh\nexit 1\n", StandardCharsets.UTF_8);
-            assertThat(hook.toFile().setExecutable(true)).isTrue();
+            // An outside actor promotes through its own porcelain commit: HEAD is what counts.
+            RegistryGitTestSupport.checkoutHead(dir);
+            Path stored = dir.resolve("workflow-versions/analyze-document/v1.pb");
+            Files.createDirectories(stored.getParent());
+            Files.write(stored, versioned("v1").toByteArray());
+            RegistryGitTestSupport.commitWorkingTree(dir, "Promote pending workflow");
 
-            assertThatThrownBy(() -> repository.save(versioned("v1")))
-                    .isInstanceOf(IOException.class);
-            Path pending = dir.resolve("workflow-versions/analyze-document/v1.pb");
-            assertThat(Files.isRegularFile(pending)).isTrue();
-            assertThat(repository.find("analyze-document", "v1")).isEmpty();
-            assertThat(repository.versions("analyze-document")).isEmpty();
-            assertThat(git.workflowNames()).isEmpty();
-
-            Files.delete(hook);
-            assertThatThrownBy(() -> repository.save(versioned("v1")))
-                    .isInstanceOf(IOException.class)
-                    .hasMessageContaining("save workflow version");
-            assertThat(Files.isRegularFile(pending)).isTrue();
-            assertThat(repository.find("analyze-document", "v1")).isEmpty();
-
-            try (Git operator = Git.open(dir.toFile())) {
-                operator.add().addFilepattern("workflow-versions/analyze-document/v1.pb").call();
-                operator.commit().setMessage("Promote pending workflow").call();
-            }
             assertThat(repository.find("analyze-document", "v1")).contains(versioned("v1"));
+            assertThat(repository.versions("analyze-document")).containsExactly(versioned("v1"));
         }
     }
 
     @Test
-    void identicalDirtyFileCannotBePromotedWithoutACommit(@TempDir Path dir)
-            throws Exception {
+    void workingTreeFilesDoNotBlockOrAlterPromotion(@TempDir Path dir) throws Exception {
         try (GitSchemaRegistryStore git = store(dir)) {
             WorkflowVersionRepository repository = new RegistryWorkflowVersionRepository(git);
+            // A working-tree file at the version path is not consulted and never claimed:
+            // promotion writes the committed object directly, whatever the worktree holds.
             Path pending = dir.resolve("workflow-versions/analyze-document/v1.pb");
             Files.createDirectories(pending.getParent());
             Files.write(pending, versioned("v1").toByteArray());
 
-            assertThatThrownBy(() -> repository.save(versioned("v1")))
-                    .isInstanceOf(IOException.class);
-            assertThat(repository.find("analyze-document", "v1")).isEmpty();
-            assertThat(Files.readAllBytes(pending)).isEqualTo(versioned("v1").toByteArray());
+            repository.save(versioned("v1"));
+            assertThat(repository.find("analyze-document", "v1")).contains(versioned("v1"));
+
+            Files.write(pending, new byte[]{9, 9, 9});
+            assertThat(repository.find("analyze-document", "v1")).contains(versioned("v1"));
+
+            // The committed bytes stay immutable even with garbage under the worktree path.
+            VersionedWorkflow altered = VersionedWorkflow.newBuilder(versioned("v1"))
+                    .setCreatedAt(Timestamp.newBuilder().setSeconds(11).build())
+                    .build();
+            assertThatThrownBy(() -> repository.save(altered))
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessageContaining("immutable");
+        }
+    }
+
+    @Test
+    void oversizedCommittedPromotionIsRefusedBeforeDecoding(@TempDir Path dir) throws Exception {
+        try (GitSchemaRegistryStore git = store(dir)) {
+            WorkflowVersionRepository repository = new RegistryWorkflowVersionRepository(git);
+            repository.save(versioned("v1"));
+            RegistryGitTestSupport.checkoutHead(dir);
+            Path stored = dir.resolve("workflow-versions/analyze-document/v1.pb");
+            Files.write(stored, new byte[ai.protomolt.proto.grpc.workflow.WorkflowValidation.MAX_WORKFLOW_BYTES + 1]);
+            RegistryGitTestSupport.commitWorkingTree(dir, "Oversize promotion");
+
+            assertThatThrownBy(() -> repository.find("analyze-document", "v1"))
+                    .isInstanceOf(IOException.class)
+                    .hasStackTraceContaining("1048576-byte limit");
         }
     }
 
