@@ -1,6 +1,7 @@
 package ai.protomolt.proto.search.embedding.tei;
 
 import ai.protomolt.proto.search.embedding.EmbeddingProvider;
+import ai.protomolt.proto.search.embedding.EmbeddingInFlightLimit;
 import io.grpc.ManagedChannel;
 import io.grpc.ManagedChannelBuilder;
 import io.grpc.StatusRuntimeException;
@@ -66,7 +67,7 @@ public final class TeiEmbeddingProvider implements EmbeddingProvider, AutoClosea
     public static final String TRUNCATE_ENVIRONMENT_VARIABLE = "PROTOMOLT_TEI_TRUNCATE";
 
     /**
-     * System property capping how many Embed calls one {@link #embedAll(List)} keeps in flight
+     * System property capping Embed RPCs across all TEI instances in this process
      * at once: {@value}. A positive integer; unset means {@value #DEFAULT_MAX_IN_FLIGHT}.
      */
     public static final String MAX_IN_FLIGHT_PROPERTY = "protomolt.embeddings.tei.max-in-flight";
@@ -79,6 +80,8 @@ public final class TeiEmbeddingProvider implements EmbeddingProvider, AutoClosea
 
     /** Fixed text embedded once to learn the vector length; see {@link #dimension()}. */
     private static final String DIMENSION_PROBE = "dimension probe";
+
+    private static final EmbeddingInFlightLimit IN_FLIGHT = new EmbeddingInFlightLimit();
 
     private final Object lock = new Object();
     private final boolean callerOwned;
@@ -185,13 +188,17 @@ public final class TeiEmbeddingProvider implements EmbeddingProvider, AutoClosea
     @Override
     public float[] embed(String text) {
         Objects.requireNonNull(text, "text");
+        int cap = maxInFlight();
+        ManagedChannel active = channel();
+        EmbedRequest request = EmbedRequest.newBuilder().setInputs(text).setTruncate(truncate()).build();
+        return IN_FLIGHT.execute(cap, () -> embedAdmitted(active, request));
+    }
+
+    private float[] embedAdmitted(ManagedChannel active, EmbedRequest request) {
         try {
-            EmbedResponse response = EmbedGrpc.newBlockingStub(channel())
+            EmbedResponse response = EmbedGrpc.newBlockingStub(active)
                     .withDeadlineAfter(30, TimeUnit.SECONDS)
-                    .embed(EmbedRequest.newBuilder()
-                            .setInputs(text)
-                            .setTruncate(truncate())
-                            .build());
+                    .embed(request);
             float[] vector = new float[response.getEmbeddingsCount()];
             for (int i = 0; i < vector.length; i++) {
                 vector[i] = response.getEmbeddings(i);
@@ -220,25 +227,14 @@ public final class TeiEmbeddingProvider implements EmbeddingProvider, AutoClosea
      * TEI batches concurrent requests server side (dynamic batching), so per-text unary calls
      * issued at the same time get the batching benefit without a batch API.
      *
-     * <p>At most {@link #MAX_IN_FLIGHT_PROPERTY} calls (default {@value #DEFAULT_MAX_IN_FLIGHT})
-     * are open at the same time, however long the input list is: the texts are queued in
-     * input order on a pool of that many virtual threads, so a document with hundreds of
-     * chunks costs the server and this client a fixed number of concurrent requests. One
-     * future per text is still created up front, which keeps input-order collection and
-     * cancellation simple; a cancelled text that has not started yet is skipped by the pool.
+     * <p>The process-wide cap covers every TEI instance and entry point, including the
+     * dimension probe. Each instance resolves its cap once; overlapping calls configured
+     * with different caps fail explicitly. Reconfiguration is possible when admission is
+     * idle. Closing one provider does not reset the shared cap or close another's channel.
      *
-     * <p>Results are collected in input order. When a collected call has failed, every call
-     * not yet collected is cancelled and the failure propagates. A failure is only noticed
-     * once collection reaches it, so a still-running call earlier in the input order delays
-     * it; that wait is bounded by the per-call 30 second deadline.
-     *
-     * <p>A structured-concurrency scope would express this fork-join directly, but
-     * {@code java.util.concurrent.StructuredTaskScope} is still a preview API on the JDK 25
-     * baseline this module compiles to (JEP 505, its fifth preview) and the build enables no
-     * preview features, so the scope is spelled out with a virtual-thread executor and
-     * futures instead: one fork per text, unordered completion, input-order collection,
-     * cancellation of the uncollected on failure. This is the shape to replace the day the
-     * API is final.
+     * <p>Only a fixed number of worker futures is allocated per batch. Results retain input
+     * order. Worker completion is collected as it arrives; a failure cancels the rest.
+     * RPCs have a 30 second deadline; waiting for admission is interruptible.
      *
      * @throws IllegalStateException when any embed call fails or the calling thread is
      *         interrupted while waiting
@@ -251,22 +247,30 @@ public final class TeiEmbeddingProvider implements EmbeddingProvider, AutoClosea
         }
         int workers = Math.min(maxInFlight(), texts.size());
         try (ExecutorService executor = Executors.newFixedThreadPool(workers, Thread.ofVirtual().factory())) {
-            List<Future<float[]>> futures = new ArrayList<>(texts.size());
-            for (String text : texts) {
-                futures.add(executor.submit(() -> embed(text)));
-            }
-            List<float[]> vectors = new ArrayList<>(texts.size());
-            for (int collected = 0; collected < futures.size(); collected++) {
-                try {
-                    vectors.add(await(futures.get(collected)));
-                } catch (RuntimeException e) {
-                    for (int rest = collected + 1; rest < futures.size(); rest++) {
-                        futures.get(rest).cancel(true);
+            float[][] vectors = new float[texts.size()][];
+            java.util.concurrent.atomic.AtomicInteger next = new java.util.concurrent.atomic.AtomicInteger();
+            var completed = new java.util.concurrent.ExecutorCompletionService<Void>(executor);
+            List<Future<?>> futures = new ArrayList<>(workers);
+            for (int worker = 0; worker < workers; worker++) {
+                futures.add(completed.submit(() -> {
+                    int index;
+                    while ((index = next.getAndIncrement()) < texts.size()) {
+                        vectors[index] = embed(texts.get(index));
                     }
-                    throw e;
-                }
+                    return null;
+                }));
             }
-            return vectors;
+            try {
+                for (int worker = 0; worker < workers; worker++) {
+                    awaitCompletion(completed);
+                }
+            } catch (RuntimeException failure) {
+                for (Future<?> future : futures) {
+                    future.cancel(true);
+                }
+                throw failure;
+            }
+            return new ArrayList<>(java.util.Arrays.asList(vectors));
         }
     }
 
@@ -327,9 +331,9 @@ public final class TeiEmbeddingProvider implements EmbeddingProvider, AutoClosea
         }
     }
 
-    private static float[] await(Future<float[]> future) {
+    private static void awaitCompletion(java.util.concurrent.CompletionService<Void> completed) {
         try {
-            return future.get();
+            completed.take().get();
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             throw new IllegalStateException("Interrupted while embedding a batch", e);
@@ -366,7 +370,8 @@ public final class TeiEmbeddingProvider implements EmbeddingProvider, AutoClosea
         try {
             parsed = Integer.parseInt(configured.trim());
         } catch (NumberFormatException e) {
-            parsed = 0;
+            throw new IllegalStateException("Invalid " + MAX_IN_FLIGHT_PROPERTY + " / "
+                    + MAX_IN_FLIGHT_ENVIRONMENT_VARIABLE + ": " + configured, e);
         }
         if (parsed < 1) {
             throw new IllegalStateException("The TEI in-flight cap must be a positive integer; set the '"
