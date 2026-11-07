@@ -1259,10 +1259,15 @@ public final class DocumentSaves {
             if (selector.equals(BLOBS_SELECTOR)) entry.addAllBlobRefs(blobRefs);
             parts.put(selector, entry.build());
         }
+        // Promotion changes placement explicitly; ordinary saves keep reference-only carry-forward.
+        // Originals remain in the commit's purge fence even after their verified bytes were copied.
+        var placementSources = request.getStoragePlacement() == StoragePlacement.STORAGE_PLACEMENT_SELECTED_DRIVE
+                ? DocumentPlacement.materialize(parts, stack, drives::byId, newObjects) : List.<StackRef>of();
         // Carried and sourced parts reference their objects, raw blobs included, without re-upload.
         // An explicit carried_from source part joins them so a purge of it fails the
         // commit as SOURCE_PURGED instead of qualifying vanished opaque bytes.
         var carriedObjects = new ArrayList<StackRef>();
+        carriedObjects.addAll(placementSources);
         for (var part : parts.values()) {
             if (part.hasRef() && !newObjects.contains(part.getRef())) carriedObjects.add(part.getRef());
             for (var blob : part.getBlobRefsList())
@@ -1575,7 +1580,14 @@ public final class DocumentSaves {
             if (!attestedLocators.add(attestation.getOccurrence()))
                 throw malformedException("Duplicate opaque attestation occurrence");
         }
-        if (writes.isEmpty() && sourced.isEmpty()) throw malformedException("A save writes or sources at least one part");
+        if (request.getStoragePlacement() == StoragePlacement.STORAGE_PLACEMENT_SELECTED_DRIVE) {
+            if (request.getDrive().isBlank() || request.getUnchanged() != UnchangedPolicy.UNCHANGED_POLICY_UNSPECIFIED)
+                throw malformedException("Selected-drive placement requires an explicit drive and a new accession");
+            if (writes.isEmpty() && sourced.isEmpty() && !request.getExpected().hasRevision())
+                throw malformedException("Placement-only saves require an existing expected revision");
+        } else if (writes.isEmpty() && sourced.isEmpty()) {
+            throw malformedException("A save writes or sources at least one part");
+        }
         return writes;
     }
 

@@ -64,15 +64,48 @@ class LargeStreamQualificationIT {
     private ManagedChannel channel;
     private DocumentServiceGrpc.DocumentServiceBlockingStub blockingStub;
     private DocumentServiceGrpc.DocumentServiceStub asyncStub;
+    private long promotionBaseline;
+    private final AtomicLong promotionPeak = new AtomicLong();
+    private final AtomicInteger promotionSamples = new AtomicInteger();
+    private String promotionStackId;
 
     @BeforeEach
     void setUp() throws Exception {
         f = new AccessionFixture();
         account = "acct-" + UUID.randomUUID();
+        String prefix = "promotion-large/" + UUID.randomUUID();
+        promotionStackId = f.catalog.registerStack(StackRecord.newBuilder().setStackId("stack-" + UUID.randomUUID())
+                .setProvider("s3").setEndpoint(S3.getEndpoint().toString()).setNamespace(BUCKET + "/" + prefix).build());
+        var destination = new ai.protomolt.proto.repo.stack.BlobStoreStack(promotionStackId,
+                new ai.protomolt.proto.repo.blob.s3.S3BlobStore(s3()), BUCKET, prefix);
+        var measured = (ai.protomolt.proto.repo.stack.Stack) java.lang.reflect.Proxy.newProxyInstance(
+                getClass().getClassLoader(), new Class<?>[] {ai.protomolt.proto.repo.stack.Stack.class},
+                (proxy, method, args) -> {
+                    if (method.getName().equals("put") && args[0] instanceof InputStream input && promotionBaseline > 0) {
+                        args = args.clone();
+                        args[0] = new java.io.FilterInputStream(input) {
+                            long sinceSample;
+                            @Override public int read(byte[] bytes, int offset, int length) throws IOException {
+                                int count = in.read(bytes, offset, length);
+                                if (count > 0) sinceSample += count;
+                                if (sinceSample >= 64L * 1024 * 1024) {
+                                    recordHeapDelta(promotionBaseline, promotionPeak);
+                                    promotionSamples.incrementAndGet(); sinceSample = 0;
+                                }
+                                return count;
+                            }
+                        };
+                    }
+                    try { return method.invoke(destination, args); }
+                    catch (java.lang.reflect.InvocationTargetException failure) { throw failure.getCause(); }
+                });
+        var drives = new DocumentSaves.Drives("default", java.util.Map.of("default", f.stack, "durable", measured));
+        var saves = new DocumentSaves(f.catalog, drives, resolver(), limits(), bytes -> () -> {}, java.time.Clock.systemUTC());
+        var reads = new DocumentReads(f.catalog, drives, limits(), bytes -> () -> {}, java.time.Clock.systemUTC());
         var serverName = "large-stream-" + UUID.randomUUID();
         server = InProcessServerBuilder.forName(serverName)
                 .executor(Executors.newVirtualThreadPerTaskExecutor())
-                .addService(new AccessionGrpcService(f.saves, f.uploads, f.reads, authentication ->
+                .addService(new AccessionGrpcService(saves, new DocumentUploads(saves), reads, authentication ->
                         new ai.protomolt.proto.repo.spi.RepositoryCaller(
                                 authentication.caller().name(),
                                 authentication.caller().unrestricted())))
@@ -93,7 +126,7 @@ class LargeStreamQualificationIT {
     }
 
     @Test
-    void grpcSixHundredMegabyteUploadAndReadBlobAndReadDocumentStayBoundedInHeap() throws Exception {
+    void grpcSixHundredMegabyteUploadPromotionAndReadStayBoundedInHeap() throws Exception {
         var address = address(account, "doc-600mb-grpc");
         var document = Document.newBuilder()
                 .setDocId("doc-600mb-grpc")
@@ -128,6 +161,21 @@ class LargeStreamQualificationIT {
         assertThat(peakDelta.get())
                 .as("Peak live heap delta during 600 MB gRPC UploadDocument must remain strictly bounded")
                 .isLessThan(MAX_ALLOWED_HEAP_DELTA_BYTES);
+
+        var beforePromotion = f.catalog.manifest(address, 1).orElseThrow();
+        promotionBaseline = settledUsedHeap();
+        var promoted = blockingStub.saveDocument(SaveDocumentRequest.newBuilder().setOperationId("promote-600mb")
+                .setTarget(DocumentTarget.newBuilder().setAddress(address)).setExpected(at(1)).setOwner(intakeOwner())
+                .setDrive("durable").setStoragePlacement(StoragePlacement.STORAGE_PLACEMENT_SELECTED_DRIVE).build());
+        assertThat(promoted.getAccession().getRevision()).isEqualTo(2);
+        assertThat(promotionSamples.get()).as("heap sampled during the actual raw-object copy").isGreaterThanOrEqualTo(9);
+        assertThat(promotionPeak.get()).as("live heap delta for 600 MiB promotion")
+                .isLessThan(MAX_ALLOWED_HEAP_DELTA_BYTES);
+        assertThat(f.catalog.manifest(address, 1)).contains(beforePromotion);
+        assertThat(f.catalog.manifest(address, 2).orElseThrow().getPartsList()).allSatisfy(part -> {
+            assertThat(part.getRef().getStackId()).isEqualTo(promotionStackId);
+            assertThat(part.getBlobRefsList()).allSatisfy(blob -> assertThat(blob.getRef().getStackId()).isEqualTo(promotionStackId));
+        });
 
         // ReadDocument returns the manifest and claim-checked BLOBS metadata without pulling the 600 MB raw blob.
         var docFrames = new java.util.ArrayList<ReadDocumentResponse>();
