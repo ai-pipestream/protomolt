@@ -72,13 +72,17 @@ final class RepoStorageWiring {
         }
         String generation = config.managedStorage().retentionQualified()
                 ? config.managedStorage().backendGeneration() : null;
+        // Every authoritative repository drive keeps revisions until explicit purge.
+        // Cache expiry is independent: selectedBacking is the authoritative provider.
+        if (!selectedBacking.handle().capabilities().containsAll(Set.of(
+                BlobCapability.NON_EXPIRING_WRITES, BlobCapability.PHYSICAL_RECLAMATION)))
+            throw new IllegalArgumentException(generation == null
+                    ? "Repository backing must retain bytes until explicit purge"
+                    : "Selected backing provider cannot support managed ingestion and reclamation");
         UUID readerIncarnation = null;
         if (generation != null) {
             var backing = Objects.requireNonNull(selectedBacking, "Managed storage requires a selected backing");
             var managedCapabilities = backing.handle().capabilities();
-            if (!managedCapabilities.containsAll(Set.of(
-                    BlobCapability.NON_EXPIRING_WRITES, BlobCapability.PHYSICAL_RECLAMATION)))
-                throw new IllegalArgumentException("Selected backing provider cannot support managed ingestion and reclamation");
             if (!bounded && !managedCapabilities.contains(BlobCapability.STREAMING_WRITE))
                 throw new IllegalArgumentException("Selected backing provider cannot support managed streaming ingestion");
             var profiles = new ManagedBackendLedger(tx);
