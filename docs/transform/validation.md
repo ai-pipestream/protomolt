@@ -222,6 +222,10 @@ go version -m "$conformance_tools/protovalidate-conformance"
 "$conformance_tools/protovalidate-conformance" \
   protobuf/validation-conformance/build/install/protomolt-protobuf-validation-conformance/bin/protomolt-protobuf-validation-conformance \
   2>&1 | tee protovalidate-conformance.log
+
+"$conformance_tools/protovalidate-conformance" --strict_message \
+  protobuf/validation-conformance/build/install/protomolt-protobuf-validation-conformance/bin/protomolt-protobuf-validation-conformance \
+  2>&1 | tee protovalidate-conformance-strict-message.log
 ```
 
 At the current pin, the final summary must be

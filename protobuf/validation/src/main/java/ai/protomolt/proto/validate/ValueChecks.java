@@ -489,10 +489,6 @@ final class ValueChecks {
         }
     }
 
-    /**
-     * Membership by IEEE numeric equality, matching CEL: {@code -0.0} equals {@code 0.0} and
-     * {@code NaN} equals nothing — boxed {@link Double#equals} gets both edge cases wrong.
-     */
     /** Formats a list of float/double membership values the way protovalidate does. */
     private static String fmtDoubles(List<Double> values) {
         StringBuilder sb = new StringBuilder("[");
@@ -505,6 +501,10 @@ final class ValueChecks {
         return sb.append("]").toString();
     }
 
+    /**
+     * Membership by IEEE numeric equality, matching CEL: {@code -0.0} equals {@code 0.0} and
+     * {@code NaN} equals nothing — boxed {@link Double#equals} gets both edge cases wrong.
+     */
     private static boolean containsNumeric(List<Double> values, double value) {
         for (double candidate : values) {
             if (candidate == value) {

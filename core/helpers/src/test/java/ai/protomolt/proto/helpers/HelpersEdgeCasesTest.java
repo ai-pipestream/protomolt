@@ -21,7 +21,7 @@ class HelpersEdgeCasesTest {
         assertDoesNotThrow(() -> BinaryProtobufIdentifierValidator.validate("s", null));
         // Empty bytes parse to the default FileDescriptorProto, which has nothing invalid.
         assertDoesNotThrow(() -> BinaryProtobufIdentifierValidator.validateBytes("s", new byte[0]));
-        assertThrows(InvalidProtocolBufferException.class,
+        assertThrows(ProtoSchemaValidationException.class,
                 () -> BinaryProtobufIdentifierValidator.validateBytes("s", new byte[]{1, 2, 3}));
         assertThrows(NullPointerException.class,
                 () -> BinaryProtobufIdentifierValidator.validateBytes("s", null));
