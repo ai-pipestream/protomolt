@@ -45,11 +45,12 @@ class SaveIntentsIT {
             var frozen = bytes.readAllBytes();
             var expected = new String(digest.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8).trim();
             assertThat(SaveIntent.parseFrom(frozen)).isEqualTo(intent);
-            // Every field but unchanged, which the unchanged-policy vector freezes: v1 predates it,
-            // and an unset policy leaves the encoding, and so every recorded digest, as it was.
+            // Later policy fields are separately frozen below: their zero values leave
+            // the v1 encoding, and so every existing recorded digest, unchanged.
             assertThat(intent.getAllFields().keySet()).extracting(Descriptors.FieldDescriptor::getName)
                     .containsExactlyInAnyOrderElementsOf(SaveIntent.getDescriptor().getFields().stream()
-                            .map(Descriptors.FieldDescriptor::getName).filter(name -> !name.equals("unchanged")).toList());
+                            .map(Descriptors.FieldDescriptor::getName)
+                            .filter(name -> !name.equals("unchanged") && !name.equals("storage_placement")).toList());
             assertThat(ai.protomolt.proto.descriptors.MessageFingerprints.deterministicBytes(intent)).isEqualTo(frozen);
             assertThat(SaveIntents.sha256Hex(frozen)).isEqualTo(expected);
             assertThat(SaveIntents.sha256(intent)).isEqualTo(expected);
@@ -109,6 +110,22 @@ class SaveIntentsIT {
         assertThat(unspecified.getValidationMode()).isEqualTo(ValidationMode.VALIDATION_MODE_TYPED);
         assertThat(unspecified).isEqualTo(typed);
         assertThat(SaveIntents.sha256(unspecified)).isEqualTo(SaveIntents.sha256(typed));
+    }
+
+    @Test void placementIsBoundToIntentWithoutChangingLegacyZeroPolicyBytes() {
+        var request = SaveDocumentRequest.newBuilder().setOperationId("placement")
+                .setTarget(DocumentTarget.newBuilder().setAddress(ADDRESS))
+                .setExpected(ExpectedRevision.newBuilder().setRevision(1)).setOwner(STEP_OWNER).setDrive("durable");
+        var legacy = SaveIntents.intent(request.build(), ADDRESS, Map.of());
+        assertThat(SaveIntents.intent(request.clone().setStoragePlacement(StoragePlacement.STORAGE_PLACEMENT_UNSPECIFIED)
+                .build(), ADDRESS, Map.of())).isEqualTo(legacy);
+        var placed = SaveIntents.intent(request.clone().setStoragePlacement(StoragePlacement.STORAGE_PLACEMENT_SELECTED_DRIVE)
+                .build(), ADDRESS, Map.of());
+        // Field 14, varint 1: an additive canonical intent field, never an operation-id alias.
+        assertThat(placed.toByteString()).isEqualTo(legacy.toByteString().concat(com.google.protobuf.ByteString.fromHex("7001")));
+        assertThat(SaveIntents.sha256(placed)).isNotEqualTo(SaveIntents.sha256(legacy));
+        assertThat(SaveIntents.sha256(SaveIntents.intent(request.setDrive("another").build(), ADDRESS, Map.of())))
+                .isNotEqualTo(SaveIntents.sha256(legacy));
     }
 
     @Test void duplicateAttestationLocatorsAreInvalid() {

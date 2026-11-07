@@ -16,7 +16,7 @@ public enum StringFormat {
     EMAIL("string.email", "value must be a valid email address", Formats::isEmail),
     HOSTNAME("string.hostname", "value must be a valid hostname", Formats::isHostname),
     ADDRESS("string.address", "value must be a valid hostname or IP address", Formats::isAddress),
-    UUID("string.uuid", "value must be a valid UUID", Formats::isUuid),
+    UUID("string.uuid", "must be a valid UUID", Formats::isUuid),
     TUUID("string.tuuid", "value must be a valid trimmed UUID", Formats::isTuuid),
     ULID("string.ulid", "value must be a valid ULID", Formats::isUlid),
     URI("string.uri", "value must be an absolute URI", Formats::isUri),
