@@ -227,15 +227,39 @@ is parsed with `Boolean.parseBoolean` and read once, on the first embed call.
 `normalize` is deliberately left unset on requests, so the TEI server's own
 default applies.
 
-`embedAll` issues one concurrent unary Embed call per text on virtual
-threads. TEI batches concurrent requests server side (dynamic batching), so
-concurrent unary calls get the batching benefit without a client-side batch
-API. Results are collected in input order; when a collected call has failed,
-every call not yet collected is cancelled and the failure propagates. A
-failure is only noticed once collection reaches it, so a still-running call
-earlier in the input order delays it, bounded by the per-call 30 second
-deadline. TEI's Info RPC reports no vector dimension, so `dimension()` embeds
-a fixed probe string once and caches the vector length.
+`embedAll` issues one unary Embed RPC per text using at most the configured
+number of virtual-thread workers and futures per batch. Results retain input
+order; the first observed worker failure cancels the remaining workers. TEI
+batches concurrent requests server side. `dimension()` embeds a fixed probe
+once and caches the vector length; that probe also uses admission below.
+
+### Process-wide TEI and Turboembed admission
+
+Each provider family shares one in-flight RPC budget across every instance,
+target, and embedding entry point (`embed`, document/query variants and batches).
+TEI and Turboembed have separate budgets; neither limits the other or OVMS.
+
+| Provider | System property | Environment fallback | Default |
+|---|---|---|---|
+| TEI | `protomolt.embeddings.tei.max-in-flight` | `PROTOMOLT_TEI_MAX_IN_FLIGHT` | 8 |
+| Turboembed | `protomolt.embeddings.turboembed.max-in-flight` | `PROTOMOLT_TURBOEMBED_MAX_IN_FLIGHT` | 8 |
+
+A cap must be a positive integer. Each instance reads its cap lazily once, with
+the system property taking precedence. All active or waiting RPCs in a family
+must agree on the cap: conflicting configurations fail explicitly, including
+when another call is waiting for admission. Once all active and waiting calls
+leave, a newly configured instance can establish a different cap. Closing an
+instance never resets another instance's budget. Existing channel ownership
+rules still apply (TEI caller-owned `close` is a no-op; Turboembed closes its
+provider but leaves a caller-owned channel open).
+
+Admission waits on the calling thread for at most 30 seconds, is interruptible,
+and preserves the interruption or timeout cause. The RPC then has its own
+30-second deadline. Permits are released on every return or failure. Turboembed
+keeps its sequential batches of at most 32 texts and acquires admission per RPC.
+TEI uses bounded worker futures rather than allocating one future per text;
+result storage still scales with the requested output. These limits bound local
+client RPCs; a remote server may take time to observe cancellation.
 
 ### OVMS
 
