@@ -15,6 +15,7 @@ import ai.protomolt.proto.types.ConceptScheme;
 import ai.protomolt.proto.validate.ProtoValidator;
 import ai.protomolt.proto.validate.source.ProtomoltRuleSource;
 import com.google.protobuf.Message;
+import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.Base64;
@@ -173,7 +174,7 @@ public final class SnapshotProjector {
         Objects.requireNonNull(converter, "converter").write(scheme, bytes, SkosConverter.Format.TURTLE);
         try (ModelScope model = new ModelScope(base(source, evidence, "scheme"))) {
             try (var rdf = new ModelScope(ModelFactory.createDefaultModel())) {
-                RDFParser.fromString(bytes.toString(StandardCharsets.UTF_8), Lang.TURTLE).parse(rdf.value);
+                RDFParser.source(new ByteArrayInputStream(bytes.toByteArray())).lang(Lang.TURTLE).parse(rdf.value);
                 var triples = rdf.value.getGraph().find();
                 try {
                     triples.forEachRemaining(triple -> {
