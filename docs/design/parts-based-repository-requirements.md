@@ -199,8 +199,9 @@ reserve operation IDs. Schema-registry failures remain separate from grant looku
 - **No reliance on provider versioning,** conditional writes or provider-specific copy behaviour.
 - **Interface:** streamed put (returns SHA-256 and length), streamed get with optional
   byte range, head, delete, and optional server-side copy as a speed-up only.
-- **Carry-forward by reference.** A new accession points at the same key for unchanged
-  parts. Nothing is copied or re-uploaded.
+- **Carry-forward by reference.** By default a new accession points at the same key
+  for unchanged parts, with no copy or re-upload. Explicit selected-drive placement
+  materializes off-drive objects as described below; it does not alter earlier references.
 - **Keep forever.** Delete is a catalog tombstone. Only an explicit administrator purge removes
   bytes (§5, decision 36). A purge first marks the document's references purged in the catalog. It deletes
   an object's bytes only when no remaining unpurged reference, from any document, still
@@ -240,6 +241,58 @@ reserve operation IDs. Schema-registry failures remain separate from grant looku
   commit, so "unreferenced and old" is not safe to delete. Objects from failed or
   abandoned saves are left in place and can be reported. Automatic cleanup is a later
   feature and needs pending uploads recorded in the catalog and fenced against it.
+
+### Durable drives and promotion
+
+A repository drive retains every committed object until explicit administrator
+purge. This includes a non-expiring Valkey drive: operators must configure
+persistence and no eviction, and must not attach an external expiration or
+lifecycle rule to retained bytes. A cache may expire because it is not the
+authoritative copy. Missing retained bytes are data loss, never an empty part or
+a reason to substitute the current revision. Provider outages remain unavailable.
+
+Promotion is an explicit `SaveDocumentRequest.storage_placement` option,
+`STORAGE_PLACEMENT_SELECTED_DRIVE`, with an explicit destination `drive`. It
+materializes the entire composed candidate on that drive, including carried
+parts, selected chunk/embedding sets and every raw-blob binding. Ordinary saves
+keep the existing reference-based carry-forward behavior. Promotion may be a
+placement-only save with no writes or sources, using an exact expected revision.
+It is not an unchanged-outcome optimization and always records a new accession.
+
+The server streams each distinct off-drive object through the existing verified
+stack read and put interfaces. It checks length and SHA-256 before publishing
+the new references. Already-local objects may be reused. Promotion does not
+decode, reserialize or reinterpret a carried part, its Any payloads, or its
+retained schema. Carried content keeps its original part/blob provenance and
+schema bindings; changed and sourced content follows the normal save rules.
+The new accession records the requesting writer and passes the normal ownership,
+ACL, writer-grant and commit-time authority checks. Placement alone does not
+fabricate a semantic part change in the accession event.
+
+All destination objects must be present before one catalog transaction publishes
+the new manifest, current pointer, operation outcome and outbox event. The
+transaction checks the expected revision and that source references have not
+been purged, including references that were physically copied. The placement
+option and destination participate in retry identity. The same operation and
+intent replay the recorded result; a conflicting intent fails. Failed copying,
+corruption, cancellation or a lost revision race cannot publish a partial
+promotion. An absent outcome is not proof that an in-flight request cannot commit.
+
+Promotion never rewrites an earlier manifest or rebinds an existing stack ID.
+Exact historical reads continue using their recorded stack and schema. Promoting
+the latest revision therefore does not make the old drive disposable: earlier
+revisions and other documents can still depend on it. Retiring a source drive
+requires a separately verified migration of every retained dependency, not a
+configuration edit or source deletion after one successful promotion.
+
+Cleanup remains two-phase and reference-aware. Administrator purge durably
+marks references and records exact deletion targets before provider deletion;
+shared objects survive while any unpurged reference remains. Incomplete physical
+reclamation keeps the purge pending, and retry resumes its recorded targets.
+An interrupted promotion may leave unreferenced destination objects, as an
+interrupted save may. They are not age-swept: safe orphan collection requires
+catalogued, fenced in-flight attempts. Temporary TTL drives and revision pruning
+are not enabled by promotion or by this durable-drive contract.
 
 ## 7. Catalog and commit
 
