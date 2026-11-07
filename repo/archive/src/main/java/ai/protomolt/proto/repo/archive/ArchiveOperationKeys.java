@@ -18,7 +18,9 @@ import com.google.protobuf.CodedOutputStream;
 import com.google.protobuf.WireFormat;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.io.OutputStream;
 import java.nio.ByteBuffer;
+import java.security.DigestOutputStream;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
@@ -340,9 +342,25 @@ public final class ArchiveOperationKeys {
         MessageDigest sha256 = digest("SHA-256");
         sha256.update(MessageFingerprints.deterministicBytes(request));
         for (Blob blob : derivedBlobs) {
-            sha256.update(MessageFingerprints.deterministicBytes(blob));
+            digestDeterministically(blob, sha256);
         }
         return HexFormat.of().formatHex(sha256.digest());
+    }
+
+    /**
+     * Feeds the digest the same bytes as {@link MessageFingerprints#deterministicBytes},
+     * without first holding a serialized copy of a blob's data.
+     */
+    private static void digestDeterministically(Blob blob, MessageDigest digest) {
+        try {
+            CodedOutputStream out = CodedOutputStream.newInstance(
+                    new DigestOutputStream(OutputStream.nullOutputStream(), digest));
+            out.useDeterministicSerialization();
+            blob.writeTo(out);
+            out.flush();
+        } catch (IOException impossible) {
+            throw new IllegalStateException("digest serialization failed", impossible);
+        }
     }
 
     /** The deterministic operation ID of a {@code BridgeEntry} save. */
