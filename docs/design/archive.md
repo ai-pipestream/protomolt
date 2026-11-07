@@ -38,7 +38,7 @@ The entry's storage identity is its v2 document call number (`NodeAddress`:
 `account_id`, `graph_id = "archive:" + account_id`,
 `graph_address_id = archive`, `doc_id = entry_id`). Stack object keys are
 server-allocated by `DocumentService`, and the legacy `entry_uuid` field is
-reserved (§1 below). Identity is never random: re-saves are idempotent by
+still declared but left blank (§1 below). Identity is never random: re-saves are idempotent by
 construction, retries converge on the same document and operation outcome,
 and the same coordinate can never mint two entries.
 
@@ -344,10 +344,11 @@ holds whatever characters `entry_id` carries.
 
 `EntryInfo.entry_uuid` was the ledger's primary key and object-key prefix.
 Under v2 neither exists: the call number is the identity and stack keys are
-server-allocated. The implementation reserves the field (and
-`PutEntryResponse.entry_uuid`, `UploadRenditionResponse.entry_uuid`) rather
-than keep a second identity alive, and the `archive.snapshot_identity` rule on
-`VersionManifest` drops its `entry_uuid` clause.
+server-allocated. The field (and `PutEntryResponse.entry_uuid`,
+`UploadRenditionResponse.entry_uuid`) is still declared in the protos but left
+blank over v2, rather than keep a second identity alive. The
+`archive.snapshot_identity` rule on `VersionManifest` drops its `entry_uuid`
+clause.
 
 Ownership: each archive is bound at creation to one intake datasource of its
 account (a new required `Archive.datasource_id`). Entries carry

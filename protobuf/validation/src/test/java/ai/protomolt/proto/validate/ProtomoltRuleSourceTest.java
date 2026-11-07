@@ -2,11 +2,13 @@ package ai.protomolt.proto.validate;
 
 import ai.protomolt.proto.validate.model.FieldConstraints;
 import ai.protomolt.proto.validate.model.MessageConstraints;
+import ai.protomolt.proto.validate.model.StringFormat;
 import ai.protomolt.proto.validate.source.ProtomoltRuleSource;
 import ai.protomolt.proto.validate.testdata.DraftForm;
 import ai.protomolt.proto.validate.testdata.Item;
 import ai.protomolt.proto.validate.testdata.MultiNumericGauntlet;
 import ai.protomolt.proto.validate.testdata.Person;
+import ai.protomolt.proto.validate.testdata.WellKnownDoc;
 import org.junit.jupiter.api.Test;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -48,6 +50,18 @@ class ProtomoltRuleSourceTest {
             assertThat(rule.expression()).isEqualTo("!this.endsWith('@localhost')");
             assertThat(rule.message()).isEqualTo("localhost emails are forbidden");
         });
+    }
+
+    @Test
+    void decimalFlagExtractsToDecimalFormat() {
+        // The protomolt-only string.decimal rule (field 34, no buf.validate
+        // counterpart) reads into the neutral model as StringFormat.DECIMAL.
+        FieldConstraints amount = SOURCE
+                .fieldConstraints(WellKnownDoc.getDescriptor().findFieldByName("amount"))
+                .orElseThrow();
+
+        assertThat(amount.string()).hasValueSatisfying(s ->
+                assertThat(s.formats()).containsExactly(StringFormat.DECIMAL));
     }
 
     @Test

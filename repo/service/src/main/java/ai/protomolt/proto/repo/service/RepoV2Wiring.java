@@ -184,7 +184,29 @@ final class RepoV2Wiring {
                         return Optional.empty();
                     }
                     return driveLedger.findById(driveId).map(stackForDrive);
-                });
+                },
+                temporaryDrive(catalog, driveLedger));
+    }
+
+    /** Classifies the recorded physical identity, including aliases created by another drive. */
+    private static java.util.function.Function<String, Optional<Boolean>> temporaryDrive(
+            PostgresCatalog catalog, DriveLedger driveLedger) {
+        return stackId -> {
+            var recorded = catalog.stack(stackId);
+            if (recorded.isPresent())
+                return recorded.map(row -> DriveBackingPool.temporaryNamespace(row.getNamespace()));
+            if (!stackId.startsWith("stack-")) return Optional.empty();
+            final UUID driveId;
+            try {
+                driveId = UUID.fromString(stackId.substring("stack-".length()));
+            } catch (IllegalArgumentException malformed) {
+                return Optional.empty();
+            }
+            return driveLedger.findById(driveId).map(record -> {
+                var stored = record.readProviderConfig();
+                return stored != null && stored.hasRedis() && stored.getRedis().getTtlSeconds() > 0;
+            });
+        };
     }
 
     /** Opens one stack for a resolved namespace; the composition supplies the blob store. */

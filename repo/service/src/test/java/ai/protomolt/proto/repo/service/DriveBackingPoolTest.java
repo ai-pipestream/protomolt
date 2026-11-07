@@ -108,12 +108,13 @@ class DriveBackingPoolTest {
         }
     }
 
-    @Test void refusesExpiryAndIdentityOverridesBeforeProviderOpen() {
-        try (var pool = new DriveBackingPool(CONFIG, BlobStores.of(List.of()), DEFAULTS)) {
+    @Test void refusesExpiryOnQualifiedHostsAndIdentityOverridesBeforeProviderOpen() {
+        var config = CONFIG.withManagedStorage(new ManagedStoragePolicy("generation", "realm", true));
+        try (var pool = new DriveBackingPool(config, BlobStores.of(List.of()), DEFAULTS)) {
             var redis = new DriveRecord(); redis.provider = "valkey";
             redis.writeProviderConfig(DriveProviderConfig.newBuilder().setRedis(RedisDriveConfig.newBuilder()
                     .setUri("redis://host:6379").setTtlSeconds(5)).build());
-            assertThatThrownBy(() -> pool.resolve(redis)).hasMessageContaining("until explicit purge");
+            assertThatThrownBy(() -> pool.resolve(redis)).hasMessageContaining("expiring drives");
             var s3 = s3("http://host:9000");
             s3.writeProviderConfig(s3.readProviderConfig().toBuilder().putOptions("endpoint", "http://other:9000").build());
             assertThatThrownBy(() -> pool.resolve(s3)).hasMessageContaining("Unsupported per-drive tuning option");
@@ -155,6 +156,157 @@ class DriveBackingPoolTest {
                 "", "replace", "us-east-1", true);
         assertThat(a.namespace("bucket", "documents")).isNotEqualTo(b.namespace("bucket", "documents"))
                 .isNotEqualTo(path.namespace("bucket", "documents"));
+    }
+
+    @Test void temporaryRedisDrivePropagatesTtlAndQualifiesOnObjectExpiry() {
+        var opened = new AtomicInteger(); var closed = new ArrayList<String>(); var seen = new ArrayList<Map<String, String>>();
+        var provider = new BlobStoreProvider() {
+            public String id() { return "valkey"; }
+            public OpenedBlobStore open(Map<String, String> options) {
+                opened.incrementAndGet(); seen.add(options);
+                // Deliberately no NON_EXPIRING_WRITES: a temporary drive must not need it.
+                return new OpenedBlobStore(STORE, () -> closed.add(options.get("uri")),
+                        Set.of(BlobCapability.OBJECT_EXPIRY, BlobCapability.PHYSICAL_RECLAMATION), name -> {}, (bucket, key) -> true);
+            }
+        };
+        try (var pool = new DriveBackingPool(CONFIG, BlobStores.of(List.of(provider)), DEFAULTS)) {
+            var backing = pool.resolve(redis("redis://host:6379", 300));
+            String prefix = DriveBackingPool.temporaryKeyPrefix("", 300);
+            assertThat(seen.getFirst()).containsEntry("ttl-seconds", "300").containsEntry("key-prefix", prefix);
+            assertThat(backing.namespace("bucket", "documents")).isEqualTo("redis-expiring:300:replace:"
+                    + encode(prefix) + ":" + encode("bucket") + ":" + encode("documents"));
+            assertThat(DriveBackingPool.temporaryNamespace(backing.namespace("bucket", "documents"))).isTrue();
+            assertThat(pool.resolve(redis("redis://host:6379", 300))).isSameAs(backing);
+            assertThat(pool.resolve(redis("redis://host:6379", 120))).isNotSameAs(backing);
+            assertThat(opened).hasValue(2);
+        }
+    }
+
+    @Test void temporaryDriveWithoutObjectExpiryIsRefusedAndClosesProvider() {
+        var opened = new AtomicInteger(); var closed = new ArrayList<String>();
+        var provider = new BlobStoreProvider() {
+            public String id() { return "valkey"; }
+            public OpenedBlobStore open(Map<String, String> options) {
+                opened.incrementAndGet();
+                return new OpenedBlobStore(STORE, () -> closed.add(options.get("uri")),
+                        Set.of(BlobCapability.PHYSICAL_RECLAMATION), name -> {}, (bucket, key) -> true);
+            }
+        };
+        try (var pool = new DriveBackingPool(CONFIG, BlobStores.of(List.of(provider)), DEFAULTS)) {
+            assertThatThrownBy(() -> pool.resolve(redis("redis://host:6379", 60)))
+                    .hasMessageContaining("retention capabilities");
+            assertThat(opened).hasValue(1);
+            assertThat(closed).containsExactly("redis://host:6379");
+        }
+    }
+
+    @Test void retentionQualifiedHostRefusesTemporaryDriveBeforeOpeningProvider() {
+        var config = CONFIG.withManagedStorage(new ManagedStoragePolicy("generation", "realm", true));
+        var opened = new AtomicInteger();
+        var provider = new BlobStoreProvider() {
+            public String id() { return "valkey"; }
+            public OpenedBlobStore open(Map<String, String> options) {
+                opened.incrementAndGet();
+                return new OpenedBlobStore(STORE, () -> {},
+                        Set.of(BlobCapability.NON_EXPIRING_WRITES, BlobCapability.PHYSICAL_RECLAMATION,
+                                BlobCapability.STREAMING_WRITE, BlobCapability.OBJECT_EXPIRY), name -> {}, (bucket, key) -> true);
+            }
+        };
+        try (var pool = new DriveBackingPool(config, BlobStores.of(List.of(provider)), DEFAULTS)) {
+            assertThatThrownBy(() -> pool.resolve(redis("redis://host:6379", 60)))
+                    .hasMessageContaining("expiring drives");
+            assertThat(opened).hasValue(0);
+            pool.resolve(redis("redis://host:6379", 0));
+            assertThat(opened).hasValue(1);
+        }
+    }
+
+    @Test void boundedHostRefusesTemporaryDriveBeforeOpeningProvider() {
+        var opened = new AtomicInteger();
+        var provider = new BlobStoreProvider() {
+            public String id() { return "valkey"; }
+            public OpenedBlobStore open(Map<String, String> options) {
+                opened.incrementAndGet();
+                return handle(() -> {});
+            }
+        };
+        try (var pool = new DriveBackingPool(CONFIG, BlobStores.of(List.of(provider)), DEFAULTS, true,
+                environment -> null)) {
+            assertThatThrownBy(() -> pool.resolve(redis("redis://host:6379", 60)))
+                    .hasMessageContaining("create-only");
+            assertThat(opened).hasValue(0);
+        }
+    }
+
+    @Test void negativeTtlIsRefusedBeforeOpeningProvider() {
+        var opened = new AtomicInteger();
+        var provider = new BlobStoreProvider() {
+            public String id() { return "valkey"; }
+            public OpenedBlobStore open(Map<String, String> options) {
+                opened.incrementAndGet();
+                return handle(() -> {});
+            }
+        };
+        try (var pool = new DriveBackingPool(CONFIG, BlobStores.of(List.of(provider)), DEFAULTS)) {
+            assertThatThrownBy(() -> pool.resolve(redis("redis://host:6379", -5)))
+                    .hasMessageContaining("must not be negative");
+            assertThat(opened).hasValue(0);
+        }
+    }
+
+    @Test void temporaryNamespacesIsolateTtlAndKeepDurableIdentityByteForByte() {
+        var provider = new BlobStoreProvider() {
+            public String id() { return "valkey"; }
+            public OpenedBlobStore open(Map<String, String> options) {
+                return new OpenedBlobStore(STORE, () -> {},
+                        Set.of(BlobCapability.NON_EXPIRING_WRITES, BlobCapability.OBJECT_EXPIRY,
+                                BlobCapability.PHYSICAL_RECLAMATION), name -> {}, (bucket, key) -> true);
+            }
+        };
+        try (var pool = new DriveBackingPool(CONFIG, BlobStores.of(List.of(provider)), DEFAULTS)) {
+            var durable = pool.resolve(redis("redis://host:6379", 0, "p:"));
+            var shortTtl = pool.resolve(redis("redis://host:6379", 60, "p:"));
+            var longTtl = pool.resolve(redis("redis://host:6379", 120, "p:"));
+            // The zero-TTL namespace is exactly the identity a pre-temporary host recorded.
+            assertThat(durable.namespace("bucket", "documents")).isEqualTo("redis:replace:"
+                    + encode("p:") + ":" + encode("bucket") + ":" + encode("documents"));
+            assertThat(shortTtl.namespace("bucket", "documents"))
+                    .isNotEqualTo(durable.namespace("bucket", "documents"))
+                    .isNotEqualTo(longTtl.namespace("bucket", "documents"));
+            assertThat(shortTtl.namespace("bucket", "documents"))
+                    .contains(encode(DriveBackingPool.temporaryKeyPrefix("p:", 60)));
+            assertThatThrownBy(() -> pool.resolve(redis("redis://host:6379", 0,
+                    DriveBackingPool.temporaryKeyPrefix("p:", 60))))
+                    .hasMessageContaining("reserved temporary-drive prefix");
+        }
+    }
+
+    @Test void temporaryKeyPrefixEncodesIdentityAndRejectsDurablePrefixCollision() {
+        assertThat(DriveBackingPool.temporaryKeyPrefix("p:", 60))
+                .isEqualTo("protomolt:temporary:v1:60:cDo");
+        assertThat(DriveBackingPool.temporaryKeyPrefix("", 60))
+                .isEqualTo("protomolt:temporary:v1:60:");
+        assertThat(DriveBackingPool.temporaryKeyPrefix("p:ttl=60", 60))
+                .isNotEqualTo(DriveBackingPool.temporaryKeyPrefix("p", 60));
+        assertThat(DriveBackingPool.temporaryKeyPrefix("p", 60))
+                .isNotEqualTo(DriveBackingPool.temporaryKeyPrefix("p", 120));
+        assertThatThrownBy(() -> DriveBackingPool.temporaryKeyPrefix("p", 0))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    private static DriveRecord redis(String uri, int ttlSeconds) {
+        return redis(uri, ttlSeconds, "");
+    }
+
+    private static DriveRecord redis(String uri, int ttlSeconds, String keyPrefix) {
+        var record = new DriveRecord(); record.provider = "valkey";
+        record.writeProviderConfig(DriveProviderConfig.newBuilder().setRedis(RedisDriveConfig.newBuilder()
+                .setUri(uri).setTtlSeconds(ttlSeconds).setKeyPrefix(keyPrefix)).build());
+        return record;
+    }
+
+    private static String encode(String value) {
+        return Base64.getUrlEncoder().withoutPadding().encodeToString(value.getBytes(java.nio.charset.StandardCharsets.UTF_8));
     }
 
     private static DriveRecord s3(String endpoint) {

@@ -34,6 +34,7 @@ class WellKnownFormatRulesTest {
                 .setDigest("a".repeat(64))
                 .setLegacyDigest("b".repeat(40))
                 .setEncoded("aGVsbG8=")
+                .setAmount("19.99")
                 .build();
         assertThat(VALIDATOR.validate(valid).valid()).isTrue();
 
@@ -47,11 +48,46 @@ class WellKnownFormatRulesTest {
                 .setDigest("A".repeat(64))
                 .setLegacyDigest("b".repeat(41))
                 .setEncoded("!!")
+                .setAmount("1e3")
                 .build();
         assertThat(ruleIds(invalid)).containsExactlyInAnyOrder(
                 "string.date", "string.date_time", "string.mime_type",
                 "string.language_tag", "string.currency_code", "string.phone_number",
-                "string.sha256_hex", "string.sha1_hex", "string.base64");
+                "string.sha256_hex", "string.sha1_hex", "string.base64",
+                "string.decimal");
+    }
+
+    @Test
+    void decimalIsUnsignedAndExponentFree() {
+        assertThat(ruleIds(WellKnownDoc.newBuilder().setAmount("42").build()))
+                .doesNotContain("string.decimal", "string.decimal_empty");
+        // Boundary: longer than any binary numeric type, still a decimal string.
+        assertThat(ruleIds(WellKnownDoc.newBuilder()
+                        .setAmount("12345678901234567890.5").build()))
+                .doesNotContain("string.decimal", "string.decimal_empty");
+        for (String bad : List.of("-5", "+5", "1e3", "19.99.", "12.34.56", " 42")) {
+            assertThat(ruleIds(WellKnownDoc.newBuilder().setAmount(bad).build()))
+                    .as("decimal must refuse %s", bad)
+                    .contains("string.decimal");
+        }
+        assertThat(ruleIds(WellKnownDoc.getDefaultInstance()))
+                .contains("string.decimal_empty");
+    }
+
+    @Test
+    void decimalClassificationProducesOrdinaryViolationsWithoutCompilationOrEvaluationExceptions() {
+        // StringFormat.DECIMAL is backed by the deterministic Decimals character scanner and has
+        // no compilation or runtime evaluation exception path: malformed inputs always classify
+        // as ordinary ValidationResult violations rather than throwing RuleCompilationException
+        // or RuleEvaluationException.
+        for (String input : List.of("", "-5", "1e3", "not-a-decimal", "\u0000")) {
+            ValidationResult result = VALIDATOR.validate(
+                    WellKnownDoc.newBuilder().setAmount(input).build());
+            assertThat(result.valid()).isFalse();
+            assertThat(result.violations())
+                    .extracting(ValidationResult.Violation::ruleId)
+                    .contains(input.isEmpty() ? "string.decimal_empty" : "string.decimal");
+        }
     }
 
     @Test

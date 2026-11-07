@@ -25,6 +25,12 @@ build.buf.validate package for exact compatibility. The semantics of the
 buf.validate option namespace, and the protovalidate standard those options
 express, are defined by the upstream project.
 
+Upstream review 2026-11-05: upstream main 04cd1e0187b7e570f3bb0f86a31daf1f2ad7237e
+(newest tag still v1.2.2) defines no string decimal rule, so the vendored
+schema above is unchanged. ProtoMolt's validate.v1 string.decimal (field 34)
+is original protomolt code with no buf.validate counterpart; it is read by
+ProtomoltRuleSource, not by this module's FieldRuleTranslation.
+
 Original code
 -------------
 All other code in this module is original to protomolt, written

@@ -116,6 +116,24 @@ descriptors were built without the protovalidate extension registry, so
 schemas loaded from a registry or reflection are enforced rather than
 silently passed.
 
+### `validate.v1` `string.decimal` relationship
+
+`string.decimal` (field 34) is a ProtoMolt-only extension with no
+`buf.validate` counterpart: at the reviewed upstream commit
+`04cd1e0187b7e570f3bb0f86a31daf1f2ad7237e` (main HEAD, checked 2026-11-05;
+latest upstream tag remains v1.2.2) the only "decimal" mentions in
+`buf/validate/validate.proto` are prose about dotted-decimal IPv4 text and
+decimal port numbers — there is no decimal rule, so `FieldRuleTranslation`
+(which maps all 20 upstream well-known string cases) has nothing to map
+and the vendored `v1.2.2` schemas stay verbatim. The rule is declared in
+`ai.protomolt.proto.validate.v1`, read by `ProtomoltRuleSource` into the
+neutral model's `StringFormat.DECIMAL`, and enforced by the unsigned,
+exponent-free `Decimals` parser (`digits` or `digits.digits`, e.g. the
+schema.org price shape). Violations carry the stable `string.decimal`
+(`string.decimal_empty` when empty) rule ids. Protovalidate-annotated
+schemas are unaffected, and the upstream conformance corpus contains no
+decimal cases.
+
 Compatibility is measured against a pinned upstream suite. On 2026-11-05,
 ProtoMolt `44d61b9bac8effa0fe025cc6166e8c49af42687b` passed all **2880** cases
 at upstream `04cd1e0187b7e570f3bb0f86a31daf1f2ad7237e`, with **0 failed and
@@ -167,6 +185,17 @@ identical violation prose, and an expected compilation error may match a
 runtime error. A claim about either strict mode needs a separate recorded
 run. See the pinned upstream [comparison implementation](https://github.com/bufbuild/protovalidate/blob/04cd1e0187b7e570f3bb0f86a31daf1f2ad7237e/tools/protovalidate-conformance/internal/results/result.go).
 
+Recorded `--strict_message` run: PASS 2880/2880 against upstream pin
+`04cd1e0187b7` (see ticket #796). Violation prose follows the upstream
+wording for every rule the suite pins a message for. Deliberately unchanged
+(no upstream message expectation in the corpus, so strict mode does not
+compare them): `string.prefix` / `string.contains` / `string.not_contains`,
+`string.len_bytes` / `string.min_bytes` / `string.max_bytes`,
+`string.max_len`, `bytes.len`, `bytes.in` / `bytes.not_in`,
+`field_mask.in` / `field_mask.not_in`, `timestamp.within` /
+`timestamp.lt_now` / `timestamp.gt_now`, and the non-UUID/IP string and
+`bytes.uuid` format messages.
+
 This is separate from `buf lint`, which applies the `STANDARD` and
 `COMMENTS` schema-style rules configured in `buf.yaml`, and from
 `buf breaking`, which checks schema compatibility. Neither establishes
@@ -180,6 +209,7 @@ postal rules also need their own tests; the Buf corpus does not cover them.
 | Full upstream conformance runner and corpus | `04cd1e0187b7e570f3bb0f86a31daf1f2ad7237e` (CI uses `04cd1e0`) | [CI conformance job](../../.github/workflows/ci.yml) |
 | Vendored `buf/validate/validate.proto` | v1.2.2, `4baed765070e580226a0a30bf2a357cc027dc1f7` | [Dialect NOTICE](../../protobuf/validation-protovalidate/NOTICE) |
 | Vendored `buf/validate/conformance/harness/harness.proto` and field-path port provenance | v1.2.2, same commit | [Harness NOTICE](../../protobuf/validation-conformance/NOTICE) |
+| Upstream decimal-rule review (no `string.decimal` upstream; protomolt-only field 34) | upstream main `04cd1e0187b7e570f3bb0f86a31daf1f2ad7237e`, checked 2026-11-05; latest tag v1.2.2 | [Decimal relationship](#validatev1-stringdecimal-relationship) |
 | Buf CLI for lint and breaking checks | `1.70.0` | [CI](../../.github/workflows/ci.yml) and [build prerequisites](../operations/building.md#prerequisites) |
 
 These are independent pins. Installing a newer Buf CLI does not update the
@@ -211,6 +241,10 @@ go version -m "$conformance_tools/protovalidate-conformance"
 "$conformance_tools/protovalidate-conformance" \
   protobuf/validation-conformance/build/install/protomolt-protobuf-validation-conformance/bin/protomolt-protobuf-validation-conformance \
   2>&1 | tee protovalidate-conformance.log
+
+"$conformance_tools/protovalidate-conformance" --strict_message \
+  protobuf/validation-conformance/build/install/protomolt-protobuf-validation-conformance/bin/protomolt-protobuf-validation-conformance \
+  2>&1 | tee protovalidate-conformance-strict-message.log
 ```
 
 At the current pin, the final summary must be

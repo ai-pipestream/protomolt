@@ -24,6 +24,8 @@ modules:
     name: buf.build/ai-pipestream/protomolt-service
   - path: protobuf/validation/src/main/proto
     name: buf.build/ai-pipestream/protobuf-validation
+  - path: protobuf/validation-protovalidate/src/main/proto
+    name: buf.build/bufbuild/protovalidate
   - path: protobuf/types/src/main/proto
     name: buf.build/ai-pipestream/protobuf-types
   - path: search/index/spi/src/main/proto
@@ -118,6 +120,9 @@ lint:
     - STANDARD
     - COMMENTS
   ignore:
+    # Unmodified upstream validation vocabulary; consumed by public contracts.
+    # Do not rewrite its package/options to conform to ProtoMolt house naming.
+    - protobuf/validation-protovalidate/src/main/proto/buf/validate/validate.proto
     # The vendored parser-fleet document model keeps the fleet's own lint
     # bar; see the module comment above. Top-level ignore ONLY: a
     # module-level lint block breaks the workspace image `buf breaking`

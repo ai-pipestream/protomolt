@@ -36,6 +36,7 @@ class FormatEnumsTest {
         assertThat(StringFormat.PROTOBUF_DOT_FQN.ruleId()).isEqualTo("string.protobuf_dot_fqn");
         assertThat(StringFormat.HOST_AND_PORT.ruleId()).isEqualTo("string.host_and_port");
         assertThat(StringFormat.LINK_RELATION.ruleId()).isEqualTo("string.link_relation");
+        assertThat(StringFormat.DECIMAL.ruleId()).isEqualTo("string.decimal");
     }
 
     @Test
@@ -63,6 +64,9 @@ class FormatEnumsTest {
         assertThat(StringFormat.IPV6.matches("127.0.0.1")).isFalse();
         assertThat(StringFormat.HOSTNAME.matches("example.com")).isTrue();
         assertThat(StringFormat.HOSTNAME.matches("-bad-.com")).isFalse();
+        assertThat(StringFormat.DECIMAL.matches("19.99")).isTrue();
+        assertThat(StringFormat.DECIMAL.matches("1e3")).isFalse();
+        assertThat(StringFormat.DECIMAL.matches("-5")).isFalse();
     }
 
     @Test
