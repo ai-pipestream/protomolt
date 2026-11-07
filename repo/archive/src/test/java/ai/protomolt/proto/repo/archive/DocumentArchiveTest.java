@@ -1493,6 +1493,173 @@ class DocumentArchiveTest {
     }
 
     @Test
+    void anInlineUploadIdentifiesItsPrimaryFromTheWindowsAlone() throws Exception {
+        ByteString body = opaqueBytes(LARGER_THAN_THE_WINDOWS);
+        V2Uploads v2 = new V2Uploads(entryNode("e-windows"), body, header -> null);
+        startService(v2);
+        Received received = new Received();
+        RenditionUploads.FlowControlledUpload stream = new RenditionUploads(archive(channel))
+                .uploadFlowControlled(received);
+        stream.onNext(header("e-windows", "op-windows", body.size(), "").build());
+        for (ByteString chunk : chunks(body, 64 * 1024)) {
+            stream.onNext(UploadRenditionRequest.newBuilder().setChunk(chunk).build());
+        }
+        stream.onCompleted();
+        received.done.get(5, TimeUnit.SECONDS);
+
+        assertThat(publishedSignatureEvidence(v2.frames.getFirst().getHeader().getSave()))
+                .contains("reached outside the captured windows")
+                .doesNotContain(" and 0 reached outside");
+    }
+
+    @Test
+    void reuploadingTheSameInlineBytesKeepsTheStoredClassification() throws Exception {
+        // Larger than the head window, with no expected_sha256: the digest has to come from
+        // the bytes in hand, because the windows no longer hold them all.
+        ByteString body = opaqueBytes(LARGER_THAN_THE_WINDOWS);
+        NodeAddress node = entryNode("e-again");
+        V2Uploads v2 = new V2Uploads(node, body, header -> null);
+        startService(v2);
+        uploadInline(v2, "e-again", "op-first", body);
+        Classification first = ArchiveClassifications.decodeClassification(
+                v2.frames.getFirst().getHeader().getSave().getDocument().getSearchMetadata()
+                        .getMetadataOrThrow(ArchiveClassifications.CLASSIFICATION_METADATA_KEY));
+        Classification stored = first.toBuilder()
+                .setClassifiedAt(com.google.protobuf.Timestamp.newBuilder().setSeconds(1L)).build();
+        GetDocumentResponse current = documentWithBlob(node, 1L, "original", body);
+        v2.current = current.toBuilder().setDocument(current.getDocument().toBuilder()
+                .setSearchMetadata(current.getDocument().getSearchMetadata().toBuilder().putMetadata(
+                        ArchiveClassifications.CLASSIFICATION_METADATA_KEY,
+                        ArchiveClassifications.encodeClassification(stored)))).build();
+        v2.frames.clear();
+
+        uploadInline(v2, "e-again", "op-second", body);
+
+        assertThat(ArchiveClassifications.decodeClassification(
+                v2.frames.getFirst().getHeader().getSave().getDocument().getSearchMetadata()
+                        .getMetadataOrThrow(ArchiveClassifications.CLASSIFICATION_METADATA_KEY)))
+                .isEqualTo(stored);
+    }
+
+    private void uploadInline(V2Uploads v2, String entryId, String operationId, ByteString body) throws Exception {
+        Received received = new Received();
+        RenditionUploads.FlowControlledUpload stream = new RenditionUploads(archive(channel))
+                .uploadFlowControlled(received);
+        stream.onNext(header(entryId, operationId, body.size(), "").build());
+        for (ByteString chunk : chunks(body, 64 * 1024)) {
+            stream.onNext(UploadRenditionRequest.newBuilder().setChunk(chunk).build());
+        }
+        stream.onCompleted();
+        received.done.get(5, TimeUnit.SECONDS);
+    }
+
+    @Test
+    void putEntryIdentifiesItsPrimaryFromTheWindowsAlone() throws Exception {
+        assertThat(publishedSignatureEvidence(putOriginal("e-large", opaqueBytes(LARGER_THAN_THE_WINDOWS))))
+                .contains("reached outside the captured windows")
+                .doesNotContain(" and 0 reached outside");
+    }
+
+    @Test
+    void aPrimaryInsideTheWindowsStaysFullyObservable() throws Exception {
+        assertThat(publishedSignatureEvidence(putOriginal("e-small", opaqueBytes(4 * 1024))))
+                .contains(" and 0 reached outside the captured windows");
+    }
+
+    @Test
+    void windowsOfMatchesAStreamedCaptureAndKeepsOnlyHeadAndTail() {
+        byte[] bytes = new byte[LARGER_THAN_THE_WINDOWS];
+        new java.util.Random(767).nextBytes(bytes);
+        // A rope is how large content arrives: no single flat buffer to copy.
+        ByteString rope = ByteString.copyFrom(bytes, 0, 100_000)
+                .concat(ByteString.copyFrom(bytes, 100_000, bytes.length - 100_000));
+        var windows = ArchiveClassifications.windowsOf(rope);
+        var streamed = new ai.protomolt.proto.asset.characterize.WindowCapture();
+        streamed.update(bytes, 0, bytes.length);
+
+        assertThat(windows.sizeBytes()).isEqualTo(bytes.length);
+        assertThat(windows.head()).isEqualTo(streamed.windows().head())
+                .hasSize(ai.protomolt.proto.asset.characterize.ByteWindows.DEFAULT_HEAD_BYTES);
+        assertThat(windows.tail()).isEqualTo(streamed.windows().tail())
+                .hasSize(ai.protomolt.proto.asset.characterize.ByteWindows.DEFAULT_TAIL_BYTES);
+        assertThat(windows.byteAt(ai.protomolt.proto.asset.characterize.ByteWindows.DEFAULT_HEAD_BYTES))
+                .isEqualTo(ai.protomolt.proto.asset.characterize.ByteWindows.NOT_OBSERVED);
+        assertThat(windows.byteAt(bytes.length - 1L)).isEqualTo(bytes[bytes.length - 1] & 0xFF);
+        assertThat(ArchiveClassifications.windowsOf(ByteString.EMPTY).sizeBytes()).isZero();
+    }
+
+    /** Saves one original rendition through PutEntry and returns the save the archive sent. */
+    private SaveDocumentRequest putOriginal(String entryId, ByteString body) throws Exception {
+        NodeAddress node = entryNode(entryId);
+        List<SaveDocumentRequest> saves = new java.util.concurrent.CopyOnWriteArrayList<>();
+        startService(new DocumentServiceGrpc.DocumentServiceImplBase() {
+            @Override
+            public void getOperationOutcome(GetOperationOutcomeRequest request,
+                    StreamObserver<GetOperationOutcomeResponse> responseObserver) {
+                responseObserver.onNext(GetOperationOutcomeResponse.getDefaultInstance());
+                responseObserver.onCompleted();
+            }
+
+            @Override
+            public void listRevisions(ListRevisionsRequest request,
+                    StreamObserver<ListRevisionsResponse> responseObserver) {
+                responseObserver.onNext(ListRevisionsResponse.getDefaultInstance());
+                responseObserver.onCompleted();
+            }
+
+            @Override
+            public void getDocument(GetDocumentRequest request,
+                    StreamObserver<GetDocumentResponse> responseObserver) {
+                if (saves.isEmpty()) {
+                    responseObserver.onError(Status.NOT_FOUND.asRuntimeException());
+                    return;
+                }
+                responseObserver.onNext(documentWithBlob(node, 1L, "original", body));
+                responseObserver.onCompleted();
+            }
+
+            @Override
+            public void saveDocument(SaveDocumentRequest request,
+                    StreamObserver<SaveDocumentResponse> responseObserver) {
+                saves.add(request);
+                responseObserver.onNext(SaveDocumentResponse.newBuilder()
+                        .setOperationId(request.getOperationId())
+                        .setAccession(Accession.newBuilder().setAddress(node).setRevision(1L))
+                        .build());
+                responseObserver.onCompleted();
+            }
+        });
+        archive(channel).putEntry(PutEntryRequest.newBuilder()
+                .setAddress(EntryAddress.newBuilder()
+                        .setAccountId(ACCOUNT).setArchive(ARCHIVE).setEntryId(entryId))
+                .addRenditions(RenditionContent.newBuilder()
+                        .setRendition(RenditionDescriptor.newBuilder()
+                                .setName("original").setMediaType("application/octet-stream"))
+                        .setData(body))
+                .build());
+        assertThat(saves).hasSize(1);
+        return saves.getFirst();
+    }
+
+    private static String publishedSignatureEvidence(SaveDocumentRequest save) {
+        return ArchiveClassifications.decodeClassification(save.getDocument().getSearchMetadata()
+                        .getMetadataOrThrow(ArchiveClassifications.CLASSIFICATION_METADATA_KEY))
+                .getEvidenceList().stream()
+                .filter(evidence -> evidence.getSignal().equals("published-signature"))
+                .map(ai.protomolt.proto.asset.v1.CharacterizationEvidence::getObservation)
+                .findFirst().orElseThrow();
+    }
+
+    /** Bytes no format signature claims, longer or shorter than the windows as the test needs. */
+    private static ByteString opaqueBytes(int size) {
+        byte[] bytes = new byte[size];
+        for (int i = 0; i < size; i++) {
+            bytes[i] = (byte) (i % 2 == 0 ? 0x00 : 0xEE);
+        }
+        return ByteString.copyFrom(bytes);
+    }
+
+    @Test
     void anInlineRenditionLongerThanTheInlineLimitIsRefusedWithoutReachingV2() throws Exception {
         ByteString body = pdfBytes(RenditionUploads.INLINE_BODY_MAX_BYTES + 1);
         V2Uploads v2 = new V2Uploads(entryNode("e-long"), body, header -> null);
@@ -1538,6 +1705,7 @@ class DocumentArchiveTest {
         private final ByteString body;
         private final java.util.function.Function<UploadHeader, StatusRuntimeException> refuse;
         volatile boolean replayHeaders;
+        volatile GetDocumentResponse current;
 
         V2Uploads(NodeAddress entryNode, ByteString body,
                 java.util.function.Function<UploadHeader, StatusRuntimeException> refuse) {
@@ -1587,7 +1755,7 @@ class DocumentArchiveTest {
                 responseObserver.onError(Status.NOT_FOUND.asRuntimeException());
                 return;
             }
-            responseObserver.onNext(documentWithBlob(entryNode, 1L, "original", body));
+            responseObserver.onNext(current != null ? current : documentWithBlob(entryNode, 1L, "original", body));
             responseObserver.onCompleted();
         }
 
@@ -1678,6 +1846,8 @@ class DocumentArchiveTest {
                                 .setName("original")
                                 .setMediaType("application/pdf")));
     }
+
+    private static final int LARGER_THAN_THE_WINDOWS = 512 * 1024;
 
     private static ByteString pdfBytes(int size) {
         byte[] bytes = new byte[size];

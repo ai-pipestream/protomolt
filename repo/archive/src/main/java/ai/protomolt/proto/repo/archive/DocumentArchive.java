@@ -142,7 +142,7 @@ import java.util.Set;
 import java.util.TreeMap;
 import java.util.UUID;
 import java.util.concurrent.ExecutionException;
-import java.util.function.Function;
+import java.util.function.BiFunction;
 import java.util.stream.Collectors;
 
 /**
@@ -877,7 +877,7 @@ public final class DocumentArchive {
         ByteWindows windows = null;
         boolean primaryUnchanged = samePrimaryIdentity && !filenameChange;
         if (primaryNew != null && !primaryNew.getData().isEmpty()) {
-            windows = ByteWindows.ofWhole(primaryNew.getData().toByteArray());
+            windows = ArchiveClassifications.windowsOf(primaryNew.getData());
             String primaryBlobId = primaryId.get();
             String newSha = RenditionReads.sha256Hex(primaryNew.getData());
             long newSize = primaryNew.getData().size();
@@ -1884,10 +1884,18 @@ public final class DocumentArchive {
             RenditionDescriptor rendition,
             Optional<PartSelector> encodedPartSelector,
             boolean needsWindows,
-            Function<ByteWindows, UploadHeader> headerBuilder,
+            BiFunction<ByteWindows, String, UploadHeader> headerBuilder,
             boolean checkBytes) implements UploadStart {
         UploadHeader header(ByteWindows windows) {
-            return headerBuilder.apply(windows);
+            return headerBuilder.apply(windows, "");
+        }
+
+        /**
+         * The header for content the caller holds whole, so its digest is known even though
+         * the windows no longer carry every byte.
+         */
+        UploadHeader header(ByteWindows windows, String contentSha256) {
+            return headerBuilder.apply(windows, contentSha256);
         }
     }
 
@@ -1943,9 +1951,9 @@ public final class DocumentArchive {
         ExpectedRevision expected = header.getExpectedVersion() > 0
                 ? ExpectedRevision.newBuilder().setRevision(header.getExpectedVersion()).build()
                 : lastWriteWins(address, current);
-        Function<ByteWindows, UploadHeader> headerBuilder = windows -> {
+        BiFunction<ByteWindows, String, UploadHeader> headerBuilder = (windows, uploadedSha256) -> {
             Classification classification = resolveUploadClassification(
-                    address, current, currentBlobs, header, declared, origin, primaryUpload, windows);
+                    address, current, currentBlobs, header, declared, origin, primaryUpload, windows, uploadedSha256);
             Document.Builder document = core(
                     binding,
                     header.getAddress(),
@@ -2029,7 +2037,8 @@ public final class DocumentArchive {
             FormatFact declared,
             ObjectStoreOrigin origin,
             boolean primaryUpload,
-            ByteWindows uploadedWindows) {
+            ByteWindows uploadedWindows,
+            String uploadedSha256) {
         Optional<Classification> stored = current.flatMap(ArchiveClassifications::storedClassification);
         FormatFact effectiveDeclared = declared != null
                 ? declared
@@ -2045,6 +2054,7 @@ public final class DocumentArchive {
                     header.getRendition().getName(), header.getRendition().getSubKey());
             String knownSha = !header.getExpectedSha256().isEmpty()
                     ? header.getExpectedSha256()
+                    : !uploadedSha256.isEmpty() ? uploadedSha256
                     : (uploadedWindows.sizeBytes() == uploadedWindows.head().length
                             ? RenditionReads.sha256Hex(ByteString.copyFrom(uploadedWindows.head()))
                             : "");
