@@ -72,6 +72,24 @@ idempotently, and evidence has a durable home. The gap is precisely the
 pipeline half the title names — `PipelineExecutor` still refuses an
 external-completion step because no coordinator is wired to it.
 
+### Repository sinks and derived renditions
+
+Expose an optional repository sink that explicitly publishes selected current
+processing state as a digital asset or new rendition. Processing persistence
+already serves checkpoints/replay; it does not itself publish an asset. A run
+may persist every step and publish only selected outputs. Reuse the caller's
+existing execution/replay path and the repository's save operation identity,
+with reconciliation across a commit followed by a lost acknowledgement.
+
+The selected protobuf may be saved directly. Optional renderer providers add
+formats such as Parquet, with declared input profiles, options and limits.
+`MessageProjection`, Parquet/OKF emitters, and archive rendition upload/read
+paths already exist; generic renderer discovery and the repository-sink
+workflow are still open in #817-#820. They do not replace the durable execution
+work above or require all renderer dependencies in the minimal repository host.
+See the [emit guide](../sink/emitting.md#processing-persistence-and-repository-sinks)
+and the [normative repository boundary](parts-based-repository-requirements.md#processing-persistence-and-repository-sinks).
+
 ### Standalone application generation
 
 Generate a runnable application from a checked workflow or pipeline. Each output

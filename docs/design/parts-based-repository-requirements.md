@@ -59,6 +59,45 @@ This decision does not authorize implementation in the current documentation rev
 
 ## 5. Data model
 
+### Processing persistence and repository sinks
+
+Decision agreed with Kristian, 2026-11-07: **persist** retains processing
+protobuf state for checkpoints and replay. A **repository sink** explicitly
+publishes selected current processing state as a digital asset or as a new
+rendition of an existing asset. These are different operations, even when they
+share underlying storage. A run may persist every step and publish no assets,
+or publish at selected steps only. A checkpoint is not a repository accession.
+
+Repository sinks use the existing `DocumentService` save/upload contract and
+archive rendition adapter, including validation, writer authority, revision
+preconditions, operation identity and retained provenance. Publishing an asset
+does not require changing its format: a sink can save the selected protobuf
+state directly. An optional projection/renderer can first produce a supported
+derived representation such as Parquet. Installing a provider makes its
+capability discoverable; only an explicit configured sink step authorizes a
+write. It does not subscribe every processing checkpoint to asset publication.
+
+Pin the selected processing state and its schema/provenance before publication.
+Record any existing source repository revision separately from the new
+destination revision. A newly created asset need not have a prior repository
+revision; preserve its actual processing input identity instead of inventing
+one. Derived outputs preserve their source association and do not replace the
+authoritative processing protobuf merely because they are easier to browse.
+
+Reuse processing replay and repository save replay at their respective
+boundaries. A rendered output or successful checkpoint is not a committed
+asset. After a lost save response, reconcile the same publication operation
+before recording sink success; replay must not create a duplicate rendition.
+Checkpoint retention, repository revision retention, and external publication
+receipts remain distinct. Search or graph publication can follow a committed
+asset and has its own outcome, rather than being inferred from sink success.
+
+This is the contract for the planned repository sink (#818), not a claim that
+the generic renderer/sink workflow is implemented. The
+[emit guide](../sink/emitting.md#processing-persistence-and-repository-sinks)
+maps it onto existing code and the implementation tickets. It adds no new
+public document API or second checkpoint/replay framework.
+
 ### Parts
 A document is split on protobuf field boundaries into parts, each stored as its own object:
 
