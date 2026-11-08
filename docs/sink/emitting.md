@@ -15,6 +15,70 @@ message data goes only where a caller deliberately sends it.
 | `protomolt-emit-parquet` | Descriptor-driven Parquet files from protobuf messages |
 | `protomolt-emit-parquet-s3` | Parquet files uploaded to any S3-compatible store (RustFS, AWS S3) |
 
+## Processing persistence and repository sinks
+
+The [repository requirements](../design/parts-based-repository-requirements.md#processing-persistence-and-repository-sinks)
+distinguish two operations:
+
+| Operation | Purpose | Result |
+|---|---|---|
+| Persist a processing step | Retain processing protobuf state for checkpoint/replay | Resumable processing state |
+| Execute a repository sink | Publish selected current state as an asset or rendition | Committed repository identity, revision and save outcome |
+
+A workflow can persist after every step while publishing only selected outputs.
+An asset may contain the selected protobuf itself; conversion is optional.
+For a different representation, descriptor-based projection maps the selected
+state into a supported model, a renderer produces the target bytes, and the
+repository sink saves them. Kafka delivery and external graph/search publication
+are other sink operations with separate receipts, not repository renditions.
+
+For example, a workflow can checkpoint parser and NLP results, explicitly save
+the selected NLP state as a repository asset, and later publish that committed
+revision to search. Another selected step can render a Parquet rendition. The
+checkpoint does not imply either publication, and a successful repository save
+does not imply search visibility. Configuring a sink step can automate the save;
+discovering an installed renderer alone cannot authorize it.
+
+The planned integration reuses these existing boundaries:
+
+- [WorkflowRunWorker](../../jobs/service/src/main/java/ai/protomolt/proto/jobs/service/worker/WorkflowRunWorker.java)
+  and [WorkflowRunStore](../../jobs/service/src/main/java/ai/protomolt/proto/jobs/service/store/WorkflowRunStore.java)
+  illustrate existing execution/checkpoint ownership. Trace the actual caller's
+  persist/replay path before wiring a sink; do not add another checkpoint engine.
+  This distinction describes responsibilities, not a certification of every
+  existing checkpoint storage encoding.
+- [MessageProjection](../../transform/projection/src/main/java/ai/protomolt/proto/projection/MessageProjection.java)
+  and the emitters below supply optional mapping/rendering. `Bundle` and the
+  current Parquet writer materialize bytes in memory, so their limits must be
+  explicit. They are not already an unbounded streaming conversion SPI.
+- [RenditionUploads](../../repo/archive/src/main/java/ai/protomolt/proto/repo/archive/RenditionUploads.java)
+  sends rendition data through v2 `DocumentService.UploadDocument`.
+  [DocumentUploads](../../repo/accession/src/main/java/ai/protomolt/proto/repo/accession/DocumentUploads.java)
+  and [DocumentSaves](../../repo/accession/src/main/java/ai/protomolt/proto/repo/accession/DocumentSaves.java)
+  own admission and publication. Sinks must use these public boundaries rather
+  than write directly to backing object-store paths.
+
+The sink freezes the selected state, input/schema identities, destination,
+renderer/options when present, and publication operation identity. If the state
+came from a repository revision, retain that source revision. If it has not yet
+been published, retain its actual processing input/result identity. Do not
+pretend every processing output already has a repository address.
+
+After commit, record the returned asset/revision and save outcome as the sink
+step's result. A crash between repository commit and checkpoint acknowledgement
+requires reconciliation/replay of the same save intent, not a new publication
+identity. Changed output under that identity is a conflict. Source checkpoint
+cleanup must not silently invalidate a published asset's required bytes or
+provenance; use the repository's retention and reference rules.
+
+The generic provider discovery and repository-sink workflow remain planned:
+[renderer SPI #817](https://git.rokkon.com/ai-pipestream/protomolt/issues/817),
+[repository sink #818](https://git.rokkon.com/ai-pipestream/protomolt/issues/818),
+[Parquet provider #819](https://git.rokkon.com/ai-pipestream/protomolt/issues/819),
+and [console #820](https://git.rokkon.com/ai-pipestream/protomolt/issues/820).
+The console's Save-as action and configured workflow sink should share the same
+publication semantics. Neither requires every persisted step to become an asset.
+
 ## The bundle and its sinks
 
 A `Bundle` is an insertion-ordered map of bundle-relative paths to bytes.
