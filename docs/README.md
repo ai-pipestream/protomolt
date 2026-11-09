@@ -63,7 +63,7 @@ are a draft for review, not a description of completed repairs.
 - [Cluster directory](core/cluster-directory.md): memory-resident discovery with encrypted restart persistence
 - [Distributed config](core/config.md): typed protobuf config documents behind a pluggable `ConfigSource`
 - [Core utilities](core/helpers.md): `Any`, `Struct`, conversion, and message comparison
-- [Compatibility checking](schema/compatibility.md): wire, JSON, and source compatibility
+- [Compatibility checking](schema/compatibility.md): wire, JSON, and source compatibility, stability tiers, and five-surface release-baseline gates
 - [JSON Schema generation](schema/json-schema.md): draft 2020-12 output from protobuf descriptors
 - [Schema metadata](schema/metadata.md): ownership, sensitivity, descriptions, and extraction
 - [Publishing schemas](schema/publishing.md): Confluent and Apicurio publishers

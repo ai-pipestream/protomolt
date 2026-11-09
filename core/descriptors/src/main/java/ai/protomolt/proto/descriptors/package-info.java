@@ -27,4 +27,5 @@
  * <p>See the <a href="https://github.com/ai-pipestream/protomolt/blob/main/docs/core/descriptor-sources.md">Descriptor
  * sources guide</a> for the full loader table and usage.</p>
  */
+@ApiStability(StabilityTier.STABLE)
 package ai.protomolt.proto.descriptors;

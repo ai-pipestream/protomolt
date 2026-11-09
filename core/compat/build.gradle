@@ -3,4 +3,6 @@ description = 'Protobuf schema compatibility checking: typed diffs and policy ev
 dependencies {
     api project(':protomolt-descriptors')
     api project(':protomolt-sources')
+    implementation project(':protomolt-protobuf-metadata')
+    implementation libs.jackson.databind
 }

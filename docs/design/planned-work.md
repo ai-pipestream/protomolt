@@ -320,14 +320,17 @@ Run MCP fixtures against the official inspector. Define stability labels for
 Java APIs, protobuf contracts, stored formats, REST routes, and action
 envelopes. Enforce compatible changes in CI once a release baseline exists.
 
-Protobuf contracts are covered: CI runs `buf lint` and `buf breaking` against
-the pull request's base branch. MCP is covered by the `mcp-inspector` CI job,
-which drives the stdio and streamable-HTTP servers with the pinned official
-MCP Inspector CLI ([tests/mcp-inspector](../../tests/mcp-inspector/README.md)).
-Everything else is open — no stability annotations of any kind, no Java binary-compatibility
-tooling, and no REST-route or action-envelope check. Note that comparing
-against a base branch is not the same as comparing against a release baseline,
-which is what the last sentence asks for.
+Protobuf contracts, Java APIs, stored formats, REST routes, and action
+envelopes carry stability tiers (`StabilityTier`, `@ApiStability`, and
+`ai.protomolt.proto.meta.v1` stability options) and are gated in CI against
+`compatibility/baseline/` via `ReleaseBaselineGate` and
+`:protomolt-system-tests:checkCompatibilityBaseline`, alongside `buf lint` and
+`buf breaking` on pull requests. The checked-in baseline manifest is explicitly
+marked `UNRELEASED_INITIAL_SNAPSHOT` (`releaseTag: ""`) so no external released
+stability guarantee is claimed before the first release tag is cut. MCP is
+covered by the `mcp-inspector` CI job, which drives the stdio and
+streamable-HTTP servers with the pinned official MCP Inspector CLI
+([tests/mcp-inspector](../../tests/mcp-inspector/README.md)).
 
 ### WASM generator supply chain
 
