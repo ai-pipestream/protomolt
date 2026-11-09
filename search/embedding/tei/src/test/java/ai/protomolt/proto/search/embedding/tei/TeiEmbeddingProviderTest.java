@@ -24,6 +24,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.LinkedBlockingDeque;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -269,7 +270,7 @@ class TeiEmbeddingProviderTest {
             long started = System.nanoTime();
             assertThatThrownBy(() -> waiter.embed("waits"))
                     .isInstanceOf(IllegalStateException.class)
-                    .hasCauseInstanceOf(java.util.concurrent.TimeoutException.class);
+                    .hasCauseInstanceOf(TimeoutException.class);
             long waitedMillis = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started);
             assertThat(waitedMillis).isBetween(900L, 10_000L);
             fake.hold = false;

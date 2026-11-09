@@ -23,6 +23,12 @@ public final class EmbeddingInFlightLimit {
     /** Admission wait used when a caller does not choose its own: 30 seconds. */
     public static final Duration DEFAULT_ADMISSION_TIMEOUT = Duration.ofSeconds(30);
 
+    /**
+     * Longest configurable admission wait in whole seconds: {@value}, the largest whole
+     * number of seconds whose nanosecond count fits in a {@code long}.
+     */
+    public static final long MAX_ADMISSION_TIMEOUT_SECONDS = Long.MAX_VALUE / 1_000_000_000L;
+
     /** Creates a limit with a 30 second admission timeout, separate from the RPC deadline. */
     public EmbeddingInFlightLimit() {
         this(DEFAULT_ADMISSION_TIMEOUT);
@@ -75,7 +81,8 @@ public final class EmbeddingInFlightLimit {
      *
      * @param configured the configured value, or {@code null} when unset
      * @param source the property and environment names, for the error message
-     * @throws IllegalStateException when the value is not a positive integer
+     * @throws IllegalStateException when the value is not a positive integer no greater than
+     *     {@link #MAX_ADMISSION_TIMEOUT_SECONDS}
      */
     public static Duration admissionTimeoutSeconds(String configured, String source) {
         if (configured == null) {
@@ -90,11 +97,21 @@ public final class EmbeddingInFlightLimit {
         if (seconds < 1) {
             throw new IllegalStateException(source + " must be a positive number of seconds: " + configured);
         }
+        if (seconds > MAX_ADMISSION_TIMEOUT_SECONDS) {
+            throw new IllegalStateException(source + " must be at most " + MAX_ADMISSION_TIMEOUT_SECONDS
+                    + " seconds: " + configured);
+        }
         return Duration.ofSeconds(seconds);
     }
 
     private static long requirePositive(Duration admissionTimeout) {
-        long nanos = admissionTimeout.toNanos();
+        long nanos;
+        try {
+            nanos = admissionTimeout.toNanos();
+        } catch (ArithmeticException overflow) {
+            throw new IllegalArgumentException("Admission timeout is too long to represent in nanoseconds: "
+                    + admissionTimeout, overflow);
+        }
         if (nanos <= 0) {
             throw new IllegalArgumentException("Admission timeout must be positive");
         }

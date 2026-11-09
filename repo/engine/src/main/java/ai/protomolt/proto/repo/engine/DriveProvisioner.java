@@ -12,6 +12,8 @@ import org.slf4j.LoggerFactory;
 import ai.protomolt.proto.repo.blob.spi.NamespaceProvisioner;
 
 import java.nio.charset.StandardCharsets;
+import java.util.Locale;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -38,11 +40,11 @@ public final class DriveProvisioner {
     public DriveProvisioner(DriveLedger drives, NamespaceProvisioner namespaces, String defaultBucketBase,
             String defaultRegion, String defaultProvider, java.util.function.Consumer<DriveRecord> recordGate) {
         this.drives = drives;
-        java.util.Objects.requireNonNull(namespaces);
+        Objects.requireNonNull(namespaces);
         this.namespaces = record -> namespaces;
         this.multipleBackends = false;
-        this.defaultProvider = java.util.Objects.requireNonNull(defaultProvider);
-        this.recordGate = java.util.Objects.requireNonNull(recordGate);
+        this.defaultProvider = Objects.requireNonNull(defaultProvider);
+        this.recordGate = Objects.requireNonNull(recordGate);
         this.defaultBucketBase = defaultBucketBase;
         this.defaultRegion = defaultRegion;
     }
@@ -53,12 +55,12 @@ public final class DriveProvisioner {
             java.util.function.Consumer<DriveRecord> recordGate,
             java.util.function.Function<DriveRecord, NamespaceProvisioner> namespaces) {
         this.drives = drives;
-        this.namespaces = java.util.Objects.requireNonNull(namespaces);
+        this.namespaces = Objects.requireNonNull(namespaces);
         this.multipleBackends = true;
         this.defaultBucketBase = defaultBucketBase;
         this.defaultRegion = defaultRegion;
-        this.defaultProvider = java.util.Objects.requireNonNull(defaultProvider);
-        this.recordGate = java.util.Objects.requireNonNull(recordGate);
+        this.defaultProvider = Objects.requireNonNull(defaultProvider);
+        this.recordGate = Objects.requireNonNull(recordGate);
     }
 
     /**
@@ -181,7 +183,7 @@ public final class DriveProvisioner {
      * Anything else collapses to a dash; edges are trimmed.
      */
     static String sanitizeBucketName(String raw) {
-        String lower = raw.toLowerCase(java.util.Locale.ROOT);
+        String lower = raw.toLowerCase(Locale.ROOT);
         StringBuilder sb = new StringBuilder(lower.length());
         int sepCount = 0;
         char firstSep = 0;

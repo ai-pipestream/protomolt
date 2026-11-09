@@ -263,7 +263,8 @@ batches share a slow server and a longer queue is preferable to failing:
 | TEI | `protomolt.embeddings.tei.admission-timeout-seconds` | `PROTOMOLT_TEI_ADMISSION_TIMEOUT_SECONDS` | 30 |
 | Turboembed | `protomolt.embeddings.turboembed.admission-timeout-seconds` | `PROTOMOLT_TURBOEMBED_ADMISSION_TIMEOUT_SECONDS` | 30 |
 
-A timeout must be a positive whole number of seconds. The RPC then has its own
+A timeout must be a positive whole number of seconds, at most 9223372036
+(the largest whole-second wait that fits in nanoseconds). The RPC then has its own
 30-second deadline. Permits are released on every return or failure. Turboembed
 keeps its sequential batches of at most 32 texts and acquires admission per RPC.
 TEI uses bounded worker futures rather than allocating one future per text;

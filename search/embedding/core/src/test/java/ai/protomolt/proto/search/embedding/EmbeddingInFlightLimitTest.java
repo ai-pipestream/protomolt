@@ -7,6 +7,7 @@ import java.time.Duration;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import org.junit.jupiter.api.Test;
 
 class EmbeddingInFlightLimitTest {
@@ -47,7 +48,7 @@ class EmbeddingInFlightLimitTest {
             try {
                 assertThat(entered.await(5, TimeUnit.SECONDS)).isTrue();
                 assertThatThrownBy(() -> limit.execute(1, () -> 2))
-                        .hasCauseInstanceOf(java.util.concurrent.TimeoutException.class);
+                        .hasCauseInstanceOf(TimeoutException.class);
             } finally {
                 release.countDown();
             }
@@ -73,7 +74,7 @@ class EmbeddingInFlightLimitTest {
                 assertThat(entered.await(5, TimeUnit.SECONDS)).isTrue();
                 long started = System.nanoTime();
                 assertThatThrownBy(() -> limit.execute(1, Duration.ofMillis(50), () -> 2))
-                        .hasCauseInstanceOf(java.util.concurrent.TimeoutException.class);
+                        .hasCauseInstanceOf(TimeoutException.class);
                 assertThat(TimeUnit.NANOSECONDS.toSeconds(System.nanoTime() - started)).isLessThan(5);
             } finally {
                 release.countDown();
@@ -97,6 +98,24 @@ class EmbeddingInFlightLimitTest {
         var limit = new EmbeddingInFlightLimit();
         assertThatThrownBy(() -> limit.execute(1, Duration.ZERO, () -> 1))
                 .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void admissionTimeoutSecondsRefusesAWaitThatOverflowsNanosecondsNamingTheKnob() {
+        long largest = EmbeddingInFlightLimit.MAX_ADMISSION_TIMEOUT_SECONDS;
+        assertThat(EmbeddingInFlightLimit.admissionTimeoutSeconds(Long.toString(largest), "knob").toNanos())
+                .isEqualTo(TimeUnit.SECONDS.toNanos(largest));
+        for (String bad : new String[] {Long.toString(largest + 1), Long.toString(Long.MAX_VALUE)}) {
+            assertThatThrownBy(() -> EmbeddingInFlightLimit.admissionTimeoutSeconds(bad, "knob"))
+                    .isInstanceOf(IllegalStateException.class)
+                    .hasMessageContaining("knob")
+                    .hasMessageContaining(bad);
+        }
+        var limit = new EmbeddingInFlightLimit();
+        assertThatThrownBy(() -> limit.execute(1, Duration.ofSeconds(Long.MAX_VALUE), () -> 1))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasCauseInstanceOf(ArithmeticException.class)
+                .hasMessageContaining("too long");
     }
 
     private static void await(CountDownLatch latch) {
