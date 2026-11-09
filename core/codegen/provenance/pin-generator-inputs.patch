@@ -11,18 +11,25 @@ index 6dbeeb4..12e8ed5 100755
  
      rm "$BINARYEN_TAR"
 diff --git a/buildtools-common/get_grpcjava.sh b/buildtools-common/get_grpcjava.sh
-index c986973..7b83a6d 100755
+index c986973..2707207 100755
 --- a/buildtools-common/get_grpcjava.sh
 +++ b/buildtools-common/get_grpcjava.sh
-@@ -7,6 +7,9 @@ mkdir -p "${SCRIPT_DIR}/grpcjava"
+@@ -3,10 +3,14 @@ set -euxo pipefail
+ 
+ SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &> /dev/null && pwd)
+ 
+-mkdir -p "${SCRIPT_DIR}/grpcjava"
++rm -rf "${SCRIPT_DIR}/grpcjava"
  
  GRPC_VERSION=$(awk '{$1=$1};1' < "${SCRIPT_DIR}/grpcjava-version.txt")
- curl --fail -L "https://github.com/grpc/grpc-java/archive/refs/tags/${GRPC_VERSION}.tar.gz" \
+-curl --fail -L "https://github.com/grpc/grpc-java/archive/refs/tags/${GRPC_VERSION}.tar.gz" \
 -    | tar -xz --strip-components 1 -C "${SCRIPT_DIR}/grpcjava"
-+    -o "${SCRIPT_DIR}/grpcjava.tar.gz"
-+echo "ca53210ee823a15d9b1ebe86a36b564d6834fd0c049e207469803180b7f8a20e  ${SCRIPT_DIR}/grpcjava.tar.gz" | sha256sum --check --strict
-+tar -xzf "${SCRIPT_DIR}/grpcjava.tar.gz" --strip-components 1 -C "${SCRIPT_DIR}/grpcjava"
-+rm "${SCRIPT_DIR}/grpcjava.tar.gz"
++git -c advice.detachedHead=false clone --depth 1 --branch "${GRPC_VERSION}" \
++    https://github.com/grpc/grpc-java.git "${SCRIPT_DIR}/grpcjava"
++# The tag must still resolve to the exact reviewed commit (v1.79.0). A git
++# commit is stable where GitHub's generated source archives are not.
++test "$(git -C "${SCRIPT_DIR}/grpcjava" rev-parse HEAD)" = "381593f39e37b530177faad3c6035cfce4536ec7" \
++    || { echo "ERROR: grpc-java ${GRPC_VERSION} is not the pinned commit" >&2; exit 1; }
  
  cp -R "${SCRIPT_DIR}/grpcjava/compiler/src/java_plugin/cpp" "${SCRIPT_DIR}/protobuf/src/grpcjava"
 \ No newline at end of file
@@ -39,17 +46,17 @@ index 2039213..4afd604 100755
 +    || { echo "ERROR: protobuf ${PROTOBUF_VERSION} is not the pinned commit" >&2; exit 1; }
  git submodule update --init --recursive
 diff --git a/buildtools-common/get_wasi_sdk.sh b/buildtools-common/get_wasi_sdk.sh
-index 379f688..ed0f9c7 100755
+index 379f688..8ef0c3c 100755
 --- a/buildtools-common/get_wasi_sdk.sh
 +++ b/buildtools-common/get_wasi_sdk.sh
 @@ -25,6 +25,12 @@ mkdir -p "${SCRIPT_DIR}/tools"
      cd "${SCRIPT_DIR}/tools"
      echo "Downloading wasi-sdk..."
      curl --fail -L "$WASI_SDK_URL" -o "$WASI_SDK_TAR"
++    # The pinned build image is linux/amd64 only (see buildtools-v4/Dockerfile).
 +    case "${WASI_SDK_ARCH}" in
 +        x86_64-linux) WASI_SDK_SHA256=52640dde13599bf127a95499e61d6d640256119456d1af8897ab6725bcf3d89c ;;
-+        arm64-linux)  WASI_SDK_SHA256=47fccad8b2498f2239e05e1115c3ffc652bf37e7de2f88fb64b2d663c976ce2d ;;
-+        *) echo "ERROR: no pinned wasi-sdk checksum for ${WASI_SDK_ARCH}" >&2; exit 1 ;;
++        *) echo "ERROR: no pinned wasi-sdk checksum for ${WASI_SDK_ARCH}; the pinned build runs on x86_64-linux" >&2; exit 1 ;;
 +    esac
 +    echo "${WASI_SDK_SHA256}  ${WASI_SDK_TAR}" | sha256sum --check --strict
      tar xvf "$WASI_SDK_TAR"
@@ -74,28 +81,37 @@ index 824dcb3..0f2086e 100755
  sed -i '/src\/google\/protobuf\/compiler\/subprocess\./d' "${SCRIPT_DIR}"/protobuf/src/file_lists.cmake
  sed -i '/src\/google\/protobuf\/compiler\/command_line_interface\./d' "${SCRIPT_DIR}"/protobuf/src/file_lists.cmake
 diff --git a/buildtools-v4/Dockerfile b/buildtools-v4/Dockerfile
-index 9268af1..80d6654 100644
+index 9268af1..c222d1b 100644
 --- a/buildtools-v4/Dockerfile
 +++ b/buildtools-v4/Dockerfile
-@@ -1,7 +1,20 @@
+@@ -1,7 +1,29 @@
 -FROM ubuntu:24.04
 -
 -# Install dependencies
 -RUN apt-get update && apt-get install -y git patch curl wget cmake && rm -rf /var/lib/apt/lists/*
-+FROM ubuntu:24.04@sha256:fe81560990fae86dc4743202b2cb4d3df98d0bcf949173cecef15ce1127ef852
++# The build runs on linux/amd64 only. The Ubuntu snapshot service serves
++# the amd64 archive but not ubuntu-ports, so an arm64 image could not pin
++# its packages; an arm64 host runs this amd64 image under emulation. The
++# WASM output does not depend on the build architecture.
++FROM --platform=linux/amd64 ubuntu:24.04@sha256:fe81560990fae86dc4743202b2cb4d3df98d0bcf949173cecef15ce1127ef852
 +
 +# Install dependencies from a fixed Ubuntu archive snapshot so package
-+# versions cannot drift between rebuilds (pinned by protomolt #828;
-+# see core/codegen/provenance/README.md in the protomolt repository).
++# versions cannot drift between rebuilds (see
++# core/codegen/provenance/README.md in the protomolt repository).
 +# The snapshot host redirects to HTTPS and the base image ships no CA
-+# bundle, so TLS peer verification is off for apt; package integrity and
-+# origin authentication come from apt's signed Release files, exactly as
-+# with the plain-HTTP archive this recipe used before.
++# bundle, so TLS peer verification is off for that one host only; package
++# integrity and origin authentication come from apt's signed Release
++# files, as with the plain-HTTP archive this recipe used before. The
++# source rewrite is checked, so an image whose sources do not match fails
++# here instead of installing unpinned packages.
 +RUN sed -i \
 +      -e 's|http://archive.ubuntu.com/ubuntu/|http://snapshot.ubuntu.com/ubuntu/20261024T120000Z/|' \
 +      -e 's|http://security.ubuntu.com/ubuntu/|http://snapshot.ubuntu.com/ubuntu/20261024T120000Z/|' \
 +      /etc/apt/sources.list.d/ubuntu.sources \
-+ && printf 'Acquire::https::Verify-Peer "false";\nAcquire::https::Verify-Host "false";\n' \
++ && grep -q 'snapshot.ubuntu.com/ubuntu/20261024T120000Z/' /etc/apt/sources.list.d/ubuntu.sources \
++ && ! grep -q -e 'archive.ubuntu.com' -e 'security.ubuntu.com' -e 'ports.ubuntu.com' \
++      /etc/apt/sources.list.d/ubuntu.sources \
++ && printf 'Acquire::https::snapshot.ubuntu.com::Verify-Peer "false";\nAcquire::https::snapshot.ubuntu.com::Verify-Host "false";\n' \
 +      > /etc/apt/apt.conf.d/99snapshot-tls \
 + && apt-get -o Acquire::Check-Valid-Until=false update \
 + && apt-get install -y git patch curl wget cmake && rm -rf /var/lib/apt/lists/*

@@ -42,7 +42,7 @@ tasks.named('check') {
 }
 
 // Ship the attribution material for the components compiled into the embedded
-// WASM binary inside the jar that carries the binary (#828).
+// WASM binary inside the jar that carries the binary.
 tasks.named('jar') {
     from(rootProject.file('LICENSE')) { into('META-INF') }
     from(rootProject.file('NOTICE')) { into('META-INF') }
