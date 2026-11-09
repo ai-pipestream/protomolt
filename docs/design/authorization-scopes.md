@@ -301,10 +301,13 @@ credential.
   compile-time rewrite consumes the caller identity this layer
   establishes and its own `metric_access` section on the policy
   document: denied members disappear from descriptions and refuse
-  queries by name, and per-principal row filters are ANDed into every
-  reduction as ordinary equality filters, with rollup subjects and the
-  rebuild verb fail-closed for restricted principals — see
-  [the metric mapping design](metric-mapping.md).
+  queries (and caller CEL predicates referencing them) by name, and
+  per-principal row filters (`equals`, `range`, `long_range`,
+  `double_range`, and boolean `cel` predicates over the subject's
+  rows) are validated against the mapping schema and ANDed into every
+  reduction before aggregation, with invalid policy rules, rollup
+  subjects, and the rebuild verb fail-closed for restricted principals
+  — see [the metric mapping design](metric-mapping.md).
 - **It does not issue credentials.** There is no token mint, no
   expiry, no JWT parsing. A credential is an opaque string whose
   digest a policy names; issuance and distribution belong to the

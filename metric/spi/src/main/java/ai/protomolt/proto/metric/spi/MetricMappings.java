@@ -115,7 +115,8 @@ public final class MetricMappings {
         if (!violations.isEmpty()) {
             throw new MetricSchemaException(descriptor.getFullName(), violations);
         }
-        return new MetricMapping(resolvedSubject, descriptor.getFullName(), members);
+        return new MetricMapping(
+                resolvedSubject, descriptor.getFullName(), members, descriptor);
     }
 
     // ------------------------------------------------------------- the walk

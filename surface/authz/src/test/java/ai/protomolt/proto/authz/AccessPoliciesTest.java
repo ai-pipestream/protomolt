@@ -4,6 +4,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import ai.protomolt.proto.actions.Scopes;
+import ai.protomolt.proto.types.DateRange;
+import ai.protomolt.proto.types.DoubleRange;
+import ai.protomolt.proto.types.LongRange;
 import com.google.protobuf.util.JsonFormat;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -238,5 +241,149 @@ class AccessPoliciesTest {
                 .build();
         assertThatThrownBy(() -> AccessPolicies.requireWellFormed(blankEquals))
                 .hasMessageContaining("invalid");
+    }
+
+    @Test
+    void metricRangeAndCelRowFiltersValidateAtPolicyLoad() {
+        AccessPolicy valid = policy().toBuilder()
+                .setPrincipals(0, policy().getPrincipals(0).toBuilder()
+                        .setMetricAccess(MetricAccess.newBuilder()
+                                .addRowFilters(MetricRowFilter.newBuilder()
+                                        .setMappingSubject("orders")
+                                        .setMember("created_at")
+                                        .setRange(DateRange.newBuilder()
+                                                .setBegin("2026-07-01")
+                                                .setEnd("2026-07-31")))
+                                .addRowFilters(MetricRowFilter.newBuilder()
+                                        .setMappingSubject("orders")
+                                        .setMember("revenue")
+                                        .setLongRange(LongRange.newBuilder()
+                                                .setBegin(50L)
+                                                .setEnd(500L)))
+                                .addRowFilters(MetricRowFilter.newBuilder()
+                                        .setMappingSubject("orders")
+                                        .setMember("avg_ratio")
+                                        .setDoubleRange(DoubleRange.newBuilder()
+                                                .setBegin(0.1)
+                                                .setEnd(0.9)))
+                                .addRowFilters(MetricRowFilter.newBuilder()
+                                        .setMappingSubject("orders")
+                                        .setCel("this.segment == 'smb' && this.amount >= 50"))
+                                .addRowFilters(MetricRowFilter.newBuilder()
+                                        .setMappingSubject("orders")
+                                        .setCel("this.paying == true"))))
+                .build();
+        assertThat(AccessPolicies.requireWellFormed(valid)).isSameAs(valid);
+
+        // Multiple filter forms on a single MetricRowFilter -> rejected.
+        AccessPolicy twoForms = policy().toBuilder()
+                .setPrincipals(0, policy().getPrincipals(0).toBuilder()
+                        .setMetricAccess(MetricAccess.newBuilder()
+                                .addRowFilters(MetricRowFilter.newBuilder()
+                                        .setMappingSubject("orders")
+                                        .setMember("segment")
+                                        .addEquals("smb")
+                                        .setCel("this.segment == 'smb'"))))
+                .build();
+        assertThatThrownBy(() -> AccessPolicies.requireWellFormed(twoForms))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("exactly one of equals, range, long_range, double_range, or cel");
+
+        // Missing member on a range filter -> rejected.
+        AccessPolicy rangeWithoutMember = policy().toBuilder()
+                .setPrincipals(0, policy().getPrincipals(0).toBuilder()
+                        .setMetricAccess(MetricAccess.newBuilder()
+                                .addRowFilters(MetricRowFilter.newBuilder()
+                                        .setMappingSubject("orders")
+                                        .setLongRange(LongRange.newBuilder()
+                                                .setBegin(10L)))))
+                .build();
+        assertThatThrownBy(() -> AccessPolicies.requireWellFormed(rangeWithoutMember))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("requires a member name");
+
+        // Empty integer range after exclusive bounds (5, 6) -> rejected.
+        AccessPolicy emptyLongRange = policy().toBuilder()
+                .setPrincipals(0, policy().getPrincipals(0).toBuilder()
+                        .setMetricAccess(MetricAccess.newBuilder()
+                                .addRowFilters(MetricRowFilter.newBuilder()
+                                        .setMappingSubject("orders")
+                                        .setMember("revenue")
+                                        .setLongRange(LongRange.newBuilder()
+                                                .setBegin(5L)
+                                                .setEnd(6L)
+                                                .setIncludeHead(false)
+                                                .setIncludeTail(false)))))
+                .build();
+        assertThatThrownBy(() -> AccessPolicies.requireWellFormed(emptyLongRange))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("empty long_range");
+
+        // Empty date range after exclusive bounds -> rejected.
+        AccessPolicy emptyDateRange = policy().toBuilder()
+                .setPrincipals(0, policy().getPrincipals(0).toBuilder()
+                        .setMetricAccess(MetricAccess.newBuilder()
+                                .addRowFilters(MetricRowFilter.newBuilder()
+                                        .setMappingSubject("orders")
+                                        .setMember("created_at")
+                                        .setRange(DateRange.newBuilder()
+                                                .setBegin("2026-07-10")
+                                                .setEnd("2026-07-11")
+                                                .setIncludeHead(false)
+                                                .setIncludeTail(false)))))
+                .build();
+        assertThatThrownBy(() -> AccessPolicies.requireWellFormed(emptyDateRange))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("empty date range");
+
+        // Syntax error in CEL -> rejected.
+        AccessPolicy badCelSyntax = policy().toBuilder()
+                .setPrincipals(0, policy().getPrincipals(0).toBuilder()
+                        .setMetricAccess(MetricAccess.newBuilder()
+                                .addRowFilters(MetricRowFilter.newBuilder()
+                                        .setMappingSubject("orders")
+                                        .setCel("this.segment =="))))
+                .build();
+        assertThatThrownBy(() -> AccessPolicies.requireWellFormed(badCelSyntax))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("invalid cel");
+
+        // Non-boolean / constant literal CEL -> rejected.
+        AccessPolicy nonBooleanCel = policy().toBuilder()
+                .setPrincipals(0, policy().getPrincipals(0).toBuilder()
+                        .setMetricAccess(MetricAccess.newBuilder()
+                                .addRowFilters(MetricRowFilter.newBuilder()
+                                        .setMappingSubject("orders")
+                                        .setCel("this.amount + 1"))))
+                .build();
+        assertThatThrownBy(() -> AccessPolicies.requireWellFormed(nonBooleanCel))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("boolean predicate");
+
+        AccessPolicy constantLiteralCel = policy().toBuilder()
+                .setPrincipals(0, policy().getPrincipals(0).toBuilder()
+                        .setMetricAccess(MetricAccess.newBuilder()
+                                .addRowFilters(MetricRowFilter.newBuilder()
+                                        .setMappingSubject("orders")
+                                        .setCel("true"))))
+                .build();
+        assertThatThrownBy(() -> AccessPolicies.requireWellFormed(constantLiteralCel))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("boolean predicate");
+
+        // Duplicate CEL filter on same subject -> rejected.
+        AccessPolicy duplicateCel = policy().toBuilder()
+                .setPrincipals(0, policy().getPrincipals(0).toBuilder()
+                        .setMetricAccess(MetricAccess.newBuilder()
+                                .addRowFilters(MetricRowFilter.newBuilder()
+                                        .setMappingSubject("orders")
+                                        .setCel("this.paying == true"))
+                                .addRowFilters(MetricRowFilter.newBuilder()
+                                        .setMappingSubject("orders")
+                                        .setCel("this.paying == true"))))
+                .build();
+        assertThatThrownBy(() -> AccessPolicies.requireWellFormed(duplicateCel))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("duplicates CEL filter");
     }
 }

@@ -304,11 +304,15 @@ metric prerequisite.
    already be one row before aggregation.
 8. **Row/member security is the access policy's, not a query
    feature.** The policy document's `metric_access` section declares
-   per-principal denied members and injected equality row filters (the
-   metric layer's own filter shape, no new policy language); the metric
-   service rewrites at compile time from the resolved caller, with
-   rollup subjects and the rebuild verb fail-closed for restricted
-   principals. See [authorization scopes](authorization-scopes.md).
+   per-principal denied members and injected row filters (`equals`,
+   `range`, `long_range`, `double_range`, and boolean `cel` predicates
+   over the subject's rows — the metric layer's own filter shape,
+   validated at policy load and against the mapping schema at compile
+   time); the metric service rewrites at compile time from the
+   resolved caller across gRPC and catalog actions, with invalid
+   policy rules, rollup subjects, and the rebuild verb fail-closed for
+   restricted principals. See
+   [authorization scopes](authorization-scopes.md).
 9. **Physical SQL is evidence, not an API.** A response may carry the
    Lucene collector plan or the DuckDB statement so a human or agent
    can see what ran. Clients do not submit SQL.
@@ -484,8 +488,9 @@ you cannot annotate still serve.
 
 Package `ai.protomolt.proto.metric.v1`, in `metric/proto` the way
 `search.v1` lives in `search/proto`. The sketch below is what shipped,
-with three additions: `MetricFilter` grew a `DateRange range` and a
-`TreePath prefix` beside the equality set (exactly one form per
+with additions: `MetricFilter` grew `DateRange range`,
+`TreePath prefix`, `LongRange long_range`, `DoubleRange double_range`,
+and boolean `string cel` beside the equality set (exactly one form per
 filter), and `RebuildRollup` joined the service with
 `RebuildRollupRequest` / `RollupEnrichment` /
 `RebuildRollupResponse`. Read the proto for those.
@@ -506,10 +511,13 @@ message MemberRef {
 
 message MetricFilter {
   string member = 1;
-  // Equality set. Empty values refused. Exactly one of these three forms.
+  // Exactly one of these six forms.
   repeated string equals = 2;
-  ai.protomolt.proto.types.v1.DateRange range = 3;   // DATE dimensions
-  ai.protomolt.proto.types.v1.TreePath prefix = 4;   // TREE_PATH dimensions
+  ai.protomolt.proto.types.v1.DateRange range = 3;         // DATE dimensions
+  ai.protomolt.proto.types.v1.TreePath prefix = 4;         // TREE_PATH dimensions
+  ai.protomolt.proto.types.v1.LongRange long_range = 5;    // NUMERIC dimensions/measures
+  ai.protomolt.proto.types.v1.DoubleRange double_range = 6;// NUMERIC dimensions/measures
+  string cel = 7;                                          // boolean CEL predicate
 }
 
 message QueryMetricsRequest {
@@ -740,10 +748,13 @@ and is useful with no metric code on the classpath.
 - Caller-submitted SQL
 - Agent memories, behavior rules, BYO-LLM routing as product features
 - A row-level policy language beyond the access policy's per-principal
-  deny lists and equality row filters (JWT claim mapping stays the
-  OIDC resolver's job)
-- CEL query filters. Date ranges and tree-path prefixes shipped as
-  typed filter forms; arbitrary caller CEL over rows did not.
+  deny lists and typed (`equals`, `range`, `long_range`,
+  `double_range`, boolean `cel`) row filters (JWT claim mapping stays
+  the OIDC resolver's job)
+- Unbounded CEL query filters. Date ranges, numeric ranges, tree-path
+  prefixes, and schema-checked boolean row predicates shipped as typed
+  filter forms; arbitrary non-boolean or unindexed CEL expressions did
+  not.
 - Mixing retrieval hits into an aggregate in one RPC
 - Default subject, default limit, and any backend guess on a
   multi-engine mount (a single-engine mount resolving an unset backend

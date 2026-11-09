@@ -255,7 +255,8 @@ public final class MetricServiceModule implements ServiceModule {
         context.channels().publishInProcess(ROLE, name);
 
         for (ProtoAction action : MetricActions.over(
-                served, config.rollupSink(), config.subjectResolver())) {
+                served, config.rollupSink(), config.subjectResolver(),
+                config.accessPolicy())) {
             context.contributions().contribute(ProtoAction.class, action);
         }
 
