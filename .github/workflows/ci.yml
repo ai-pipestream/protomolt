@@ -209,9 +209,22 @@ jobs:
       - name: Build the conformance executor
         run: ./gradlew :protomolt-protobuf-validation-conformance:installDist --max-workers=2 --console=plain
 
-      - name: Run the full conformance suite
+      # All three comparison modes gate (#824): default structure, exact
+      # violation prose, and compile-time vs runtime error classification.
+      # No case filters, expected-failure lists, or skips in any mode.
+      - name: Run the full conformance suite (default)
         run: |
           protovalidate-conformance \
+            protobuf/validation-conformance/build/install/protomolt-protobuf-validation-conformance/bin/protomolt-protobuf-validation-conformance
+
+      - name: Run the full conformance suite (strict_message)
+        run: |
+          protovalidate-conformance --strict_message \
+            protobuf/validation-conformance/build/install/protomolt-protobuf-validation-conformance/bin/protomolt-protobuf-validation-conformance
+
+      - name: Run the full conformance suite (strict_error)
+        run: |
+          protovalidate-conformance --strict_error \
             protobuf/validation-conformance/build/install/protomolt-protobuf-validation-conformance/bin/protomolt-protobuf-validation-conformance
 
   # Runs the live-registry integration suites (Apicurio native v3, Apicurio
