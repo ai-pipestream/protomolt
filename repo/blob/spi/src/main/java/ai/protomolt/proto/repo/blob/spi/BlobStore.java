@@ -245,6 +245,28 @@ public interface BlobStore {
     }
 
     /**
+     * Opens a streamed read of the whole current object when the caller holds an
+     * authoritative expected length and lowercase hex SHA-256 digest (for example,
+     * from a {@code StackRef}).
+     *
+     * <p>Read-through cache decorators use {@code expectedLength} to skip cache
+     * lookups for oversized objects and verify cached bytes against both
+     * {@code expectedLength} and {@code expectedSha256Hex}, evicting corrupt or
+     * mismatched cache entries and falling back to the authoritative backing store.
+     *
+     * @param bucket the bucket
+     * @param key the object key
+     * @param expectedLength expected object length in bytes
+     * @param expectedSha256Hex expected 64-character lowercase hex SHA-256 digest
+     * @return the object's bytes from offset 0
+     * @throws BlobNotFoundException when the object does not exist
+     */
+    default InputStream openVerifiedStream(
+            String bucket, String key, long expectedLength, String expectedSha256Hex) {
+        return openStream(bucket, key, 0, -1);
+    }
+
+    /**
      * Server-side copy of one object within this store (the four-part partial
      * save's copy-forward: unwritten parts move between addresses without
      * their bytes ever transiting the service).

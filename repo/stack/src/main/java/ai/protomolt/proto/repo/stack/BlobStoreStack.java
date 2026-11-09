@@ -151,7 +151,7 @@ public final class BlobStoreStack implements Stack {
 
     @Override public InputStream open(StackRef ref) throws IOException {
         requireOwn(ref);
-        return new VerifyingInputStream(raw(ref, 0, -1), ref.getLength(), ref.getSha256());
+        return new VerifyingInputStream(rawVerified(ref), ref.getLength(), ref.getSha256());
     }
 
     @Override public InputStream openRange(StackRef ref, long offset, long length) throws IOException {
@@ -200,6 +200,18 @@ public final class BlobStoreStack implements Stack {
             throw failure;
         } catch (Exception failure) {
             throw new IOException("Stack resources did not close", failure);
+        }
+    }
+
+    private InputStream rawVerified(StackRef ref) throws IOException {
+        try {
+            return store.openVerifiedStream(bucket, ref.getKey(), ref.getLength(), ref.getSha256());
+        } catch (BlobStore.BlobNotFoundException missing) {
+            throw new StackDataLoss("Referenced stack object is missing", missing);
+        } catch (UnsupportedOperationException unsupported) {
+            throw unsupported;
+        } catch (RuntimeException failure) {
+            throw new IOException("Stack read failed", failure);
         }
     }
 

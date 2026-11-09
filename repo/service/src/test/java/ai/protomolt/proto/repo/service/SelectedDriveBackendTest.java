@@ -87,4 +87,39 @@ class SelectedDriveBackendTest {
         for (var provider : java.util.List.of("s3", "redis"))
             refused(new SelectedDriveBackend(config(provider)), drive(provider, remote));
     }
+
+    @Test void perDriveReadThroughCacheRequiresDriveBackingPoolUnlessMatchingHostCache() {
+        var s3 = S3DriveConfig.newBuilder().setEndpointOverride("http://storage:9000").setForcePathStyle(true);
+        var hostCacheConfig = config("s3-valkey-cache");
+        var matchingCache = ai.protomolt.proto.repo.v1.DriveCacheConfig.newBuilder()
+                .setProvider("valkey")
+                .setUri(hostCacheConfig.redisUri())
+                .setTtlSeconds(hostCacheConfig.redisTtlSeconds())
+                .setMaxCacheableBytes(hostCacheConfig.redisMaxObjectBytes())
+                .build();
+
+        // Plain S3 host without DriveBackingPool refuses an explicit read_through_cache
+        refused(new SelectedDriveBackend(config("s3")),
+                drive("s3", DriveProviderConfig.newBuilder()
+                        .setS3(s3.clone().setReadThroughCache(matchingCache)).build()));
+
+        // Host with s3-valkey-cache accepts an identical cache and refuses any divergence
+        var cachedGate = new SelectedDriveBackend(hostCacheConfig);
+        cachedGate.accept(drive("s3", DriveProviderConfig.newBuilder()
+                .setS3(s3.clone().setReadThroughCache(matchingCache)).build()));
+        cachedGate.accept(drive("s3", DriveProviderConfig.newBuilder()
+                .setS3(s3.clone().setReadThroughCache(matchingCache.toBuilder().clearProvider())).build()));
+        refused(cachedGate, drive("s3", DriveProviderConfig.newBuilder()
+                .setS3(s3.clone().setReadThroughCache(matchingCache.toBuilder().setProvider("redis"))).build()));
+        refused(cachedGate, drive("s3", DriveProviderConfig.newBuilder()
+                .setS3(s3.clone().setReadThroughCache(matchingCache.toBuilder().setUri("redis://other:6379"))).build()));
+        refused(cachedGate, drive("s3", DriveProviderConfig.newBuilder()
+                .setS3(s3.clone().setReadThroughCache(matchingCache.toBuilder().setTtlSeconds(10))).build()));
+        refused(cachedGate, drive("s3", DriveProviderConfig.newBuilder()
+                .setS3(s3.clone().setReadThroughCache(matchingCache.toBuilder().setMaxCacheableBytes(10))).build()));
+        refused(cachedGate, drive("s3", DriveProviderConfig.newBuilder()
+                .setS3(s3.clone().setReadThroughCache(matchingCache.toBuilder().setKeyPrefix("custom:"))).build()));
+        refused(cachedGate, drive("s3", DriveProviderConfig.newBuilder()
+                .setS3(s3.clone().setReadThroughCache(matchingCache.toBuilder().setCredentialsRef("env:CACHE"))).build()));
+    }
 }

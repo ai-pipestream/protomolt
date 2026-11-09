@@ -598,6 +598,12 @@ public record RepoServiceConfig(
                 || BLOB_STORE_S3_REDIS_CACHE.equals(blobStore);
     }
 
+    /** Whether the host default S3 backing is fronted by a Valkey or Redis read-through cache. */
+    boolean hasRedisCache() {
+        return BLOB_STORE_S3_VALKEY_CACHE.equals(blobStore)
+                || BLOB_STORE_S3_REDIS_CACHE.equals(blobStore);
+    }
+
     /** Provider used to acquire the selected Redis-compatible endpoint, with no fallback. */
     String redisCompatibleProvider() {
         return BLOB_STORE_VALKEY.equals(blobStore) || BLOB_STORE_S3_VALKEY_CACHE.equals(blobStore)

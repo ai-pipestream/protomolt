@@ -243,4 +243,37 @@ class CacheProviderIT {
             cacheHandle.close();
         }
     }
+
+    @Test
+    void namespaceIsolationAndVerifiedStreamReadThroughOnS3AndValkey() throws Exception {
+        var providers = BlobStores.discover();
+        s3Handle = providers.open("s3", s3Options());
+        redisHandle = providers.open("valkey", redisOptions("ns-it-" + UUID.randomUUID()));
+        var backing = s3Handle.store();
+        var cache = redisHandle.store();
+
+        var driveA = new CachingBlobStore(backing, cache, 60, 1024 * 1024, "s3|http://endpoint-a:4566|us-east-1|pathStyle=true");
+        var driveB = new CachingBlobStore(backing, cache, 60, 1024 * 1024, "s3|http://endpoint-b:4566|us-east-1|pathStyle=true");
+
+        byte[] payloadA = bytes("streamed-drive-a-payload");
+        String shaA = java.util.HexFormat.of().formatHex(
+                java.security.MessageDigest.getInstance("SHA-256").digest(payloadA));
+        backing.put(spec(BUCKET, "shared-stream-key"),
+                new java.io.ByteArrayInputStream(payloadA), payloadA.length);
+
+        try (var stream = driveA.openVerifiedStream(BUCKET, "shared-stream-key", payloadA.length, shaA)) {
+            assertThat(stream.readAllBytes()).isEqualTo(payloadA);
+        }
+        assertThat(cache.get(driveA.cacheBucket(BUCKET), "shared-stream-key").data()).isEqualTo(payloadA);
+        assertThatThrownBy(() -> cache.get(driveB.cacheBucket(BUCKET), "shared-stream-key"))
+                .isInstanceOf(BlobStore.BlobNotFoundException.class);
+
+        // Poison driveA's cache entry; openVerifiedStream detects the SHA-256 mismatch,
+        // evicts the corrupt entry, and falls back to authoritative S3.
+        cache.put(spec(driveA.cacheBucket(BUCKET), "shared-stream-key"), bytes("corrupt-stream-payload!!"));
+        try (var stream = driveA.openVerifiedStream(BUCKET, "shared-stream-key", payloadA.length, shaA)) {
+            assertThat(stream.readAllBytes()).isEqualTo(payloadA);
+        }
+        assertThat(cache.get(driveA.cacheBucket(BUCKET), "shared-stream-key").data()).isEqualTo(payloadA);
+    }
 }
