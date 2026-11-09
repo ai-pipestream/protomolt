@@ -1,0 +1,104 @@
+diff --git a/buildtools-common/get_binaryen.sh b/buildtools-common/get_binaryen.sh
+index 6dbeeb4..12e8ed5 100755
+--- a/buildtools-common/get_binaryen.sh
++++ b/buildtools-common/get_binaryen.sh
+@@ -15,6 +15,7 @@ mkdir -p "${SCRIPT_DIR}/tools"
+     cd "${SCRIPT_DIR}/tools"
+     echo "Downloading binaryen..."
+     curl --fail -L "$BINARYEN_URL" -o "$BINARYEN_TAR"
++    echo "e959f2170af4c20c552e9de3a0253704d6a9d2766e8fdb88e4d6ac4bae9388fe  ${BINARYEN_TAR}" | sha256sum --check --strict
+     tar xvf "$BINARYEN_TAR"
+ 
+     rm "$BINARYEN_TAR"
+diff --git a/buildtools-common/get_grpcjava.sh b/buildtools-common/get_grpcjava.sh
+index c986973..7b83a6d 100755
+--- a/buildtools-common/get_grpcjava.sh
++++ b/buildtools-common/get_grpcjava.sh
+@@ -7,6 +7,9 @@ mkdir -p "${SCRIPT_DIR}/grpcjava"
+ 
+ GRPC_VERSION=$(awk '{$1=$1};1' < "${SCRIPT_DIR}/grpcjava-version.txt")
+ curl --fail -L "https://github.com/grpc/grpc-java/archive/refs/tags/${GRPC_VERSION}.tar.gz" \
+-    | tar -xz --strip-components 1 -C "${SCRIPT_DIR}/grpcjava"
++    -o "${SCRIPT_DIR}/grpcjava.tar.gz"
++echo "ca53210ee823a15d9b1ebe86a36b564d6834fd0c049e207469803180b7f8a20e  ${SCRIPT_DIR}/grpcjava.tar.gz" | sha256sum --check --strict
++tar -xzf "${SCRIPT_DIR}/grpcjava.tar.gz" --strip-components 1 -C "${SCRIPT_DIR}/grpcjava"
++rm "${SCRIPT_DIR}/grpcjava.tar.gz"
+ 
+ cp -R "${SCRIPT_DIR}/grpcjava/compiler/src/java_plugin/cpp" "${SCRIPT_DIR}/protobuf/src/grpcjava"
+\ No newline at end of file
+diff --git a/buildtools-common/get_protobuf.sh b/buildtools-common/get_protobuf.sh
+index 2039213..4afd604 100755
+--- a/buildtools-common/get_protobuf.sh
++++ b/buildtools-common/get_protobuf.sh
+@@ -10,4 +10,7 @@ rm -rf "${SCRIPT_DIR}/protobuf"
+ PROTOBUF_VERSION=$(awk '{$1=$1};1' < "${SCRIPT_DIR}/protobuf-version.txt")
+ git clone --depth 1 --branch "${PROTOBUF_VERSION}" https://github.com/protocolbuffers/protobuf.git "${SCRIPT_DIR}/protobuf"
+ cd "${SCRIPT_DIR}/protobuf"
++# The tag must still resolve to the exact reviewed commit (v34.1).
++test "$(git rev-parse HEAD)" = "4b0c3aacf0657fbf38253b38918d3358dd4319ec" \
++    || { echo "ERROR: protobuf ${PROTOBUF_VERSION} is not the pinned commit" >&2; exit 1; }
+ git submodule update --init --recursive
+diff --git a/buildtools-common/get_wasi_sdk.sh b/buildtools-common/get_wasi_sdk.sh
+index 379f688..ed0f9c7 100755
+--- a/buildtools-common/get_wasi_sdk.sh
++++ b/buildtools-common/get_wasi_sdk.sh
+@@ -25,6 +25,12 @@ mkdir -p "${SCRIPT_DIR}/tools"
+     cd "${SCRIPT_DIR}/tools"
+     echo "Downloading wasi-sdk..."
+     curl --fail -L "$WASI_SDK_URL" -o "$WASI_SDK_TAR"
++    case "${WASI_SDK_ARCH}" in
++        x86_64-linux) WASI_SDK_SHA256=52640dde13599bf127a95499e61d6d640256119456d1af8897ab6725bcf3d89c ;;
++        arm64-linux)  WASI_SDK_SHA256=47fccad8b2498f2239e05e1115c3ffc652bf37e7de2f88fb64b2d663c976ce2d ;;
++        *) echo "ERROR: no pinned wasi-sdk checksum for ${WASI_SDK_ARCH}" >&2; exit 1 ;;
++    esac
++    echo "${WASI_SDK_SHA256}  ${WASI_SDK_TAR}" | sha256sum --check --strict
+     tar xvf "$WASI_SDK_TAR"
+ 
+     rm "$WASI_SDK_TAR"
+diff --git a/buildtools-common/patch_protobuf.sh b/buildtools-common/patch_protobuf.sh
+index 824dcb3..0f2086e 100755
+--- a/buildtools-common/patch_protobuf.sh
++++ b/buildtools-common/patch_protobuf.sh
+@@ -19,6 +19,13 @@ set_target_properties(protoc-wrapper PROPERTIES VERSION ${protobuf_VERSION})
+ add_dependencies(plugins protoc-wrapper)
+ EOF
+ 
++# Pin the CMake FetchContent abseil input to the exact commit of its
++# 20250512.1 tag instead of the movable tag name.
++sed -i 's/set(abseil-cpp-version "20250512.1")/set(abseil-cpp-version "76bb24329e8bf5f39704eb10d21b9a80befa7c81")/' \
++    "${SCRIPT_DIR}/protobuf/cmake/dependencies.cmake"
++grep -q 'set(abseil-cpp-version "76bb24329e8bf5f39704eb10d21b9a80befa7c81")' \
++    "${SCRIPT_DIR}/protobuf/cmake/dependencies.cmake"
++
+ rm "${SCRIPT_DIR}"/protobuf/src/google/protobuf/compiler/subprocess.* "${SCRIPT_DIR}"/protobuf/src/google/protobuf/compiler/command_line_interface.*
+ sed -i '/src\/google\/protobuf\/compiler\/subprocess\./d' "${SCRIPT_DIR}"/protobuf/src/file_lists.cmake
+ sed -i '/src\/google\/protobuf\/compiler\/command_line_interface\./d' "${SCRIPT_DIR}"/protobuf/src/file_lists.cmake
+diff --git a/buildtools-v4/Dockerfile b/buildtools-v4/Dockerfile
+index 9268af1..80d6654 100644
+--- a/buildtools-v4/Dockerfile
++++ b/buildtools-v4/Dockerfile
+@@ -1,7 +1,20 @@
+-FROM ubuntu:24.04
+-
+-# Install dependencies
+-RUN apt-get update && apt-get install -y git patch curl wget cmake && rm -rf /var/lib/apt/lists/*
++FROM ubuntu:24.04@sha256:fe81560990fae86dc4743202b2cb4d3df98d0bcf949173cecef15ce1127ef852
++
++# Install dependencies from a fixed Ubuntu archive snapshot so package
++# versions cannot drift between rebuilds (pinned by protomolt #828;
++# see core/codegen/provenance/README.md in the protomolt repository).
++# The snapshot host redirects to HTTPS and the base image ships no CA
++# bundle, so TLS peer verification is off for apt; package integrity and
++# origin authentication come from apt's signed Release files, exactly as
++# with the plain-HTTP archive this recipe used before.
++RUN sed -i \
++      -e 's|http://archive.ubuntu.com/ubuntu/|http://snapshot.ubuntu.com/ubuntu/20261024T120000Z/|' \
++      -e 's|http://security.ubuntu.com/ubuntu/|http://snapshot.ubuntu.com/ubuntu/20261024T120000Z/|' \
++      /etc/apt/sources.list.d/ubuntu.sources \
++ && printf 'Acquire::https::Verify-Peer "false";\nAcquire::https::Verify-Host "false";\n' \
++      > /etc/apt/apt.conf.d/99snapshot-tls \
++ && apt-get -o Acquire::Check-Valid-Until=false update \
++ && apt-get install -y git patch curl wget cmake && rm -rf /var/lib/apt/lists/*
+ 
+ WORKDIR /workspace
+ 

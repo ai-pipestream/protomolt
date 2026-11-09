@@ -48,3 +48,44 @@ Bundled at: core/formats/src/main/java/ai/protomolt/proto/formats/LinkRelations.
 IANA Link Relations registry
 Internet Assigned Numbers Authority (IANA)
 https://www.iana.org/assignments/link-relations/
+
+This product embeds protoc-wrapper-v4.wasm (core/codegen), a WebAssembly
+build of protoc and the grpc-java compiler plugin, compiled from the
+components below. Exact versions, input digests, and the rebuild procedure
+are recorded in core/codegen/provenance/README.md. Full license texts are
+in the licenses/ directory named below and are packaged in the
+protomolt-codegen jar under META-INF/.
+
+Protocol Buffers (protoc and libprotobuf), v34.1
+Copyright 2008 Google Inc.
+BSD 3-Clause License: licenses/LICENSE-protobuf.txt
+https://github.com/protocolbuffers/protobuf
+
+utf8_range (bundled in Protocol Buffers third_party)
+Copyright (c) 2019 Yibo Cai; Copyright 2022 Google LLC
+MIT License: licenses/LICENSE-utf8_range.txt
+https://github.com/protocolbuffers/protobuf/tree/main/third_party/utf8_range
+
+Abseil C++ Libraries, 20250512.1 (linked into libprotobuf/libprotoc)
+Copyright the Abseil authors
+Apache License, Version 2.0 (see the root LICENSE file)
+https://github.com/abseil/abseil-cpp
+
+gRPC-Java compiler plugin, v1.79.0
+Copyright 2014 The gRPC Authors
+Apache License, Version 2.0 (see the root LICENSE file);
+upstream notice: licenses/NOTICE-grpc-java.txt
+https://github.com/grpc/grpc-java
+
+LLVM runtime libraries shipped in the WASI SDK sysroot and linked into the
+binary (libc++, libc++abi, compiler-rt), LLVM 19 (WASI SDK 25.0)
+Copyright the LLVM Project contributors
+Apache License, Version 2.0 with LLVM Exceptions: licenses/LICENSE-llvm.txt
+https://llvm.org
+
+wasi-libc (linked into the binary via the WASI SDK 25.0 sysroot), including
+portions derived from musl (MIT), cloudlibc (BSD 2-Clause), dlmalloc (CC0),
+and emmalloc (MIT), as itemized in licenses/LICENSE-wasi-libc.txt
+Apache License, Version 2.0 with LLVM Exceptions / MIT:
+licenses/LICENSE-wasi-libc-apache-llvm.txt, licenses/LICENSE-wasi-libc-mit.txt
+https://github.com/WebAssembly/wasi-libc
