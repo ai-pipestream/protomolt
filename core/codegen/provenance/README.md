@@ -10,14 +10,15 @@ download: it is the output of the protobuf4j build recorded below.
 - Source and build commit: `359ad92e3e6ba46b59d99ce51417ac35730a9abb`
 - Build target: `make build-v4`
 - Output: `wasm/protoc-wrapper-v4.wasm`
-- SHA-256: `d313a23b806a089c39b493049f4c94c7be938ba6a62c76b0b6f8c8fa02017baf`
+- SHA-256: `0c1a98a6e731bd8553b31867dda88c80231c2625b622d182d7a2dd028715f03f`
 
-That source revision builds the wrapper in an Ubuntu 24.04 container with:
+That source revision, with `pin-generator-inputs.patch` applied, builds the wrapper
+in an Ubuntu 24.04 container with:
 
-- Protocol Buffers `v34.1`
-- grpc-java compiler plugin `v1.79.0`
-- WASI SDK `25.0`
-- Binaryen `123`
+- Protocol Buffers `v36.2`
+- grpc-java compiler plugin `v1.85.1`
+- WASI SDK `34.0` (LLVM 23.1.0, wasi-libc `2e6fb9d8ee0c`)
+- Binaryen `133`
 
 It contains protoc's Java, Kotlin, Python, C++, C#, Ruby, PHP, and Objective-C
 generators together with the grpc-java plugin. ProtoMolt executes the module
@@ -31,17 +32,21 @@ a mutable image tag, unchecksummed tool archives, and git tags. The rebuild
 script therefore applies `pin-generator-inputs.patch` to the checked-out
 protobuf4j tree before building. The patch is reviewed against the exact
 source commit above; if it stops applying, the pins must be re-derived in the
-open, not worked around. Nothing in the patch changes what is built, only
+open, not worked around. The patch moves Protocol Buffers and the grpc-java
+plugin to the versions the repository runtime uses (protobuf-java 4.36.2, grpc
+1.85.1; the recipe's own version files name v34.1 and v1.79.0), moves the WASI
+SDK and Binaryen to their current releases with the two recipe changes described
+under "Toolchain changes for WASI SDK 34" below, and otherwise changes only
 which exact bytes may be built from:
 
 | Input | Identity | Pin |
 |---|---|---|
 | Docker base image | `ubuntu:24.04` (OCI index), `linux/amd64` platform | `sha256:fe81560990fae86dc4743202b2cb4d3df98d0bcf949173cecef15ce1127ef852` |
 | apt packages (git, patch, curl, wget, cmake) | Ubuntu snapshot `20261024T120000Z`, the pinned base image's creation date (update the two together) | `http://snapshot.ubuntu.com/ubuntu/20261024T120000Z/` |
-| WASI SDK 25.0 `x86_64-linux` tarball | `wasi-sdk-25.0-x86_64-linux.tar.gz` | `52640dde13599bf127a95499e61d6d640256119456d1af8897ab6725bcf3d89c` |
-| Binaryen 123 `x86_64-linux` tarball | `binaryen-version_123-x86_64-linux.tar.gz` (matches upstream's published `.sha256`) | `e959f2170af4c20c552e9de3a0253704d6a9d2766e8fdb88e4d6ac4bae9388fe` |
-| grpc-java `v1.79.0` | git clone of the tag; HEAD must equal the tag's commit before any use | `381593f39e37b530177faad3c6035cfce4536ec7` |
-| Protocol Buffers `v34.1` | git clone of the tag; HEAD must equal the tag's commit before any use | `4b0c3aacf0657fbf38253b38918d3358dd4319ec` |
+| WASI SDK 34.0 `x86_64-linux` tarball | `wasi-sdk-34.0-x86_64-linux.tar.gz` (upstream publishes no checksum; computed from the release asset) | `b761e3a0721dbae9c09a0059e5fdb2bf917d1b4a8a7b430fb3b5aafb0984b2c4` |
+| Binaryen 133 `x86_64-linux` tarball | `binaryen-version_133-x86_64-linux.tar.gz` (matches upstream's published `.sha256`) | `2dc9c7813f5375db93d96ead4b78222fcc3e2677bbb832297af4797782a37489` |
+| grpc-java `v1.85.1` | git clone of the tag; HEAD must equal the tag's commit before any use | `54c634aed4b5c78a29d0fa51d9282e9538722543` |
+| Protocol Buffers `v36.2` | git clone of the tag; HEAD must equal the tag's commit before any use | `2c74169b34066ceb8ddb6b882fcb3fb32d737a55` |
 | Abseil `20250512.1` (CMake FetchContent in protobuf) | `GIT_TAG` rewritten from the tag name to its commit | `76bb24329e8bf5f39704eb10d21b9a80befa7c81` |
 
 Git-sourced inputs are pinned by commit rather than by the SHA-256 of GitHub's
@@ -50,6 +55,39 @@ stable. Tool archives are release assets and are pinned by SHA-256, computed
 from the archives as served by their upstreams (Binaryen's also matches its
 published `.sha256` sidecar). The image digest is the Docker Hub OCI index
 digest for `ubuntu:24.04`.
+
+### Toolchain changes for WASI SDK 34
+
+The upstream recipe was written against WASI SDK 25 (LLVM 19). Two changes in
+the toolchain need matching recipe changes, both in `prepare_build.sh`:
+
+1. Threads target. wasi-sdk PR #637 ("Remove `wasm32-wasi` and
+   `wasm32-wasi-threads` targets", first released in wasi-sdk-34) sets
+   `WASI_SDK_TARGETS` to `wasm32-wasip1;wasm32-wasip2;wasm32-wasip3;wasm32-wasip1-threads`
+   (`CMakeLists.txt:14` at tag `wasi-sdk-34`), so the sysroot has
+   `lib/wasm32-wasip1-threads/` but no `lib/wasm32-wasi-threads/`. WASI SDK 25
+   shipped both. The shipped `share/cmake/wasi-sdk-pthread.cmake` still sets
+   `set(triple wasm32-wasi-threads)` (line 6, unchanged on upstream main), and
+   `cmake/wasi-sdk-sysroot.cmake:157-159` copies only the compiler-rt builtins
+   under the old name, not libc or `crt1.o`. CMake's compiler check therefore
+   fails with `wasm-ld: error: cannot open crt1.o` and `unable to find library -lc`.
+   The recipe derives `wasi-sdk-p1-threads.cmake` next to the shipped file,
+   differing in the triple line only (checked by `diff`), and passes it as
+   `CMAKE_TOOLCHAIN_FILE`. Threads support, `-pthread` and `--import-memory` are
+   unchanged.
+2. Stack placement. LLVM 22 changed wasm-ld's `--stack-first` to default on
+   (`lld/wasm/Driver.cpp:598` at the SDK's LLVM commit `895aa2c896ad`; LLVM
+   19 to 21 read `args.hasArg(OPT_stack_first)`). With stack-first, a
+   `--global-base` below the 64 KiB stack is rejected
+   (`lld/wasm/Writer.cpp:367-373`: `--global-base cannot be less than stack size
+   when --stack-first is used`). The recipe's `-Wl,--global-base=1024` only
+   restated the old non-stack-first default (`Driver.cpp:725-732`), so it is
+   removed and the stack-first layout is kept: the same 64 KiB stack, placed
+   below static data so an overflow traps instead of overwriting data.
+
+Clang 23 reports about 2,900 `-Wdeprecated-attributes` warnings for Abseil
+20250512.1's `lifetime_capture_by(this)`; that Abseil release is the one protobuf
+v36.2 pins, so they clear when protobuf moves to a newer Abseil.
 
 The build runs on `linux/amd64` only. The Ubuntu snapshot service serves the
 amd64 archive but not `ubuntu-ports`, so an arm64 image could not pin its
@@ -73,15 +111,9 @@ The pins make the rebuild hermetic with respect to its declared inputs. The
 final `sha256sum --check` in the rebuild script and the `verifyEmbeddedWasm`
 gate remain the arbiters of the output bytes: if a pinned-input rebuild ever
 produces different bytes, the checksum, this record, and the review must move
-together. A clean rebuild through `rebuild-protoc-wrapper-v4.sh` reproduced
-the recorded SHA-256 above byte-for-byte with each archive's checksum verified
-in-build before extraction; the grpc-java plugin sources taken from the pinned
-commit are byte-identical to those in the archive that rebuild used. That
-qualification covers the revised input policy (grpc-java by commit, one pinned
-platform, snapshot-scoped apt TLS): a full clean rebuild on 2026-11-09 through
-the same public path exited 0 and its final check reported
-`protoc-wrapper-v4.wasm: OK` at the recorded SHA-256, with the embedded binary
-unmodified.
+together. Consecutive `docker build --no-cache` runs of the patched recipe
+each produce exactly the SHA-256 above, with every archive checksum and git
+commit verified in-build before use.
 
 ## License and notice material
 

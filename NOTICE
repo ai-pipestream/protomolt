@@ -56,7 +56,7 @@ are recorded in core/codegen/provenance/README.md. Full license texts are
 in the licenses/ directory named below and are packaged in the
 protomolt-codegen jar under META-INF/.
 
-Protocol Buffers (protoc and libprotobuf), v34.1
+Protocol Buffers (protoc and libprotobuf), v36.2
 Copyright 2008 Google Inc.
 BSD 3-Clause License: licenses/LICENSE-protobuf.txt
 https://github.com/protocolbuffers/protobuf
@@ -71,19 +71,19 @@ Copyright the Abseil authors
 Apache License, Version 2.0 (see the root LICENSE file)
 https://github.com/abseil/abseil-cpp
 
-gRPC-Java compiler plugin, v1.79.0
+gRPC-Java compiler plugin, v1.85.1
 Copyright 2014 The gRPC Authors
 Apache License, Version 2.0 (see the root LICENSE file);
 upstream notice: licenses/NOTICE-grpc-java.txt
 https://github.com/grpc/grpc-java
 
 LLVM runtime libraries shipped in the WASI SDK sysroot and linked into the
-binary (libc++, libc++abi, compiler-rt), LLVM 19 (WASI SDK 25.0)
+binary (libc++, libc++abi, compiler-rt), LLVM 23.1.0 (WASI SDK 34.0)
 Copyright the LLVM Project contributors
 Apache License, Version 2.0 with LLVM Exceptions: licenses/LICENSE-llvm.txt
 https://llvm.org
 
-wasi-libc (linked into the binary via the WASI SDK 25.0 sysroot)
+wasi-libc (linked into the binary via the WASI SDK 34.0 sysroot)
 Apache License, Version 2.0 with LLVM Exceptions / Apache License, Version
 2.0 / MIT, as itemized in licenses/LICENSE-wasi-libc.txt:
 licenses/LICENSE-wasi-libc-apache-llvm.txt, licenses/LICENSE-wasi-libc-mit.txt

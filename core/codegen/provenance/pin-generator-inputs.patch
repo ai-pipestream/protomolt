@@ -1,17 +1,26 @@
 diff --git a/buildtools-common/get_binaryen.sh b/buildtools-common/get_binaryen.sh
-index 6dbeeb4..12e8ed5 100755
+index 6dbeeb4..1e537cc 100755
 --- a/buildtools-common/get_binaryen.sh
 +++ b/buildtools-common/get_binaryen.sh
+@@ -1,7 +1,7 @@
+ #!/usr/bin/env bash
+ set -euxo pipefail
+ 
+-BINARYEN_VERSION=123
++BINARYEN_VERSION=133
+ 
+ SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &> /dev/null && pwd)
+ 
 @@ -15,6 +15,7 @@ mkdir -p "${SCRIPT_DIR}/tools"
      cd "${SCRIPT_DIR}/tools"
      echo "Downloading binaryen..."
      curl --fail -L "$BINARYEN_URL" -o "$BINARYEN_TAR"
-+    echo "e959f2170af4c20c552e9de3a0253704d6a9d2766e8fdb88e4d6ac4bae9388fe  ${BINARYEN_TAR}" | sha256sum --check --strict
++    echo "2dc9c7813f5375db93d96ead4b78222fcc3e2677bbb832297af4797782a37489  ${BINARYEN_TAR}" | sha256sum --check --strict
      tar xvf "$BINARYEN_TAR"
  
      rm "$BINARYEN_TAR"
 diff --git a/buildtools-common/get_grpcjava.sh b/buildtools-common/get_grpcjava.sh
-index c986973..2707207 100755
+index c986973..1578d52 100755
 --- a/buildtools-common/get_grpcjava.sh
 +++ b/buildtools-common/get_grpcjava.sh
 @@ -3,10 +3,14 @@ set -euxo pipefail
@@ -26,42 +35,70 @@ index c986973..2707207 100755
 -    | tar -xz --strip-components 1 -C "${SCRIPT_DIR}/grpcjava"
 +git -c advice.detachedHead=false clone --depth 1 --branch "${GRPC_VERSION}" \
 +    https://github.com/grpc/grpc-java.git "${SCRIPT_DIR}/grpcjava"
-+# The tag must still resolve to the exact reviewed commit (v1.79.0). A git
++# The tag must still resolve to the exact reviewed commit (v1.85.1). A git
 +# commit is stable where GitHub's generated source archives are not.
-+test "$(git -C "${SCRIPT_DIR}/grpcjava" rev-parse HEAD)" = "381593f39e37b530177faad3c6035cfce4536ec7" \
++test "$(git -C "${SCRIPT_DIR}/grpcjava" rev-parse HEAD)" = "54c634aed4b5c78a29d0fa51d9282e9538722543" \
 +    || { echo "ERROR: grpc-java ${GRPC_VERSION} is not the pinned commit" >&2; exit 1; }
  
  cp -R "${SCRIPT_DIR}/grpcjava/compiler/src/java_plugin/cpp" "${SCRIPT_DIR}/protobuf/src/grpcjava"
 \ No newline at end of file
 diff --git a/buildtools-common/get_protobuf.sh b/buildtools-common/get_protobuf.sh
-index 2039213..4afd604 100755
+index 2039213..f7e83d7 100755
 --- a/buildtools-common/get_protobuf.sh
 +++ b/buildtools-common/get_protobuf.sh
 @@ -10,4 +10,7 @@ rm -rf "${SCRIPT_DIR}/protobuf"
  PROTOBUF_VERSION=$(awk '{$1=$1};1' < "${SCRIPT_DIR}/protobuf-version.txt")
  git clone --depth 1 --branch "${PROTOBUF_VERSION}" https://github.com/protocolbuffers/protobuf.git "${SCRIPT_DIR}/protobuf"
  cd "${SCRIPT_DIR}/protobuf"
-+# The tag must still resolve to the exact reviewed commit (v34.1).
-+test "$(git rev-parse HEAD)" = "4b0c3aacf0657fbf38253b38918d3358dd4319ec" \
++# The tag must still resolve to the exact reviewed commit (v36.2).
++test "$(git rev-parse HEAD)" = "2c74169b34066ceb8ddb6b882fcb3fb32d737a55" \
 +    || { echo "ERROR: protobuf ${PROTOBUF_VERSION} is not the pinned commit" >&2; exit 1; }
  git submodule update --init --recursive
 diff --git a/buildtools-common/get_wasi_sdk.sh b/buildtools-common/get_wasi_sdk.sh
-index 379f688..8ef0c3c 100755
+index 379f688..c1b9ad8 100755
 --- a/buildtools-common/get_wasi_sdk.sh
 +++ b/buildtools-common/get_wasi_sdk.sh
+@@ -1,7 +1,7 @@
+ #!/usr/bin/env bash
+ set -euxo pipefail
+ 
+-WASI_SDK_VERSION=25
++WASI_SDK_VERSION=34
+ WASI_SDK_MINOR_VERSION=0
+ 
+ SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &> /dev/null && pwd)
 @@ -25,6 +25,12 @@ mkdir -p "${SCRIPT_DIR}/tools"
      cd "${SCRIPT_DIR}/tools"
      echo "Downloading wasi-sdk..."
      curl --fail -L "$WASI_SDK_URL" -o "$WASI_SDK_TAR"
 +    # The pinned build image is linux/amd64 only (see buildtools-v4/Dockerfile).
 +    case "${WASI_SDK_ARCH}" in
-+        x86_64-linux) WASI_SDK_SHA256=52640dde13599bf127a95499e61d6d640256119456d1af8897ab6725bcf3d89c ;;
++        x86_64-linux) WASI_SDK_SHA256=b761e3a0721dbae9c09a0059e5fdb2bf917d1b4a8a7b430fb3b5aafb0984b2c4 ;;
 +        *) echo "ERROR: no pinned wasi-sdk checksum for ${WASI_SDK_ARCH}; the pinned build runs on x86_64-linux" >&2; exit 1 ;;
 +    esac
 +    echo "${WASI_SDK_SHA256}  ${WASI_SDK_TAR}" | sha256sum --check --strict
      tar xvf "$WASI_SDK_TAR"
  
      rm "$WASI_SDK_TAR"
+diff --git a/buildtools-common/grpcjava-version.txt b/buildtools-common/grpcjava-version.txt
+index 26f4e1e..0904fd4 100644
+--- a/buildtools-common/grpcjava-version.txt
++++ b/buildtools-common/grpcjava-version.txt
+@@ -1 +1 @@
+-v1.79.0
++v1.85.1
+diff --git a/buildtools-common/optimize_protoc-wrapper.sh b/buildtools-common/optimize_protoc-wrapper.sh
+index 12eb99a..ba2e336 100755
+--- a/buildtools-common/optimize_protoc-wrapper.sh
++++ b/buildtools-common/optimize_protoc-wrapper.sh
+@@ -3,6 +3,6 @@ set -euxo pipefail
+ 
+ SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &> /dev/null && pwd)
+ 
+-BINARYEN_PATH=${SCRIPT_DIR}/tools/binaryen-version_123
++BINARYEN_PATH=${SCRIPT_DIR}/tools/binaryen-version_133
+ 
+ "${BINARYEN_PATH}/bin/wasm-opt" -o build/protoc-wrapper.wasm --low-memory-unused --converge -O3 --strip-debug build/protoc-wrapper
 diff --git a/buildtools-common/patch_protobuf.sh b/buildtools-common/patch_protobuf.sh
 index 824dcb3..0f2086e 100755
 --- a/buildtools-common/patch_protobuf.sh
@@ -80,6 +117,56 @@ index 824dcb3..0f2086e 100755
  rm "${SCRIPT_DIR}"/protobuf/src/google/protobuf/compiler/subprocess.* "${SCRIPT_DIR}"/protobuf/src/google/protobuf/compiler/command_line_interface.*
  sed -i '/src\/google\/protobuf\/compiler\/subprocess\./d' "${SCRIPT_DIR}"/protobuf/src/file_lists.cmake
  sed -i '/src\/google\/protobuf\/compiler\/command_line_interface\./d' "${SCRIPT_DIR}"/protobuf/src/file_lists.cmake
+diff --git a/buildtools-common/prepare_build.sh b/buildtools-common/prepare_build.sh
+index 6a740a6..58a7302 100755
+--- a/buildtools-common/prepare_build.sh
++++ b/buildtools-common/prepare_build.sh
+@@ -13,7 +13,21 @@ case "${ARCH,,}" in
+     *) echo "ERROR: unsupported architecture ${ARCH}" >&2; exit 1 ;;
+ esac
+ 
+-WASI_SDK_PATH=${SCRIPT_DIR}/tools/wasi-sdk-25.0-${WASI_SDK_ARCH}
++WASI_SDK_PATH=${SCRIPT_DIR}/tools/wasi-sdk-34.0-${WASI_SDK_ARCH}
++
++# WASI SDK 34 builds its threaded sysroot only for wasm32-wasip1-threads:
++# wasi-sdk PR 637 removed the deprecated wasm32-wasi-threads target from
++# WASI_SDK_TARGETS, but share/cmake/wasi-sdk-pthread.cmake still sets
++# `triple wasm32-wasi-threads`, so clang finds no crt1.o or libc for it.
++# Derive a toolchain file that differs from the shipped one in that line
++# only, next to it so its relative WASI_SDK_PREFIX still resolves.
++PTHREAD_TOOLCHAIN="${WASI_SDK_PATH}/share/cmake/wasi-sdk-pthread.cmake"
++P1_THREADS_TOOLCHAIN="${WASI_SDK_PATH}/share/cmake/wasi-sdk-p1-threads.cmake"
++test -d "${WASI_SDK_PATH}/share/wasi-sysroot/lib/wasm32-wasip1-threads"
++sed 's/^set(triple wasm32-wasi-threads)$/set(triple wasm32-wasip1-threads)/' \
++    "${PTHREAD_TOOLCHAIN}" > "${P1_THREADS_TOOLCHAIN}"
++test "$(diff "${PTHREAD_TOOLCHAIN}" "${P1_THREADS_TOOLCHAIN}" | grep -c '^[<>]')" = 2
++grep -qx 'set(triple wasm32-wasip1-threads)' "${P1_THREADS_TOOLCHAIN}"
+ 
+ # Detect protobuf version to set appropriate API defines
+ # Check if protobuf-version.txt exists (it should be in the workspace root)
+@@ -36,7 +50,12 @@ fi
+ 
+ CFLAGS="-D_WASI_EMULATED_MMAN -D_WASI_EMULATED_PROCESS_CLOCKS -D_WASI_EMULATED_SIGNAL -DABSL_HAVE_MMAP -DABSL_FORCE_THREAD_IDENTITY_MODE=1 -DWASM_WAMR -isystem ${SCRIPT_DIR}/protobuf/wasm-stubs"
+ CXXFLAGS="$CFLAGS -fno-exceptions $PROTOBUF_API_DEFINE"
+-LDFLAGS="-lwasi-emulated-process-clocks -lwasi-emulated-mman -lwasi-emulated-signal -Wl,--max-memory=4294967296 -Wl,--global-base=1024"
++# LLVM 22 and later (WASI SDK 34 ships LLVM 23) default wasm-ld to
++# --stack-first, which places the 64 KiB stack below static data and
++# rejects a --global-base smaller than the stack. The former
++# --global-base=1024 only restated the old non-stack-first default, so it
++# is dropped and the stack-first layout is kept.
++LDFLAGS="-lwasi-emulated-process-clocks -lwasi-emulated-mman -lwasi-emulated-signal -Wl,--max-memory=4294967296"
+ 
+ mkdir -p "$SCRIPT_DIR/build"
+ 
+@@ -44,7 +63,7 @@ mkdir -p "$SCRIPT_DIR/build"
+     cd "$SCRIPT_DIR/build"
+ 
+     cmake \
+-        -DCMAKE_TOOLCHAIN_FILE="$WASI_SDK_PATH/share/cmake/wasi-sdk-pthread.cmake" \
++        -DCMAKE_TOOLCHAIN_FILE="${P1_THREADS_TOOLCHAIN}" \
+         -DCMAKE_BUILD_TYPE=Release \
+         -DCMAKE_C_FLAGS="$CFLAGS" \
+         -DCMAKE_CXX_FLAGS="$CXXFLAGS" \
 diff --git a/buildtools-v4/Dockerfile b/buildtools-v4/Dockerfile
 index 9268af1..c222d1b 100644
 --- a/buildtools-v4/Dockerfile
@@ -118,3 +205,10 @@ index 9268af1..c222d1b 100644
  
  WORKDIR /workspace
  
+diff --git a/buildtools-v4/protobuf-version.txt b/buildtools-v4/protobuf-version.txt
+index d92e3e3..a33df8e 100644
+--- a/buildtools-v4/protobuf-version.txt
++++ b/buildtools-v4/protobuf-version.txt
+@@ -1 +1 @@
+-v34.1
++v36.2
