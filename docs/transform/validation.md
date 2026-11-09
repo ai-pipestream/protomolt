@@ -179,22 +179,20 @@ to the structured field and rule paths expected by Buf. The response stays
 binary protobuf on stdout; diagnostics belong on stderr.
 
 The default upstream comparison checks success/failure and, for validation
-violations, count, field path, rule path, rule ID and map-key flag. Since
-#824, CI runs the complete corpus in all three modes as separate steps:
+violations, count, field path, rule path, rule ID and map-key flag. CI runs
+the complete corpus in all three modes as separate steps:
 the default comparison, `--strict_message` (identical violation prose),
 and `--strict_error` (compilation errors distinguished from runtime
 errors). Each step must end `PASS (failed: 0, skipped: 0, passed: 2880,
 total: 2880)`; no case filters, expected-failure lists, or skips are used
 in any mode. See the pinned upstream [comparison implementation](https://github.com/bufbuild/protovalidate/blob/04cd1e0187b7e570f3bb0f86a31daf1f2ad7237e/tools/protovalidate-conformance/internal/results/result.go).
 
-Recorded `--strict_message` run: PASS 2880/2880 against upstream pin
-`04cd1e0187b7` (see ticket #796); recorded `--strict_error` run: PASS
-2880/2880 against the same pin (see ticket #797). Both strict modes were
-re-verified locally for #824 (2026-11-08, ProtoMolt `5a6137ba1`, runner
-module `v1.2.3-0.20261023160130-04cd1e0187b7`, Go 1.27.1, Temurin JDK
-25.0.5; local runs added `--timeout 60s` for a heavily loaded host, CI
-uses the runner default): default, `--strict_message`, and
-`--strict_error` each
+Recorded evidence at upstream pin `04cd1e0187b7`: `--strict_message` PASS
+2880/2880 (ticket #796) and `--strict_error` PASS 2880/2880 (ticket #797).
+All three modes at ProtoMolt `5a6137ba1`, runner module
+`v1.2.3-0.20261023160130-04cd1e0187b7`, Go 1.27.1, Temurin JDK 25.0.5,
+with `--timeout 60s` on a heavily loaded local host (ticket #824): default,
+`--strict_message`, and `--strict_error` each
 `PASS (failed: 0, skipped: 0, passed: 2880, total: 2880)`, exit 0.
 Violation prose follows the upstream
 wording for every rule the suite pins a message for. Deliberately unchanged
@@ -274,7 +272,11 @@ The GitHub `conformance` job separately builds `installDist`, installs the
 pinned upstream runner, and invokes it in the default, `--strict_message`,
 and `--strict_error` modes (three steps, so each mode's summary appears
 separately in the job log) without filters or expected-failure
-files. It runs on pull requests, pushes to `main`, and manual dispatches;
+files. Each step passes `--timeout 30s` (the runner default of 5s per suite
+can expire on a slow runner; the timeout changes no comparison), keeps
+`pipefail` through `tee`, and fails unless the log contains the
+full-corpus summary held in the job's `CONFORMANCE_SUMMARY`, which moves
+together with the runner pin. It runs on pull requests, pushes to `main`, and manual dispatches;
 an arbitrary branch push without a PR does not trigger this workflow.
 `./gradlew build` alone runs the local curated harness, not this external
 full-suite command. Review the conformance job for the exact candidate
