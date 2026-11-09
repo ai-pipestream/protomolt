@@ -10,13 +10,8 @@ import ai.protomolt.proto.actions.Caller;
  */
 public final class ResourceAccessDeniedException extends RuntimeException {
 
-    private final String callerName;
-    private final String requiredScope;
-
     public ResourceAccessDeniedException(Caller caller, String requiredScope) {
         super(message(caller, requiredScope));
-        this.callerName = caller.name();
-        this.requiredScope = requiredScope == null ? "" : requiredScope;
     }
 
     private static String message(Caller caller, String requiredScope) {
@@ -26,15 +21,5 @@ public final class ResourceAccessDeniedException extends RuntimeException {
         }
         return "caller '" + caller.name() + "' does not hold '" + requiredScope
                 + "', which resources/read requires";
-    }
-
-    /** The principal that was refused; never a credential. */
-    public String callerName() {
-        return callerName;
-    }
-
-    /** The scope the collection requires, or empty when it declares none. */
-    public String requiredScope() {
-        return requiredScope;
     }
 }

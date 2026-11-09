@@ -8,6 +8,10 @@ import ai.protomolt.proto.actions.Caller;
 import ai.protomolt.proto.actions.Scopes;
 import ai.protomolt.proto.delegation.DelegationBridge;
 import ai.protomolt.proto.delegation.InProcessDelegationCoordinator;
+import ai.protomolt.proto.delegation.v1.AcceptanceCheck;
+import ai.protomolt.proto.delegation.v1.TaskMessageKind;
+import ai.protomolt.proto.delegation.v1.TaskSpec;
+import ai.protomolt.proto.delegation.v1.WorkerHello;
 import ai.protomolt.proto.grpc.profile.FileSystemServiceProfileRepository;
 import ai.protomolt.proto.grpc.profile.ServiceProfileValidation;
 import ai.protomolt.proto.grpc.profile.v1.DescriptorArtifact;
@@ -24,9 +28,13 @@ import com.google.protobuf.ByteString;
 import com.google.protobuf.DescriptorProtos.FileDescriptorSet;
 import io.grpc.health.v1.HealthProto;
 import java.nio.file.Path;
+import java.time.Duration;
+import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
+import java.util.UUID;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -54,14 +62,16 @@ class McpResourceScopeTest {
     private InProcessDelegationCoordinator coordinator;
     private DelegationBridge bridge;
     private McpServer server;
+    private InMemorySchemaRegistryStore store;
+    private FileSystemServiceProfileRepository profiles;
+    private String taskId;
 
     @BeforeEach
     void setUp() throws Exception {
-        InMemorySchemaRegistryStore store = new InMemorySchemaRegistryStore();
+        store = new InMemorySchemaRegistryStore();
         store.register("orders-value", ORDER_PROTO, List.of());
 
-        FileSystemServiceProfileRepository profiles =
-                new FileSystemServiceProfileRepository(directory);
+        profiles = new FileSystemServiceProfileRepository(directory);
         byte[] descriptors = FileDescriptorSet.newBuilder()
                 .addFile(HealthProto.getDescriptor().toProto())
                 .build().toByteArray();
@@ -87,6 +97,19 @@ class McpResourceScopeTest {
 
         coordinator = new InProcessDelegationCoordinator();
         bridge = new DelegationBridge(coordinator);
+        bridge.registerWorker(WorkerHello.newBuilder()
+                .setWorkerId("scope-worker")
+                .setProtocolVersion(1)
+                .setProvider("kimi")
+                .build());
+        taskId = UUID.randomUUID().toString();
+        bridge.offer("scope-worker", taskId, TaskSpec.newBuilder()
+                .setObjective("prove transcript scoping")
+                .addRequiredChecks(AcceptanceCheck.newBuilder().setName("unit-tests"))
+                .build(), Duration.ofSeconds(30), null);
+        bridge.accept("scope-worker", taskId, 1);
+        bridge.sendCoordinatorMessage("scope-worker", taskId,
+                TaskMessageKind.TASK_MESSAGE_KIND_NOTE, "private transcript note", "", List.of());
 
         server = new McpServer(
                 ActionCatalog.defaults(ActionContext.create()),
@@ -220,6 +243,11 @@ class McpResourceScopeTest {
     void aCollectionDeclaringNoScopeIsRefusedToScopedCallersOnly() {
         McpResources undeclared = new McpResources() {
             @Override
+            public boolean owns(String uri) {
+                return uri.startsWith("protomolt://undeclared/");
+            }
+
+            @Override
             public ArrayNode list(ObjectMapper mapper) {
                 ArrayNode resources = mapper.createArrayNode();
                 ObjectNode entry = resources.addObject();
@@ -256,11 +284,122 @@ class McpResourceScopeTest {
         assertThat(denied.path("error").path("message").asText())
                 .contains("permission-denied");
         assertThat(denied.toString()).doesNotContain("secret\":true");
+        // A missing URI in the hidden namespace is refused the same way, so the
+        // refusal does not reveal which resources exist.
+        ObjectNode deniedMissing = read(scoped, 4, "protomolt://undeclared/missing");
+        assertThat(deniedMissing.path("error").path("code").asInt())
+                .isEqualTo(denied.path("error").path("code").asInt());
+        assertThat(deniedMissing.path("error").path("message").asText())
+                .isEqualTo(denied.path("error").path("message").asText());
 
         McpServer.Session operator = readyOn(undeclaredServer, Caller.operator());
         assertThat(read(operator, 2, "protomolt://undeclared/secret")
                 .path("result").path("contents").get(0).path("text").asText())
                 .contains("secret");
+    }
+
+    private String transcriptUri() {
+        return DelegationResources.TASKS_URI + "/" + taskId + "/transcript";
+    }
+
+    @Test
+    void serviceInvokerReadsServiceProfilesButNotDelegation() {
+        McpServer.Session session =
+                ready(Caller.scoped("svc-caller", Set.of(Scopes.SERVICE_INVOKE)));
+
+        ObjectNode listed = session.handle(request(2, "resources/list",
+                MAPPER.createObjectNode())).orElseThrow();
+        assertThat(listed.path("result").path("resources").findValuesAsText("uri"))
+                .contains("protomolt://services", "protomolt://services/health-local")
+                .doesNotContain("protomolt://registry/subjects",
+                        DelegationResources.WORKERS_URI, DelegationResources.TASKS_URI);
+
+        assertThat(read(session, 3, "protomolt://services")
+                .path("result").path("contents").get(0).path("text").asText())
+                .contains("health-local");
+        assertThat(read(session, 4, "protomolt://services/health-local")
+                .path("result").path("contents").get(0).path("text").asText())
+                .contains("localhost").contains("50051");
+
+        ObjectNode deniedTranscript = read(session, 5, transcriptUri());
+        assertThat(deniedTranscript.has("result")).isFalse();
+        assertThat(deniedTranscript.path("error").path("code").asInt())
+                .isEqualTo(JsonRpc.PERMISSION_DENIED);
+        assertThat(deniedTranscript.path("error").path("message").asText())
+                .contains("permission-denied").contains("svc-caller")
+                .contains(Scopes.WORKER_COORDINATE);
+        assertThat(deniedTranscript.toString())
+                .doesNotContain("private transcript note").doesNotContain("contents");
+    }
+
+    @Test
+    void transcriptIsReadableWithWorkerCoordinateAndRefusedWithoutIt() {
+        McpServer.Session coordinatorSession =
+                ready(Caller.scoped("mesh-node", Set.of(Scopes.WORKER_COORDINATE)));
+        ObjectNode transcript = read(coordinatorSession, 2, transcriptUri());
+        assertThat(transcript.path("result").path("contents").get(0).path("text").asText())
+                .contains(taskId).contains("private transcript note");
+
+        McpServer.Session reader =
+                ready(Caller.scoped("ci-reader", Set.of(Scopes.SCHEMA_READ)));
+        ObjectNode denied = read(reader, 2, transcriptUri());
+        assertThat(denied.has("result")).isFalse();
+        assertThat(denied.path("error").path("message").asText())
+                .contains("permission-denied").contains("ci-reader")
+                .contains(Scopes.WORKER_COORDINATE);
+        assertThat(denied.toString())
+                .doesNotContain("private transcript note").doesNotContain(taskId);
+
+        // A transcript for a task that does not exist is refused identically.
+        ObjectNode deniedUnknown = read(reader, 3,
+                DelegationResources.TASKS_URI + "/" + UUID.randomUUID() + "/transcript");
+        assertThat(deniedUnknown.path("error").path("message").asText())
+                .isEqualTo(denied.path("error").path("message").asText());
+    }
+
+    @Test
+    void scopedPagingCrossesPageOneAndSkipsHiddenCollections() {
+        for (int i = 0; i < 150; i++) {
+            store.register(String.format("subject-%03d-value", i), ORDER_PROTO, List.of());
+        }
+        // Hidden collections sit before and after the visible one, so the cursor has to
+        // index the caller-visible delegates rather than every mounted one.
+        McpServer paged = new McpServer(
+                ActionCatalog.defaults(ActionContext.create()),
+                CompositeResources.of(
+                        new ServiceProfileResources(profiles, store),
+                        new RegistryResources(store),
+                        new DelegationResources(bridge)),
+                "test", "0");
+        McpServer.Session session =
+                readyOn(paged, Caller.scoped("ci-reader", Set.of(Scopes.SCHEMA_READ)));
+
+        List<String> uris = new ArrayList<>();
+        String cursor = null;
+        int pages = 0;
+        do {
+            ObjectNode params = MAPPER.createObjectNode();
+            if (cursor != null) {
+                params.put("cursor", cursor);
+            }
+            ObjectNode page = session.handle(request(10 + pages, "resources/list", params))
+                    .orElseThrow();
+            assertThat(page.has("error")).as("page %d: %s", pages, page).isFalse();
+            uris.addAll(page.path("result").path("resources").findValuesAsText("uri"));
+            cursor = page.path("result").path("nextCursor").asText(null);
+            pages++;
+        } while (cursor != null && pages < 10);
+
+        assertThat(pages).isGreaterThan(1);
+        assertThat(cursor).isNull();
+        assertThat(new HashSet<>(uris)).hasSameSizeAs(uris);
+        // The workspace, the subjects index, orders-value and the 150 new subjects.
+        assertThat(uris).hasSize(1 + 1 + 1 + 150)
+                .contains("protomolt://workspace", "protomolt://registry/subjects",
+                        "protomolt://registry/subjects/subject-000-value",
+                        "protomolt://registry/subjects/subject-149-value")
+                .noneMatch(uri -> uri.startsWith("protomolt://services"))
+                .noneMatch(uri -> uri.startsWith("protomolt://delegation"));
     }
 
     private static McpServer.Session readyOn(McpServer target, Caller caller) {

@@ -58,11 +58,11 @@ public interface McpResources {
 
     /**
      * Whether this collection serves the namespace {@code uri} addresses, judged from
-     * the URI alone so a read can be refused before any contents are produced.
+     * the URI alone and without touching any store, so a read by a caller who may not
+     * see the collection is refused before anything is read. Every collection declares
+     * it: a refusal never depends on whether the addressed resource exists.
      */
-    default boolean owns(String uri) {
-        return false;
-    }
+    boolean owns(String uri);
 
     /** Lists the resources served by this collection. */
     ArrayNode list(ObjectMapper mapper);
@@ -122,9 +122,9 @@ public interface McpResources {
         if (visibleTo(caller)) {
             return read(mapper, uri);
         }
-        // Ownership is judged from the URI when the provider declares it; otherwise
-        // it is probed and the probed contents are discarded, never returned.
-        if (owns(uri) || read(mapper, uri).isPresent()) {
+        // Ownership comes from the URI alone, so the refusal reads nothing and says
+        // nothing about whether the addressed resource exists.
+        if (owns(uri)) {
             throw new ResourceAccessDeniedException(caller, requiredScope());
         }
         return Optional.empty();
