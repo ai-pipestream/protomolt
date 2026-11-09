@@ -17,6 +17,12 @@ public final class JsonRpc {
     public static final int INTERNAL_ERROR = -32603;
     /** MCP-assigned: resources/read against a URI the server does not serve. */
     public static final int RESOURCE_NOT_FOUND = -32002;
+    /**
+     * Implementation-defined (JSON-RPC reserved server-error range): the caller is
+     * authenticated but does not hold the scope the resource collection requires.
+     * The message carries the uniform {@code permission-denied} refusal.
+     */
+    public static final int PERMISSION_DENIED = -32050;
 
     private JsonRpc() {
     }

@@ -87,10 +87,10 @@ final class McpMethodDispatcher {
                 case "tools/call" -> Optional.of(JsonRpc.result(
                         mapper, id, callTool(params, caller)));
                 case "resources/list" -> Optional.of(JsonRpc.result(
-                        mapper, id, listResources(params)));
+                        mapper, id, listResources(params, caller)));
                 case "resources/templates/list" -> Optional.of(JsonRpc.result(
-                        mapper, id, listResourceTemplates(params)));
-                case "resources/read" -> readResource(params)
+                        mapper, id, listResourceTemplates(params, caller)));
+                case "resources/read" -> readResource(params, caller)
                         .map(contents -> JsonRpc.result(mapper, id, contents))
                         .or(() -> Optional.of(JsonRpc.error(
                                 mapper, id, JsonRpc.RESOURCE_NOT_FOUND,
@@ -99,6 +99,12 @@ final class McpMethodDispatcher {
                         mapper, id, JsonRpc.METHOD_NOT_FOUND,
                         "Method not found: " + method));
             };
+        } catch (ResourceAccessDeniedException e) {
+            // The uniform authorization refusal: principal and missing scope by
+            // name, no contents, no metadata, no credential.
+            return Optional.of(JsonRpc.error(
+                    mapper, id, JsonRpc.PERMISSION_DENIED,
+                    "permission-denied: " + e.getMessage()));
         } catch (IllegalArgumentException e) {
             return Optional.of(JsonRpc.error(
                     mapper, id, JsonRpc.INVALID_PARAMS, e.getMessage()));
@@ -197,7 +203,7 @@ final class McpMethodDispatcher {
         return result;
     }
 
-    ObjectNode listResources(JsonNode params) {
+    ObjectNode listResources(JsonNode params, Caller caller) {
         if (params == null || !params.isObject()) {
             throw new IllegalArgumentException("resources/list params must be an object");
         }
@@ -215,7 +221,7 @@ final class McpMethodDispatcher {
         }
         McpResources.Page page = resources == null
                 ? new McpResources.Page(mapper.createArrayNode(), null)
-                : resources.page(mapper, cursorValue, RESOURCE_PAGE_SIZE);
+                : resources.page(mapper, cursorValue, RESOURCE_PAGE_SIZE, caller);
         ObjectNode result = mapper.createObjectNode();
         result.set("resources", page.resources());
         if (page.nextCursor() != null) {
@@ -224,13 +230,13 @@ final class McpMethodDispatcher {
         return result;
     }
 
-    ObjectNode listResourceTemplates(JsonNode params) {
+    ObjectNode listResourceTemplates(JsonNode params, Caller caller) {
         if (params == null || !params.isObject()) {
             throw new IllegalArgumentException(
                     "resources/templates/list params must be an object");
         }
         int offset = cursorOffset(params.get("cursor"), "resource template");
-        ArrayNode all = resources.templates(mapper);
+        ArrayNode all = resources.templates(mapper, caller);
         if (offset > all.size()) {
             throw new IllegalArgumentException("resource template cursor is invalid");
         }
@@ -265,7 +271,7 @@ final class McpMethodDispatcher {
         }
     }
 
-    Optional<ObjectNode> readResource(JsonNode params) {
+    Optional<ObjectNode> readResource(JsonNode params, Caller caller) {
         String uri = params.path("uri").asText(null);
         if (uri == null) {
             throw new IllegalArgumentException("resources/read requires params.uri");
@@ -273,7 +279,7 @@ final class McpMethodDispatcher {
         if (resources == null) {
             return Optional.empty();
         }
-        return resources.read(mapper, uri).map(contents -> {
+        return resources.read(mapper, uri, caller).map(contents -> {
             ObjectNode result = mapper.createObjectNode();
             ArrayNode list = result.putArray("contents");
             list.add(contents);

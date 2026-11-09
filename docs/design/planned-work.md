@@ -290,9 +290,13 @@ already checked. The metric mapping's row and member security rewrites
 descriptions and queries from the caller. Design of record:
 [authorization scopes](authorization-scopes.md). Still open:
 
-- **MCP resources stay authenticated-only.** `tools/list` and `tools/call`
-  are scope-checked; resource reads (registry documents, service profiles,
-  delegation transcripts) are not, a recorded edge rather than a silent one.
+- **MCP resources are scope-checked (#822).** Each resource collection
+  declares its scope like an action: registry documents `schema-read`,
+  service profiles `service-invoke`, delegation workers/tasks/transcripts
+  `worker-coordinate`; `resources/list` serves only visible collections
+  and `resources/read` outside the scope is refused by name. Only the
+  workspace bootstrap stays authenticated-only, serving the caller's own
+  filtered tool inventory.
 - **Composable later, deliberately not in v1:** signed scope assertions,
   where a receipt-layer trust snapshot vouches for an external issuer's
   scope claims. The verification machinery exists; binding it to call

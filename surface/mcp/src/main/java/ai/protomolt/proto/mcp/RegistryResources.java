@@ -1,5 +1,6 @@
 package ai.protomolt.proto.mcp;
 
+import ai.protomolt.proto.actions.Scopes;
 import ai.protomolt.proto.registry.SchemaRegistryStore;
 import ai.protomolt.proto.registry.StoredSchema;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -31,6 +32,17 @@ public final class RegistryResources implements McpResources {
 
     public RegistryResources(SchemaRegistryStore store) {
         this.store = Objects.requireNonNull(store, "store");
+    }
+
+    /** Registry documents are schema reads, matching the registry server's route split. */
+    @Override
+    public String requiredScope() {
+        return Scopes.SCHEMA_READ;
+    }
+
+    @Override
+    public boolean owns(String uri) {
+        return ROOT.equals(uri) || uri.startsWith(ROOT + "/");
     }
 
     /** The resource index: the subjects list plus one entry per subject. */

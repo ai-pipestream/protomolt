@@ -1,5 +1,7 @@
 package ai.protomolt.proto.mcp;
 
+import ai.protomolt.proto.actions.Caller;
+import ai.protomolt.proto.mcp.transport.ResourceAccessDeniedException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
@@ -7,7 +9,15 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import java.util.Optional;
 import java.util.Objects;
 
-/** One independently mountable collection of MCP resources. */
+/**
+ * One independently mountable collection of MCP resources.
+ *
+ * <p>Authorization mirrors the transport contract (and the action catalog): a
+ * collection declares the one scope a caller must hold to list or read it through
+ * {@link #requiredScope()}; a collection that declares none is refused to scoped
+ * callers, and only a server-describing bootstrap may opt into
+ * {@link #authenticatedOnly()} instead.</p>
+ */
 public interface McpResources {
 
     /** A bounded resource page and an opaque continuation cursor, when more rows remain. */
@@ -18,6 +28,40 @@ public interface McpResources {
                 throw new IllegalArgumentException("next cursor must not be blank");
             }
         }
+    }
+
+    /**
+     * The scope a caller must hold to list or read this collection, from the closed
+     * vocabulary; empty when the collection declares none.
+     */
+    default String requiredScope() {
+        return "";
+    }
+
+    /**
+     * Whether this collection only describes the server to its caller and therefore
+     * stays behind authentication alone, with no scope.
+     */
+    default boolean authenticatedOnly() {
+        return false;
+    }
+
+    /** Whether {@code caller} may see this collection at all: list, templates, reads. */
+    default boolean visibleTo(Caller caller) {
+        Objects.requireNonNull(caller, "caller");
+        if (caller.unrestricted() || authenticatedOnly()) {
+            return true;
+        }
+        String scope = requiredScope();
+        return !scope.isBlank() && caller.holds(scope);
+    }
+
+    /**
+     * Whether this collection serves the namespace {@code uri} addresses, judged from
+     * the URI alone so a read can be refused before any contents are produced.
+     */
+    default boolean owns(String uri) {
+        return false;
     }
 
     /** Lists the resources served by this collection. */
@@ -40,4 +84,49 @@ public interface McpResources {
 
     /** Reads one URI, or empty when this collection does not own it. */
     Optional<ObjectNode> read(ObjectMapper mapper, String uri);
+
+    /** {@link #list(ObjectMapper)} as {@code caller} sees it: empty when not visible. */
+    default ArrayNode list(ObjectMapper mapper, Caller caller) {
+        return visibleTo(caller) ? list(mapper) : mapper.createArrayNode();
+    }
+
+    /**
+     * {@link #templates(ObjectMapper)} as {@code caller} sees it: empty when not visible.
+     */
+    default ArrayNode templates(ObjectMapper mapper, Caller caller) {
+        return visibleTo(caller) ? templates(mapper) : mapper.createArrayNode();
+    }
+
+    /**
+     * {@link #page(ObjectMapper, String, int)} as {@code caller} sees it: an empty
+     * final page when not visible, so neither rows nor a continuation leak.
+     */
+    default Page page(ObjectMapper mapper, String cursor, int pageSize, Caller caller) {
+        if (pageSize <= 0) {
+            throw new IllegalArgumentException("page size must be positive");
+        }
+        return visibleTo(caller)
+                ? page(mapper, cursor, pageSize)
+                : new Page(mapper.createArrayNode(), null);
+    }
+
+    /**
+     * {@link #read(ObjectMapper, String)} as {@code caller}: refused by name, before
+     * any contents are returned, when this collection owns {@code uri} and the caller
+     * may not see the collection.
+     *
+     * @throws ResourceAccessDeniedException when the caller lacks the required scope
+     */
+    default Optional<ObjectNode> read(ObjectMapper mapper, String uri, Caller caller) {
+        Objects.requireNonNull(caller, "caller");
+        if (visibleTo(caller)) {
+            return read(mapper, uri);
+        }
+        // Ownership is judged from the URI when the provider declares it; otherwise
+        // it is probed and the probed contents are discarded, never returned.
+        if (owns(uri) || read(mapper, uri).isPresent()) {
+            throw new ResourceAccessDeniedException(caller, requiredScope());
+        }
+        return Optional.empty();
+    }
 }
