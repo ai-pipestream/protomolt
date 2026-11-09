@@ -11,6 +11,7 @@ import inference.GrpcPredictV2.ModelInferRequest;
 import inference.GrpcPredictV2.ModelInferResponse;
 import io.grpc.ManagedChannel;
 import io.grpc.ManagedChannelBuilder;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -34,8 +35,13 @@ public final class TurboembedEmbeddingProvider implements EmbeddingProvider {
     public static final String MAX_IN_FLIGHT_PROPERTY = "protomolt.embeddings.turboembed.max-in-flight";
     /** Environment fallback for the process-wide RPC cap. */
     public static final String MAX_IN_FLIGHT_ENVIRONMENT_VARIABLE = PREFIX + "MAX_IN_FLIGHT";
+    /** Seconds one RPC may wait for a process-wide slot; system property overrides the environment, default 30. */
+    public static final String ADMISSION_TIMEOUT_PROPERTY = "protomolt.embeddings.turboembed.admission-timeout-seconds";
+    /** Environment fallback for the admission timeout. */
+    public static final String ADMISSION_TIMEOUT_ENVIRONMENT_VARIABLE = PREFIX + "ADMISSION_TIMEOUT_SECONDS";
     private static final EmbeddingInFlightLimit IN_FLIGHT = new EmbeddingInFlightLimit();
     private Integer maxInFlight;
+    private Duration admissionTimeout;
     private final Map<String, String> environment;
     private Session session;
     private boolean closed;
@@ -145,7 +151,7 @@ public final class TurboembedEmbeddingProvider implements EmbeddingProvider {
                     .putParameters("normalize", parameter("NORMALIZE_MODEL"))
                     .putParameters("quantization", parameter("QUANTIZE_NONE"))
                     .build();
-            ModelInferResponse response = IN_FLIGHT.execute(maxInFlight(), () -> {
+            ModelInferResponse response = IN_FLIGHT.execute(maxInFlight(), admissionTimeout(), () -> {
                 configured(); // Refuse queued calls if this provider was closed while waiting.
                 return GRPCInferenceServiceGrpc.newBlockingStub(active.channel())
                         .withDeadlineAfter(30, TimeUnit.SECONDS).modelInfer(request);
@@ -194,6 +200,18 @@ public final class TurboembedEmbeddingProvider implements EmbeddingProvider {
             maxInFlight = parsed;
         }
         return maxInFlight;
+    }
+
+    private synchronized Duration admissionTimeout() {
+        if (admissionTimeout == null) {
+            String value = System.getProperty(ADMISSION_TIMEOUT_PROPERTY);
+            if (value == null) {
+                value = environment.get(ADMISSION_TIMEOUT_ENVIRONMENT_VARIABLE);
+            }
+            admissionTimeout = EmbeddingInFlightLimit.admissionTimeoutSeconds(value,
+                    ADMISSION_TIMEOUT_PROPERTY + " / " + ADMISSION_TIMEOUT_ENVIRONMENT_VARIABLE);
+        }
+        return admissionTimeout;
     }
 
     private static InferParameter parameter(String value) {

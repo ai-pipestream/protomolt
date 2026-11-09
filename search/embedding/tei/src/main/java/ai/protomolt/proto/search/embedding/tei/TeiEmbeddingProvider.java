@@ -9,15 +9,20 @@ import tei.v1.EmbedGrpc;
 import tei.v1.Tei.EmbedRequest;
 import tei.v1.Tei.EmbedResponse;
 
+import java.time.Duration;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.concurrent.CompletionService;
 import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorCompletionService;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * {@link EmbeddingProvider} that calls a Hugging Face Text Embeddings Inference (TEI) server
@@ -78,6 +83,16 @@ public final class TeiEmbeddingProvider implements EmbeddingProvider, AutoClosea
     /** In-flight cap applied when neither knob is set: {@value}. */
     public static final int DEFAULT_MAX_IN_FLIGHT = 8;
 
+    /**
+     * System property bounding how long one Embed call waits for a process-wide slot, in
+     * whole seconds: {@value}. A positive integer; unset means 30. Unlike the cap, callers
+     * need not agree on it.
+     */
+    public static final String ADMISSION_TIMEOUT_PROPERTY = "protomolt.embeddings.tei.admission-timeout-seconds";
+
+    /** Environment variable consulted when {@link #ADMISSION_TIMEOUT_PROPERTY} is unset: {@value}. */
+    public static final String ADMISSION_TIMEOUT_ENVIRONMENT_VARIABLE = "PROTOMOLT_TEI_ADMISSION_TIMEOUT_SECONDS";
+
     /** Fixed text embedded once to learn the vector length; see {@link #dimension()}. */
     private static final String DIMENSION_PROBE = "dimension probe";
 
@@ -91,6 +106,7 @@ public final class TeiEmbeddingProvider implements EmbeddingProvider, AutoClosea
     private volatile Integer dimension;
     private volatile Boolean truncate;
     private volatile Integer maxInFlight;
+    private volatile Duration admissionTimeout;
 
     /**
      * ServiceLoader constructor. The target is resolved on the first {@link #dimension()},
@@ -189,9 +205,10 @@ public final class TeiEmbeddingProvider implements EmbeddingProvider, AutoClosea
     public float[] embed(String text) {
         Objects.requireNonNull(text, "text");
         int cap = maxInFlight();
+        Duration wait = admissionTimeout();
         ManagedChannel active = channel();
         EmbedRequest request = EmbedRequest.newBuilder().setInputs(text).setTruncate(truncate()).build();
-        return IN_FLIGHT.execute(cap, () -> embedAdmitted(active, request));
+        return IN_FLIGHT.execute(cap, wait, () -> embedAdmitted(active, request));
     }
 
     private float[] embedAdmitted(ManagedChannel active, EmbedRequest request) {
@@ -248,8 +265,8 @@ public final class TeiEmbeddingProvider implements EmbeddingProvider, AutoClosea
         int workers = Math.min(maxInFlight(), texts.size());
         try (ExecutorService executor = Executors.newFixedThreadPool(workers, Thread.ofVirtual().factory())) {
             float[][] vectors = new float[texts.size()][];
-            java.util.concurrent.atomic.AtomicInteger next = new java.util.concurrent.atomic.AtomicInteger();
-            var completed = new java.util.concurrent.ExecutorCompletionService<Void>(executor);
+            AtomicInteger next = new AtomicInteger();
+            var completed = new ExecutorCompletionService<Void>(executor);
             List<Future<?>> futures = new ArrayList<>(workers);
             for (int worker = 0; worker < workers; worker++) {
                 futures.add(completed.submit(() -> {
@@ -270,7 +287,7 @@ public final class TeiEmbeddingProvider implements EmbeddingProvider, AutoClosea
                 }
                 throw failure;
             }
-            return new ArrayList<>(java.util.Arrays.asList(vectors));
+            return new ArrayList<>(Arrays.asList(vectors));
         }
     }
 
@@ -331,7 +348,25 @@ public final class TeiEmbeddingProvider implements EmbeddingProvider, AutoClosea
         }
     }
 
-    private static void awaitCompletion(java.util.concurrent.CompletionService<Void> completed) {
+    private Duration admissionTimeout() {
+        Duration resolved = admissionTimeout;
+        if (resolved != null) {
+            return resolved;
+        }
+        synchronized (lock) {
+            if (admissionTimeout == null) {
+                String configured = System.getProperty(ADMISSION_TIMEOUT_PROPERTY);
+                if (configured == null) {
+                    configured = environment.get(ADMISSION_TIMEOUT_ENVIRONMENT_VARIABLE);
+                }
+                admissionTimeout = EmbeddingInFlightLimit.admissionTimeoutSeconds(configured,
+                        ADMISSION_TIMEOUT_PROPERTY + " / " + ADMISSION_TIMEOUT_ENVIRONMENT_VARIABLE);
+            }
+            return admissionTimeout;
+        }
+    }
+
+    private static void awaitCompletion(CompletionService<Void> completed) {
         try {
             completed.take().get();
         } catch (InterruptedException e) {

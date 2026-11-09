@@ -58,6 +58,47 @@ class EmbeddingInFlightLimitTest {
         }
     }
 
+    @Test
+    void perCallAdmissionTimeoutOverridesTheDefaultWithoutConflicting() throws Exception {
+        var limit = new EmbeddingInFlightLimit(Duration.ofSeconds(30));
+        var entered = new CountDownLatch(1);
+        var release = new CountDownLatch(1);
+        try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
+            var active = executor.submit(() -> limit.execute(1, () -> {
+                entered.countDown();
+                await(release);
+                return 1;
+            }));
+            try {
+                assertThat(entered.await(5, TimeUnit.SECONDS)).isTrue();
+                long started = System.nanoTime();
+                assertThatThrownBy(() -> limit.execute(1, Duration.ofMillis(50), () -> 2))
+                        .hasCauseInstanceOf(java.util.concurrent.TimeoutException.class);
+                assertThat(TimeUnit.NANOSECONDS.toSeconds(System.nanoTime() - started)).isLessThan(5);
+            } finally {
+                release.countDown();
+            }
+            assertThat(active.get(5, TimeUnit.SECONDS)).isEqualTo(1);
+            assertThat(limit.execute(1, Duration.ofSeconds(1), () -> 3)).isEqualTo(3);
+        }
+    }
+
+    @Test
+    void admissionTimeoutSecondsParsesDefaultsAndRefusesNonPositive() {
+        assertThat(EmbeddingInFlightLimit.admissionTimeoutSeconds(null, "knob"))
+                .isEqualTo(EmbeddingInFlightLimit.DEFAULT_ADMISSION_TIMEOUT);
+        assertThat(EmbeddingInFlightLimit.admissionTimeoutSeconds(" 90 ", "knob")).isEqualTo(Duration.ofSeconds(90));
+        for (String bad : new String[] {"0", "-5", "later"}) {
+            assertThatThrownBy(() -> EmbeddingInFlightLimit.admissionTimeoutSeconds(bad, "knob"))
+                    .isInstanceOf(IllegalStateException.class)
+                    .hasMessageContaining("knob")
+                    .hasMessageContaining(bad);
+        }
+        var limit = new EmbeddingInFlightLimit();
+        assertThatThrownBy(() -> limit.execute(1, Duration.ZERO, () -> 1))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
     private static void await(CountDownLatch latch) {
         try {
             if (!latch.await(5, TimeUnit.SECONDS)) {
