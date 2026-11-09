@@ -57,8 +57,8 @@ public final class DriveProvisioner {
         this.multipleBackends = true;
         this.defaultBucketBase = defaultBucketBase;
         this.defaultRegion = defaultRegion;
-        this.defaultProvider = defaultProvider;
-        this.recordGate = recordGate;
+        this.defaultProvider = java.util.Objects.requireNonNull(defaultProvider);
+        this.recordGate = java.util.Objects.requireNonNull(recordGate);
     }
 
     /**

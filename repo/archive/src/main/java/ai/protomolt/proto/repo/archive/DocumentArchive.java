@@ -109,6 +109,7 @@ import ai.protomolt.proto.repo.v2.ValidationMode;
 import ai.protomolt.proto.repo.v2.WriteAction;
 import ai.protomolt.proto.validate.ProtoValidator;
 import ai.protomolt.proto.validate.ValidationResult;
+import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
 import com.google.protobuf.Any;
 import com.google.protobuf.ByteString;
@@ -735,7 +736,7 @@ public final class DocumentArchive {
             List<ListenableFuture<GetDocumentResponse>> futures) {
         try {
             // Fail on any completed error, even if an earlier read is still pending.
-            return com.google.common.util.concurrent.Futures.allAsList(futures).get();
+            return Futures.allAsList(futures).get();
         } catch (InterruptedException interrupted) {
             Thread.currentThread().interrupt();
             throw Status.CANCELLED
