@@ -76,7 +76,12 @@ produces different bytes, the checksum, this record, and the review must move
 together. A clean rebuild through `rebuild-protoc-wrapper-v4.sh` reproduced
 the recorded SHA-256 above byte-for-byte with each archive's checksum verified
 in-build before extraction; the grpc-java plugin sources taken from the pinned
-commit are byte-identical to those in the archive that rebuild used.
+commit are byte-identical to those in the archive that rebuild used. That
+qualification covers the revised input policy (grpc-java by commit, one pinned
+platform, snapshot-scoped apt TLS): a full clean rebuild on 2026-11-09 through
+the same public path exited 0 and its final check reported
+`protoc-wrapper-v4.wasm: OK` at the recorded SHA-256, with the embedded binary
+unmodified.
 
 ## License and notice material
 

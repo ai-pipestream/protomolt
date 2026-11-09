@@ -83,9 +83,25 @@ Copyright the LLVM Project contributors
 Apache License, Version 2.0 with LLVM Exceptions: licenses/LICENSE-llvm.txt
 https://llvm.org
 
-wasi-libc (linked into the binary via the WASI SDK 25.0 sysroot), including
-portions derived from musl (MIT), cloudlibc (BSD 2-Clause), dlmalloc (CC0),
-and emmalloc (MIT), as itemized in licenses/LICENSE-wasi-libc.txt
-Apache License, Version 2.0 with LLVM Exceptions / MIT:
+wasi-libc (linked into the binary via the WASI SDK 25.0 sysroot)
+Apache License, Version 2.0 with LLVM Exceptions / Apache License, Version
+2.0 / MIT, as itemized in licenses/LICENSE-wasi-libc.txt:
 licenses/LICENSE-wasi-libc-apache-llvm.txt, licenses/LICENSE-wasi-libc-mit.txt
+(plain Apache License, Version 2.0: see the root LICENSE file)
 https://github.com/WebAssembly/wasi-libc
+
+Derived portions inside wasi-libc, each with its original notice packaged
+beside the binary:
+- musl (libc-top-half/musl), MIT: licenses/LICENSE-wasi-libc-musl.txt,
+  Copyright 2005-2020 Rich Felker, et al.
+- cloudlibc (libc-bottom-half/cloudlibc), BSD 2-Clause:
+  licenses/LICENSE-wasi-libc-cloudlibc.txt,
+  Copyright (c) 2015-2017 Nuxi and contributors
+- musl-fts (fts/musl-fts), BSD 3-Clause:
+  licenses/LICENSE-wasi-libc-musl-fts.txt and
+  licenses/NOTICE-wasi-libc-musl-fts.txt,
+  Copyright (c) 1989, 1993 The Regents of the University of California
+- dlmalloc 2.8.6 (dlmalloc/src/malloc.c), public domain / CC0 dedication by
+  Doug Lea: licenses/NOTICE-wasi-libc-dlmalloc.txt
+- emmalloc (emmalloc/emmalloc.c), Copyright 2018 The Emscripten Authors,
+  MIT (see above): licenses/NOTICE-wasi-libc-emmalloc.txt
