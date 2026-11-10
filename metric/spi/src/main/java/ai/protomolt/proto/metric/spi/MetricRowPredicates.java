@@ -473,21 +473,27 @@ public final class MetricRowPredicates {
             }
             case DATE -> {
                 long epochMillis = expectTimestampMillis(mapping, source, litExpr, target.member());
-                DateRangeFilter filter = switch (op) {
-                    case "_>=_" -> new DateRangeFilter(
-                            target.member(), target.fieldName(), target.fieldPath(),
-                            epochMillis, null);
-                    case "_>_" -> new DateRangeFilter(
-                            target.member(), target.fieldName(), target.fieldPath(),
-                            Math.addExact(epochMillis, 1L), null);
-                    case "_<=_" -> new DateRangeFilter(
-                            target.member(), target.fieldName(), target.fieldPath(),
-                            null, epochMillis);
-                    case "_<_" -> new DateRangeFilter(
-                            target.member(), target.fieldName(), target.fieldPath(),
-                            null, Math.subtractExact(epochMillis, 1L));
-                    default -> throw unsupported(mapping, source, "unexpected operator " + op);
-                };
+                DateRangeFilter filter;
+                try {
+                    filter = switch (op) {
+                        case "_>=_" -> new DateRangeFilter(
+                                target.member(), target.fieldName(), target.fieldPath(),
+                                epochMillis, null);
+                        case "_>_" -> new DateRangeFilter(
+                                target.member(), target.fieldName(), target.fieldPath(),
+                                Math.addExact(epochMillis, 1L), null);
+                        case "_<=_" -> new DateRangeFilter(
+                                target.member(), target.fieldName(), target.fieldPath(),
+                                null, epochMillis);
+                        case "_<_" -> new DateRangeFilter(
+                                target.member(), target.fieldName(), target.fieldPath(),
+                                null, Math.subtractExact(epochMillis, 1L));
+                        default -> throw unsupported(mapping, source, "unexpected operator " + op);
+                    };
+                } catch (ArithmeticException e) {
+                    throw unsupported(mapping, source,
+                            "timestamp comparison bound overflows the epoch-millisecond range");
+                }
                 yield new RowPredicate.DateRange(filter);
             }
             default -> throw unsupported(mapping, source,
@@ -655,9 +661,14 @@ public final class MetricRowPredicates {
             return switch (constant.getKind()) {
                 case INT64_VALUE -> new NumericLiteral(
                         true, constant.int64Value(), (double) constant.int64Value());
-                case UINT64_VALUE -> new NumericLiteral(
-                        true, constant.uint64Value().longValue(),
-                        constant.uint64Value().doubleValue());
+                case UINT64_VALUE -> {
+                    long raw = constant.uint64Value().longValue();
+                    if (raw < 0) {
+                        throw unsupported(mapping, source, "numeric literal for '" + member
+                                + "' exceeds the signed 64-bit integer range");
+                    }
+                    yield new NumericLiteral(true, raw, (double) raw);
+                }
                 case DOUBLE_VALUE -> {
                     double d = constant.doubleValue();
                     if (!Double.isFinite(d)) {
@@ -676,7 +687,13 @@ public final class MetricRowPredicates {
             NumericLiteral inner = expectNumericLiteral(
                     mapping, source, expr.call().args().get(0), member);
             if (inner.integral()) {
-                long neg = -inner.longValue();
+                long neg;
+                try {
+                    neg = Math.negateExact(inner.longValue());
+                } catch (ArithmeticException e) {
+                    throw unsupported(mapping, source, "negated numeric literal for '" + member
+                            + "' overflows the signed 64-bit integer range");
+                }
                 return new NumericLiteral(true, neg, (double) neg);
             }
             return new NumericLiteral(false, 0L, -inner.doubleValue());

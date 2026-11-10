@@ -10,6 +10,7 @@ import ai.protomolt.proto.types.LongRange;
 import com.google.protobuf.util.JsonFormat;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -385,5 +386,28 @@ class AccessPoliciesTest {
         assertThatThrownBy(() -> AccessPolicies.requireWellFormed(duplicateCel))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("duplicates CEL filter");
+    }
+
+    @Test
+    void aNonFiniteDoubleRangeBoundIsRefusedAtPolicyLoad() {
+        for (DoubleRange range : List.of(
+                DoubleRange.newBuilder().setBegin(Double.NaN).setEnd(1.0).build(),
+                DoubleRange.newBuilder().setBegin(0.0).setEnd(Double.POSITIVE_INFINITY).build(),
+                DoubleRange.newBuilder().setBegin(Double.NEGATIVE_INFINITY).build(),
+                DoubleRange.newBuilder().setEnd(Double.NaN).setIncludeTail(false).build())) {
+            AccessPolicy nonFinite = policy().toBuilder()
+                    .setPrincipals(0, policy().getPrincipals(0).toBuilder()
+                            .setMetricAccess(MetricAccess.newBuilder()
+                                    .addRowFilters(MetricRowFilter.newBuilder()
+                                            .setMappingSubject("orders")
+                                            .setMember("avg_ratio")
+                                            .setDoubleRange(range))))
+                    .build();
+            assertThatThrownBy(() -> AccessPolicies.requireWellFormed(nonFinite))
+                    .as(range.toString())
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessageContaining("row_filters[0].double_range.")
+                    .hasMessageContaining("must be finite");
+        }
     }
 }

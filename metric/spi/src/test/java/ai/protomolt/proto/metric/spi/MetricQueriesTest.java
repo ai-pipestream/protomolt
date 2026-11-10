@@ -529,4 +529,37 @@ class MetricQueriesTest {
                         .build()));
         assertThat(emptyExclusiveLong.code()).isEqualTo(MetricRefusal.UNSUPPORTED_FILTER);
     }
+
+    @Test
+    void celIntegerBoundsAtTheSigned64BitEdgeCompileExactlyOrRefuse() throws Exception {
+        MetricMapping mapping = mapping();
+
+        assertThat(celPredicate(mapping, "revenue >= 9223372036854775807")).isEqualTo(
+                new RowPredicate.NumericRange(NumericRangeFilter.ofLong(
+                        "revenue", "amount_cents", "amount_cents", Long.MAX_VALUE, null)));
+        assertThat(celPredicate(mapping, "revenue <= -9223372036854775808")).isEqualTo(
+                new RowPredicate.NumericRange(NumericRangeFilter.ofLong(
+                        "revenue", "amount_cents", "amount_cents", null, Long.MIN_VALUE)));
+        assertThat(celPredicate(mapping, "revenue <= -(9223372036854775807)")).isEqualTo(
+                new RowPredicate.NumericRange(NumericRangeFilter.ofLong(
+                        "revenue", "amount_cents", "amount_cents", null, -Long.MAX_VALUE)));
+
+        for (String expression : List.of(
+                "revenue > 9223372036854775807",
+                "revenue < -9223372036854775808",
+                "revenue >= -(-9223372036854775808)",
+                "revenue == 9223372036854775808u")) {
+            MetricRefusal refusal = refusalOf(() -> celPredicate(mapping, expression));
+            assertThat(refusal.code()).as(expression).isEqualTo(MetricRefusal.UNSUPPORTED_FILTER);
+        }
+    }
+
+    private static RowPredicate celPredicate(MetricMapping mapping, String expression) {
+        FakeExecutor lucene = FakeExecutor.lucene(List.of(
+                MetricRow.newBuilder().putMeasures("revenue", 100.0).build()));
+        MetricQueries.query(mapping, Map.of(MetricBackend.METRIC_BACKEND_LUCENE, lucene),
+                request("revenue").addFilters(MetricFilter.newBuilder().setCel(expression)).build());
+        assertThat(lucene.executed.predicates()).hasSize(1);
+        return lucene.executed.predicates().get(0);
+    }
 }
