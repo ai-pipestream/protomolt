@@ -66,9 +66,11 @@ public final class McpHttpHandler implements HttpHandler, AutoCloseable {
 
     /**
      * With a resolver, a credential a mounted access policy names authenticates as its
-     * principal; the caller is pinned to the session it initializes. Every later request on
-     * that session must present a credential resolving to the same principal, or it is
-     * refused with HTTP 403. A non-null resolver requires the operator token.
+     * principal and opens a session bound to that principal. Every later request on the
+     * session must present a credential resolving to the same principal, or it is refused
+     * with HTTP 403, and it runs with the scopes that credential resolves to now, so a
+     * narrowed or widened policy applies from the next request. A non-null resolver
+     * requires the operator token.
      */
     public McpHttpHandler(McpServer server, String apiToken,
                           CallerResolver resolver) {
@@ -171,7 +173,8 @@ public final class McpHttpHandler implements HttpHandler, AutoCloseable {
         if ("tools/call".equals(methodName) && session.isToolCallReady(message)) {
             Future<Optional<com.fasterxml.jackson.databind.node.ObjectNode>> future;
             try {
-                future = session.submit(message);
+                future = caller == null
+                        ? session.submit(message) : session.submit(message, caller);
             } catch (java.util.concurrent.RejectedExecutionException e) {
                 write(exchange, 200, error(message.get("id"), -32000, e.getMessage()), sessionId);
                 return;
@@ -199,7 +202,8 @@ public final class McpHttpHandler implements HttpHandler, AutoCloseable {
             return;
         }
 
-        Optional<com.fasterxml.jackson.databind.node.ObjectNode> response = session.handle(message);
+        Optional<ObjectNode> response =
+                caller == null ? session.handle(message) : session.handle(message, caller);
         if (response.isEmpty()) {
             accepted(exchange, sessionId);
         } else {
@@ -244,7 +248,8 @@ public final class McpHttpHandler implements HttpHandler, AutoCloseable {
         for (JsonNode entry : batch) {
             if (session.isToolCallReady(entry)) {
                 try {
-                    session.submit(entry).get().ifPresent(responses::add);
+                    (caller == null ? session.submit(entry) : session.submit(entry, caller))
+                            .get().ifPresent(responses::add);
                 } catch (InterruptedException e) {
                     Thread.currentThread().interrupt();
                     accepted(exchange, sessionId);
@@ -259,7 +264,8 @@ public final class McpHttpHandler implements HttpHandler, AutoCloseable {
                     responses.add(error(entry.get("id"), -32602, e.getMessage()));
                 }
             } else {
-                session.handle(entry).ifPresent(responses::add);
+                (caller == null ? session.handle(entry) : session.handle(entry, caller))
+                        .ifPresent(responses::add);
             }
         }
         if (responses.isEmpty()) {

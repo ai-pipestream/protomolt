@@ -74,6 +74,13 @@ public final class McpServer {
         public Future<Optional<ObjectNode>> submit(JsonNode message, Consumer<Optional<ObjectNode>> completion) {
             return session.submit(message, completion);
         }
+        /** Dispatches as the caller this request's credential resolved to; see the transport. */
+        public Optional<ObjectNode> handle(JsonNode message, Caller requestCaller) {
+            return session.handle(message, requestCaller);
+        }
+        public Future<Optional<ObjectNode>> submit(JsonNode message, Caller requestCaller) {
+            return session.submit(message, requestCaller, null);
+        }
         public void dispatch(JsonNode message, Consumer<Optional<ObjectNode>> completion) {
             session.dispatch(message, completion);
         }

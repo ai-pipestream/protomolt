@@ -402,6 +402,47 @@ class McpResourceScopeTest {
                 .noneMatch(uri -> uri.startsWith("protomolt://delegation"));
     }
 
+    @Test
+    void aCursorIssuedForOneVisibleSetIsRefusedForAnother() {
+        for (int i = 0; i < 150; i++) {
+            store.register(String.format("subject-%03d-value", i), ORDER_PROTO, List.of());
+        }
+        McpServer paged = new McpServer(
+                ActionCatalog.defaults(ActionContext.create()),
+                CompositeResources.of(
+                        new ServiceProfileResources(profiles, store),
+                        new RegistryResources(store),
+                        new DelegationResources(bridge)),
+                "test", "0");
+        Caller reader = Caller.scoped("ci-reader", Set.of(Scopes.SCHEMA_READ));
+        McpServer.Session session = readyOn(paged, reader);
+        ObjectNode first = session.handle(
+                request(10, "resources/list", MAPPER.createObjectNode())).orElseThrow();
+        String cursor = first.path("result").path("nextCursor").asText(null);
+        assertThat(cursor).isNotNull();
+
+        // Scopes resolve per request: the same principal widened to see service
+        // profiles, or narrowed so the registry is hidden, holds a cursor whose
+        // positions no longer mean the same rows.
+        Caller widened = Caller.scoped("ci-reader",
+                Set.of(Scopes.SCHEMA_READ, Scopes.SERVICE_INVOKE));
+        Caller narrowed = Caller.scoped("ci-reader", Set.of(Scopes.WORKER_COORDINATE));
+        for (Caller changed : List.of(widened, narrowed)) {
+            ObjectNode refused = session.handle(request(11, "resources/list",
+                    MAPPER.createObjectNode().put("cursor", cursor)), changed).orElseThrow();
+            assertThat(refused.path("error").path("code").asInt())
+                    .as("%s", changed.scopes()).isEqualTo(-32602);
+            assertThat(refused.path("error").path("message").asText())
+                    .contains("different set of visible collections");
+            assertThat(refused.has("result")).isFalse();
+        }
+
+        ObjectNode resumed = session.handle(request(12, "resources/list",
+                MAPPER.createObjectNode().put("cursor", cursor)), reader).orElseThrow();
+        assertThat(resumed.has("error")).as("%s", resumed).isFalse();
+        assertThat(resumed.path("result").path("resources").size()).isPositive();
+    }
+
     private static McpServer.Session readyOn(McpServer target, Caller caller) {
         McpServer.Session session = target.openSession(caller);
         ObjectNode initialize = MAPPER.createObjectNode();

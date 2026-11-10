@@ -89,7 +89,7 @@ claude mcp add --transport http protomolt http://host:8080/mcp \
 ```
 
 With an [access policy](../design/authorization-scopes.md) mounted, a
-credential the policy names also authenticates; the session is pinned to that
+credential the policy names also authenticates; the session is bound to that
 principal at `initialize`, `tools/list` serves only the tools whose scope the
 caller holds, and a call outside the scope is an `isError` result naming the
 missing scope.
@@ -98,6 +98,11 @@ Every request on a session is authenticated again. A credential that no longer
 resolves, such as a revoked JDBC row, gets HTTP 401 even with a live session
 id. A valid credential for a different principal, the operator token included,
 gets HTTP 403 on another principal's session, for `DELETE` as well as `POST`.
+Scopes are read on each request rather than fixed at `initialize`: narrowing
+or widening a principal changes `tools/list`, `tools/call` and `resources/*`
+from its next request. A `resources/list` cursor issued under one set of
+visible collections is refused with `-32602` once that set changes; list
+again without a cursor.
 
 Each HTTP `initialize` request creates a bounded server-side session and returns
 an `Mcp-Session-Id` response header. Send that header and the negotiated

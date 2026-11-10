@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Objects;
@@ -79,12 +80,40 @@ public final class CompositeResources implements McpResources {
 
     @Override
     public Page page(ObjectMapper mapper, String cursor, int pageSize, Caller caller) {
-        // The cursor indexes the caller-visible delegate list; a session pins its
-        // caller, so the indexing is stable for the cursor's whole lifetime.
-        List<McpResources> visible = delegates.stream()
-                .filter(delegate -> delegate.visibleTo(caller))
-                .toList();
-        return pageOver(visible, mapper, cursor, pageSize, caller);
+        // The cursor indexes the caller-visible delegate list and carries the set of
+        // delegates that were visible when it was issued. Scopes resolve per request,
+        // so that set can change between pages; a cursor from a different set is
+        // refused instead of silently skipping or repeating rows.
+        Objects.requireNonNull(caller, "caller");
+        if (delegates.size() > Long.SIZE) {
+            throw new IllegalStateException("a scoped resource cursor covers at most "
+                    + Long.SIZE + " collections");
+        }
+        List<McpResources> visible = new ArrayList<>();
+        long mask = 0;
+        for (int i = 0; i < delegates.size(); i++) {
+            if (delegates.get(i).visibleTo(caller)) {
+                visible.add(delegates.get(i));
+                mask |= 1L << i;
+            }
+        }
+        String stamp = Long.toHexString(mask);
+        String inner = cursor;
+        if (cursor != null && !cursor.isBlank()) {
+            int dot = cursor.indexOf('.');
+            if (dot <= 0) {
+                throw new IllegalArgumentException("resource cursor is invalid");
+            }
+            if (!cursor.substring(0, dot).equals(stamp)) {
+                throw new IllegalArgumentException("resource cursor was issued for a"
+                        + " different set of visible collections; list again without a"
+                        + " cursor");
+            }
+            inner = cursor.substring(dot + 1);
+        }
+        Page page = pageOver(visible, mapper, inner, pageSize, caller);
+        return page.nextCursor() == null ? page
+                : new Page(page.resources(), stamp + "." + page.nextCursor());
     }
 
     private Page pageOver(List<McpResources> served, ObjectMapper mapper, String cursor,
