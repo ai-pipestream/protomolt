@@ -15,7 +15,14 @@ import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.Map;
+import org.apache.jena.graph.Triple;
+import org.apache.jena.graph.GraphMemFactory;
+import org.apache.jena.riot.Lang;
+import org.apache.jena.riot.RDFParser;
+import org.apache.jena.riot.system.StreamRDFBase;
+import org.apache.jena.riot.system.StreamRDFLib;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -98,6 +105,44 @@ class SkosConverterTest {
             assertThat(c.getRelatedList()).containsExactly(a.getId());
             assertThat(ConceptScheme.parseFrom(result.toByteArray())).isEqualTo(result);
         }
+    }
+
+    @Test void directGraphExportHoldsTheTriplesBothSyntaxesCarry() {
+        var original = read(SIMPLE + """
+                ex:a skos:prefLabel "Letter 🙂"@fr; skos:altLabel "a\\u0001b"@en;
+                  skos:notation "001"^^<http://www.w3.org/2001/XMLSchema#integer>, "plain";
+                  skos:exactMatch <https://other.example/concept> .
+                ex:b a skos:Concept; skos:inScheme ex:scheme; skos:prefLabel "Beta"@en; skos:broader ex:a .
+                ex:c a skos:Concept; skos:inScheme ex:scheme; skos:prefLabel "Old"@en;
+                  owl:deprecated true; dct:isReplacedBy ex:b .
+                """);
+        var direct = GraphMemFactory.createDefaultGraph();
+        converter.write(original, StreamRDFLib.graph(direct));
+        assertThat(direct.size()).isPositive();
+
+        var turtle = new ByteArrayOutputStream();
+        converter.write(original, turtle, SkosConverter.Format.TURTLE);
+        var parsed = GraphMemFactory.createDefaultGraph();
+        RDFParser.source(new ByteArrayInputStream(turtle.toByteArray()))
+                .lang(Lang.TURTLE).parse(parsed);
+        assertThat(direct.isIsomorphicWith(parsed)).isTrue();
+        assertThat(converter.read(new ByteArrayInputStream(turtle.toByteArray()),
+                SkosConverter.Format.TURTLE)).isEqualTo(original);
+    }
+
+    @Test void directGraphExportRefusesBeforeStartingTheDestination() {
+        var valid = read(SIMPLE);
+        var invalid = valid.toBuilder()
+                .setConcepts(0, valid.getConcepts(0).toBuilder().clearIri()).build();
+        var events = new ArrayList<String>();
+        var destination = new StreamRDFBase() {
+            @Override public void start() { events.add("start"); }
+            @Override public void triple(Triple triple) { events.add("triple"); }
+            @Override public void finish() { events.add("finish"); }
+        };
+        assertThatThrownBy(() -> converter.write(invalid, destination))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThat(events).isEmpty();
     }
 
     @Test void readsNarrowerAsBroaderAndRefusesInconsistentDualDirections() {

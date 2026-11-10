@@ -15,8 +15,6 @@ import ai.protomolt.proto.types.ConceptScheme;
 import ai.protomolt.proto.validate.ProtoValidator;
 import ai.protomolt.proto.validate.source.ProtomoltRuleSource;
 import com.google.protobuf.Message;
-import java.io.ByteArrayInputStream;
-import java.io.ByteArrayOutputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.Base64;
 import java.util.HashSet;
@@ -30,8 +28,7 @@ import org.apache.jena.rdf.model.ModelFactory;
 import org.apache.jena.rdf.model.Property;
 import org.apache.jena.rdf.model.Resource;
 import org.apache.jena.rdf.model.ResourceFactory;
-import org.apache.jena.riot.Lang;
-import org.apache.jena.riot.RDFParser;
+import org.apache.jena.riot.system.StreamRDFLib;
 
 /**
  * Rebuildable, trusted snapshot projection. The caller owns the Dataset and its
@@ -170,11 +167,10 @@ public final class SnapshotProjector {
         String typeUrl = occurrence.getSchema().getTypeUrl();
         if (!typeUrl.substring(typeUrl.lastIndexOf('/') + 1).equals(ConceptScheme.getDescriptor().getFullName()))
             throw new IllegalArgumentException("Retained occurrence must name ConceptScheme");
-        var bytes = new ByteArrayOutputStream();
-        Objects.requireNonNull(converter, "converter").write(scheme, bytes, SkosConverter.Format.TURTLE);
+        Objects.requireNonNull(converter, "converter");
         try (ModelScope model = new ModelScope(base(source, evidence, "scheme"))) {
             try (var rdf = new ModelScope(ModelFactory.createDefaultModel())) {
-                RDFParser.source(new ByteArrayInputStream(bytes.toByteArray())).lang(Lang.TURTLE).parse(rdf.value);
+                converter.write(scheme, StreamRDFLib.graph(rdf.value.getGraph()));
                 var triples = rdf.value.getGraph().find();
                 try {
                     triples.forEachRemaining(triple -> {
