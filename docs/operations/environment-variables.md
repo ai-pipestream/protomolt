@@ -368,6 +368,7 @@ at first use is the failure.
 | `PROTOMOLT_TEI_TARGET` | unset | TEI gRPC `host:port` |
 | `PROTOMOLT_TEI_TRUNCATE` | `true` | `false` rejects overlength inputs instead of truncating server side |
 | `PROTOMOLT_TEI_MAX_IN_FLIGHT` | `8` | positive integer; concurrent Embed calls one batch keeps open |
+| `PROTOMOLT_TEI_ADMISSION_TIMEOUT_SECONDS` | `30` | positive whole seconds, at most 9223372036; how long one Embed call waits for a process-wide slot. System property `protomolt.embeddings.tei.admission-timeout-seconds` wins |
 | `PROTOMOLT_OVMS_TARGET` | unset | OVMS gRPC `host:port` |
 | `PROTOMOLT_OVMS_MODEL` | unset | model name |
 | `PROTOMOLT_OVMS_INPUT` | provider default | input tensor name |
@@ -528,8 +529,9 @@ chunking policy digest so a changed bundle requires reindexing.
 | `PROTOMOLT_TURBOEMBED_REVISION` | Exact served bundle revision, checked on every response. |
 | `PROTOMOLT_TURBOEMBED_MANIFEST_SHA256` | Exact lowercase 64-character manifest digest, checked on every response. |
 | `PROTOMOLT_TURBOEMBED_DIMS` | Positive integer dimensions, checked against each returned vector. |
+| `PROTOMOLT_TURBOEMBED_ADMISSION_TIMEOUT_SECONDS` | Positive whole seconds, at most 9223372036, default 30; how long one RPC waits for a process-wide slot. System property `protomolt.embeddings.turboembed.admission-timeout-seconds` wins. |
 
-All six Turboembed values are required when selected. Configuration does not
+The six Turboembed values other than the admission timeout are required when selected. Configuration does not
 prove server availability; the RPC checks the pinned identity before returning
 vectors. Custom credentials/TLS can be supplied through the caller-owned channel
 constructor. No Turboembed dependency is added to the repository-only assembly.
