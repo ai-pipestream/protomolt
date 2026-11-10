@@ -1,5 +1,6 @@
 package ai.protomolt.proto.mcp;
 
+import ai.protomolt.proto.actions.Scopes;
 import ai.protomolt.proto.delegation.DelegationBridge;
 import ai.protomolt.proto.delegation.lifecycle.DelegationReducer;
 import ai.protomolt.proto.delegation.InProcessDelegationCoordinator;
@@ -55,6 +56,17 @@ public final class DelegationResources implements McpResources {
      */
     public DelegationResources(DelegationBridge bridge) {
         this.bridge = Objects.requireNonNull(bridge, "bridge");
+    }
+
+    /** Workers, task states, and transcripts are the delegation coordination surface. */
+    @Override
+    public String requiredScope() {
+        return Scopes.WORKER_COORDINATE;
+    }
+
+    @Override
+    public boolean owns(String uri) {
+        return ROOT.equals(uri) || uri.startsWith(ROOT + "/");
     }
 
     /**

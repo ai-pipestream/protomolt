@@ -192,6 +192,53 @@ class ScopedServeTest {
     }
 
     @Test
+    void mcpResourceReadsAreScopeCheckedOverHttp() throws Exception {
+        // Anonymous callers never reach resource dispatch on a guarded node.
+        HttpResponse<String> anonymous = post("/mcp", """
+                {"jsonrpc":"2.0","id":1,"method":"resources/list","params":{}}
+                """);
+        assertThat(anonymous.statusCode()).isEqualTo(401);
+
+        String initialize = """
+                {"jsonrpc":"2.0","id":1,"method":"initialize","params":
+                 {"protocolVersion":"2025-06-18","capabilities":{},
+                  "clientInfo":{"name":"scope-test","version":"0"}}}
+                """;
+        HttpResponse<String> initialized = post("/mcp", initialize, "api_token", READER);
+        assertThat(initialized.statusCode()).isEqualTo(200);
+        String session = initialized.headers().firstValue("Mcp-Session-Id").orElseThrow();
+        String version = MAPPER.readTree(initialized.body()).path("result")
+                .path("protocolVersion").asText();
+        post("/mcp", "{\"jsonrpc\":\"2.0\",\"method\":\"notifications/initialized\"}",
+                "api_token", READER, "Mcp-Session-Id", session,
+                "MCP-Protocol-Version", version);
+
+        // The schema-read principal does not see the delegation collection listed.
+        HttpResponse<String> listed = post("/mcp", """
+                {"jsonrpc":"2.0","id":2,"method":"resources/list","params":{}}
+                """, "api_token", READER, "Mcp-Session-Id", session,
+                "MCP-Protocol-Version", version);
+        assertThat(MAPPER.readTree(listed.body()).path("result")
+                .path("resources").findValuesAsText("uri"))
+                .contains("protomolt://workspace")
+                .doesNotContain("protomolt://delegation/workers",
+                        "protomolt://delegation/tasks");
+
+        // A direct read outside the scope is refused by name, with no contents.
+        HttpResponse<String> denied = post("/mcp", """
+                {"jsonrpc":"2.0","id":3,"method":"resources/read",
+                 "params":{"uri":"protomolt://delegation/tasks"}}
+                """, "api_token", READER, "Mcp-Session-Id", session,
+                "MCP-Protocol-Version", version);
+        JsonNode reply = MAPPER.readTree(denied.body());
+        assertThat(reply.has("result")).isFalse();
+        assertThat(reply.path("error").path("message").asText())
+                .contains("permission-denied").contains("ci-reader")
+                .contains(Scopes.WORKER_COORDINATE);
+        assertThat(denied.body()).doesNotContain("contents");
+    }
+
+    @Test
     void restResolvesThePrincipalAndRefusesOutsideItsScope() throws Exception {
         HttpResponse<String> allowed = post("/grpc-json/ProtoMoltService/ListTypes",
                 "{}", "api_token", READER);

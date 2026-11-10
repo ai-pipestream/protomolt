@@ -1,5 +1,6 @@
 package ai.protomolt.proto.mcp.transport;
 
+import ai.protomolt.proto.actions.Caller;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
@@ -26,10 +27,33 @@ public final class CompositeResources implements McpResources {
                 : present.size() == 1 ? present.getFirst() : new CompositeResources(present);
     }
 
+    /**
+     * A composite declares no scope of its own: each delegate's declaration applies.
+     * The composite is visible when any delegate is, and the caller-aware overloads
+     * serve only the visible delegates.
+     */
+    @Override
+    public boolean visibleTo(Caller caller) {
+        Objects.requireNonNull(caller, "caller");
+        return delegates.stream().anyMatch(delegate -> delegate.visibleTo(caller));
+    }
+
+    @Override
+    public boolean owns(String uri) {
+        return delegates.stream().anyMatch(delegate -> delegate.owns(uri));
+    }
+
     @Override
     public ArrayNode list(ObjectMapper mapper) {
         ArrayNode result = mapper.createArrayNode();
         delegates.forEach(delegate -> delegate.list(mapper).forEach(result::add));
+        return result;
+    }
+
+    @Override
+    public ArrayNode list(ObjectMapper mapper, Caller caller) {
+        ArrayNode result = mapper.createArrayNode();
+        delegates.forEach(delegate -> delegate.list(mapper, caller).forEach(result::add));
         return result;
     }
 
@@ -41,20 +65,45 @@ public final class CompositeResources implements McpResources {
     }
 
     @Override
+    public ArrayNode templates(ObjectMapper mapper, Caller caller) {
+        ArrayNode result = mapper.createArrayNode();
+        delegates.forEach(
+                delegate -> delegate.templates(mapper, caller).forEach(result::add));
+        return result;
+    }
+
+    @Override
     public Page page(ObjectMapper mapper, String cursor, int pageSize) {
+        return pageOver(delegates, mapper, cursor, pageSize, null);
+    }
+
+    @Override
+    public Page page(ObjectMapper mapper, String cursor, int pageSize, Caller caller) {
+        // The cursor indexes the caller-visible delegate list; a session pins its
+        // caller, so the indexing is stable for the cursor's whole lifetime.
+        List<McpResources> visible = delegates.stream()
+                .filter(delegate -> delegate.visibleTo(caller))
+                .toList();
+        return pageOver(visible, mapper, cursor, pageSize, caller);
+    }
+
+    private Page pageOver(List<McpResources> served, ObjectMapper mapper, String cursor,
+                          int pageSize, Caller caller) {
         if (pageSize <= 0) {
             throw new IllegalArgumentException("page size must be positive");
         }
         Position position = decode(cursor);
-        if (cursor != null && position.delegateIndex() >= delegates.size()) {
+        if (cursor != null && position.delegateIndex() >= served.size()) {
             throw new IllegalArgumentException("resource cursor is invalid");
         }
         ArrayNode result = mapper.createArrayNode();
         int delegateIndex = position.delegateIndex();
         String delegateCursor = position.delegateCursor();
-        while (delegateIndex < delegates.size() && result.size() < pageSize) {
-            Page page = delegates.get(delegateIndex).page(mapper, delegateCursor,
-                    pageSize - result.size());
+        while (delegateIndex < served.size() && result.size() < pageSize) {
+            McpResources delegate = served.get(delegateIndex);
+            Page page = caller == null
+                    ? delegate.page(mapper, delegateCursor, pageSize - result.size())
+                    : delegate.page(mapper, delegateCursor, pageSize - result.size(), caller);
             page.resources().forEach(result::add);
             if (page.nextCursor() != null) {
                 return new Page(result, encode(delegateIndex, page.nextCursor()));
@@ -69,6 +118,19 @@ public final class CompositeResources implements McpResources {
     public Optional<ObjectNode> read(ObjectMapper mapper, String uri) {
         for (McpResources delegate : delegates) {
             Optional<ObjectNode> found = delegate.read(mapper, uri);
+            if (found.isPresent()) {
+                return found;
+            }
+        }
+        return Optional.empty();
+    }
+
+    @Override
+    public Optional<ObjectNode> read(ObjectMapper mapper, String uri, Caller caller) {
+        // A delegate that owns the URI but is not visible to the caller refuses by
+        // name; the refusal propagates instead of falling through to later delegates.
+        for (McpResources delegate : delegates) {
+            Optional<ObjectNode> found = delegate.read(mapper, uri, caller);
             if (found.isPresent()) {
                 return found;
             }
