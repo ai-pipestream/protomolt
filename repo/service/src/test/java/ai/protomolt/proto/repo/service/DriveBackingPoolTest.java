@@ -294,6 +294,168 @@ class DriveBackingPoolTest {
                 .isInstanceOf(IllegalArgumentException.class);
     }
 
+    @Test void perDriveReadThroughCachePoolsSharedHandlesAndIsolatesCacheNamespaceByS3Backend() {
+        var s3Opened = new AtomicInteger();
+        var s3Closed = new ArrayList<String>();
+        var cacheOpened = new AtomicInteger();
+        var cacheClosed = new ArrayList<String>();
+        var cacheSeen = new ArrayList<Map<String, String>>();
+        var s3Reclaimed = new ArrayList<String>();
+        var cacheDeleted = new ArrayList<String>();
+
+        var s3Provider = new BlobStoreProvider() {
+            public String id() { return "s3"; }
+            public OpenedBlobStore open(Map<String, String> options) {
+                s3Opened.incrementAndGet();
+                return new OpenedBlobStore(STORE, () -> s3Closed.add(options.get("endpoint")),
+                        Set.of(BlobCapability.NON_EXPIRING_WRITES, BlobCapability.PHYSICAL_RECLAMATION,
+                                BlobCapability.STREAMING_WRITE),
+                        name -> {}, (bucket, key) -> s3Reclaimed.add(bucket + "/" + key));
+            }
+        };
+        var cacheStore = (BlobStore) java.lang.reflect.Proxy.newProxyInstance(
+                BlobStore.class.getClassLoader(), new Class<?>[]{BlobStore.class},
+                (proxy, method, args) -> switch (method.getName()) {
+                    case "delete" -> cacheDeleted.add(args[0] + "/" + args[1]);
+                    case "headObject" -> { throw new BlobStore.BlobNotFoundException("absent"); }
+                    default -> { throw new AssertionError("Unexpected cache method: " + method.getName()); }
+                });
+        var valkeyProvider = new BlobStoreProvider() {
+            public String id() { return "valkey"; }
+            public OpenedBlobStore open(Map<String, String> options) {
+                cacheOpened.incrementAndGet();
+                cacheSeen.add(options);
+                return new OpenedBlobStore(cacheStore, () -> cacheClosed.add(options.get("uri") + "|" + options.get("key-prefix")),
+                        Set.of(BlobCapability.OBJECT_EXPIRY, BlobCapability.PHYSICAL_RECLAMATION),
+                        name -> {}, (bucket, key) -> true);
+            }
+        };
+        var env = Map.of("CACHE_A_PASSWORD", "secret-a", "CACHE_A_USERNAME", "cache-user");
+        var pool = new DriveBackingPool(CONFIG, BlobStores.of(List.of(s3Provider, valkeyProvider)), DEFAULTS, env::get);
+
+        var cacheConfigA = DriveCacheConfig.newBuilder()
+                .setUri("redis://cache:6379/1")
+                .setTtlSeconds(60)
+                .setMaxCacheableBytes(2048)
+                .setKeyPrefix("shared:")
+                .setCredentialsRef("env:CACHE_A")
+                .build();
+
+        // Two drives on the same S3 endpoint and identical cache config share both handles
+        var drive1 = s3WithCache("http://s3-one:9000", "us-east-1", true, cacheConfigA);
+        var backing1 = pool.resolve(drive1);
+        assertThat(pool.resolve(drive1)).isSameAs(backing1);
+        assertThat(backing1.provider()).isEqualTo("s3");
+        assertThat(backing1.endpoint()).isEqualTo("http://s3-one:9000");
+        assertThat(backing1.temporary()).isFalse();
+        assertThat(backing1.store()).isInstanceOf(ai.protomolt.proto.repo.blob.cache.CachingBlobStore.class);
+        assertThat(s3Opened).hasValue(1);
+        assertThat(cacheOpened).hasValue(1);
+        assertThat(cacheSeen.getFirst())
+                .containsEntry("uri", "redis://cache-user:secret-a@cache:6379/1")
+                .containsEntry("ttl-seconds", "60")
+                .containsEntry("max-object-bytes", "2048")
+                .containsEntry("key-prefix", "shared:");
+
+        // A drive on a DIFFERENT S3 endpoint with the SAME resolved cache config shares the cache
+        // handle but gets a distinct CachingBlobStore with an isolated cacheNamespace!
+        var drive2 = s3WithCache("http://s3-two:9000", "us-east-1", true, cacheConfigA);
+        var backing2 = pool.resolve(drive2);
+        assertThat(backing2).isNotSameAs(backing1);
+        assertThat(s3Opened).hasValue(2);
+        assertThat(cacheOpened).hasValue(1);
+        var caching1 = (ai.protomolt.proto.repo.blob.cache.CachingBlobStore) backing1.store();
+        var caching2 = (ai.protomolt.proto.repo.blob.cache.CachingBlobStore) backing2.store();
+        assertThat(caching1.cacheNamespace()).isNotEqualTo(caching2.cacheNamespace());
+        assertThat(caching1.cacheBucket("same-bucket")).isNotEqualTo(caching2.cacheBucket("same-bucket"));
+
+        // An uncached drive on http://s3-one:9000 reuses the S3 handle without wrapping in a cache
+        var uncached1 = pool.resolve(s3("http://s3-one:9000"));
+        assertThat(s3Opened).hasValue(2);
+        assertThat(uncached1.store()).isSameAs(STORE);
+
+        // Composed reclaimer reclaims from S3 and strictly evicts from the isolated cache bucket
+        assertThat(backing1.reclaimer().reclaim("same-bucket", "doc/key")).isTrue();
+        assertThat(s3Reclaimed).containsExactly("same-bucket/doc/key");
+        assertThat(cacheDeleted).containsExactly(caching1.cacheBucket("same-bucket") + "/doc/key");
+
+        pool.close();
+        assertThat(cacheClosed).containsExactly("redis://cache-user:secret-a@cache:6379/1|shared:");
+        assertThat(s3Closed).containsExactlyInAnyOrder("http://s3-one:9000", "http://s3-two:9000");
+    }
+
+    @Test void refusesInvalidPerDriveReadThroughCacheConfigurationsAndClosesOpenedHandlesOnFailure() {
+        var s3Opened = new AtomicInteger();
+        var s3Closed = new ArrayList<String>();
+        var s3Provider = provider(s3Opened, s3Closed, Set.of(
+                BlobCapability.NON_EXPIRING_WRITES, BlobCapability.PHYSICAL_RECLAMATION, BlobCapability.STREAMING_WRITE));
+        var nonExpiringCache = new BlobStoreProvider() {
+            public String id() { return "redis"; }
+            public OpenedBlobStore open(Map<String, String> options) {
+                return new OpenedBlobStore(STORE, () -> s3Closed.add("cache:" + options.get("uri")),
+                        Set.of(BlobCapability.PHYSICAL_RECLAMATION), name -> {}, (bucket, key) -> true);
+            }
+        };
+        try (var pool = new DriveBackingPool(CONFIG, BlobStores.of(List.of(s3Provider, nonExpiringCache)), DEFAULTS)) {
+            var baseCache = DriveCacheConfig.newBuilder()
+                    .setProvider("valkey")
+                    .setUri("redis://cache:6379")
+                    .setTtlSeconds(60)
+                    .setMaxCacheableBytes(1024)
+                    .build();
+
+            // Invalid provider, blank URI, non-positive TTL/maxCacheableBytes, inline credentials, reserved prefix
+            assertThatThrownBy(() -> pool.resolve(s3WithCache("http://s3:9000", "us-east-1", true,
+                    baseCache.toBuilder().setProvider("memcached").build())))
+                    .hasMessageContaining("valkey or redis");
+            assertThatThrownBy(() -> pool.resolve(s3WithCache("http://s3:9000", "us-east-1", true,
+                    baseCache.toBuilder().clearUri().build())))
+                    .hasMessageContaining("non-blank uri");
+            assertThatThrownBy(() -> pool.resolve(s3WithCache("http://s3:9000", "us-east-1", true,
+                    baseCache.toBuilder().setTtlSeconds(0).build())))
+                    .hasMessageContaining("ttl_seconds must be positive");
+            assertThatThrownBy(() -> pool.resolve(s3WithCache("http://s3:9000", "us-east-1", true,
+                    baseCache.toBuilder().setTtlSeconds(-5).build())))
+                    .hasMessageContaining("ttl_seconds must be positive");
+            assertThatThrownBy(() -> pool.resolve(s3WithCache("http://s3:9000", "us-east-1", true,
+                    baseCache.toBuilder().setMaxCacheableBytes(0).build())))
+                    .hasMessageContaining("max_cacheable_bytes must be positive");
+            assertThatThrownBy(() -> pool.resolve(s3WithCache("http://s3:9000", "us-east-1", true,
+                    baseCache.toBuilder().setUri("redis://user:secret@cache:6379").build())))
+                    .hasMessageContaining("must not contain credentials")
+                    .hasMessageNotContaining("secret");
+            assertThatThrownBy(() -> pool.resolve(s3WithCache("http://s3:9000", "us-east-1", true,
+                    baseCache.toBuilder().setKeyPrefix(DriveBackingPool.temporaryKeyPrefix("p", 60)).build())))
+                    .hasMessageContaining("reserved temporary-drive prefix");
+            assertThatThrownBy(() -> pool.resolve(s3WithCache("http://s3:9000", "us-east-1", true,
+                    baseCache.toBuilder().setCredentialsRef("env:MISSING_CACHE").build())))
+                    .hasMessageContaining("incomplete");
+            assertThat(s3Opened).hasValue(0);
+
+            // When cache provider lacks OBJECT_EXPIRY, both the cache handle and newly opened S3 handle close
+            assertThatThrownBy(() -> pool.resolve(s3WithCache("http://s3-fail:9000", "us-east-1", true,
+                    baseCache.toBuilder().setProvider("redis").build())))
+                    .hasMessageContaining("expiry and reclamation capabilities");
+            assertThat(s3Opened).hasValue(1);
+            assertThat(s3Closed).containsExactly("cache:redis://cache:6379", "http://s3-fail:9000");
+        }
+    }
+
+    private static DriveRecord s3WithCache(
+            String endpoint, String region, boolean pathStyle, DriveCacheConfig cache) {
+        var record = new DriveRecord();
+        record.provider = "s3";
+        record.region = region;
+        record.credentialsRef = "host:default";
+        record.writeProviderConfig(DriveProviderConfig.newBuilder()
+                .setS3(S3DriveConfig.newBuilder()
+                        .setEndpointOverride(endpoint)
+                        .setForcePathStyle(pathStyle)
+                        .setReadThroughCache(cache))
+                .build());
+        return record;
+    }
+
     private static DriveRecord redis(String uri, int ttlSeconds) {
         return redis(uri, ttlSeconds, "");
     }

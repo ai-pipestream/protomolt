@@ -357,6 +357,16 @@ final class RepoV2Wiring {
         }
 
         @Override
+        public java.io.InputStream openVerifiedStream(
+                String bucket, String key, long expectedLength, String expectedSha256Hex) {
+            try {
+                return delegate.openVerifiedStream(bucket, key, expectedLength, expectedSha256Hex);
+            } catch (UnsupportedOperationException unsupported) {
+                return openStream(bucket, key, 0, -1);
+            }
+        }
+
+        @Override
         public long objectLength(String bucket, String key) {
             try {
                 return delegate.objectLength(bucket, key);

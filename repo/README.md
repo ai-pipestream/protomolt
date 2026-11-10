@@ -649,6 +649,35 @@ reclamation remains pending and the same purge ID resumes it after restart.
 Failed promotion/save attempts can leave unreferenced objects; there is no age
 sweep because in-flight writes are not fenced for safe orphan collection.
 
-Temporary TTL repository drives and revision pruning are not enabled. Issue
-#775's temporary staging and per-drive cache work remain separate; a staging
-expiry contract must never expire a retained revision's authoritative bytes.
+Temporary TTL repository drives (`RedisDriveConfig.ttl_seconds > 0` on an explicit
+per-drive Valkey/Redis configuration) are supported for expiring staging with
+explicit promotion (`STORAGE_PLACEMENT_SELECTED_DRIVE`) to a durable drive (#809);
+revision pruning remains a later feature.
+
+### Per-drive read-through caches
+
+An S3 drive can opt into a dedicated or shared Valkey/Redis read-through cache
+by setting `provider_config.s3.read_through_cache` (`DriveCacheConfig`):
+
+- `provider`: `"valkey"` (preferred) or `"redis"`.
+- `uri`: `redis://` or `rediss://` endpoint without inline credentials.
+- `ttl_seconds`: required positive cache-entry TTL (`> 0`).
+- `max_cacheable_bytes`: required positive byte ceiling (`> 0`); larger objects
+  stream directly from S3 and bypass the cache.
+- `key_prefix`: optional Redis key prefix for this drive's cache entries.
+- `credentials_ref`: optional `env:<NAME>` secret reference (resolved via the
+  host environment, never persisted in drive metadata or catalog records).
+
+`DriveBackingPool` validates and pools authoritative S3 handles and Valkey/Redis
+cache handles independently. Even when two S3 drives share an identical
+`DriveCacheConfig` (including `key_prefix`) and the same bucket/prefix name on
+different S3 backends, `CachingBlobStore` namespaces every cache key by the
+authoritative S3 backing identity (`s3|<endpoint>|<region>|pathStyle=<bool>`),
+preventing cross-drive cache collisions. Catalog state and current-revision
+pointers are never cached in Valkey/Redis. Verified stack reads validate cached
+bytes against the manifest's expected length and SHA-256, evicting corrupt cache
+entries and falling back to S3 automatically; a cached entry is served only
+after S3 confirms the object still exists, so an object lost from S3 fails the
+read instead of being answered from the cache; cache outages degrade gracefully
+to direct S3 reads and writes; and administrator purge evicts cached entries
+through the composed `ObjectReclaimer`.

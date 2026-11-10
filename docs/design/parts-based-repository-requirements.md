@@ -379,6 +379,46 @@ the documents and let the remaining objects expire.
 Revision pruning remains a later feature: it is not enabled by promotion or by
 this durable-drive contract.
 
+### Per-drive read-through caches
+
+An S3 drive may configure an optional read-through/write-through front cache via
+`S3DriveConfig.read_through_cache` (`DriveCacheConfig`). The authoritative store
+remains S3 (`NON_EXPIRING_WRITES`, `PHYSICAL_RECLAMATION`, `STREAMING_WRITE`);
+the cache is an expendable Valkey or Redis store qualified with `OBJECT_EXPIRY`
+and `PHYSICAL_RECLAMATION`, a positive `ttl_seconds`, and a positive
+`max_cacheable_bytes` ceiling. Drives do not inherit or share a cache unless
+their resolved cache configuration matches, and `DriveBackingPool` pools the
+authoritative S3 handle and the cache handle independently so shared cache
+endpoints reuse one connection pool while closing every owned handle cleanly on
+shutdown or startup failure.
+
+Cache keys are isolated by the authoritative S3 backing's physical identity
+(`s3|<endpoint>|<region>|pathStyle=<true|false>`) in addition to the cache's own
+`key_prefix`, the drive's bucket, and the object key. Equal `(bucket, key)`
+coordinates on different S3 endpoints, regions, or addressing modes never
+collide in a shared Valkey/Redis instance. Catalog and current-revision lookups
+remain strictly in the Postgres ledger; only immutable content-addressed stack
+objects and unversioned blobs within `max_cacheable_bytes` are admitted to the
+cache.
+
+Verified stack reads (`BlobStore.openVerifiedStream`) and whole-object unversioned
+reads (`openStream(bucket, key, 0, -1)` and `get(bucket, key, null)`) populate
+the cache on a miss when the object fits within `max_cacheable_bytes`. Before
+serving a cached entry on a verified stack read, `CachingBlobStore` checks the
+entry's byte length and SHA-256 against the manifest's `StackRef`; any corrupt,
+truncated, or mismatched cache entry is evicted and re-read from the
+authoritative S3 backing store, and `BlobStoreStack` still wraps the returned
+stream in `VerifyingInputStream`. A cached entry is served only after
+`headObject` on S3 confirms the object still exists; when S3 no longer has it,
+the entry is evicted and the read fails as S3 reports it (a stack part read
+answers `DATA_LOSS`), so the cache never hides authoritative loss. Existence
+checks (`headObject`) always ask S3. Bounded reads (`getBounded`) serve a cache
+hit only when it fits the caller's limit; otherwise S3 enforces the limit.
+Cache unavailability on read or write logs a warning and falls through to
+authoritative S3 without failing the operation.
+Administrator purge composes `CachingBlobStore.reclaimer(backing.reclaimer())`
+so physical reclamation evicts cached copies alongside authoritative S3 deletion.
+
 ## 7. Catalog and commit
 
 **Commit.** New part bytes are written to the stacks first. Then one catalog transaction:

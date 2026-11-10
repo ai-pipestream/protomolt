@@ -1,12 +1,15 @@
 package ai.protomolt.proto.repo.service;
 
+import ai.protomolt.proto.repo.blob.cache.CachingBlobStore;
 import ai.protomolt.proto.repo.blob.spi.BlobCapability;
 import ai.protomolt.proto.repo.blob.spi.BlobStore;
 import ai.protomolt.proto.repo.blob.spi.BlobStores;
 import ai.protomolt.proto.repo.blob.spi.NamespaceProvisioner;
 import ai.protomolt.proto.repo.blob.spi.ObjectReclaimer;
+import ai.protomolt.proto.repo.blob.spi.OpenedBlobStore;
 import ai.protomolt.proto.repo.container.ledger.DriveRecord;
 import ai.protomolt.proto.repo.spi.RepositoryException;
+import ai.protomolt.proto.repo.v1.DriveCacheConfig;
 import java.net.URI;
 import java.util.HashMap;
 import java.util.Map;
@@ -43,13 +46,17 @@ final class DriveBackingPool implements AutoCloseable {
             return retention + writePolicy + ":" + encode(keyPrefix) + ":" + encode(bucket) + ":" + encode(prefix);
         }
     }
-    private record Key(String provider, Map<String, String> options) {}
+    private record StoreKey(String provider, Map<String, String> options) {}
+    private record CacheSpec(String provider, Map<String, String> options, int ttlSeconds, long maxCacheableBytes) {}
+    private record Key(String provider, Map<String, String> options, CacheSpec cache) {}
     private final RepoServiceConfig config;
     private final BlobStores providers;
     private final Backing defaults;
     private final Function<String, String> environment;
     private final boolean bounded;
     private final OwnedResources owned = new OwnedResources();
+    private final Map<StoreKey, OpenedBlobStore> authoritativeHandles = new HashMap<>();
+    private final Map<StoreKey, OpenedBlobStore> cacheHandles = new HashMap<>();
     private final Map<Key, Backing> backings = new HashMap<>();
     private boolean closed;
 
@@ -73,15 +80,36 @@ final class DriveBackingPool implements AutoCloseable {
                 ? s3Endpoint(config.s3Endpoint(), config.s3Region(), config.s3Endpoint() != null) : endpoint(config.redisUri()), defaults.blobStore(),
                 defaults.namespaces(), defaults.reclaimer(), "", bounded ? "create-only" : "replace",
                 config.hasS3Backing() ? config.s3Region() : "", config.s3Endpoint() != null);
-        if (config.hasS3Backing())
-            backings.put(new Key("s3", Map.copyOf(RepoStorageWiring.s3Options(config))), this.defaults);
-        else {
+        if (config.hasS3Backing()) {
+            Map<String, String> hostS3Options = Map.copyOf(RepoStorageWiring.s3Options(config));
+            CacheSpec hostCache = config.hasRedisCache()
+                    ? new CacheSpec(config.redisCompatibleProvider(), Map.of(
+                            "uri", config.redisUri(),
+                            "ttl-seconds", Integer.toString(config.redisTtlSeconds()),
+                            "max-object-bytes", Long.toString(config.redisMaxObjectBytes()),
+                            "key-prefix", "",
+                            "write-policy", "replace"),
+                            config.redisTtlSeconds(),
+                            config.redisMaxObjectBytes())
+                    : null;
+            backings.put(new Key("s3", hostS3Options, hostCache), this.defaults);
+            if (!config.hasRedisCache()) {
+                authoritativeHandles.put(new StoreKey("s3", hostS3Options), new OpenedBlobStore(
+                        defaults.blobStore(),
+                        () -> {},
+                        Set.of(BlobCapability.NON_EXPIRING_WRITES,
+                                BlobCapability.PHYSICAL_RECLAMATION,
+                                BlobCapability.STREAMING_WRITE),
+                        defaults.namespaces(),
+                        defaults.reclaimer()));
+            }
+        } else {
             var options = Map.of("uri", config.redisUri(),
                 "ttl-seconds", Integer.toString(config.redisTtlSeconds()),
                 "max-object-bytes", Long.toString(config.redisMaxObjectBytes()), "key-prefix", "",
                 "write-policy", bounded ? "create-only" : "replace");
-            backings.put(new Key(provider, options), this.defaults);
-            if ("valkey".equals(provider)) backings.put(new Key("redis", options), this.defaults);
+            backings.put(new Key(provider, options, null), this.defaults);
+            if ("valkey".equals(provider)) backings.put(new Key("redis", options, null), this.defaults);
         }
     }
 
@@ -113,16 +141,21 @@ final class DriveBackingPool implements AutoCloseable {
         }
         String provider = drive.provider;
         var options = new HashMap<String, String>();
+        CacheSpec cacheSpec = null;
         switch (stored.getConfigCase()) {
             case S3 -> {
                 if (!"s3".equals(provider)) throw invalid("S3 configuration requires s3 provider");
+                var s3 = stored.getS3();
                 options.putAll(RepoStorageWiring.s3Options(config));
-                options.put("endpoint", stored.getS3().getEndpointOverride());
-                options.put("path-style", Boolean.toString(stored.getS3().getForcePathStyle()));
+                options.put("endpoint", s3.getEndpointOverride());
+                options.put("path-style", Boolean.toString(s3.getForcePathStyle()));
                 options.put("region", blank(drive.region) ? config.s3Region() : drive.region);
                 if (!blank(drive.credentialsRef)) credentials(options, drive.credentialsRef);
-                else if (!stored.getS3().getEndpointOverride().equals(text(config.s3Endpoint())))
+                else if (!s3.getEndpointOverride().equals(text(config.s3Endpoint())))
                     throw invalid("A different S3 endpoint requires an explicit credentials_ref");
+                if (s3.hasReadThroughCache()) {
+                    cacheSpec = resolveCacheSpec(s3.getReadThroughCache());
+                }
             }
             case REDIS -> {
                 if (!Set.of("redis", "valkey").contains(provider))
@@ -154,8 +187,33 @@ final class DriveBackingPool implements AutoCloseable {
                 throw invalid("Unsupported per-drive tuning option: " + entry.getKey());
             options.put(entry.getKey(), entry.getValue());
         }
-        var key = new Key(provider, Map.copyOf(options));
+        var key = new Key(provider, Map.copyOf(options), cacheSpec);
         return backings.computeIfAbsent(key, selected -> open(selected));
+    }
+
+    private CacheSpec resolveCacheSpec(DriveCacheConfig cache) {
+        String cacheProvider = blank(cache.getProvider()) ? "valkey" : cache.getProvider();
+        if (!Set.of("valkey", "redis").contains(cacheProvider))
+            throw invalid("Drive read_through_cache provider must be valkey or redis");
+        if (blank(cache.getUri()))
+            throw invalid("Drive read_through_cache requires a non-blank uri");
+        int ttl = cache.getTtlSeconds();
+        if (ttl <= 0)
+            throw invalid("Drive read_through_cache ttl_seconds must be positive");
+        long maxBytes = cache.getMaxCacheableBytes();
+        if (maxBytes <= 0)
+            throw invalid("Drive read_through_cache max_cacheable_bytes must be positive");
+        String keyPrefix = cache.getKeyPrefix();
+        if (keyPrefix.startsWith(TEMPORARY_PREFIX))
+            throw invalid("Drive read_through_cache key_prefix uses the reserved temporary-drive prefix");
+        String resolvedUri = redisCredentials(cache.getUri(), cache.getCredentialsRef());
+        var cacheOptions = Map.of(
+                "uri", resolvedUri,
+                "ttl-seconds", Integer.toString(ttl),
+                "max-object-bytes", Long.toString(maxBytes),
+                "key-prefix", keyPrefix,
+                "write-policy", "replace");
+        return new CacheSpec(cacheProvider, cacheOptions, ttl, maxBytes);
     }
 
     /** Compatibility identity emitted by the former one-backend host; never rewrites it. */
@@ -167,13 +225,62 @@ final class DriveBackingPool implements AutoCloseable {
     }
 
     private Backing open(Key key) {
+        int ttlSeconds = "s3".equals(key.provider()) ? 0
+                : Integer.parseInt(key.options().getOrDefault("ttl-seconds", "0"));
+        StoreKey authKey = new StoreKey(key.provider(), key.options());
+        boolean newAuthHandle = !authoritativeHandles.containsKey(authKey);
+        OpenedBlobStore handle = newAuthHandle
+                ? openAuthoritativeHandle(authKey, ttlSeconds)
+                : authoritativeHandles.get(authKey);
+        try {
+            String endpoint = "s3".equals(key.provider())
+                    ? s3Endpoint(key.options().get("endpoint"), key.options().get("region"),
+                            Boolean.parseBoolean(key.options().get("path-style")))
+                    : endpoint(key.options().get("uri"));
+            String region = key.options().getOrDefault("region", "");
+            boolean pathStyle = Boolean.parseBoolean(key.options().get("path-style"));
+            BlobStore store = handle.store();
+            ObjectReclaimer reclaimer = handle.reclaimer();
+            if (key.cache() != null) {
+                StoreKey cacheKey = new StoreKey(key.cache().provider(), key.cache().options());
+                OpenedBlobStore cacheHandle = cacheHandles.get(cacheKey);
+                if (cacheHandle == null) {
+                    cacheHandle = openCacheHandle(cacheKey);
+                    cacheHandles.put(cacheKey, cacheHandle);
+                    owned.add(cacheHandle);
+                }
+                var cachingStore = new CachingBlobStore(
+                        handle.store(),
+                        cacheHandle.store(),
+                        key.cache().ttlSeconds(),
+                        key.cache().maxCacheableBytes(),
+                        s3CacheNamespace(endpoint, region, pathStyle));
+                store = cachingStore;
+                reclaimer = cachingStore.reclaimer(handle.reclaimer());
+            }
+            var backing = new Backing(key.provider(), endpoint,
+                    store, handle::ensureNamespace, reclaimer,
+                    key.options().getOrDefault("key-prefix", ""), key.options().getOrDefault("write-policy", "replace"),
+                    region, pathStyle, ttlSeconds);
+            if (newAuthHandle) {
+                authoritativeHandles.put(authKey, handle);
+                owned.add(handle);
+            }
+            return backing;
+        } catch (RuntimeException | Error failure) {
+            if (newAuthHandle) {
+                try { handle.close(); } catch (Exception cleanup) { failure.addSuppressed(cleanup); }
+            }
+            throw failure;
+        }
+    }
+
+    private OpenedBlobStore openAuthoritativeHandle(StoreKey key, int ttlSeconds) {
         var handle = providers.open(key.provider(), key.options());
         try {
             // A positive per-drive TTL selects a temporary drive: its writes expire, so
             // OBJECT_EXPIRY replaces NON_EXPIRING_WRITES in the qualification gate. The
             // host default and zero-TTL drives keep the durable retention gate.
-            int ttlSeconds = "s3".equals(key.provider()) ? 0
-                    : Integer.parseInt(key.options().getOrDefault("ttl-seconds", "0"));
             var required = ttlSeconds > 0
                     ? Set.of(BlobCapability.OBJECT_EXPIRY, BlobCapability.PHYSICAL_RECLAMATION)
                     : config.managedStorage().retentionQualified() && !bounded
@@ -182,15 +289,25 @@ final class DriveBackingPool implements AutoCloseable {
                             : Set.of(BlobCapability.NON_EXPIRING_WRITES, BlobCapability.PHYSICAL_RECLAMATION);
             if (!handle.capabilities().containsAll(required))
                 throw invalid("Drive provider lacks required repository retention capabilities");
-            var backing = new Backing(key.provider(), "s3".equals(key.provider())
-                    ? s3Endpoint(key.options().get("endpoint"), key.options().get("region"),
-                            Boolean.parseBoolean(key.options().get("path-style"))) : endpoint(key.options().get("uri")),
-                    handle.store(), handle::ensureNamespace, handle.reclaimer(),
-                    key.options().getOrDefault("key-prefix", ""), key.options().getOrDefault("write-policy", "replace"),
-                    key.options().getOrDefault("region", ""), Boolean.parseBoolean(key.options().get("path-style")),
-                    ttlSeconds);
-            owned.add(handle);
-            return backing;
+            return handle;
+        } catch (RuntimeException | Error failure) {
+            try { handle.close(); } catch (Exception cleanup) { failure.addSuppressed(cleanup); }
+            throw failure;
+        }
+    }
+
+    private OpenedBlobStore openCacheHandle(StoreKey key) {
+        final OpenedBlobStore handle;
+        try {
+            handle = providers.open(key.provider(), key.options());
+        } catch (IllegalArgumentException invalidConfig) {
+            throw invalid("Invalid drive read_through_cache configuration: " + invalidConfig.getMessage());
+        }
+        try {
+            if (!handle.capabilities().containsAll(
+                    Set.of(BlobCapability.OBJECT_EXPIRY, BlobCapability.PHYSICAL_RECLAMATION)))
+                throw invalid("Drive read_through_cache provider lacks required expiry and reclamation capabilities");
+            return handle;
         } catch (RuntimeException | Error failure) {
             try { handle.close(); } catch (Exception cleanup) { failure.addSuppressed(cleanup); }
             throw failure;
@@ -235,13 +352,18 @@ final class DriveBackingPool implements AutoCloseable {
         } catch (java.net.URISyntaxException invalid) { throw invalid("Invalid Redis credential profile"); }
     }
 
-    private static String s3Endpoint(String value, String region, boolean pathStyle) {
+    static String s3Endpoint(String value, String region, boolean pathStyle) {
         if (blank(value)) return "";
         var uri = URI.create(value); // already validated by the opened S3 provider
         // S3BackendIdentity deliberately covers origins; the unmanaged provider
         // also supports explicit path prefixes, whose exact spelling stays identity.
         if (uri.getRawPath() != null && !uri.getRawPath().isEmpty() && !uri.getRawPath().equals("/")) return value;
         return ai.protomolt.proto.repo.blob.s3.S3BackendIdentity.of(value, region, pathStyle).location().get("endpoint");
+    }
+
+    /** Canonical physical backing identity isolating cache entries across S3 backends. */
+    static String s3CacheNamespace(String endpoint, String region, boolean pathStyle) {
+        return "s3:" + encode(text(endpoint)) + ":" + encode(text(region)) + ":" + (pathStyle ? "path" : "virtual");
     }
 
     private static String endpoint(String value) {
@@ -288,6 +410,8 @@ final class DriveBackingPool implements AutoCloseable {
         if (closed) return;
         closed = true;
         backings.clear();
+        authoritativeHandles.clear();
+        cacheHandles.clear();
         owned.close();
     }
 }
