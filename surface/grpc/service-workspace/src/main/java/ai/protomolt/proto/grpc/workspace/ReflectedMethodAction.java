@@ -18,6 +18,7 @@ import com.google.protobuf.Descriptors.MethodDescriptor;
 import com.google.protobuf.DynamicMessage;
 import com.google.protobuf.Message;
 import io.grpc.CallCredentials;
+import io.grpc.ChannelCredentials;
 import io.grpc.CallOptions;
 import io.grpc.ManagedChannel;
 import io.grpc.Metadata;
@@ -109,13 +110,17 @@ final class ReflectedMethodAction implements ProtoAction {
         int deadline = ProfileMethodPolicy.deadline(policy, 0);
         CallCredentials callCredentials =
                 ProfileCredentials.callCredentials(profile, endpoint, credentials);
+        ChannelCredentials tlsCredentials =
+                ProfileCredentials.channelCredentials(profile, endpoint, credentials);
         try {
             channels.validateDeadline(deadline);
         } catch (IllegalArgumentException invalid) {
             throw new ActionException("invalid-profile", "profile method deadline is not allowed");
         }
-        ManagedChannel channel = channels.open(ServiceActionSupport.target(endpoint),
-                endpoint.getTransport() == Transport.TRANSPORT_TLS);
+        ManagedChannel channel = tlsCredentials == null
+                ? channels.open(ServiceActionSupport.target(endpoint),
+                        endpoint.getTransport() == Transport.TRANSPORT_TLS)
+                : channels.open(ServiceActionSupport.target(endpoint), tlsCredentials);
         try {
             CallOptions options =
                     CallOptions.DEFAULT.withDeadlineAfter(deadline, TimeUnit.MILLISECONDS);

@@ -21,6 +21,7 @@ import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.google.protobuf.util.JsonFormat;
 import io.grpc.CallCredentials;
+import io.grpc.ChannelCredentials;
 import io.grpc.ManagedChannel;
 import io.grpc.Channel;
 import io.grpc.Status;
@@ -105,6 +106,8 @@ final class ServiceActionSupport {
         ServiceEndpoint endpoint = endpoint(profile, endpointName);
         CallCredentials callCredentials =
                 ProfileCredentials.callCredentials(profile, endpoint, credentials);
+        ChannelCredentials tlsCredentials =
+                ProfileCredentials.channelCredentials(profile, endpoint, credentials);
         String target = target(endpoint);
         boolean tls = endpoint.getTransport() == Transport.TRANSPORT_TLS;
         try {
@@ -116,7 +119,8 @@ final class ServiceActionSupport {
         }
         ManagedChannel channel;
         try {
-            channel = channels.open(target, tls);
+            channel = tlsCredentials == null
+                    ? channels.open(target, tls) : channels.open(target, tlsCredentials);
         } catch (IllegalArgumentException e) {
             throw invalid(e.getMessage(), "/profile/endpoints");
         }

@@ -15,6 +15,7 @@ import com.google.protobuf.Descriptors;
 import com.google.protobuf.DynamicMessage;
 import com.google.protobuf.Message;
 import io.grpc.CallCredentials;
+import io.grpc.ChannelCredentials;
 import io.grpc.CallOptions;
 import io.grpc.ManagedChannel;
 import io.grpc.Metadata;
@@ -106,20 +107,26 @@ public final class GrpcInvokeAction implements StreamingAction {
         return execute(input, context, new Metadata(), hostCredentials);
     }
 
-    /** Full host seam: static headers and per-call credentials both stay host-owned. */
+    /** Host seam for static headers and per-call credentials. */
     public Message execute(Message input, ActionContext context, Metadata hostHeaders,
                            CallCredentials hostCredentials) throws ActionException {
-        CallPlan plan = prepare(input, context, hostHeaders, hostCredentials);
+        return execute(input, context, hostHeaders, hostCredentials, null);
+    }
+
+    /**
+     * Full host seam: static headers, per-call credentials and TLS channel credentials (custom
+     * trust, client certificate) all stay host-owned. Channel credentials require the
+     * request's {@code tls} flag.
+     */
+    public Message execute(Message input, ActionContext context, Metadata hostHeaders,
+                           CallCredentials hostCredentials, ChannelCredentials hostTls)
+            throws ActionException {
+        CallPlan plan = prepare(input, context, hostHeaders, hostCredentials, hostTls);
 
         Reply result = Reply.of(responseType())
                 .set("method", plan.method().getFullName())
                 .set("methodType", DynamicGrpcCalls.methodType(plan.method()).name());
-        ManagedChannel channel;
-        try {
-            channel = channelFactory.open(plan.target(), plan.tls());
-        } catch (IllegalArgumentException e) {
-            throw invalidInput(e.getMessage(), "/target");
-        }
+        ManagedChannel channel = open(plan);
         try {
             List<DynamicMessage> responses = DynamicGrpcCalls.call(
                     channel, plan.method(), plan.request(), plan.options(), plan.headers(),
@@ -181,17 +188,19 @@ public final class GrpcInvokeAction implements StreamingAction {
         executeStreaming(input, context, emitter, new Metadata(), hostCredentials);
     }
 
-    /** Streaming full host seam: static headers and per-call credentials stay host-owned. */
+    /** Streaming host seam for static headers and per-call credentials. */
     public void executeStreaming(Message input, ActionContext context, StreamEmitter emitter,
                                  Metadata hostHeaders, CallCredentials hostCredentials)
             throws ActionException {
-        CallPlan plan = prepare(input, context, hostHeaders, hostCredentials);
-        ManagedChannel channel;
-        try {
-            channel = channelFactory.open(plan.target(), plan.tls());
-        } catch (IllegalArgumentException e) {
-            throw invalidInput(e.getMessage(), "/target");
-        }
+        executeStreaming(input, context, emitter, hostHeaders, hostCredentials, null);
+    }
+
+    /** Streaming full host seam, with TLS channel credentials as in the unary one. */
+    public void executeStreaming(Message input, ActionContext context, StreamEmitter emitter,
+                                 Metadata hostHeaders, CallCredentials hostCredentials,
+                                 ChannelCredentials hostTls) throws ActionException {
+        CallPlan plan = prepare(input, context, hostHeaders, hostCredentials, hostTls);
+        ManagedChannel channel = open(plan);
         try {
             if (!plan.method().isServerStreaming()) {
                 List<DynamicMessage> responses = DynamicGrpcCalls.call(
@@ -262,8 +271,19 @@ public final class GrpcInvokeAction implements StreamingAction {
         return terminal.build();
     }
 
+    private ManagedChannel open(CallPlan plan) throws ActionException {
+        try {
+            return plan.channelCredentials() == null
+                    ? channelFactory.open(plan.target(), plan.tls())
+                    : channelFactory.open(plan.target(), plan.channelCredentials());
+        } catch (IllegalArgumentException e) {
+            throw invalidInput(e.getMessage(), "/target");
+        }
+    }
+
     private CallPlan prepare(Message input, ActionContext context, Metadata hostHeaders,
-                             CallCredentials hostCredentials) throws ActionException {
+                             CallCredentials hostCredentials, ChannelCredentials hostTls)
+            throws ActionException {
         String target = Fields.string(input, "target");
         String methodName = Fields.string(input, "method");
         // The request is a structure: its shape is the callee's input type, which this
@@ -273,6 +293,9 @@ public final class GrpcInvokeAction implements StreamingAction {
         int deadlineMs = orDefault(Fields.integer(input, "deadlineMs"), DEFAULT_DEADLINE_MS);
         int maxResponses = orDefault(Fields.integer(input, "maxResponses"), DEFAULT_MAX_RESPONSES);
         boolean tls = Fields.flag(input, "tls");
+        if (hostTls != null && !tls) {
+            throw invalidInput("host TLS credentials need a TLS call; set 'tls'", "/tls");
+        }
 
         try {
             channelFactory.validateTarget(target, tls);
@@ -303,7 +326,7 @@ public final class GrpcInvokeAction implements StreamingAction {
                     + ": " + nested.violations().getFirst().path(), "/request");
         }
         return new CallPlan(method, request, headers(input, hostHeaders, hostCredentials),
-                deadlineMs, maxResponses, target, tls, hostCredentials);
+                deadlineMs, maxResponses, target, tls, hostCredentials, hostTls);
     }
 
     /** Zero means the caller said nothing, which the message documents as the default. */
@@ -319,7 +342,8 @@ public final class GrpcInvokeAction implements StreamingAction {
             int maxResponses,
             String target,
             boolean tls,
-            CallCredentials credentials) {
+            CallCredentials credentials,
+            ChannelCredentials channelCredentials) {
 
         CallOptions options() {
             CallOptions options =
