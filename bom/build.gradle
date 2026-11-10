@@ -16,6 +16,7 @@ def supportedModules = [
         'protomolt-acquire-gather-git',
         'protomolt-acquire-gather-maven',
         'protomolt-emit',
+        'protomolt-emit-renderer',
         'protomolt-emit-git',
         'protomolt-emit-okf',
         'protomolt-emit-parquet',

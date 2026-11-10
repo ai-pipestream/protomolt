@@ -1,0 +1,60 @@
+syntax = "proto3";
+package ai.protomolt.proto.emit.v1;
+import "ai/protomolt/proto/validate/v1/validate.proto";
+import "buf/validate/validate.proto";
+option java_multiple_files = true;
+option java_package = "ai.protomolt.proto.emit.v1";
+
+// Installed capabilities never authorize writes. This version renders one
+// message to one bounded artifact; bundles and streaming have separate contracts.
+message RendererCapability {
+  // Stable installed provider identity, separate from any display label.
+  string provider_id = 1 [(ai.protomolt.proto.validate.v1.field).string = {min_len: 1, max_len: 256}, (buf.validate.field).string = {min_len: 1, max_len: 256}];
+  // Exact implementation/profile version bound into publication intent.
+  string provider_version = 2 [(ai.protomolt.proto.validate.v1.field).string = {min_len: 1, max_len: 256}, (buf.validate.field).string = {min_len: 1, max_len: 256}];
+  // Declared semantic input profile; providers inspect the actual descriptor.
+  string source_profile = 3 [(ai.protomolt.proto.validate.v1.field).string = {min_len: 1, max_len: 256}, (buf.validate.field).string = {min_len: 1, max_len: 256}];
+  // Media type of the single output artifact.
+  string media_type = 4 [(ai.protomolt.proto.validate.v1.field).string = {min_len: 1, max_len: 256}, (buf.validate.field).string = {min_len: 1, max_len: 256}];
+  // Suggested filename suffix, without a leading dot or path.
+  string extension = 5 [(ai.protomolt.proto.validate.v1.field).string = {min_len: 1, max_len: 256}, (buf.validate.field).string = {min_len: 1, max_len: 256}];
+  // Full protobuf name of the typed options.
+  string options_type = 6 [(ai.protomolt.proto.validate.v1.field).string = {min_len: 1, max_len: 256}, (buf.validate.field).string = {min_len: 1, max_len: 256}];
+  // Canonical descriptor closure fingerprint of the options.
+  string options_fingerprint = 7 [(ai.protomolt.proto.validate.v1.field).string = {min_len: 1, max_len: 256}, (buf.validate.field).string = {min_len: 1, max_len: 256}];
+  // Explicit representation loss or fidelity statement.
+  string loss_description = 8 [(ai.protomolt.proto.validate.v1.field).string = {min_len: 1, max_len: 1024}, (buf.validate.field).string = {min_len: 1, max_len: 1024}];
+  // Positive serialized input plus options budget for this bounded adapter.
+  uint32 max_input_bytes = 9 [(ai.protomolt.proto.validate.v1.field).uint32 = {gt: 0}, (buf.validate.field).uint32 = {gt: 0}];
+  // Positive artifact budget enforced while producing output.
+  uint32 max_output_bytes = 10 [(ai.protomolt.proto.validate.v1.field).uint32 = {gt: 0}, (buf.validate.field).uint32 = {gt: 0}];
+}
+// Both options and input are bound to exact descriptor closures. The caller
+// supplies already-authorized retained input; no registry lookup is implied.
+message RenderRequest {
+  // Exact configured capability; the response must echo it without changes.
+  RendererCapability capability = 1 [(ai.protomolt.proto.validate.v1.field).required = true, (buf.validate.field).required = true];
+  // Root type in the supplied retained descriptor closure.
+  string input_type = 2 [(ai.protomolt.proto.validate.v1.field).string = {min_len: 1, max_len: 128}, (buf.validate.field).string = {min_len: 1, max_len: 128}];
+  // Canonical fingerprint of the supplied input closure.
+  string input_fingerprint = 3 [(ai.protomolt.proto.validate.v1.field).string = {min_len: 1, max_len: 128}, (buf.validate.field).string = {min_len: 1, max_len: 128}];
+  // Binary FileDescriptorSet; includes imports, never a live registry lookup.
+  bytes input_descriptors = 4;
+  // Original binary message; empty bytes are valid for an empty message.
+  bytes input = 5;
+  // Binary options of the exact capability options type; may be empty.
+  bytes options = 6;
+}
+// A successful terminal response is the complete artifact, never a save receipt.
+message RenderResponse {
+  // Exact configured capability; the response must echo it without changes.
+  RendererCapability capability = 1 [(ai.protomolt.proto.validate.v1.field).required = true, (buf.validate.field).required = true];
+  // Complete artifact bytes, bounded by the configured output budget.
+  bytes content = 2;
+}
+// Hosts supply authentication, outbound policy and bounded gRPC message limits.
+// This is an optional rendering endpoint, not another document/storage API.
+service RendererService {
+  // Render one authorized input with the selected bounded capability.
+  rpc Render(RenderRequest) returns (RenderResponse);
+}

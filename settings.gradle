@@ -600,3 +600,6 @@ project(':protomolt-search-embedding-turboembed').projectDir = file('search/embe
 
 include 'protomolt-graph'
 project(':protomolt-graph').projectDir = file('sink/graph')
+
+include 'protomolt-emit-renderer'
+project(':protomolt-emit-renderer').projectDir = file('sink/emit/renderer')

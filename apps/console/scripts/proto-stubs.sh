@@ -20,6 +20,7 @@ fi
 # @bufbuild/protobuf. Output follows the import path under src/gen, with the
 # file's name suffixed _pb.ts.
 protos=(
+  sink/emit/renderer/src/main/proto/ai/protomolt/proto/emit/v1/renderer.proto
   repo/proto/src/main/proto/ai/protomolt/proto/repo/v2/document_service.proto
   repo/proto/src/main/proto/ai/protomolt/proto/repo/v1/drive.proto
   repo/proto/src/main/proto/ai/protomolt/proto/repo/archive/v1/archive_service.proto

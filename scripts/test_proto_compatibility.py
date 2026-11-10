@@ -37,7 +37,25 @@ class ProtoCompatibilityTest(unittest.TestCase):
         for name in ("check-proto-compatibility.sh", "check-approved-proto-migration.py"):
             shutil.copy2(ROOT / "scripts" / name, cls.repo / "scripts" / name)
         # Use the real current gate configuration, including every FILE rule.
-        shutil.copy2(ROOT / "buf.yaml", cls.repo / "buf.yaml")
+        # Modules added after the fixture snapshot have no sources there, and
+        # Buf fails on an empty module, so only those module entries are left
+        # out. Rules, ignores and every module the snapshot has are kept.
+        (cls.repo / "buf.yaml").write_text(cls.modules_present_in_snapshot(
+            (ROOT / "buf.yaml").read_text()))
+
+    @classmethod
+    def modules_present_in_snapshot(cls, config):
+        kept = []
+        skipping = False
+        for line in config.splitlines(keepends=True):
+            if line.startswith("  - path: "):
+                path = line[len("  - path: "):].strip()
+                skipping = not (cls.repo / path).is_dir()
+            elif not line.startswith("    "):
+                skipping = False
+            if not skipping:
+                kept.append(line)
+        return "".join(kept)
 
     @classmethod
     def git(cls, *args):

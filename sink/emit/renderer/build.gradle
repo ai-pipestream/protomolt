@@ -1,0 +1,20 @@
+plugins { alias(libs.plugins.protobuf) }
+description = 'Optional typed rendition renderer discovery and bounded remote adapter'
+dependencies {
+    api libs.protobuf.java
+    api project(':protomolt-descriptors')
+    api project(':protomolt-protobuf-validation')
+    api project(':protomolt-protobuf-validation-protovalidate')
+    api libs.grpc.api
+    api libs.grpc.stub
+    api libs.grpc.protobuf
+    compileOnly libs.javax.annotation.api
+    testImplementation libs.grpc.inprocess
+}
+protobuf {
+    protoc { artifact = "com.google.protobuf:protoc:${libs.versions.protobuf.asProvider().get()}" }
+    plugins { grpc { artifact = "io.grpc:protoc-gen-grpc-java:${libs.versions.grpc.get()}" } }
+    generateProtoTasks { all().configureEach { plugins { grpc {} } } }
+}
+ext.forbiddenRuntimeModules = ['protomolt-repo-service', 'protomolt-emit-parquet', 'parquet-hadoop', 'jena-core']
+apply from: rootProject.file('gradle/runtime-boundaries.gradle')
