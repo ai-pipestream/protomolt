@@ -25,6 +25,7 @@ import io.grpc.protobuf.services.ProtoReflectionServiceV1;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.nio.file.NoSuchFileException;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.security.KeyStore;
@@ -254,6 +255,10 @@ class ProfileMutualTlsTest {
 
         Files.delete(clientKeyFile);
         assertRefused(working, "TLS material could not be loaded");
+        // The cause is kept for host diagnostics, while the wire message stays generic.
+        assertThatThrownBy(() -> working.execute("service-invoke", checkInput()))
+                .isInstanceOfSatisfying(ActionException.class, refused ->
+                        assertThat(refused.getCause()).isInstanceOf(NoSuchFileException.class));
 
         ActionCatalog withoutTls = catalog(null);
         assertThatThrownBy(() -> withoutTls.execute("service-invoke", checkInput()))

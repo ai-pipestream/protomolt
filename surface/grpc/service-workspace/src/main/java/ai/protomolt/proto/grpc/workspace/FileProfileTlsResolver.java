@@ -105,7 +105,7 @@ public final class FileProfileTlsResolver implements ProfileTlsResolver {
                     endpoint.getPort(), endpoint.getTrustRef(),
                     endpoint.getClientCertificateRef());
         } catch (IllegalArgumentException invalid) {
-            throw unavailable("profile TLS reference is unsupported");
+            throw unavailable("profile TLS reference is unsupported", invalid);
         }
         if (!allowed.contains(actual)) {
             throw unavailable("profile endpoint is not approved for TLS material");
@@ -127,7 +127,7 @@ public final class FileProfileTlsResolver implements ProfileTlsResolver {
                 builder.keyManager(keyManagers(files).getKeyManagers());
             }
         } catch (IOException | GeneralSecurityException | IllegalArgumentException e) {
-            throw unavailable("profile TLS material could not be loaded");
+            throw unavailable("profile TLS material could not be loaded", e);
         }
         return builder.build();
     }
@@ -183,17 +183,28 @@ public final class FileProfileTlsResolver implements ProfileTlsResolver {
         byte[] der = Base64.getMimeDecoder()
                 .decode(pem.substring(begin + KEY_BEGIN.length(), end));
         PKCS8EncodedKeySpec spec = new PKCS8EncodedKeySpec(der);
+        GeneralSecurityException unsupported =
+                new GeneralSecurityException("unsupported private key algorithm");
         for (String algorithm : KEY_ALGORITHMS) {
             try {
                 return KeyFactory.getInstance(algorithm).generatePrivate(spec);
             } catch (GeneralSecurityException wrongAlgorithm) {
-                // Try the next algorithm; the key's own encoding decides which one parses.
+                // The key's own encoding decides which algorithm parses; keep each refusal.
+                unsupported.addSuppressed(wrongAlgorithm);
             }
         }
-        throw new GeneralSecurityException("unsupported private key algorithm");
+        throw unsupported;
     }
 
     private static ActionException unavailable(String message) {
         return new ActionException("credential-unavailable", message);
+    }
+
+    /**
+     * The cause stays attached for host diagnostics; the code and message are what reach the
+     * wire, and neither names a file or its contents.
+     */
+    private static ActionException unavailable(String message, Exception cause) {
+        return new ActionException("credential-unavailable", message, null, cause);
     }
 }
