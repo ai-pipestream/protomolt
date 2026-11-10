@@ -301,8 +301,6 @@ descriptions and queries from the caller. Design of record:
   where a receipt-layer trust snapshot vouches for an external issuer's
   scope claims. The verification machinery exists; binding it to call
   credentials is its own decision.
-- **RANGE and CEL row filters** on metric access, which today expresses
-  row security as equality sets ([metric mapping](metric-mapping.md) v1.1).
 
 ### Transactional registry writes
 

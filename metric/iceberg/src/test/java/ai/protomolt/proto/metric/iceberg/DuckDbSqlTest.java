@@ -11,8 +11,11 @@ import ai.protomolt.proto.metric.spi.CompiledMetricQuery.Dimension;
 import ai.protomolt.proto.metric.spi.CompiledMetricQuery.DimensionKind;
 import ai.protomolt.proto.metric.spi.CompiledMetricQuery.EqualsFilter;
 import ai.protomolt.proto.metric.spi.CompiledMetricQuery.Measure;
+import ai.protomolt.proto.metric.spi.CompiledMetricQuery.NumericRangeFilter;
 import ai.protomolt.proto.metric.spi.CompiledMetricQuery.PathPrefixFilter;
+import ai.protomolt.proto.metric.spi.CompiledMetricQuery.RowPredicate;
 import java.util.List;
+import java.util.Set;
 import org.junit.jupiter.api.Test;
 
 /**
@@ -307,6 +310,43 @@ class DuckDbSqlTest {
                 List.of(new PathPrefixFilter("p", "path", "path", "p5"))), ONE_FILE);
 
         assertThat(sql.parameters()).containsExactly("p1", "p2", "p5", "p5", "3", "4");
+        assertThat(countPlaceholders(sql.text())).isEqualTo(sql.parameters().size());
+    }
+
+    @Test
+    void numericRangesAndCelRowPredicatesBindEveryValueInOrder() {
+        CompiledMetricQuery q = new CompiledMetricQuery(
+                "subject",
+                MetricBackend.METRIC_BACKEND_UNSPECIFIED,
+                List.of(count()),
+                List.of(term("s", "segment")),
+                List.of(equals("segment", DimensionKind.TERM, "smb")),
+                List.of(),
+                List.of(),
+                List.of(
+                        NumericRangeFilter.ofLong("rev", "amount", "amount", 50L, 500L),
+                        NumericRangeFilter.ofDouble("ratio", "ratio", "ratio", 0.25, false, 0.75, true)),
+                List.of(new RowPredicate.And(List.of(
+                        new RowPredicate.Not(
+                                new RowPredicate.Terms(equals("segment", DimensionKind.TERM, "') OR 1=1 --")),
+                                Set.of("segment"),
+                                List.of("segment")),
+                        new RowPredicate.Or(List.of(
+                                new RowPredicate.Terms(equals("paying", DimensionKind.BOOLEAN, "true")),
+                                new RowPredicate.NumericRange(
+                                        NumericRangeFilter.ofLong("rev", "amount", "amount", 100L, null))))))),
+                25);
+
+        DuckDbSql sql = DuckDbSql.render(q, ONE_FILE);
+        assertThat(sql.text())
+                .doesNotContain("OR 1=1")
+                .contains("\"amount\" >= CAST(? AS BIGINT)")
+                .contains("\"amount\" <= CAST(? AS BIGINT)")
+                .contains("CAST(\"ratio\" AS DOUBLE) > CAST(? AS DOUBLE)")
+                .contains("CAST(\"ratio\" AS DOUBLE) <= CAST(? AS DOUBLE)")
+                .contains("(\"segment\" IS NOT NULL AND NOT (\"segment\" IN (?)))");
+        assertThat(sql.parameters()).containsExactly(
+                "smb", "50", "500", "0.25", "0.75", "') OR 1=1 --", "true", "100");
         assertThat(countPlaceholders(sql.text())).isEqualTo(sql.parameters().size());
     }
 

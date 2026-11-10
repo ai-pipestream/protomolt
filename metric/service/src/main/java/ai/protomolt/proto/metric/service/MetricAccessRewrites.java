@@ -12,6 +12,9 @@ import ai.protomolt.proto.metric.MemberRef;
 import ai.protomolt.proto.metric.MetricFilter;
 import ai.protomolt.proto.metric.QueryMetricsRequest;
 import ai.protomolt.proto.metric.spi.MetricMapping;
+import ai.protomolt.proto.metric.spi.MetricQueries;
+import ai.protomolt.proto.metric.spi.MetricRefusal;
+import ai.protomolt.proto.metric.spi.MetricRowPredicates;
 import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
 
@@ -87,9 +90,11 @@ final class MetricAccessRewrites {
 
     /**
      * The request with the caller's row filters ANDed in, refusing a denied member by
-     * name first. The injected member must exist on the mapping: a policy filtering a
-     * member the mapping does not declare is the operator's error, said loudly rather
-     * than blamed on the caller.
+     * name first. Every injected row filter (equality set, date/numeric range, or CEL
+     * predicate) is validated against the mapping before query compilation: a policy
+     * filtering a member the mapping does not declare or using an invalid range or CEL
+     * expression is the operator's error, refused closed as {@code FAILED_PRECONDITION}
+     * rather than blamed on the caller or silently ignored.
      */
     static QueryMetricsRequest rewrite(QueryMetricsRequest request, MetricAccess access,
                                        Caller caller, MetricMapping mapping) {
@@ -100,7 +105,13 @@ final class MetricAccessRewrites {
             requested.add(dimension.getName());
         }
         for (MetricFilter filter : request.getFiltersList()) {
-            requested.add(filter.getMember());
+            if (!filter.getMember().isEmpty()) {
+                requested.add(filter.getMember());
+            }
+            if (!filter.getCel().isEmpty()) {
+                requested.addAll(MetricRowPredicates.referencedMembers(
+                        mapping, filter.getCel()));
+            }
         }
         for (String name : requested) {
             if (denied.contains(name)) {
@@ -115,18 +126,63 @@ final class MetricAccessRewrites {
             if (!subject.equals(filter.getMappingSubject())) {
                 continue;
             }
-            if (mapping.member(filter.getMember()).isEmpty()) {
-                throw new StatusRuntimeException(Status.FAILED_PRECONDITION.withDescription(
-                        "the access policy filters member '" + filter.getMember()
-                                + "' for caller '" + caller.name() + "', which mapping '"
-                                + subject + "' does not declare"));
-            }
-            narrowed.addFilters(MetricFilter.newBuilder()
-                    .setMember(filter.getMember())
-                    .addAllEquals(filter.getEqualsList()));
+            MetricFilter compiledFilter = toMetricFilter(filter, caller, subject, mapping);
+            narrowed.addFilters(compiledFilter);
             injected = true;
         }
         return injected ? narrowed.build() : request;
+    }
+
+    private static MetricFilter toMetricFilter(
+            MetricRowFilter filter, Caller caller, String subject, MetricMapping mapping) {
+        int forms = (filter.getEqualsCount() > 0 ? 1 : 0)
+                + (filter.hasRange() ? 1 : 0)
+                + (filter.hasLongRange() ? 1 : 0)
+                + (filter.hasDoubleRange() ? 1 : 0)
+                + (!filter.getCel().isEmpty() ? 1 : 0);
+        if (forms != 1) {
+            throw new StatusRuntimeException(Status.FAILED_PRECONDITION.withDescription(
+                    "the access policy row filter on '" + subject + "' for caller '"
+                            + caller.name()
+                            + "' must specify exactly one of equals, range, long_range,"
+                            + " double_range, or cel"));
+        }
+        if (filter.getCel().isEmpty() && filter.getMember().isEmpty()) {
+            throw new StatusRuntimeException(Status.FAILED_PRECONDITION.withDescription(
+                    "the access policy row filter on '" + subject + "' for caller '"
+                            + caller.name() + "' is missing a member name"));
+        }
+        if (!filter.getMember().isEmpty() && mapping.member(filter.getMember()).isEmpty()) {
+            throw new StatusRuntimeException(Status.FAILED_PRECONDITION.withDescription(
+                    "the access policy filters member '" + filter.getMember()
+                            + "' for caller '" + caller.name() + "', which mapping '"
+                            + subject + "' does not declare"));
+        }
+        MetricFilter.Builder builder = MetricFilter.newBuilder();
+        if (!filter.getMember().isEmpty()) {
+            builder.setMember(filter.getMember());
+        }
+        if (filter.getEqualsCount() > 0) {
+            builder.addAllEquals(filter.getEqualsList());
+        } else if (filter.hasRange()) {
+            builder.setRange(filter.getRange());
+        } else if (filter.hasLongRange()) {
+            builder.setLongRange(filter.getLongRange());
+        } else if (filter.hasDoubleRange()) {
+            builder.setDoubleRange(filter.getDoubleRange());
+        } else {
+            builder.setCel(filter.getCel());
+        }
+        MetricFilter built = builder.build();
+        try {
+            MetricQueries.validateFilter(mapping, built);
+        } catch (MetricRefusal refusal) {
+            throw new StatusRuntimeException(Status.FAILED_PRECONDITION.withDescription(
+                    "the access policy row filter on '" + subject + "' for caller '"
+                            + caller.name() + "' is invalid: [" + refusal.code() + "] "
+                            + refusal.getMessage()));
+        }
+        return built;
     }
 
     private static Set<String> denied(MetricAccess access, String subject) {

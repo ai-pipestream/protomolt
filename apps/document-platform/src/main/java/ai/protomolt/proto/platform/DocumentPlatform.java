@@ -106,6 +106,10 @@ public final class DocumentPlatform implements AutoCloseable {
     public static final String ACCESS_POLICY_SUBJECT =
             "ai/protomolt/proto/authz/v1/access_policy.proto";
 
+    /** The registry subject the canonical range types publish under. */
+    public static final String RANGES_SUBJECT =
+            "ai/protomolt/proto/types/v1/ranges.proto";
+
 
     /** The config subject the parse role's routing rules read: {@value}. */
     public static final String PARSE_ROUTING_CONFIG_SUBJECT = "parse-routing";
@@ -963,6 +967,7 @@ public final class DocumentPlatform implements AutoCloseable {
         ProtoSourceSet sources = ProtoSourceSet.builder()
                 .add(DOCUMENT_SUBJECT, classpathProto(DOCUMENT_SUBJECT), "platform")
                 .add(VALIDATE_SUBJECT, classpathProto(VALIDATE_SUBJECT), "platform")
+                .add(RANGES_SUBJECT, classpathProto(RANGES_SUBJECT), "platform")
                 .add(ROUTING_SUBJECT, classpathProto(ROUTING_SUBJECT), "platform")
                 .add(ACCESS_POLICY_SUBJECT, classpathProto(ACCESS_POLICY_SUBJECT),
                         "platform")

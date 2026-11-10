@@ -13,6 +13,8 @@ dependencies {
     api project(':protomolt-actions')
     // The document validates against its declared validate.v1 rules before it applies.
     implementation project(':protomolt-protobuf-validation')
+    // Metric CEL row-security filters are syntax- and structure-checked at policy load.
+    implementation project(':protomolt-cel')
     // JSON policy files parse as canonical proto3 JSON.
     implementation libs.protobuf.java.util
     // The OIDC resolver logs misconfigured grants loudly before refusing them.

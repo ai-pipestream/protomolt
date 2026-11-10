@@ -5,6 +5,8 @@ import ai.protomolt.proto.metric.spi.CompiledMetricQuery.Dimension;
 import ai.protomolt.proto.metric.spi.CompiledMetricQuery.DimensionKind;
 import ai.protomolt.proto.metric.spi.CompiledMetricQuery.EqualsFilter;
 import ai.protomolt.proto.metric.spi.CompiledMetricQuery.Measure;
+import ai.protomolt.proto.metric.spi.CompiledMetricQuery.NumericRangeFilter;
+import ai.protomolt.proto.metric.spi.CompiledMetricQuery.RowPredicate;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.StringJoiner;
@@ -69,6 +71,12 @@ record DuckDbSql(String text, List<String> parameters) {
                 where.add(instant + " <= CAST(? AS BIGINT)");
                 parameters.add(Long.toString(range.lteEpochMillis()));
             }
+        }
+        for (NumericRangeFilter range : query.numericRanges()) {
+            where.add(numericRangeCondition(range, parameters));
+        }
+        for (RowPredicate predicate : query.predicates()) {
+            where.add(predicateCondition(predicate, parameters));
         }
 
         StringBuilder sql = new StringBuilder("SELECT ").append(select)
@@ -149,6 +157,82 @@ record DuckDbSql(String text, List<String> parameters) {
                     ? "CAST(? AS BOOLEAN)" : "?");
         }
         return column + " IN (" + placeholders + ")";
+    }
+
+    private static String numericRangeCondition(
+            NumericRangeFilter range, List<String> parameters) {
+        String col = column(range.fieldPath());
+        StringJoiner bounds = new StringJoiner(" AND ");
+        if (range.integral()) {
+            if (range.gteLong() != null) {
+                bounds.add(col + " >= CAST(? AS BIGINT)");
+                parameters.add(Long.toString(range.gteLong()));
+            }
+            if (range.lteLong() != null) {
+                bounds.add(col + " <= CAST(? AS BIGINT)");
+                parameters.add(Long.toString(range.lteLong()));
+            }
+        } else {
+            if (range.lowerDouble() != null) {
+                String op = range.lowerInclusive() ? " >= " : " > ";
+                bounds.add("CAST(" + col + " AS DOUBLE)" + op + "CAST(? AS DOUBLE)");
+                parameters.add(Double.toString(range.lowerDouble()));
+            }
+            if (range.upperDouble() != null) {
+                String op = range.upperInclusive() ? " <= " : " < ";
+                bounds.add("CAST(" + col + " AS DOUBLE)" + op + "CAST(? AS DOUBLE)");
+                parameters.add(Double.toString(range.upperDouble()));
+            }
+        }
+        return bounds.toString();
+    }
+
+    private static String dateRangeCondition(
+            CompiledMetricQuery.DateRangeFilter range, List<String> parameters) {
+        String instant = "epoch_ms(timezone('UTC', " + column(range.fieldPath()) + "))";
+        StringJoiner bounds = new StringJoiner(" AND ");
+        if (range.gteEpochMillis() != null) {
+            bounds.add(instant + " >= CAST(? AS BIGINT)");
+            parameters.add(Long.toString(range.gteEpochMillis()));
+        }
+        if (range.lteEpochMillis() != null) {
+            bounds.add(instant + " <= CAST(? AS BIGINT)");
+            parameters.add(Long.toString(range.lteEpochMillis()));
+        }
+        return bounds.toString();
+    }
+
+    private static String predicateCondition(
+            RowPredicate predicate, List<String> parameters) {
+        return switch (predicate) {
+            case RowPredicate.And and -> {
+                StringJoiner joiner = new StringJoiner(" AND ", "(", ")");
+                for (RowPredicate child : and.children()) {
+                    joiner.add(predicateCondition(child, parameters));
+                }
+                yield joiner.toString();
+            }
+            case RowPredicate.Or or -> {
+                StringJoiner joiner = new StringJoiner(" OR ", "(", ")");
+                for (RowPredicate child : or.children()) {
+                    joiner.add(predicateCondition(child, parameters));
+                }
+                yield joiner.toString();
+            }
+            case RowPredicate.Not not -> {
+                StringJoiner guard = new StringJoiner(" AND ", "(", ")");
+                for (String path : not.fieldPaths()) {
+                    guard.add(column(path) + " IS NOT NULL");
+                }
+                guard.add("NOT (" + predicateCondition(not.child(), parameters) + ")");
+                yield guard.toString();
+            }
+            case RowPredicate.Terms terms -> filterCondition(terms.filter(), parameters);
+            case RowPredicate.NumericRange num ->
+                    "(" + numericRangeCondition(num.filter(), parameters) + ")";
+            case RowPredicate.DateRange date ->
+                    "(" + dateRangeCondition(date.filter(), parameters) + ")";
+        };
     }
 
     /** Struct extraction per path segment: {@code "a"['b']['c']}. */

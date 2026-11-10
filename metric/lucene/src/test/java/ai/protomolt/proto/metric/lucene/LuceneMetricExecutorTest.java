@@ -432,4 +432,62 @@ class LuceneMetricExecutorTest {
                 .hasMessageContaining("title")
                 .hasMessageContaining("declare facetable or sortable");
     }
+
+    @Test
+    void numericRangesAndCelPredicatesFilterBeforeAggregation() {
+        // LongRange: amount in [50, 150] -> o-1 (100) + o-2 (50) = 150.0
+        QueryMetricsResponse longBounded = MetricQueries.query(mapping, executors,
+                request("revenue")
+                        .addFilters(MetricFilter.newBuilder()
+                                .setMember("revenue")
+                                .setLongRange(ai.protomolt.proto.types.LongRange
+                                        .newBuilder()
+                                        .setBegin(50L).setEnd(150L)))
+                        .build());
+        assertThat(longBounded.getRows(0).getMeasuresOrThrow("revenue")).isEqualTo(150.0);
+
+        // Exclusive LongRange: amount in (50, 200) -> o-1 (100) only = 100.0
+        QueryMetricsResponse longExclusive = MetricQueries.query(mapping, executors,
+                request("revenue")
+                        .addFilters(MetricFilter.newBuilder()
+                                .setMember("revenue")
+                                .setLongRange(ai.protomolt.proto.types.LongRange
+                                        .newBuilder()
+                                        .setBegin(50L).setIncludeHead(false)
+                                        .setEnd(200L).setIncludeTail(false)))
+                        .build());
+        assertThat(longExclusive.getRows(0).getMeasuresOrThrow("revenue")).isEqualTo(100.0);
+
+        // DoubleRange: ratio in [0.5, 0.75] -> o-1 (100), o-3 (200), o-4 (30) = 330.0
+        QueryMetricsResponse doubleBounded = MetricQueries.query(mapping, executors,
+                request("revenue")
+                        .addFilters(MetricFilter.newBuilder()
+                                .setMember("avg_ratio")
+                                .setDoubleRange(ai.protomolt.proto.types.DoubleRange
+                                        .newBuilder()
+                                        .setBegin(0.5).setEnd(0.75)))
+                        .build());
+        assertThat(doubleBounded.getRows(0).getMeasuresOrThrow("revenue")).isEqualTo(330.0);
+
+        // Compound CEL: paying && (segment == 'mid' || amount >= 100) && segment != 'ent'
+        // Matches o-1 (smb, paying, 100) + o-3 (mid, paying, 200) = 300.0
+        QueryMetricsResponse compoundCel = MetricQueries.query(mapping, executors,
+                request("revenue")
+                        .addFilters(MetricFilter.newBuilder()
+                                .setCel("this.paying && (this.segment == 'mid' || this.amount >= 100) && this.segment != 'ent'"))
+                        .build());
+        assertThat(compoundCel.getRows(0).getMeasuresOrThrow("revenue")).isEqualTo(300.0);
+        assertThat(compoundCel.getPhysicalPlan()).contains("lucene collector: filter=");
+
+        // Conflicting filters (segment == 'smb' AND segment == 'mid') -> 0.0 (or empty groups)
+        QueryMetricsResponse conflicting = MetricQueries.query(mapping, executors,
+                request("revenue")
+                        .addDimensions(MemberRef.newBuilder().setName("segment"))
+                        .addFilters(MetricFilter.newBuilder()
+                                .setMember("segment").addEquals("smb"))
+                        .addFilters(MetricFilter.newBuilder()
+                                .setCel("this.segment == 'mid'"))
+                        .build());
+        assertThat(conflicting.getRowsList()).isEmpty();
+    }
 }

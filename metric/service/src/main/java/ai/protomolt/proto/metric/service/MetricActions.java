@@ -2,9 +2,12 @@ package ai.protomolt.proto.metric.service;
 
 import ai.protomolt.proto.actions.ActionContext;
 import ai.protomolt.proto.actions.ActionException;
+import ai.protomolt.proto.actions.Caller;
 import ai.protomolt.proto.actions.CatalogContract;
 import ai.protomolt.proto.actions.ProtoAction;
 import ai.protomolt.proto.actions.Scopes;
+import ai.protomolt.proto.authz.AccessPolicy;
+import ai.protomolt.proto.authz.MetricAccess;
 import ai.protomolt.proto.metric.DescribeMappingRequest;
 import ai.protomolt.proto.metric.DescribeMappingResponse;
 import ai.protomolt.proto.metric.QueryMetricsRequest;
@@ -19,8 +22,11 @@ import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.google.protobuf.Descriptors.Descriptor;
 import com.google.protobuf.Message;
+import io.grpc.Status;
+import io.grpc.StatusRuntimeException;
 import java.util.List;
 import java.util.Map;
+import java.util.function.Supplier;
 
 /**
  * The metric service's three catalog verbs. Registered on an action catalog
@@ -88,10 +94,50 @@ public final class MetricActions {
             Map<String, ServedMetricSubject> subjects,
             ai.protomolt.proto.metric.spi.RollupSink rollups,
             ai.protomolt.proto.metric.spi.MetricSubjectResolver resolver) {
+        return over(subjects, rollups, resolver, null);
+    }
+
+    /**
+     * The verbs over the same served subjects, enforcing per-principal
+     * {@code metric_access} rules from {@code accessPolicy}.
+     */
+    public static List<ProtoAction> over(
+            Map<String, ServedMetricSubject> subjects,
+            ai.protomolt.proto.metric.spi.RollupSink rollups,
+            ai.protomolt.proto.metric.spi.MetricSubjectResolver resolver,
+            Supplier<AccessPolicy> accessPolicy) {
         Map<String, ServedMetricSubject> served = Map.copyOf(subjects);
-        return List.of(new DescribeMappingAction(served, resolver),
-                new QueryMetricsAction(served, resolver),
-                new RebuildRollupAction(served, rollups, resolver));
+        MetricAccessRewrites rewrites = new MetricAccessRewrites(accessPolicy);
+        return List.of(new DescribeMappingAction(served, resolver, rewrites),
+                new QueryMetricsAction(served, resolver, rewrites),
+                new RebuildRollupAction(served, rollups, resolver, rewrites));
+    }
+
+    private static ServedMetricSubject restrictedSubject(
+            Map<String, ServedMetricSubject> subjects,
+            ai.protomolt.proto.metric.spi.MetricSubjectResolver resolver,
+            MetricAccessRewrites rewrites,
+            Caller caller,
+            String name,
+            ObjectMapper mapper) throws ActionException {
+        if (rewrites.accessFor(caller) != null && !subjects.containsKey(name)) {
+            throw new ActionException("permission-denied",
+                    "caller '" + caller.name() + "' carries metric access rules, which"
+                            + " subject '" + name + "' (not statically served here)"
+                            + " cannot enforce");
+        }
+        return subject(subjects, resolver, name, mapper);
+    }
+
+    private static ActionException statusFailure(StatusRuntimeException e) {
+        Status.Code code = e.getStatus().getCode();
+        String description = e.getStatus().getDescription() != null
+                ? e.getStatus().getDescription()
+                : e.getMessage();
+        if (code == Status.Code.PERMISSION_DENIED) {
+            return new ActionException("permission-denied", description);
+        }
+        return new ActionException("failed-precondition", description);
     }
 
     private static ServedMetricSubject subject(
@@ -116,11 +162,14 @@ public final class MetricActions {
 
         private final Map<String, ServedMetricSubject> subjects;
         private final ai.protomolt.proto.metric.spi.MetricSubjectResolver resolver;
+        private final MetricAccessRewrites rewrites;
 
         DescribeMappingAction(Map<String, ServedMetricSubject> subjects,
-                ai.protomolt.proto.metric.spi.MetricSubjectResolver resolver) {
+                ai.protomolt.proto.metric.spi.MetricSubjectResolver resolver,
+                MetricAccessRewrites rewrites) {
             this.subjects = subjects;
             this.resolver = resolver;
+            this.rewrites = rewrites;
         }
 
         @Override
@@ -150,14 +199,22 @@ public final class MetricActions {
         @Override
         public Message execute(Message input, ActionContext context)
                 throws ActionException {
+            return execute(input, context, Caller.operator());
+        }
+
+        @Override
+        public Message execute(Message input, ActionContext context, Caller caller)
+                throws ActionException {
             ObjectMapper mapper = context.objectMapper();
             DescribeMappingRequest request = CatalogContract.as(
                     input, DescribeMappingRequest.getDefaultInstance(), name());
-            ServedMetricSubject subject =
-                    subject(subjects, resolver, request.getMappingSubject(), mapper);
+            ServedMetricSubject subject = restrictedSubject(
+                    subjects, resolver, rewrites, caller, request.getMappingSubject(), mapper);
             DescribeMappingResponse response = MetricQueries.describe(subject.mapping(),
                     List.copyOf(subject.executors().keySet()));
-            return response;
+            MetricAccess access = rewrites.accessFor(caller);
+            return access == null ? response
+                    : MetricAccessRewrites.filter(response, access, request.getMappingSubject());
         }
     }
 
@@ -166,11 +223,14 @@ public final class MetricActions {
 
         private final Map<String, ServedMetricSubject> subjects;
         private final ai.protomolt.proto.metric.spi.MetricSubjectResolver resolver;
+        private final MetricAccessRewrites rewrites;
 
         QueryMetricsAction(Map<String, ServedMetricSubject> subjects,
-                ai.protomolt.proto.metric.spi.MetricSubjectResolver resolver) {
+                ai.protomolt.proto.metric.spi.MetricSubjectResolver resolver,
+                MetricAccessRewrites rewrites) {
             this.subjects = subjects;
             this.resolver = resolver;
+            this.rewrites = rewrites;
         }
 
         @Override
@@ -201,15 +261,29 @@ public final class MetricActions {
         @Override
         public Message execute(Message input, ActionContext context)
                 throws ActionException {
+            return execute(input, context, Caller.operator());
+        }
+
+        @Override
+        public Message execute(Message input, ActionContext context, Caller caller)
+                throws ActionException {
             ObjectMapper mapper = context.objectMapper();
             QueryMetricsRequest request = CatalogContract.as(
                     input, QueryMetricsRequest.getDefaultInstance(), name());
-            ServedMetricSubject subject = subject(
-                    subjects, resolver, request.getMappingSubject(), mapper);
+            ServedMetricSubject subject = restrictedSubject(
+                    subjects, resolver, rewrites, caller, request.getMappingSubject(), mapper);
+            MetricAccess access = rewrites.accessFor(caller);
+            QueryMetricsRequest effective;
             try {
-                QueryMetricsResponse response = MetricQueries.query(
-                        subject.mapping(), subject.executors(), request);
-                return response;
+                effective = access == null ? request
+                        : MetricAccessRewrites.rewrite(
+                                request, access, caller, subject.mapping());
+            } catch (StatusRuntimeException e) {
+                throw statusFailure(e);
+            }
+            try {
+                return MetricQueries.query(
+                        subject.mapping(), subject.executors(), effective);
             } catch (MetricRefusal refusal) {
                 throw refusal(refusal, mapper);
             }
@@ -222,13 +296,16 @@ public final class MetricActions {
         private final Map<String, ServedMetricSubject> subjects;
         private final ai.protomolt.proto.metric.spi.RollupSink rollups;
         private final ai.protomolt.proto.metric.spi.MetricSubjectResolver resolver;
+        private final MetricAccessRewrites rewrites;
 
         RebuildRollupAction(Map<String, ServedMetricSubject> subjects,
                 ai.protomolt.proto.metric.spi.RollupSink rollups,
-                ai.protomolt.proto.metric.spi.MetricSubjectResolver resolver) {
+                ai.protomolt.proto.metric.spi.MetricSubjectResolver resolver,
+                MetricAccessRewrites rewrites) {
             this.subjects = subjects;
             this.rollups = rollups;
             this.resolver = resolver;
+            this.rewrites = rewrites;
         }
 
         @Override
@@ -260,10 +337,19 @@ public final class MetricActions {
         @Override
         public Message execute(Message input, ActionContext context)
                 throws ActionException {
+            return execute(input, context, Caller.operator());
+        }
+
+        @Override
+        public Message execute(Message input, ActionContext context, Caller caller)
+                throws ActionException {
             ObjectMapper mapper = context.objectMapper();
-            // table and measures carry required and min_items rules on the request message, so
-            // the gate refuses an empty one before it reaches here. Repeating those checks in
-            // Java would give the same query two different refusal messages.
+            if (rewrites.accessFor(caller) != null) {
+                throw new ActionException("permission-denied",
+                        "caller '" + caller.name() + "' carries metric access rules; a"
+                                + " rebuilt rollup is an unrestricted reduction, so the"
+                                + " rebuild verb is refused");
+            }
             RebuildRollupRequest request = CatalogContract.as(
                     input, RebuildRollupRequest.getDefaultInstance(), name());
             ServedMetricSubject subject = subject(

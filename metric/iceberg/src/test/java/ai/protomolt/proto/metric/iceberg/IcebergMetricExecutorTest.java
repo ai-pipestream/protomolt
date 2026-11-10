@@ -287,4 +287,54 @@ class IcebergMetricExecutorTest {
                 query("nonsense").build()))
                 .hasMessageContaining("unknown member 'nonsense'");
     }
+
+    @Test
+    void numericRangesAndCelPredicatesFilterBeforeAggregationMatchingLucene() {
+        // LongRange: amount in [50, 150] -> o-1 (100) + o-2 (50) = 150.0
+        QueryMetricsResponse longBounded = MetricQueries.query(mapping, executors,
+                query("revenue")
+                        .addFilters(ai.protomolt.proto.metric.MetricFilter.newBuilder()
+                                .setMember("revenue")
+                                .setLongRange(ai.protomolt.proto.types.LongRange
+                                        .newBuilder()
+                                        .setBegin(50L).setEnd(150L)))
+                        .build());
+        assertThat(longBounded.getRows(0).getMeasuresOrThrow("revenue")).isEqualTo(150.0);
+
+        // Exclusive LongRange: amount in (50, 200) -> o-1 (100) only = 100.0
+        QueryMetricsResponse longExclusive = MetricQueries.query(mapping, executors,
+                query("revenue")
+                        .addFilters(ai.protomolt.proto.metric.MetricFilter.newBuilder()
+                                .setMember("revenue")
+                                .setLongRange(ai.protomolt.proto.types.LongRange
+                                        .newBuilder()
+                                        .setBegin(50L).setIncludeHead(false)
+                                        .setEnd(200L).setIncludeTail(false)))
+                        .build());
+        assertThat(longExclusive.getRows(0).getMeasuresOrThrow("revenue")).isEqualTo(100.0);
+
+        // Compound CEL with nested field: paying && (segment == 'mid' || amount >= 100) && meta.region == 'east'
+        // Matches o-1 (100) + o-3 (200) = 300.0
+        QueryMetricsResponse compoundCel = MetricQueries.query(mapping, executors,
+                query("revenue")
+                        .addFilters(ai.protomolt.proto.metric.MetricFilter.newBuilder()
+                                .setCel("this.paying && (this.segment == 'mid' || this.amount >= 100) && this.meta.region == 'east' && this.segment != 'ent'"))
+                        .build());
+        assertThat(compoundCel.getRows(0).getMeasuresOrThrow("revenue")).isEqualTo(300.0);
+        assertThat(compoundCel.getPhysicalPlan())
+                .doesNotContain("east")
+                .doesNotContain("mid")
+                .contains("WHERE");
+
+        // Conflicting filters (segment == 'smb' AND segment == 'mid') -> empty rows
+        QueryMetricsResponse conflicting = MetricQueries.query(mapping, executors,
+                query("revenue")
+                        .addDimensions(MemberRef.newBuilder().setName("segment"))
+                        .addFilters(ai.protomolt.proto.metric.MetricFilter.newBuilder()
+                                .setMember("segment").addEquals("smb"))
+                        .addFilters(ai.protomolt.proto.metric.MetricFilter.newBuilder()
+                                .setCel("this.segment == 'mid'"))
+                        .build());
+        assertThat(conflicting.getRowsList()).isEmpty();
+    }
 }
