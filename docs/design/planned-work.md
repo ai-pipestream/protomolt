@@ -9,22 +9,15 @@ code. An item with nothing left open does not belong here at all.
 
 ## Service connectivity
 
-### Authenticated reflection
+### Profile TLS from host configuration
 
-Service profiles can name an opaque credential reference. Apply host-resolved
-gRPC call credentials consistently to registration, refresh, inspection, and
-invocation. Start with `env:` bearer credentials. Keep credential values out
-of profiles, descriptor artifacts, summaries, logs, and errors.
-
-The contract half exists and the behavior half does not. A profile carries
-`credential_ref`, `trust_ref`, and `client_certificate_ref`, and profile
-validation refuses anything that is not a namespaced `<scheme>:<name>`
-reference, so raw secrets cannot be stored. Every gRPC path that would use
-one then refuses it by name with `unsupported-transport`, which is the
-honest placeholder: registration, refresh, and invocation all require a
-credential resolver that is never supplied, and no `CallCredentials` is
-constructed anywhere in the repo. An `env:` resolver already exists for the
-inference lane and is the piece to reach across, not rebuild.
+Let an operator configure profile TLS material on the launchers, not only in
+code. Bearer references (`env:`) and TLS references (`trust_ref`,
+`client_certificate_ref`) resolve on every gRPC path through
+`EnvProfileCredentialResolver` and `FileProfileTlsResolver`, as described in
+the [service workspace guide](../surface/service-workspace.md). Still open:
+serve and the platform expose no flag or environment variable that builds
+those resolvers' approved bindings, so a host has to wire them in code.
 
 ### Shared outbound policy
 
