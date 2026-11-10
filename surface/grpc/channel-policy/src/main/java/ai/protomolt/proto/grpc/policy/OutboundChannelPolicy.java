@@ -1,7 +1,17 @@
 package ai.protomolt.proto.grpc.policy;
 
+import io.grpc.CallOptions;
+import io.grpc.ClientCall;
+import io.grpc.ForwardingClientCall;
+import io.grpc.ForwardingClientCallListener;
+import io.grpc.KnownLength;
 import io.grpc.ManagedChannel;
+import io.grpc.Metadata;
+import io.grpc.MethodDescriptor;
+import io.grpc.Status;
 
+import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.HashSet;
@@ -28,7 +38,12 @@ public final class OutboundChannelPolicy {
     private final boolean allowPlaintext;
     private final boolean allowTls;
     private final long maxDeadlineMillis;
+    private final int maxInboundMessageBytes;
+    private final int maxOutboundMessageBytes;
     private final Semaphore channelSlots;
+
+    /** The gRPC default inbound message limit, used for both directions unless configured. */
+    public static final int DEFAULT_MAX_MESSAGE_BYTES = 4 * 1024 * 1024;
 
     private OutboundChannelPolicy(Builder builder) {
         allowedSchemes = Set.copyOf(builder.allowedSchemes);
@@ -37,6 +52,8 @@ public final class OutboundChannelPolicy {
         allowPlaintext = builder.allowPlaintext;
         allowTls = builder.allowTls;
         maxDeadlineMillis = builder.maxDeadline.toMillis();
+        maxInboundMessageBytes = builder.maxInboundMessageBytes;
+        maxOutboundMessageBytes = builder.maxOutboundMessageBytes;
         channelSlots = new Semaphore(builder.maxActiveChannels, true);
     }
 
@@ -45,7 +62,10 @@ public final class OutboundChannelPolicy {
         return builder().build();
     }
 
-    /** Starts a policy builder with DNS/IP targets, both transports, and a 60-second deadline. */
+    /**
+     * Starts a policy builder with DNS/IP targets, both transports, a 60-second deadline, and
+     * {@link #DEFAULT_MAX_MESSAGE_BYTES} per message in each direction.
+     */
     public static Builder builder() {
         return new Builder();
     }
@@ -107,7 +127,8 @@ public final class OutboundChannelPolicy {
             if (delegate == null) {
                 throw new IllegalStateException("channel opener returned null");
             }
-            return new LeasedChannel(delegate, channelSlots);
+            return new LeasedChannel(delegate, channelSlots, maxInboundMessageBytes,
+                    maxOutboundMessageBytes);
         } catch (RuntimeException e) {
             channelSlots.release();
             throw e;
@@ -127,6 +148,8 @@ public final class OutboundChannelPolicy {
         private boolean allowPlaintext = true;
         private boolean allowTls = true;
         private Duration maxDeadline = Duration.ofSeconds(60);
+        private int maxInboundMessageBytes = DEFAULT_MAX_MESSAGE_BYTES;
+        private int maxOutboundMessageBytes = DEFAULT_MAX_MESSAGE_BYTES;
         private int maxActiveChannels = 64;
 
         public Builder allowedSchemes(Set<String> schemes) {
@@ -190,6 +213,24 @@ public final class OutboundChannelPolicy {
                 throw new IllegalArgumentException("max deadline is too large", e);
             }
             maxDeadline = deadline;
+            return this;
+        }
+
+        /** Largest response message accepted on a policy channel; must be positive. */
+        public Builder maxInboundMessageBytes(int bytes) {
+            if (bytes <= 0) {
+                throw new IllegalArgumentException("max inbound message bytes must be positive");
+            }
+            maxInboundMessageBytes = bytes;
+            return this;
+        }
+
+        /** Largest request message sent on a policy channel; must be positive. */
+        public Builder maxOutboundMessageBytes(int bytes) {
+            if (bytes <= 0) {
+                throw new IllegalArgumentException("max outbound message bytes must be positive");
+            }
+            maxOutboundMessageBytes = bytes;
             return this;
         }
 
@@ -454,22 +495,56 @@ public final class OutboundChannelPolicy {
     private record HostPort(String host, int port) {
     }
 
+    /** Largest single response message a policy channel accepts, in bytes. */
+    public int maxInboundMessageBytes() {
+        return maxInboundMessageBytes;
+    }
+
+    /** Largest single request message a policy channel sends, in bytes. */
+    public int maxOutboundMessageBytes() {
+        return maxOutboundMessageBytes;
+    }
+
     private static final class LeasedChannel extends ManagedChannel {
         private final ManagedChannel delegate;
         private final Semaphore slots;
+        private final int maxInboundMessageBytes;
+        private final int maxOutboundMessageBytes;
         private final AtomicBoolean released = new AtomicBoolean();
 
-        private LeasedChannel(ManagedChannel delegate, Semaphore slots) {
+        private LeasedChannel(ManagedChannel delegate, Semaphore slots,
+                              int maxInboundMessageBytes, int maxOutboundMessageBytes) {
             this.delegate = delegate;
             this.slots = slots;
+            this.maxInboundMessageBytes = maxInboundMessageBytes;
+            this.maxOutboundMessageBytes = maxOutboundMessageBytes;
         }
 
+        /**
+         * Every call carries the policy's message limits. A caller may ask for a smaller
+         * limit, never a larger one. An oversized response fails the call with gRPC's own
+         * {@code RESOURCE_EXHAUSTED}; an oversized known-length request (every protobuf
+         * request) is refused here with
+         * {@code RESOURCE_EXHAUSTED} before any byte of it is framed.
+         */
         @Override
-        public <RequestT, ResponseT> io.grpc.ClientCall<RequestT, ResponseT> newCall(
-                io.grpc.MethodDescriptor<RequestT, ResponseT> methodDescriptor,
-                io.grpc.CallOptions callOptions) {
-            return delegate.newCall(methodDescriptor, callOptions);
+        public <RequestT, ResponseT> ClientCall<RequestT, ResponseT> newCall(
+                MethodDescriptor<RequestT, ResponseT> methodDescriptor,
+                CallOptions callOptions) {
+            int outbound = smaller(callOptions.getMaxOutboundMessageSize(),
+                    maxOutboundMessageBytes);
+            CallOptions bounded = callOptions
+                    .withMaxInboundMessageSize(smaller(callOptions.getMaxInboundMessageSize(),
+                            maxInboundMessageBytes))
+                    .withMaxOutboundMessageSize(outbound);
+            return new SizedCall<>(delegate.newCall(methodDescriptor, bounded),
+                    methodDescriptor, outbound);
         }
+
+        private static int smaller(Integer requested, int limit) {
+            return requested == null ? limit : Math.min(requested, limit);
+        }
+
 
         @Override
         public String authority() {
@@ -538,6 +613,69 @@ public final class OutboundChannelPolicy {
         private void release() {
             if (released.compareAndSet(false, true)) {
                 slots.release();
+            }
+        }
+    }
+
+    /**
+     * Measures requests whose marshaller reports a known length, as the protobuf marshaller
+     * does, before they reach the transport. gRPC's own outbound check reports an oversized
+     * request as {@code CANCELLED}; this one reports {@code RESOURCE_EXHAUSTED} naming both
+     * sizes, and never frames the message.
+     */
+    private static final class SizedCall<RequestT, ResponseT>
+            extends ForwardingClientCall.SimpleForwardingClientCall<RequestT, ResponseT> {
+        private final MethodDescriptor<RequestT, ResponseT> method;
+        private final int limit;
+        private volatile Status refusal;
+
+        private SizedCall(ClientCall<RequestT, ResponseT> delegate,
+                          MethodDescriptor<RequestT, ResponseT> method, int limit) {
+            super(delegate);
+            this.method = method;
+            this.limit = limit;
+        }
+
+        @Override
+        public void start(Listener<ResponseT> listener, Metadata headers) {
+            super.start(new ForwardingClientCallListener.SimpleForwardingClientCallListener<>(
+                    listener) {
+                @Override
+                public void onClose(Status status, Metadata trailers) {
+                    Status refused = refusal;
+                    super.onClose(refused == null ? status : refused, trailers);
+                }
+            }, headers);
+        }
+
+        @Override
+        public void sendMessage(RequestT message) {
+            if (refusal == null && method.streamRequest(message) instanceof KnownLength sized) {
+                int size = available(sized);
+                if (size > limit) {
+                    refusal = Status.RESOURCE_EXHAUSTED.withDescription("request message of "
+                            + size + " bytes exceeds the outbound limit of " + limit + " bytes");
+                    cancel(refusal.getDescription(), null);
+                    return;
+                }
+            }
+            if (refusal == null) {
+                super.sendMessage(message);
+            }
+        }
+
+        @Override
+        public void halfClose() {
+            if (refusal == null) {
+                super.halfClose();
+            }
+        }
+
+        private static int available(KnownLength sized) {
+            try {
+                return sized.available();
+            } catch (IOException e) {
+                throw new UncheckedIOException("request size could not be read", e);
             }
         }
     }
