@@ -8,6 +8,7 @@ import ai.protomolt.proto.repo.blob.spi.ExpiringBlobStore;
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.util.Arrays;
@@ -167,6 +168,93 @@ class CachingBlobStoreReadThroughTest {
         assertThat(store.delete(BUCKET, "k1")).isTrue();
     }
 
+    @Test
+    void aCacheHitForAnObjectMissingFromBackingFailsNotFoundOnEveryReadPathAndEvicts() throws Exception {
+        var backing = new InMemoryBlobStore();
+        var cache = new InMemoryBlobStore();
+        var store = new CachingBlobStore(backing, cache, 60, 1024, "s3:truth");
+        byte[] payload = "cached-but-gone".getBytes(StandardCharsets.UTF_8);
+        String sha = sha256Hex(payload);
+
+        List<Runnable> reads = List.of(
+                () -> store.get(BUCKET, "gone"),
+                () -> store.getBounded(BUCKET, "gone", null, 1024),
+                () -> readAll(store.openStream(BUCKET, "gone", 0, -1)),
+                () -> readAll(store.openVerifiedStream(BUCKET, "gone", payload.length, sha)));
+        for (Runnable read : reads) {
+            cache.put(spec(store.cacheBucket(BUCKET), "gone"), payload);
+            assertThatThrownBy(read::run).isInstanceOf(BlobStore.BlobNotFoundException.class);
+            assertThatThrownBy(() -> cache.get(store.cacheBucket(BUCKET), "gone"))
+                    .isInstanceOf(BlobStore.BlobNotFoundException.class);
+        }
+        assertThat(backing.streamReads).isZero();
+        assertThat(backing.boundedReads).isZero();
+
+        // Existence is answered by backing alone, never by a cache entry.
+        cache.put(spec(store.cacheBucket(BUCKET), "gone"), payload);
+        assertThatThrownBy(() -> store.headObject(BUCKET, "gone"))
+                .isInstanceOf(BlobStore.BlobNotFoundException.class);
+
+        // A present object is served from the cache after the existence check.
+        backing.put(spec(BUCKET, "here"), payload);
+        cache.put(spec(store.cacheBucket(BUCKET), "here"), payload);
+        assertThat(store.get(BUCKET, "here").data()).isEqualTo(payload);
+        try (InputStream in = store.openVerifiedStream(BUCKET, "here", payload.length, sha)) {
+            assertThat(in.readAllBytes()).isEqualTo(payload);
+        }
+        assertThat(backing.streamReads).isZero();
+    }
+
+    @Test
+    void getBoundedServesHitsWithinTheLimitAndLetsBackingEnforceMissesOversizeAndOutage() throws Exception {
+        var backing = new InMemoryBlobStore();
+        var cache = new InMemoryBlobStore();
+        var store = new CachingBlobStore(backing, cache, 60, 16, "s3:bounded");
+        byte[] small = "0123456789".getBytes(StandardCharsets.UTF_8);
+        byte[] large = "0123456789abcdefXYZ".getBytes(StandardCharsets.UTF_8);
+        backing.put(spec(BUCKET, "small"), small);
+        backing.put(spec(BUCKET, "large"), large);
+
+        // Miss reads backing within the limit and populates the cache.
+        assertThat(store.getBounded(BUCKET, "small", null, 10).data()).isEqualTo(small);
+        assertThat(backing.boundedReads).isEqualTo(1);
+        assertThat(cache.get(store.cacheBucket(BUCKET), "small").data()).isEqualTo(small);
+
+        // Hit within the limit: no backing body read.
+        assertThat(store.getBounded(BUCKET, "small", null, 10).data()).isEqualTo(small);
+        assertThat(backing.boundedReads).isEqualTo(1);
+
+        // A cached object over the caller's limit is still refused by backing, never truncated.
+        assertThatThrownBy(() -> store.getBounded(BUCKET, "small", null, 9))
+                .isInstanceOf(BlobStore.BlobReadLimitException.class);
+        assertThat(backing.boundedReads).isEqualTo(2);
+
+        // Oversized for the cache ceiling: backing enforces the limit and nothing is cached.
+        assertThat(store.getBounded(BUCKET, "large", null, 64).data()).isEqualTo(large);
+        assertThatThrownBy(() -> store.getBounded(BUCKET, "large", null, 18))
+                .isInstanceOf(BlobStore.BlobReadLimitException.class);
+        assertThatThrownBy(() -> cache.get(store.cacheBucket(BUCKET), "large"))
+                .isInstanceOf(BlobStore.BlobNotFoundException.class);
+        assertThatThrownBy(() -> store.getBounded(BUCKET, "small", null, -1))
+                .isInstanceOf(IllegalArgumentException.class);
+
+        // Cache outage: bounded reads come from backing.
+        var brokenCache = new InMemoryBlobStore();
+        brokenCache.failAll = true;
+        var outage = new CachingBlobStore(backing, brokenCache, 60, 16, "s3:bounded");
+        assertThat(outage.getBounded(BUCKET, "small", null, 10).data()).isEqualTo(small);
+        assertThatThrownBy(() -> outage.getBounded(BUCKET, "large", null, 18))
+                .isInstanceOf(BlobStore.BlobReadLimitException.class);
+    }
+
+    private static void readAll(InputStream in) {
+        try (in) {
+            in.readAllBytes();
+        } catch (IOException e) {
+            throw new UncheckedIOException(e);
+        }
+    }
+
     private static BlobStore.PutSpec spec(String bucket, String key) {
         return new BlobStore.PutSpec(bucket, key, "application/octet-stream", Map.of(), null);
     }
@@ -180,6 +268,7 @@ class CachingBlobStoreReadThroughTest {
         private final Map<String, String> etags = new HashMap<>();
         boolean failAll;
         int streamReads;
+        int boundedReads;
         int lastTtlSeconds;
 
         private static String coord(String bucket, String key) {
@@ -219,7 +308,7 @@ class CachingBlobStoreReadThroughTest {
             try {
                 return put(spec, body.readAllBytes(), 0);
             } catch (IOException e) {
-                throw new java.io.UncheckedIOException(e);
+                throw new UncheckedIOException(e);
             }
         }
 
@@ -232,6 +321,17 @@ class CachingBlobStoreReadThroughTest {
                 throw new BlobNotFoundException("Not found: " + k);
             }
             return new GetResult(found.clone(), "application/octet-stream", etags.get(k), null);
+        }
+
+        @Override
+        public GetResult getBounded(String bucket, String key, String versionId, int maxBytes) {
+            checkAvailable();
+            boundedReads++;
+            GetResult got = get(bucket, key, versionId);
+            if (got.data().length > maxBytes) {
+                throw new BlobReadLimitException(maxBytes);
+            }
+            return got;
         }
 
         @Override

@@ -6,7 +6,10 @@ import ai.protomolt.proto.repo.blob.spi.BlobStore;
 import ai.protomolt.proto.repo.blob.spi.BlobStores;
 import ai.protomolt.proto.repo.blob.spi.OpenedBlobStore;
 
+import java.io.ByteArrayInputStream;
 import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.util.HexFormat;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentLinkedQueue;
@@ -256,10 +259,8 @@ class CacheProviderIT {
         var driveB = new CachingBlobStore(backing, cache, 60, 1024 * 1024, "s3|http://endpoint-b:4566|us-east-1|pathStyle=true");
 
         byte[] payloadA = bytes("streamed-drive-a-payload");
-        String shaA = java.util.HexFormat.of().formatHex(
-                java.security.MessageDigest.getInstance("SHA-256").digest(payloadA));
-        backing.put(spec(BUCKET, "shared-stream-key"),
-                new java.io.ByteArrayInputStream(payloadA), payloadA.length);
+        String shaA = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(payloadA));
+        backing.put(spec(BUCKET, "shared-stream-key"), new ByteArrayInputStream(payloadA), payloadA.length);
 
         try (var stream = driveA.openVerifiedStream(BUCKET, "shared-stream-key", payloadA.length, shaA)) {
             assertThat(stream.readAllBytes()).isEqualTo(payloadA);
@@ -275,5 +276,42 @@ class CacheProviderIT {
             assertThat(stream.readAllBytes()).isEqualTo(payloadA);
         }
         assertThat(cache.get(driveA.cacheBucket(BUCKET), "shared-stream-key").data()).isEqualTo(payloadA);
+    }
+
+    @Test
+    void boundedReadsAndHitsAnswerToAuthoritativeS3OverValkey() throws Exception {
+        var providers = BlobStores.discover();
+        s3Handle = providers.open("s3", s3Options());
+        redisHandle = providers.open("valkey", redisOptions("bounded-it-" + UUID.randomUUID()));
+        var backing = s3Handle.store();
+        var cache = redisHandle.store();
+        var store = new CachingBlobStore(backing, cache, 60, 32, "s3|bounded-it");
+
+        byte[] small = bytes("bounded-small-payload");
+        byte[] large = bytes("bounded-payload-larger-than-the-cache-ceiling");
+        backing.put(spec(BUCKET, "bounded-small"), small);
+        backing.put(spec(BUCKET, "bounded-large"), large);
+        cache.delete(store.cacheBucket(BUCKET), "bounded-small");
+
+        // Miss: S3 enforces the limit, the result populates Valkey; then a hit returns the same bytes.
+        assertThat(store.getBounded(BUCKET, "bounded-small", null, small.length).data()).isEqualTo(small);
+        assertThat(cache.get(store.cacheBucket(BUCKET), "bounded-small").data()).isEqualTo(small);
+        assertThat(store.getBounded(BUCKET, "bounded-small", null, small.length).data()).isEqualTo(small);
+        assertThatThrownBy(() -> store.getBounded(BUCKET, "bounded-small", null, small.length - 1))
+                .isInstanceOf(BlobStore.BlobReadLimitException.class);
+
+        // Over the cache ceiling: never cached, and the caller's limit still holds.
+        assertThat(store.getBounded(BUCKET, "bounded-large", null, 1024).data()).isEqualTo(large);
+        assertThatThrownBy(() -> cache.get(store.cacheBucket(BUCKET), "bounded-large"))
+                .isInstanceOf(BlobStore.BlobNotFoundException.class);
+        assertThatThrownBy(() -> store.getBounded(BUCKET, "bounded-large", null, large.length - 1))
+                .isInstanceOf(BlobStore.BlobReadLimitException.class);
+
+        // Gone from S3 while still in Valkey: not found, and the entry is evicted.
+        backing.delete(BUCKET, "bounded-small");
+        assertThatThrownBy(() -> store.getBounded(BUCKET, "bounded-small", null, small.length))
+                .isInstanceOf(BlobStore.BlobNotFoundException.class);
+        assertThatThrownBy(() -> cache.get(store.cacheBucket(BUCKET), "bounded-small"))
+                .isInstanceOf(BlobStore.BlobNotFoundException.class);
     }
 }

@@ -39,6 +39,7 @@ import ai.protomolt.proto.repo.v2.DocumentTarget;
 import ai.protomolt.proto.repo.v2.ExpectedRevision;
 import ai.protomolt.proto.repo.v2.GetDocumentRequest;
 import ai.protomolt.proto.repo.v2.IntakeOrigin;
+import ai.protomolt.proto.repo.v2.PartSelection;
 import ai.protomolt.proto.repo.v2.PartSelector;
 import ai.protomolt.proto.repo.v2.PartWrite;
 import ai.protomolt.proto.repo.v2.PurgeDocumentRequest;
@@ -61,6 +62,8 @@ import io.grpc.ServerCall;
 import io.grpc.ServerCallHandler;
 import io.grpc.ServerInterceptor;
 import io.grpc.ServerInterceptors;
+import io.grpc.Status;
+import io.grpc.StatusRuntimeException;
 import io.grpc.inprocess.InProcessChannelBuilder;
 import io.grpc.inprocess.InProcessServerBuilder;
 import java.io.ByteArrayOutputStream;
@@ -93,6 +96,9 @@ import software.amazon.awssdk.services.s3.model.PutObjectRequest;
  */
 @Testcontainers
 class PerDriveReadThroughCacheIT {
+
+    // A part whose authoritative object is gone is a damaged repository, not an absent document.
+    private static final Status.Code MISSING_PART_CODE = Status.Code.DATA_LOSS;
 
     @Container
     static final PostgreSQLContainer POSTGRES = new PostgreSQLContainer("postgres:18-alpine");
@@ -228,21 +234,30 @@ class PerDriveReadThroughCacheIT {
                     assertThat(valkeyProbe.store().get(isolatedCacheBucket, rev1CoreKey).data())
                             .isEqualTo(cachedRev1CoreBytes);
 
-                    // Prove genuine cache hit: temporarily remove the CORE object from S3 while it lives in Valkey
+                    // The cache never hides authoritative loss: with the CORE object gone from S3 while
+                    // Valkey still holds it, the read fails and the entry is evicted.
                     s3A.deleteObject(DeleteObjectRequest.builder().bucket(bucket).key(rev1CoreKey).build());
                     try {
-                        assertThat(docs.getDocument(GetDocumentRequest.newBuilder()
-                                                .setAddress(address)
-                                                .setSelection(ai.protomolt.proto.repo.v2.PartSelection.newBuilder()
-                                                        .addSelectors(selector(DocumentPart.DOCUMENT_PART_CORE)))
-                                                .build())
-                                        .getDocument().getSearchMetadata().getTitle())
-                                .isEqualTo("rev-1-title");
+                        assertThatThrownBy(() -> docs.getDocument(GetDocumentRequest.newBuilder()
+                                        .setAddress(address)
+                                        .setSelection(PartSelection.newBuilder()
+                                                .addSelectors(selector(DocumentPart.DOCUMENT_PART_CORE)))
+                                        .build()))
+                                .isInstanceOfSatisfying(StatusRuntimeException.class, failure ->
+                                        assertThat(failure.getStatus().getCode()).isEqualTo(MISSING_PART_CODE));
+                        assertThatThrownBy(() -> valkeyProbe.store().get(isolatedCacheBucket, rev1CoreKey))
+                                .isInstanceOf(BlobStore.BlobNotFoundException.class);
                     } finally {
                         s3A.putObject(
                                 PutObjectRequest.builder().bucket(bucket).key(rev1CoreKey).build(),
                                 RequestBody.fromBytes(cachedRev1CoreBytes));
                     }
+                    // Restored in S3: the next read repopulates the cache from authoritative bytes.
+                    assertThat(docs.getDocument(GetDocumentRequest.newBuilder().setAddress(address).build())
+                                    .getDocument().getSearchMetadata().getTitle())
+                            .isEqualTo("rev-1-title");
+                    assertThat(valkeyProbe.store().get(isolatedCacheBucket, rev1CoreKey).data())
+                            .isEqualTo(cachedRev1CoreBytes);
 
                     // Save revision 2 on "cached": current revision lookup comes from Postgres catalog, never stale
                     docs.saveDocument(save(address, "save-rev2", "cached", 1, core(account, "rev-2-title").toBuilder()).build());
@@ -418,17 +433,28 @@ class PerDriveReadThroughCacheIT {
                         assertThat(inB.readAllBytes()).isEqualTo(bytesB);
                     }
 
-                    // Delete from S3_A and S3_B to prove subsequent reads come from Valkey without cross-drive collision
-                    clientA.deleteObject(DeleteObjectRequest.builder().bucket(sharedBucket).key(sharedKey).build());
-                    clientB.deleteObject(DeleteObjectRequest.builder().bucket(sharedBucket).key(sharedKey).build());
+                    // One Valkey holds two separate entries for the same (bucket, key), one per backend.
+                    try (OpenedBlobStore valkeyProbe = openValkeyProbe(valkeyUri, "shared-valkey-prefix:", 4096)) {
+                        assertThat(storeA.cacheBucket(sharedBucket)).isNotEqualTo(storeB.cacheBucket(sharedBucket));
+                        assertThat(valkeyProbe.store().get(storeA.cacheBucket(sharedBucket), sharedKey).data())
+                                .isEqualTo(bytesA);
+                        assertThat(valkeyProbe.store().get(storeB.cacheBucket(sharedBucket), sharedKey).data())
+                                .isEqualTo(bytesB);
 
-                    try (InputStream inA = storeA.openVerifiedStream(
-                            sharedBucket, sharedKey, bytesA.length, sha256Hex(bytesA))) {
-                        assertThat(inA.readAllBytes()).isEqualTo(bytesA);
-                    }
-                    try (InputStream inB = storeB.openVerifiedStream(
-                            sharedBucket, sharedKey, bytesB.length, sha256Hex(bytesB))) {
-                        assertThat(inB.readAllBytes()).isEqualTo(bytesB);
+                        // Losing the object on S3_A fails drive A's read and evicts only A's entry;
+                        // drive B still reads its own bytes from its own entry.
+                        clientA.deleteObject(DeleteObjectRequest.builder().bucket(sharedBucket).key(sharedKey).build());
+                        assertThatThrownBy(() -> storeA.openVerifiedStream(
+                                        sharedBucket, sharedKey, bytesA.length, sha256Hex(bytesA)))
+                                .isInstanceOf(BlobStore.BlobNotFoundException.class);
+                        assertThatThrownBy(() -> valkeyProbe.store().get(storeA.cacheBucket(sharedBucket), sharedKey))
+                                .isInstanceOf(BlobStore.BlobNotFoundException.class);
+                        try (InputStream inB = storeB.openVerifiedStream(
+                                sharedBucket, sharedKey, bytesB.length, sha256Hex(bytesB))) {
+                            assertThat(inB.readAllBytes()).isEqualTo(bytesB);
+                        }
+                        assertThat(valkeyProbe.store().get(storeB.cacheBucket(sharedBucket), sharedKey).data())
+                                .isEqualTo(bytesB);
                     }
                 }
             } finally {

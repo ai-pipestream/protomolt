@@ -676,6 +676,8 @@ authoritative S3 backing identity (`s3|<endpoint>|<region>|pathStyle=<bool>`),
 preventing cross-drive cache collisions. Catalog state and current-revision
 pointers are never cached in Valkey/Redis. Verified stack reads validate cached
 bytes against the manifest's expected length and SHA-256, evicting corrupt cache
-entries and falling back to S3 automatically; cache outages degrade gracefully
+entries and falling back to S3 automatically; a cached entry is served only
+after S3 confirms the object still exists, so an object lost from S3 fails the
+read instead of being answered from the cache; cache outages degrade gracefully
 to direct S3 reads and writes; and administrator purge evicts cached entries
 through the composed `ObjectReclaimer`.

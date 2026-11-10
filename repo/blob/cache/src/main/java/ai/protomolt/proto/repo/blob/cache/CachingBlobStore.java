@@ -2,6 +2,7 @@ package ai.protomolt.proto.repo.blob.cache;
 
 import ai.protomolt.proto.repo.blob.spi.BlobStore;
 import ai.protomolt.proto.repo.blob.spi.ExpiringBlobStore;
+import ai.protomolt.proto.repo.blob.spi.ObjectReclaimer;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.FilterInputStream;
@@ -24,9 +25,17 @@ import org.slf4j.LoggerFactory;
  * cache best-effort — a cache failure never fails an operation that the
  * backing store completed, and a restart with an empty cache loses nothing.
  *
+ * <p><b>A cache hit never outlives the authoritative object.</b> Before cached
+ * bytes are returned, {@code backing.headObject} confirms the object still
+ * exists. When it is gone the entry is evicted and the backing store's
+ * {@link BlobNotFoundException} propagates, so missing data is reported, not
+ * hidden. A failing existence check fails the read the same way: the cache
+ * saves the body transfer, never availability of data the backing store
+ * cannot vouch for.
+ *
  * <p>Semantics per operation:
  * <ul>
- *   <li>{@code get} — cache hit returns immediately. Miss → {@code
+ *   <li>{@code get} — a cache hit is confirmed against backing, then returned. Miss → {@code
  *       backing.get}, populate the cache when the object fits the ceiling
  *       ({@code maxCacheableBytes}; larger objects are never cached), return.
  *       Versioned gets ({@code versionId != null}) bypass the cache: the cache
@@ -48,10 +57,12 @@ import org.slf4j.LoggerFactory;
  *   <li>{@code list}/{@code headBucket}/{@code objectLength} — backing only;
  *       lists are never cached (enumerations go stale silently and are cheap
  *       to get wrong).</li>
- *   <li>{@code headObject} — a cache hit answers (existence caching: a cached
- *       object exists in backing, because every cached byte came from or
- *       through it); a miss falls through to backing. A cache miss says
- *       nothing about backing.</li>
+ *   <li>{@code getBounded} — versioned reads go to backing. A current-version
+ *       cache hit within {@code maxBytes} is confirmed against backing and
+ *       returned; otherwise {@code backing.getBounded} enforces the limit and
+ *       the result populates the cache when it fits.</li>
+ *   <li>{@code headObject} — backing only; existence is never answered from
+ *       the cache.</li>
  * </ul>
  */
 public final class CachingBlobStore implements BlobStore, AutoCloseable {
@@ -170,31 +181,39 @@ public final class CachingBlobStore implements BlobStore, AutoCloseable {
 
     @Override
     public GetResult get(String bucket, String key, String versionId) {
-        String cBucket = cacheBucket(bucket);
-        if (versionId == null || versionId.isEmpty()) {
-            try {
-                GetResult cached = cache.get(cBucket, key);
-                if (etagMatchesIfSha256(cached)) {
-                    return cached;
-                }
-                LOG.warn("cached object {}/{} failed ETag digest check — evicting and reading from backing",
-                        bucket, key);
-                evict(bucket, key);
-            } catch (BlobNotFoundException miss) {
-                // fall through to backing
-            } catch (RuntimeException cacheFailure) {
-                LOG.warn("cache get failed for {}/{} — falling through to backing",
-                        bucket, key, cacheFailure);
+        boolean current = versionId == null || versionId.isEmpty();
+        if (current) {
+            GetResult cached = cachedCurrent(bucket, key, -1);
+            if (cached != null) {
+                confirmBacking(bucket, key);
+                return cached;
             }
         }
         GetResult got = backing.get(bucket, key, versionId);
-        if ((versionId == null || versionId.isEmpty()) && fits(got.data().length)) {
-            try {
-                cachePut(new PutSpec(cBucket, key, got.contentType(), null, null), got.data());
-            } catch (RuntimeException cacheFailure) {
-                LOG.warn("cache populate failed for {}/{} — continuing", bucket, key, cacheFailure);
+        if (current) {
+            populate(bucket, key, got);
+        }
+        return got;
+    }
+
+    @Override
+    public GetResult getBounded(String bucket, String key, String versionId, int maxBytes) {
+        if (maxBytes < 0) {
+            throw new IllegalArgumentException("Read limit must not be negative");
+        }
+        if (versionId != null && !versionId.isEmpty()) {
+            return backing.getBounded(bucket, key, versionId, maxBytes);
+        }
+        if (maxCacheableBytes > 0) {
+            int limit = (int) Math.min(maxBytes, Math.min(maxCacheableBytes, MAX_BUFFER_BYTES));
+            GetResult cached = cachedCurrent(bucket, key, limit);
+            if (cached != null && cached.data().length <= maxBytes) {
+                confirmBacking(bucket, key);
+                return cached;
             }
         }
+        GetResult got = backing.getBounded(bucket, key, null, maxBytes);
+        populate(bucket, key, got);
         return got;
     }
 
@@ -207,6 +226,7 @@ public final class CachingBlobStore implements BlobStore, AutoCloseable {
             return backing.openStream(bucket, key, 0, -1);
         }
         String cBucket = cacheBucket(bucket);
+        byte[] verified = null;
         try {
             GetResult cached = cache.get(cBucket, key);
             byte[] data = cached.data();
@@ -215,17 +235,22 @@ public final class CachingBlobStore implements BlobStore, AutoCloseable {
                     && (expectedSha256Hex == null
                             || expectedSha256Hex.isEmpty()
                             || sha256Hex(data).equalsIgnoreCase(expectedSha256Hex))) {
-                return new ByteArrayInputStream(data);
+                verified = data;
+            } else {
+                LOG.warn(
+                        "cached object {}/{} failed verification (expected {} bytes sha256={}, got {} bytes) — evicting and reading from backing",
+                        bucket, key, expectedLength, expectedSha256Hex, data == null ? -1 : data.length);
+                evict(bucket, key);
             }
-            LOG.warn(
-                    "cached object {}/{} failed verification (expected {} bytes sha256={}, got {} bytes) — evicting and reading from backing",
-                    bucket, key, expectedLength, expectedSha256Hex, data == null ? -1 : data.length);
-            evict(bucket, key);
         } catch (BlobNotFoundException miss) {
             // fall through to backing
         } catch (RuntimeException cacheFailure) {
             LOG.warn("cache openVerifiedStream failed for {}/{} — falling through to backing",
                     bucket, key, cacheFailure);
+        }
+        if (verified != null) {
+            confirmBacking(bucket, key);
+            return new ByteArrayInputStream(verified);
         }
         InputStream stream = backing.openStream(bucket, key, 0, -1);
         return new VerifiedFillStream(stream, bucket, key, (int) expectedLength, expectedSha256Hex);
@@ -245,20 +270,10 @@ public final class CachingBlobStore implements BlobStore, AutoCloseable {
                     ? backing.openStream(bucket, key, offset, length)
                     : backing.openStream(bucket, key, versionId, offset, length);
         }
-        String cBucket = cacheBucket(bucket);
-        try {
-            GetResult cached = cache.get(cBucket, key);
-            if (etagMatchesIfSha256(cached)) {
-                return new ByteArrayInputStream(cached.data());
-            }
-            LOG.warn("cached object {}/{} failed ETag digest check — evicting and reading from backing",
-                    bucket, key);
-            evict(bucket, key);
-        } catch (BlobNotFoundException miss) {
-            // fall through to backing
-        } catch (RuntimeException cacheFailure) {
-            LOG.warn("cache openStream failed for {}/{} — falling through to backing",
-                    bucket, key, cacheFailure);
+        GetResult cached = cachedCurrent(bucket, key, -1);
+        if (cached != null) {
+            confirmBacking(bucket, key);
+            return new ByteArrayInputStream(cached.data());
         }
         InputStream stream = versionId == null
                 ? backing.openStream(bucket, key, 0, -1)
@@ -291,9 +306,8 @@ public final class CachingBlobStore implements BlobStore, AutoCloseable {
      * cache operations, eviction failures propagate so durable cleanup is retried.
      * Late in-flight cache fills require subsequent tombstone reconciliation.
      */
-    public ai.protomolt.proto.repo.blob.spi.ObjectReclaimer reclaimer(
-            ai.protomolt.proto.repo.blob.spi.ObjectReclaimer backingReclaimer) {
-        java.util.Objects.requireNonNull(backingReclaimer, "backingReclaimer");
+    public ObjectReclaimer reclaimer(ObjectReclaimer backingReclaimer) {
+        Objects.requireNonNull(backingReclaimer, "backingReclaimer");
         return (bucket, key) -> {
             String cBucket = cacheBucket(bucket);
             boolean absent = backingReclaimer.reclaim(bucket, key);
@@ -330,15 +344,6 @@ public final class CachingBlobStore implements BlobStore, AutoCloseable {
 
     @Override
     public void headObject(String bucket, String key) {
-        try {
-            cache.headObject(cacheBucket(bucket), key);
-            return; // existence caching: cached bytes came from backing
-        } catch (BlobNotFoundException miss) {
-            // A cache miss says nothing about backing — fall through.
-        } catch (RuntimeException cacheFailure) {
-            LOG.warn("cache headObject failed for {}/{} — falling through to backing",
-                    bucket, key, cacheFailure);
-        }
         backing.headObject(bucket, key);
     }
 
@@ -358,6 +363,55 @@ public final class CachingBlobStore implements BlobStore, AutoCloseable {
             else if (failure != e) failure.addSuppressed(e);
         }
         if (failure != null) throw failure;
+    }
+
+    /**
+     * The current-version cache entry, or {@code null} on a miss, a cache
+     * failure, an entry over {@code limit} ({@code -1} = no limit) or an entry
+     * whose SHA-256 ETag does not match its bytes (which is evicted).
+     */
+    private GetResult cachedCurrent(String bucket, String key, int limit) {
+        try {
+            GetResult cached = limit < 0
+                    ? cache.get(cacheBucket(bucket), key)
+                    : cache.getBounded(cacheBucket(bucket), key, null, limit);
+            if (etagMatchesIfSha256(cached)) {
+                return cached;
+            }
+            LOG.warn("cached object {}/{} failed ETag digest check — evicting and reading from backing",
+                    bucket, key);
+            evict(bucket, key);
+        } catch (BlobNotFoundException | BlobReadLimitException miss) {
+            // fall through to backing, which enforces existence and the limit
+        } catch (RuntimeException cacheFailure) {
+            LOG.warn("cache read failed for {}/{} — falling through to backing",
+                    bucket, key, cacheFailure);
+        }
+        return null;
+    }
+
+    /**
+     * Serves a cache hit only while backing still holds the object. A missing
+     * object evicts the entry and propagates backing's not-found failure.
+     */
+    private void confirmBacking(String bucket, String key) {
+        try {
+            backing.headObject(bucket, key);
+        } catch (BlobNotFoundException missing) {
+            evict(bucket, key);
+            throw missing;
+        }
+    }
+
+    private void populate(String bucket, String key, GetResult got) {
+        if (!fits(got.data().length)) {
+            return;
+        }
+        try {
+            cachePut(new PutSpec(cacheBucket(bucket), key, got.contentType(), null, null), got.data());
+        } catch (RuntimeException cacheFailure) {
+            LOG.warn("cache populate failed for {}/{} — continuing", bucket, key, cacheFailure);
+        }
     }
 
     private boolean fits(long sizeBytes) {
