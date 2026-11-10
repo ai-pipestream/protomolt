@@ -1,6 +1,6 @@
 # Typed rendition renderers
 
-`protomolt-renderer` is optional. It depends on protobuf, descriptor/validation
+`protomolt-emit-renderer` is optional. It depends on protobuf, descriptor/validation
 utilities and gRPC, and does not pull Parquet, Jena or repository-service into
 its runtime. `RendererRegistry.load(loader, enabledIds)` discovers trusted
 installed `RendererProvider` modules through `ServiceLoader`. Missing enabled
