@@ -10,7 +10,7 @@ set -euo pipefail
 # Job names from .github/workflows/ci.yml. The build job's matrix value is the
 # check-run name GitHub records.
 documented_ci_contexts() {
-  printf '%s\n' 'build (25)' 'console' 'conformance' 'integration'
+  printf '%s\n' 'build (25)' 'console' 'conformance' 'mcp-inspector' 'integration'
 }
 
 # Prints the contexts the forward must see succeed, one per line.

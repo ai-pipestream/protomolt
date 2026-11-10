@@ -321,8 +321,10 @@ Java APIs, protobuf contracts, stored formats, REST routes, and action
 envelopes. Enforce compatible changes in CI once a release baseline exists.
 
 Protobuf contracts are covered: CI runs `buf lint` and `buf breaking` against
-the pull request's base branch. Everything else is open — no inspector-driven
-MCP fixtures, no stability annotations of any kind, no Java binary-compatibility
+the pull request's base branch. MCP is covered by the `mcp-inspector` CI job,
+which drives the stdio and streamable-HTTP servers with the pinned official
+MCP Inspector CLI ([tests/mcp-inspector](../../tests/mcp-inspector/README.md)).
+Everything else is open — no stability annotations of any kind, no Java binary-compatibility
 tooling, and no REST-route or action-envelope check. Note that comparing
 against a base branch is not the same as comparing against a release baseline,
 which is what the last sentence asks for.

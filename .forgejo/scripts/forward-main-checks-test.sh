@@ -73,6 +73,7 @@ success_runs='{"check_runs":[
   {"name":"build (25)","status":"completed","conclusion":"success","started_at":"2026-10-23T00:00:00Z"},
   {"name":"console","status":"completed","conclusion":"success","started_at":"2026-10-23T00:00:00Z"},
   {"name":"conformance","status":"completed","conclusion":"neutral","started_at":"2026-10-23T00:00:00Z"},
+  {"name":"mcp-inspector","status":"completed","conclusion":"success","started_at":"2026-10-23T00:00:00Z"},
   {"name":"integration","status":"completed","conclusion":"skipped","started_at":"2026-10-23T00:00:00Z"}
 ]}'
 evaluate_required_checks "$success_runs" "$documented"
@@ -84,13 +85,14 @@ pending_runs='{"check_runs":[
   {"name":"conformance","status":"queued","conclusion":null,"started_at":"2026-10-23T00:00:01Z"}
 ]}'
 evaluate_required_checks "$pending_runs" "$documented"
-assert_eq "pending and missing checks" "3|" "${pending_checks}|${failed_checks}"
+assert_eq "pending and missing checks" "4|" "${pending_checks}|${failed_checks}"
 
 failed_runs='{"check_runs":[
   {"name":"build (25)","status":"completed","conclusion":"failure","started_at":"2026-10-23T00:00:00Z"},
   {"name":"build (25)","status":"completed","conclusion":"success","started_at":"2026-10-23T00:00:02Z"},
   {"name":"console","status":"completed","conclusion":"cancelled","started_at":"2026-10-23T00:00:00Z"},
   {"name":"conformance","status":"completed","conclusion":"success","started_at":"2026-10-23T00:00:00Z"},
+  {"name":"mcp-inspector","status":"completed","conclusion":"success","started_at":"2026-10-23T00:00:00Z"},
   {"name":"integration","status":"completed","conclusion":"success","started_at":"2026-10-23T00:00:00Z"}
 ]}'
 evaluate_required_checks "$failed_runs" "$documented"
