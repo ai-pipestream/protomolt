@@ -44,9 +44,19 @@ class OutboundMessageLimitTest {
             .setResponseMarshaller(new Bytes())
             .build();
 
+    private static final AtomicInteger OPENED = new AtomicInteger();
+    private static final AtomicInteger CLOSED = new AtomicInteger();
+
     private static final class SizedStream extends ByteArrayInputStream implements KnownLength {
         SizedStream(byte[] bytes) {
             super(bytes);
+            OPENED.incrementAndGet();
+        }
+
+        @Override
+        public void close() throws IOException {
+            CLOSED.incrementAndGet();
+            super.close();
         }
     }
 
@@ -84,6 +94,26 @@ class OutboundMessageLimitTest {
             assertThat(call(channel, CallOptions.DEFAULT, 1024, 8)).hasSize(8);
             assertNotSent(() -> call(channel, CallOptions.DEFAULT, 1025, 8));
             assertThat(received).hasValue(1);
+        } finally {
+            channel.shutdownNow();
+        }
+    }
+
+    @Test
+    void theMeasuringStreamIsClosedWhetherTheRequestIsSentOrRefused() {
+        OutboundChannelPolicy policy = OutboundChannelPolicy.builder()
+                .maxOutboundMessageBytes(1024).build();
+        ManagedChannel channel = open(policy);
+        try {
+            int opened = OPENED.get();
+            call(channel, CallOptions.DEFAULT, 8, 8);
+            // Measuring and transport streams for the request, plus the server's response.
+            assertThat(OPENED.get() - opened).isEqualTo(3);
+            int beforeRefusal = OPENED.get();
+            assertNotSent(() -> call(channel, CallOptions.DEFAULT, 1025, 8));
+            // A refused request opens only the measuring stream.
+            assertThat(OPENED.get() - beforeRefusal).isEqualTo(1);
+            assertThat(CLOSED.get()).isEqualTo(OPENED.get());
         } finally {
             channel.shutdownNow();
         }

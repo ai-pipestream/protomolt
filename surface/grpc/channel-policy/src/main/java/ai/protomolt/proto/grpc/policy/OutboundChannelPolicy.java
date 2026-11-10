@@ -11,6 +11,7 @@ import io.grpc.MethodDescriptor;
 import io.grpc.Status;
 
 import java.io.IOException;
+import java.io.InputStream;
 import java.io.UncheckedIOException;
 import java.time.Duration;
 import java.util.ArrayList;
@@ -650,17 +651,28 @@ public final class OutboundChannelPolicy {
 
         @Override
         public void sendMessage(RequestT message) {
-            if (refusal == null && method.streamRequest(message) instanceof KnownLength sized) {
-                int size = available(sized);
-                if (size > limit) {
-                    refusal = Status.RESOURCE_EXHAUSTED.withDescription("request message of "
-                            + size + " bytes exceeds the outbound limit of " + limit + " bytes");
-                    cancel(refusal.getDescription(), null);
-                    return;
-                }
+            if (refusal != null) {
+                return;
             }
-            if (refusal == null) {
-                super.sendMessage(message);
+            int size = measure(message);
+            if (size > limit) {
+                refusal = Status.RESOURCE_EXHAUSTED.withDescription("request message of "
+                        + size + " bytes exceeds the outbound limit of " + limit + " bytes");
+                cancel(refusal.getDescription(), null);
+                return;
+            }
+            super.sendMessage(message);
+        }
+
+        /**
+         * The request's length from a stream opened only for measuring, closed on every path;
+         * -1 when the marshaller does not report a known length.
+         */
+        private int measure(RequestT message) {
+            try (InputStream probe = method.streamRequest(message)) {
+                return probe instanceof KnownLength sized ? sized.available() : -1;
+            } catch (IOException e) {
+                throw new UncheckedIOException("request size could not be read", e);
             }
         }
 
@@ -668,14 +680,6 @@ public final class OutboundChannelPolicy {
         public void halfClose() {
             if (refusal == null) {
                 super.halfClose();
-            }
-        }
-
-        private static int available(KnownLength sized) {
-            try {
-                return sized.available();
-            } catch (IOException e) {
-                throw new UncheckedIOException("request size could not be read", e);
             }
         }
     }
