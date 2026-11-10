@@ -1,5 +1,8 @@
 package ai.protomolt.proto.http.rest;
 
+import ai.protomolt.proto.descriptors.ApiStability;
+import ai.protomolt.proto.descriptors.StabilityTier;
+
 import java.lang.annotation.Documented;
 import java.lang.annotation.ElementType;
 import java.lang.annotation.Retention;
@@ -13,6 +16,7 @@ import java.lang.annotation.Target;
 @Documented
 @Retention(RetentionPolicy.RUNTIME)
 @Target({ElementType.TYPE, ElementType.METHOD})
+@ApiStability(StabilityTier.STABLE)
 public @interface ProtoRestExposed {
 
     /**
@@ -34,4 +38,10 @@ public @interface ProtoRestExposed {
 
     /** Longer description for OpenAPI. */
     String description() default "";
+
+    /**
+     * Stability tier of the exposed REST route (or default tier for methods on an annotated
+     * service class). Defaults to {@link StabilityTier#STABLE}.
+     */
+    StabilityTier stability() default StabilityTier.STABLE;
 }

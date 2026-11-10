@@ -1,0 +1,982 @@
+{
+  "actions" : [
+    {
+      "name" : "check-compat",
+      "requiredScope" : "schema-read",
+      "streaming" : false,
+      "requestTypeName" : "ai.protomolt.proto.grpc.service.v1.CheckCompatRequest",
+      "responseTypeName" : "ai.protomolt.proto.grpc.service.v1.CheckCompatResponse",
+      "requiredInputFields" : [
+        "new",
+        "old"
+      ],
+      "inputFieldTypes" : {
+        "include_json_rules" : "BOOL",
+        "include_source_rules" : "BOOL",
+        "mode" : "ai.protomolt.proto.grpc.service.v1.CompatibilityMode",
+        "new" : "ai.protomolt.proto.grpc.service.v1.SchemaSource",
+        "old" : "ai.protomolt.proto.grpc.service.v1.SchemaSource"
+      },
+      "outputFieldTypes" : {
+        "changes" : "repeated ai.protomolt.proto.grpc.service.v1.SchemaChange",
+        "compatible" : "BOOL",
+        "mode" : "ai.protomolt.proto.grpc.service.v1.CompatibilityMode",
+        "violations" : "repeated ai.protomolt.proto.grpc.service.v1.SchemaChange"
+      },
+      "stability" : "STABLE"
+    },
+    {
+      "name" : "check-rules",
+      "requiredScope" : "schema-read",
+      "streaming" : false,
+      "requestTypeName" : "ai.protomolt.proto.grpc.service.v1.CheckRulesRequest",
+      "responseTypeName" : "ai.protomolt.proto.grpc.service.v1.CheckRulesResponse",
+      "requiredInputFields" : [ ],
+      "inputFieldTypes" : {
+        "cel_rules" : "repeated ai.protomolt.proto.grpc.service.v1.CelRule",
+        "filters" : "repeated STRING",
+        "rules" : "repeated STRING",
+        "sources" : "repeated ai.protomolt.proto.grpc.service.v1.ShapeSource",
+        "target" : "ai.protomolt.proto.grpc.service.v1.JoinTarget"
+      },
+      "outputFieldTypes" : {
+        "dry_run_error" : "STRING",
+        "filter_results" : "repeated BOOL",
+        "findings" : "repeated ai.protomolt.proto.grpc.service.v1.RuleFinding",
+        "message" : "google.protobuf.Struct",
+        "ok" : "BOOL",
+        "type" : "STRING"
+      },
+      "stability" : "STABLE"
+    },
+    {
+      "name" : "check-workflow",
+      "requiredScope" : "workflow-run",
+      "streaming" : false,
+      "requestTypeName" : "ai.protomolt.proto.grpc.service.v1.CheckWorkflowRequest",
+      "responseTypeName" : "ai.protomolt.proto.grpc.service.v1.CheckWorkflowResponse",
+      "requiredInputFields" : [
+        "workflow"
+      ],
+      "inputFieldTypes" : {
+        "workflow" : "ai.protomolt.proto.grpc.service.v1.CompiledWorkflow"
+      },
+      "outputFieldTypes" : {
+        "findings" : "repeated ai.protomolt.proto.grpc.service.v1.WorkflowFinding",
+        "ok" : "BOOL"
+      },
+      "stability" : "STABLE"
+    },
+    {
+      "name" : "compile",
+      "requiredScope" : "schema-read",
+      "streaming" : false,
+      "requestTypeName" : "ai.protomolt.proto.grpc.service.v1.CompileRequest",
+      "responseTypeName" : "ai.protomolt.proto.grpc.service.v1.CompileResponse",
+      "requiredInputFields" : [ ],
+      "inputFieldTypes" : {
+        "sources" : "map<STRING,STRING>"
+      },
+      "outputFieldTypes" : {
+        "descriptor_set_base64" : "STRING",
+        "errors" : "repeated STRING",
+        "files" : "repeated STRING",
+        "ok" : "BOOL"
+      },
+      "stability" : "STABLE"
+    },
+    {
+      "name" : "compile-workflow",
+      "requiredScope" : "schema-read",
+      "streaming" : false,
+      "requestTypeName" : "ai.protomolt.proto.grpc.service.v1.CompileWorkflowRequest",
+      "responseTypeName" : "ai.protomolt.proto.grpc.service.v1.CompileWorkflowResponse",
+      "requiredInputFields" : [
+        "workflow"
+      ],
+      "inputFieldTypes" : {
+        "workflow" : "ai.protomolt.proto.grpc.service.v1.CompiledWorkflow"
+      },
+      "outputFieldTypes" : {
+        "workflow" : "google.protobuf.Struct",
+        "workflow_fingerprint" : "STRING"
+      },
+      "stability" : "STABLE"
+    },
+    {
+      "name" : "complete-step",
+      "requiredScope" : "service-invoke",
+      "streaming" : false,
+      "requestTypeName" : "ai.protomolt.proto.grpc.service.v1.CompleteStepRequest",
+      "responseTypeName" : "ai.protomolt.proto.grpc.service.v1.CompleteStepResponse",
+      "requiredInputFields" : [
+        "jobId",
+        "response",
+        "stepName"
+      ],
+      "inputFieldTypes" : {
+        "job_id" : "STRING",
+        "response" : "google.protobuf.Struct",
+        "step_name" : "STRING"
+      },
+      "outputFieldTypes" : {
+        "error" : "STRING",
+        "ok" : "BOOL",
+        "outstanding_step" : "STRING",
+        "status" : "STRING"
+      },
+      "stability" : "STABLE"
+    },
+    {
+      "name" : "diff-schemas",
+      "requiredScope" : "schema-read",
+      "streaming" : false,
+      "requestTypeName" : "ai.protomolt.proto.grpc.service.v1.DiffSchemasRequest",
+      "responseTypeName" : "ai.protomolt.proto.grpc.service.v1.DiffSchemasResponse",
+      "requiredInputFields" : [
+        "new",
+        "old"
+      ],
+      "inputFieldTypes" : {
+        "new" : "ai.protomolt.proto.grpc.service.v1.SchemaSource",
+        "old" : "ai.protomolt.proto.grpc.service.v1.SchemaSource"
+      },
+      "outputFieldTypes" : {
+        "changes" : "repeated ai.protomolt.proto.grpc.service.v1.SchemaChange"
+      },
+      "stability" : "STABLE"
+    },
+    {
+      "name" : "emit-okf",
+      "requiredScope" : "artifact-access",
+      "streaming" : false,
+      "requestTypeName" : "ai.protomolt.proto.grpc.service.v1.EmitOkfRequest",
+      "responseTypeName" : "ai.protomolt.proto.grpc.service.v1.EmitOkfResponse",
+      "requiredInputFields" : [
+        "schema"
+      ],
+      "inputFieldTypes" : {
+        "schema" : "ai.protomolt.proto.grpc.service.v1.SchemaSource",
+        "title" : "STRING"
+      },
+      "outputFieldTypes" : {
+        "error" : "STRING",
+        "file_count" : "INT32",
+        "files" : "map<STRING,STRING>",
+        "ok" : "BOOL",
+        "zip_base64" : "STRING"
+      },
+      "stability" : "STABLE"
+    },
+    {
+      "name" : "eval-cel",
+      "requiredScope" : "schema-read",
+      "streaming" : false,
+      "requestTypeName" : "ai.protomolt.proto.grpc.service.v1.EvalCelRequest",
+      "responseTypeName" : "ai.protomolt.proto.grpc.service.v1.EvalCelResponse",
+      "requiredInputFields" : [
+        "expression",
+        "message",
+        "schema"
+      ],
+      "inputFieldTypes" : {
+        "expression" : "STRING",
+        "message" : "google.protobuf.Struct",
+        "schema" : "ai.protomolt.proto.grpc.service.v1.SchemaSource",
+        "type" : "STRING"
+      },
+      "outputFieldTypes" : {
+        "result" : "google.protobuf.Value",
+        "result_type" : "STRING"
+      },
+      "stability" : "STABLE"
+    },
+    {
+      "name" : "evaluate-work-record",
+      "requiredScope" : "workflow-run",
+      "streaming" : false,
+      "requestTypeName" : "ai.protomolt.proto.grpc.service.v1.EvaluateWorkRecordRequest",
+      "responseTypeName" : "ai.protomolt.proto.grpc.service.v1.EvaluateWorkRecordResponse",
+      "requiredInputFields" : [
+        "recordBase64",
+        "schema",
+        "trust",
+        "workflow"
+      ],
+      "inputFieldTypes" : {
+        "artifacts" : "map<STRING,STRING>",
+        "record_base64" : "STRING",
+        "schema" : "ai.protomolt.proto.grpc.service.v1.SchemaSource",
+        "trust" : "ai.protomolt.proto.receipt.v1.TrustSnapshot",
+        "workflow" : "ai.protomolt.proto.grpc.workflow.v1.Workflow"
+      },
+      "outputFieldTypes" : {
+        "accepted" : "BOOL",
+        "checks" : "repeated ai.protomolt.proto.grpc.service.v1.WorkRecordCheck",
+        "evaluated_at" : "STRING",
+        "manifest_digest" : "STRING",
+        "non_claims" : "repeated STRING",
+        "policy_id" : "STRING",
+        "policy_sha256" : "STRING",
+        "policy_version" : "STRING",
+        "replay_steps" : "repeated ai.protomolt.proto.grpc.service.v1.WorkflowStepReplay"
+      },
+      "stability" : "STABLE"
+    },
+    {
+      "name" : "export-work-record",
+      "requiredScope" : "workflow-run",
+      "streaming" : false,
+      "requestTypeName" : "ai.protomolt.proto.grpc.service.v1.ExportWorkRecordRequest",
+      "responseTypeName" : "ai.protomolt.proto.grpc.service.v1.ExportWorkRecordResponse",
+      "requiredInputFields" : [
+        "runId"
+      ],
+      "inputFieldTypes" : {
+        "disclose_of" : "STRING",
+        "mask_classes" : "repeated STRING",
+        "prior_manifest_sha256" : "STRING",
+        "record_id" : "STRING",
+        "run_id" : "STRING"
+      },
+      "outputFieldTypes" : {
+        "manifest_digest" : "STRING",
+        "masked_paths" : "repeated STRING",
+        "record_base64" : "STRING",
+        "record_id" : "STRING"
+      },
+      "stability" : "STABLE"
+    },
+    {
+      "name" : "extract-metadata",
+      "requiredScope" : "schema-read",
+      "streaming" : false,
+      "requestTypeName" : "ai.protomolt.proto.grpc.service.v1.ExtractMetadataRequest",
+      "responseTypeName" : "ai.protomolt.proto.grpc.service.v1.ExtractMetadataResponse",
+      "requiredInputFields" : [
+        "schema"
+      ],
+      "inputFieldTypes" : {
+        "schema" : "ai.protomolt.proto.grpc.service.v1.SchemaSource",
+        "type" : "STRING"
+      },
+      "outputFieldTypes" : {
+        "metadata" : "google.protobuf.Struct",
+        "type" : "STRING"
+      },
+      "stability" : "STABLE"
+    },
+    {
+      "name" : "gather-git",
+      "requiredScope" : "schema-read",
+      "streaming" : false,
+      "requestTypeName" : "ai.protomolt.proto.grpc.service.v1.GatherGitRequest",
+      "responseTypeName" : "ai.protomolt.proto.grpc.service.v1.GatherGitResponse",
+      "requiredInputFields" : [
+        "repo"
+      ],
+      "inputFieldTypes" : {
+        "paths" : "repeated STRING",
+        "ref" : "STRING",
+        "repo" : "STRING",
+        "subdir" : "STRING"
+      },
+      "outputFieldTypes" : {
+        "descriptor_set_base64" : "STRING",
+        "error" : "STRING",
+        "files" : "repeated STRING",
+        "ok" : "BOOL",
+        "sources" : "map<STRING,STRING>"
+      },
+      "stability" : "STABLE"
+    },
+    {
+      "name" : "generate-stubs",
+      "requiredScope" : "schema-read",
+      "streaming" : false,
+      "requestTypeName" : "ai.protomolt.proto.grpc.service.v1.GenerateStubsRequest",
+      "responseTypeName" : "ai.protomolt.proto.grpc.service.v1.GenerateStubsResponse",
+      "requiredInputFields" : [
+        "schema"
+      ],
+      "inputFieldTypes" : {
+        "files" : "repeated STRING",
+        "generators" : "repeated ai.protomolt.proto.grpc.service.v1.CodeGenerator",
+        "parameter" : "STRING",
+        "schema" : "ai.protomolt.proto.grpc.service.v1.SchemaSource"
+      },
+      "outputFieldTypes" : {
+        "error" : "STRING",
+        "file_count" : "INT32",
+        "files" : "repeated ai.protomolt.proto.grpc.service.v1.GeneratedFile",
+        "generator" : "STRING",
+        "ok" : "BOOL"
+      },
+      "stability" : "STABLE"
+    },
+    {
+      "name" : "get-job",
+      "requiredScope" : "service-invoke",
+      "streaming" : false,
+      "requestTypeName" : "ai.protomolt.proto.grpc.service.v1.GetJobRequest",
+      "responseTypeName" : "ai.protomolt.proto.grpc.service.v1.GetJobResponse",
+      "requiredInputFields" : [
+        "jobId"
+      ],
+      "inputFieldTypes" : {
+        "job_id" : "STRING"
+      },
+      "outputFieldTypes" : {
+        "error" : "STRING",
+        "job" : "ai.protomolt.proto.grpc.service.v1.WorkflowRun",
+        "ok" : "BOOL"
+      },
+      "stability" : "STABLE"
+    },
+    {
+      "name" : "grpc-invoke",
+      "requiredScope" : "service-invoke",
+      "streaming" : true,
+      "requestTypeName" : "ai.protomolt.proto.grpc.service.v1.GrpcInvokeRequest",
+      "responseTypeName" : "ai.protomolt.proto.grpc.service.v1.GrpcInvokeResponse",
+      "requiredInputFields" : [
+        "method",
+        "request",
+        "schema",
+        "target"
+      ],
+      "inputFieldTypes" : {
+        "deadline_ms" : "INT32",
+        "max_responses" : "INT32",
+        "metadata" : "map<STRING,STRING>",
+        "method" : "STRING",
+        "request" : "google.protobuf.Struct",
+        "schema" : "ai.protomolt.proto.grpc.service.v1.SchemaSource",
+        "target" : "STRING",
+        "tls" : "BOOL"
+      },
+      "outputFieldTypes" : {
+        "description" : "STRING",
+        "method" : "STRING",
+        "method_type" : "STRING",
+        "ok" : "BOOL",
+        "responses" : "repeated google.protobuf.Struct",
+        "status" : "STRING"
+      },
+      "stability" : "STABLE"
+    },
+    {
+      "name" : "infer-schema",
+      "requiredScope" : "schema-read",
+      "streaming" : false,
+      "requestTypeName" : "ai.protomolt.proto.grpc.service.v1.InferSchemaRequest",
+      "responseTypeName" : "ai.protomolt.proto.grpc.service.v1.InferSchemaResponse",
+      "requiredInputFields" : [
+        "name"
+      ],
+      "inputFieldTypes" : {
+        "name" : "STRING",
+        "samples" : "repeated google.protobuf.Struct"
+      },
+      "outputFieldTypes" : {
+        "descriptor_set_base64" : "STRING",
+        "file" : "STRING",
+        "proto_source" : "STRING",
+        "type" : "STRING"
+      },
+      "stability" : "STABLE"
+    },
+    {
+      "name" : "inference-describe-model",
+      "requiredScope" : "service-invoke",
+      "streaming" : false,
+      "requestTypeName" : "ai.protomolt.proto.grpc.service.v1.InferenceDescribeModelRequest",
+      "responseTypeName" : "ai.protomolt.proto.grpc.service.v1.InferenceDescribeModelResponse",
+      "requiredInputFields" : [
+        "model"
+      ],
+      "inputFieldTypes" : {
+        "model" : "STRING"
+      },
+      "outputFieldTypes" : {
+        "entry" : "ai.protomolt.proto.grpc.service.v1.InferenceModelEntry",
+        "error" : "STRING",
+        "ok" : "BOOL"
+      },
+      "stability" : "STABLE"
+    },
+    {
+      "name" : "inference-generate",
+      "requiredScope" : "service-invoke",
+      "streaming" : false,
+      "requestTypeName" : "ai.protomolt.proto.grpc.service.v1.InferenceGenerateRequest",
+      "responseTypeName" : "ai.protomolt.proto.grpc.service.v1.InferenceGenerateResponse",
+      "requiredInputFields" : [
+        "model"
+      ],
+      "inputFieldTypes" : {
+        "enable_thinking" : "BOOL",
+        "max_output_tokens" : "INT32",
+        "messages" : "repeated ai.protomolt.proto.grpc.service.v1.InferenceChatTurn",
+        "model" : "STRING",
+        "temperature" : "DOUBLE",
+        "top_p" : "DOUBLE"
+      },
+      "outputFieldTypes" : {
+        "error" : "STRING",
+        "finish_reason" : "STRING",
+        "model" : "STRING",
+        "model_version" : "STRING",
+        "ok" : "BOOL",
+        "provider" : "STRING",
+        "text" : "STRING",
+        "usage" : "ai.protomolt.proto.grpc.service.v1.InferenceUsage"
+      },
+      "stability" : "STABLE"
+    },
+    {
+      "name" : "inference-list-models",
+      "requiredScope" : "service-invoke",
+      "streaming" : false,
+      "requestTypeName" : "ai.protomolt.proto.grpc.service.v1.InferenceListModelsRequest",
+      "responseTypeName" : "ai.protomolt.proto.grpc.service.v1.InferenceListModelsResponse",
+      "requiredInputFields" : [ ],
+      "inputFieldTypes" : {
+        "provider" : "STRING"
+      },
+      "outputFieldTypes" : {
+        "catalog_generation" : "INT64",
+        "error" : "STRING",
+        "models" : "repeated ai.protomolt.proto.grpc.service.v1.InferenceModelEntry",
+        "ok" : "BOOL"
+      },
+      "stability" : "STABLE"
+    },
+    {
+      "name" : "join-messages",
+      "requiredScope" : "schema-read",
+      "streaming" : false,
+      "requestTypeName" : "ai.protomolt.proto.grpc.service.v1.JoinMessagesRequest",
+      "responseTypeName" : "ai.protomolt.proto.grpc.service.v1.JoinMessagesResponse",
+      "requiredInputFields" : [ ],
+      "inputFieldTypes" : {
+        "cel_rules" : "repeated ai.protomolt.proto.grpc.service.v1.CelRule",
+        "rules" : "repeated STRING",
+        "shape" : "ai.protomolt.proto.grpc.service.v1.JoinShape",
+        "sources" : "repeated ai.protomolt.proto.grpc.service.v1.ShapeSource",
+        "target" : "ai.protomolt.proto.grpc.service.v1.JoinTarget"
+      },
+      "outputFieldTypes" : {
+        "descriptor_set_base64" : "STRING",
+        "message" : "google.protobuf.Struct",
+        "proto_source" : "STRING",
+        "type" : "STRING"
+      },
+      "stability" : "STABLE"
+    },
+    {
+      "name" : "list-jobs",
+      "requiredScope" : "service-invoke",
+      "streaming" : false,
+      "requestTypeName" : "ai.protomolt.proto.grpc.service.v1.ListJobsRequest",
+      "responseTypeName" : "ai.protomolt.proto.grpc.service.v1.ListJobsResponse",
+      "requiredInputFields" : [ ],
+      "inputFieldTypes" : {
+        "limit" : "INT32",
+        "offset" : "INT32",
+        "status" : "ai.protomolt.proto.grpc.service.v1.JobStatus",
+        "workflow_name" : "STRING"
+      },
+      "outputFieldTypes" : {
+        "error" : "STRING",
+        "jobs" : "repeated ai.protomolt.proto.grpc.service.v1.WorkflowRun",
+        "ok" : "BOOL"
+      },
+      "stability" : "STABLE"
+    },
+    {
+      "name" : "list-types",
+      "requiredScope" : "schema-read",
+      "streaming" : false,
+      "requestTypeName" : "ai.protomolt.proto.grpc.service.v1.ListTypesRequest",
+      "responseTypeName" : "ai.protomolt.proto.grpc.service.v1.ListTypesResponse",
+      "requiredInputFields" : [ ],
+      "inputFieldTypes" : {
+        "filter" : "STRING",
+        "schema" : "ai.protomolt.proto.grpc.service.v1.SchemaSource"
+      },
+      "outputFieldTypes" : {
+        "types" : "repeated ai.protomolt.proto.grpc.service.v1.TypeEntry"
+      },
+      "stability" : "STABLE"
+    },
+    {
+      "name" : "map-message",
+      "requiredScope" : "schema-read",
+      "streaming" : false,
+      "requestTypeName" : "ai.protomolt.proto.grpc.service.v1.MapMessageRequest",
+      "responseTypeName" : "ai.protomolt.proto.grpc.service.v1.MapMessageResponse",
+      "requiredInputFields" : [ ],
+      "inputFieldTypes" : {
+        "cel_rules" : "repeated ai.protomolt.proto.grpc.service.v1.CelRule",
+        "message" : "google.protobuf.Struct",
+        "rules" : "repeated STRING",
+        "schema" : "ai.protomolt.proto.grpc.service.v1.SchemaSource",
+        "type" : "STRING"
+      },
+      "outputFieldTypes" : {
+        "message" : "google.protobuf.Struct"
+      },
+      "stability" : "STABLE"
+    },
+    {
+      "name" : "mask-message",
+      "requiredScope" : "schema-read",
+      "streaming" : false,
+      "requestTypeName" : "ai.protomolt.proto.grpc.service.v1.MaskMessageRequest",
+      "responseTypeName" : "ai.protomolt.proto.grpc.service.v1.MaskMessageResponse",
+      "requiredInputFields" : [
+        "message",
+        "schema"
+      ],
+      "inputFieldTypes" : {
+        "classes" : "repeated STRING",
+        "key" : "STRING",
+        "message" : "google.protobuf.Struct",
+        "schema" : "ai.protomolt.proto.grpc.service.v1.SchemaSource",
+        "strategy" : "ai.protomolt.proto.grpc.service.v1.MaskStrategy",
+        "type" : "STRING"
+      },
+      "outputFieldTypes" : {
+        "masked_fields" : "repeated STRING",
+        "message" : "google.protobuf.Struct"
+      },
+      "stability" : "STABLE"
+    },
+    {
+      "name" : "merge-schemas",
+      "requiredScope" : "schema-read",
+      "streaming" : false,
+      "requestTypeName" : "ai.protomolt.proto.grpc.service.v1.MergeSchemasRequest",
+      "responseTypeName" : "ai.protomolt.proto.grpc.service.v1.MergeSchemasResponse",
+      "requiredInputFields" : [
+        "name"
+      ],
+      "inputFieldTypes" : {
+        "name" : "STRING",
+        "report_only" : "BOOL",
+        "resolutions" : "map<STRING,ai.protomolt.proto.grpc.service.v1.MergeResolution>",
+        "sources" : "repeated ai.protomolt.proto.grpc.service.v1.ShapeSource"
+      },
+      "outputFieldTypes" : {
+        "clashes" : "repeated ai.protomolt.proto.grpc.service.v1.MergeClash",
+        "descriptor_set_base64" : "STRING",
+        "file" : "STRING",
+        "join_rules" : "repeated STRING",
+        "proto_source" : "STRING",
+        "resolved" : "BOOL",
+        "type" : "STRING",
+        "union_rules" : "map<STRING,ai.protomolt.proto.grpc.service.v1.MergeRuleList>"
+      },
+      "stability" : "STABLE"
+    },
+    {
+      "name" : "promote-workflow",
+      "requiredScope" : "workflow-run",
+      "streaming" : false,
+      "requestTypeName" : "ai.protomolt.proto.grpc.service.v1.PromoteWorkflowRequest",
+      "responseTypeName" : "ai.protomolt.proto.grpc.service.v1.PromoteWorkflowResponse",
+      "requiredInputFields" : [
+        "version",
+        "workflow"
+      ],
+      "inputFieldTypes" : {
+        "version" : "STRING",
+        "workflow" : "ai.protomolt.proto.grpc.workflow.v1.Workflow"
+      },
+      "outputFieldTypes" : {
+        "promoted" : "BOOL",
+        "versioned_workflow" : "google.protobuf.Struct"
+      },
+      "stability" : "STABLE"
+    },
+    {
+      "name" : "record-workflow-run",
+      "requiredScope" : "workflow-run",
+      "streaming" : false,
+      "requestTypeName" : "ai.protomolt.proto.grpc.service.v1.RecordWorkflowRunRequest",
+      "responseTypeName" : "ai.protomolt.proto.grpc.service.v1.RecordWorkflowRunResponse",
+      "requiredInputFields" : [
+        "input",
+        "runId",
+        "workflow"
+      ],
+      "inputFieldTypes" : {
+        "input" : "google.protobuf.Struct",
+        "run_id" : "STRING",
+        "workflow" : "ai.protomolt.proto.grpc.service.v1.CompiledWorkflow",
+        "workflow_version" : "STRING"
+      },
+      "outputFieldTypes" : {
+        "evidence" : "google.protobuf.Struct",
+        "failed_step" : "STRING",
+        "failure_kind" : "STRING",
+        "ok" : "BOOL"
+      },
+      "stability" : "STABLE"
+    },
+    {
+      "name" : "reflect",
+      "requiredScope" : "service-invoke",
+      "streaming" : false,
+      "requestTypeName" : "ai.protomolt.proto.grpc.service.v1.ReflectRequest",
+      "responseTypeName" : "ai.protomolt.proto.grpc.service.v1.ReflectResponse",
+      "requiredInputFields" : [
+        "target"
+      ],
+      "inputFieldTypes" : {
+        "deadline_ms" : "INT32",
+        "target" : "STRING",
+        "tls" : "BOOL"
+      },
+      "outputFieldTypes" : {
+        "descriptor_set_base64" : "STRING",
+        "error" : "STRING",
+        "file_count" : "INT32",
+        "ok" : "BOOL",
+        "services" : "repeated STRING"
+      },
+      "stability" : "STABLE"
+    },
+    {
+      "name" : "render-index-mappings",
+      "requiredScope" : "schema-read",
+      "streaming" : false,
+      "requestTypeName" : "ai.protomolt.proto.grpc.service.v1.RenderIndexMappingsRequest",
+      "responseTypeName" : "ai.protomolt.proto.grpc.service.v1.RenderIndexMappingsResponse",
+      "requiredInputFields" : [
+        "schema"
+      ],
+      "inputFieldTypes" : {
+        "engine" : "ai.protomolt.proto.grpc.service.v1.IndexEngine",
+        "schema" : "ai.protomolt.proto.grpc.service.v1.SchemaSource",
+        "sensitivity" : "ai.protomolt.proto.grpc.service.v1.IndexSensitivity",
+        "type" : "STRING"
+      },
+      "outputFieldTypes" : {
+        "engine" : "ai.protomolt.proto.grpc.service.v1.IndexEngine",
+        "mappings" : "google.protobuf.Struct"
+      },
+      "stability" : "STABLE"
+    },
+    {
+      "name" : "render-json-schema",
+      "requiredScope" : "schema-read",
+      "streaming" : false,
+      "requestTypeName" : "ai.protomolt.proto.grpc.service.v1.RenderJsonSchemaRequest",
+      "responseTypeName" : "ai.protomolt.proto.grpc.service.v1.RenderJsonSchemaResponse",
+      "requiredInputFields" : [
+        "schema"
+      ],
+      "inputFieldTypes" : {
+        "schema" : "ai.protomolt.proto.grpc.service.v1.SchemaSource",
+        "type" : "STRING"
+      },
+      "outputFieldTypes" : {
+        "schema" : "google.protobuf.Struct"
+      },
+      "stability" : "STABLE"
+    },
+    {
+      "name" : "render-prompt",
+      "requiredScope" : "schema-read",
+      "streaming" : false,
+      "requestTypeName" : "ai.protomolt.proto.grpc.service.v1.RenderPromptRequest",
+      "responseTypeName" : "ai.protomolt.proto.grpc.service.v1.RenderPromptResponse",
+      "requiredInputFields" : [
+        "schema"
+      ],
+      "inputFieldTypes" : {
+        "descriptor_set_ref" : "STRING",
+        "persona" : "google.protobuf.Struct",
+        "schema" : "ai.protomolt.proto.grpc.service.v1.SchemaSource",
+        "type" : "STRING"
+      },
+      "outputFieldTypes" : {
+        "descriptor_set_ref" : "STRING",
+        "few_shot" : "repeated google.protobuf.Struct",
+        "instructions" : "STRING",
+        "persona" : "google.protobuf.Struct",
+        "response_json_schema" : "google.protobuf.Struct",
+        "target_type" : "STRING"
+      },
+      "stability" : "STABLE"
+    },
+    {
+      "name" : "replay-workflow",
+      "requiredScope" : "workflow-run",
+      "streaming" : false,
+      "requestTypeName" : "ai.protomolt.proto.grpc.service.v1.ReplayWorkflowRequest",
+      "responseTypeName" : "ai.protomolt.proto.grpc.service.v1.ReplayWorkflowResponse",
+      "requiredInputFields" : [
+        "runId",
+        "schema",
+        "workflow"
+      ],
+      "inputFieldTypes" : {
+        "run_id" : "STRING",
+        "schema" : "ai.protomolt.proto.grpc.service.v1.SchemaSource",
+        "workflow" : "ai.protomolt.proto.grpc.workflow.v1.Workflow"
+      },
+      "outputFieldTypes" : {
+        "failure" : "STRING",
+        "ok" : "BOOL",
+        "steps" : "repeated ai.protomolt.proto.grpc.service.v1.WorkflowStepReplay"
+      },
+      "stability" : "STABLE"
+    },
+    {
+      "name" : "run-workflow",
+      "requiredScope" : "workflow-run",
+      "streaming" : false,
+      "requestTypeName" : "ai.protomolt.proto.grpc.service.v1.RunWorkflowRequest",
+      "responseTypeName" : "ai.protomolt.proto.grpc.service.v1.RunWorkflowResponse",
+      "requiredInputFields" : [
+        "input"
+      ],
+      "inputFieldTypes" : {
+        "input" : "google.protobuf.Struct",
+        "workflow" : "ai.protomolt.proto.grpc.service.v1.CompiledWorkflow",
+        "workflow_name" : "STRING"
+      },
+      "outputFieldTypes" : {
+        "error" : "STRING",
+        "failed_step" : "STRING",
+        "ok" : "BOOL",
+        "output" : "google.protobuf.Struct",
+        "output_type" : "STRING",
+        "steps" : "repeated ai.protomolt.proto.grpc.service.v1.WorkflowStepResult"
+      },
+      "stability" : "STABLE"
+    },
+    {
+      "name" : "service-inspect",
+      "requiredScope" : "service-invoke",
+      "streaming" : false,
+      "requestTypeName" : "ai.protomolt.proto.grpc.service.v1.ServiceInspectRequest",
+      "responseTypeName" : "ai.protomolt.proto.grpc.service.v1.ServiceInspectResponse",
+      "requiredInputFields" : [
+        "name"
+      ],
+      "inputFieldTypes" : {
+        "name" : "STRING"
+      },
+      "outputFieldTypes" : {
+        "profile" : "ai.protomolt.proto.grpc.profile.v1.ServiceProfile",
+        "services" : "repeated ai.protomolt.proto.grpc.service.v1.ReflectedService"
+      },
+      "stability" : "STABLE"
+    },
+    {
+      "name" : "service-invoke",
+      "requiredScope" : "service-invoke",
+      "streaming" : true,
+      "requestTypeName" : "ai.protomolt.proto.grpc.service.v1.ServiceInvokeRequest",
+      "responseTypeName" : "ai.protomolt.proto.grpc.service.v1.ServiceInvokeResponse",
+      "requiredInputFields" : [
+        "method",
+        "name",
+        "request"
+      ],
+      "inputFieldTypes" : {
+        "deadline_ms" : "INT32",
+        "endpoint" : "STRING",
+        "max_responses" : "INT32",
+        "method" : "STRING",
+        "name" : "STRING",
+        "request" : "google.protobuf.Struct"
+      },
+      "outputFieldTypes" : {
+        "description" : "STRING",
+        "descriptor_fingerprint" : "STRING",
+        "endpoint" : "STRING",
+        "method" : "STRING",
+        "method_type" : "STRING",
+        "ok" : "BOOL",
+        "responses" : "repeated google.protobuf.Struct",
+        "service_profile" : "STRING",
+        "status" : "STRING"
+      },
+      "stability" : "STABLE"
+    },
+    {
+      "name" : "service-list",
+      "requiredScope" : "service-invoke",
+      "streaming" : false,
+      "requestTypeName" : "ai.protomolt.proto.grpc.service.v1.ServiceListRequest",
+      "responseTypeName" : "ai.protomolt.proto.grpc.service.v1.ServiceListResponse",
+      "requiredInputFields" : [ ],
+      "inputFieldTypes" : { },
+      "outputFieldTypes" : {
+        "services" : "repeated ai.protomolt.proto.grpc.service.v1.ServiceSummary"
+      },
+      "stability" : "STABLE"
+    },
+    {
+      "name" : "service-refresh",
+      "requiredScope" : "service-invoke",
+      "streaming" : false,
+      "requestTypeName" : "ai.protomolt.proto.grpc.service.v1.ServiceRefreshRequest",
+      "responseTypeName" : "ai.protomolt.proto.grpc.service.v1.ServiceRefreshResponse",
+      "requiredInputFields" : [
+        "name"
+      ],
+      "inputFieldTypes" : {
+        "deadline_ms" : "INT32",
+        "endpoint" : "STRING",
+        "name" : "STRING"
+      },
+      "outputFieldTypes" : {
+        "changed" : "BOOL",
+        "error" : "STRING",
+        "ok" : "BOOL",
+        "profile" : "ai.protomolt.proto.grpc.profile.v1.ServiceProfile",
+        "services" : "repeated ai.protomolt.proto.grpc.service.v1.ReflectedService"
+      },
+      "stability" : "STABLE"
+    },
+    {
+      "name" : "service-register",
+      "requiredScope" : "service-invoke",
+      "streaming" : false,
+      "requestTypeName" : "ai.protomolt.proto.grpc.service.v1.ServiceRegisterRequest",
+      "responseTypeName" : "ai.protomolt.proto.grpc.service.v1.ServiceRegisterResponse",
+      "requiredInputFields" : [
+        "profile"
+      ],
+      "inputFieldTypes" : {
+        "deadline_ms" : "INT32",
+        "endpoint" : "STRING",
+        "profile" : "ai.protomolt.proto.grpc.profile.v1.ServiceProfile"
+      },
+      "outputFieldTypes" : {
+        "error" : "STRING",
+        "ok" : "BOOL",
+        "profile" : "ai.protomolt.proto.grpc.profile.v1.ServiceProfile",
+        "services" : "repeated ai.protomolt.proto.grpc.service.v1.ReflectedService"
+      },
+      "stability" : "STABLE"
+    },
+    {
+      "name" : "submit-workflow",
+      "requiredScope" : "workflow-run",
+      "streaming" : false,
+      "requestTypeName" : "ai.protomolt.proto.grpc.service.v1.SubmitWorkflowRequest",
+      "responseTypeName" : "ai.protomolt.proto.grpc.service.v1.SubmitWorkflowResponse",
+      "requiredInputFields" : [
+        "input"
+      ],
+      "inputFieldTypes" : {
+        "input" : "google.protobuf.Struct",
+        "job_id" : "STRING",
+        "workflow" : "ai.protomolt.proto.grpc.service.v1.CompiledWorkflow",
+        "workflow_name" : "STRING"
+      },
+      "outputFieldTypes" : {
+        "error" : "STRING",
+        "failed_step" : "STRING",
+        "job_id" : "STRING",
+        "ok" : "BOOL",
+        "status" : "STRING"
+      },
+      "stability" : "STABLE"
+    },
+    {
+      "name" : "suggest-mappings",
+      "requiredScope" : "schema-read",
+      "streaming" : false,
+      "requestTypeName" : "ai.protomolt.proto.grpc.service.v1.SuggestMappingsRequest",
+      "responseTypeName" : "ai.protomolt.proto.grpc.service.v1.SuggestMappingsResponse",
+      "requiredInputFields" : [
+        "target"
+      ],
+      "inputFieldTypes" : {
+        "sources" : "repeated ai.protomolt.proto.grpc.service.v1.ShapeSource",
+        "target" : "ai.protomolt.proto.grpc.service.v1.JoinTarget"
+      },
+      "outputFieldTypes" : {
+        "candidates" : "repeated ai.protomolt.proto.grpc.service.v1.MappingCandidate",
+        "target_type" : "STRING"
+      },
+      "stability" : "STABLE"
+    },
+    {
+      "name" : "synthesize-shape",
+      "requiredScope" : "schema-read",
+      "streaming" : false,
+      "requestTypeName" : "ai.protomolt.proto.grpc.service.v1.SynthesizeShapeRequest",
+      "responseTypeName" : "ai.protomolt.proto.grpc.service.v1.SynthesizeShapeResponse",
+      "requiredInputFields" : [
+        "name"
+      ],
+      "inputFieldTypes" : {
+        "fields" : "repeated ai.protomolt.proto.grpc.service.v1.ProjectedField",
+        "mode" : "ai.protomolt.proto.grpc.service.v1.ShapeMode",
+        "name" : "STRING",
+        "sources" : "repeated ai.protomolt.proto.grpc.service.v1.ShapeSource"
+      },
+      "outputFieldTypes" : {
+        "descriptor_set_base64" : "STRING",
+        "file" : "STRING",
+        "implied_rules" : "repeated STRING",
+        "proto_source" : "STRING",
+        "type" : "STRING"
+      },
+      "stability" : "STABLE"
+    },
+    {
+      "name" : "validate-message",
+      "requiredScope" : "schema-read",
+      "streaming" : false,
+      "requestTypeName" : "ai.protomolt.proto.grpc.service.v1.ValidateMessageRequest",
+      "responseTypeName" : "ai.protomolt.proto.grpc.service.v1.ValidateMessageResponse",
+      "requiredInputFields" : [
+        "message",
+        "schema"
+      ],
+      "inputFieldTypes" : {
+        "message" : "google.protobuf.Struct",
+        "schema" : "ai.protomolt.proto.grpc.service.v1.SchemaSource",
+        "type" : "STRING"
+      },
+      "outputFieldTypes" : {
+        "valid" : "BOOL",
+        "violations" : "repeated ai.protomolt.proto.grpc.service.v1.Violation"
+      },
+      "stability" : "STABLE"
+    },
+    {
+      "name" : "verify-work-record",
+      "requiredScope" : "workflow-run",
+      "streaming" : false,
+      "requestTypeName" : "ai.protomolt.proto.grpc.service.v1.VerifyWorkRecordRequest",
+      "responseTypeName" : "ai.protomolt.proto.grpc.service.v1.VerifyWorkRecordResponse",
+      "requiredInputFields" : [
+        "recordBase64",
+        "trust"
+      ],
+      "inputFieldTypes" : {
+        "artifacts" : "map<STRING,STRING>",
+        "record_base64" : "STRING",
+        "trust" : "ai.protomolt.proto.receipt.v1.TrustSnapshot"
+      },
+      "outputFieldTypes" : {
+        "checks" : "repeated ai.protomolt.proto.grpc.service.v1.WorkRecordCheck",
+        "manifest_digest" : "STRING",
+        "non_claims" : "repeated STRING",
+        "verified" : "BOOL"
+      },
+      "stability" : "STABLE"
+    }
+  ]
+}

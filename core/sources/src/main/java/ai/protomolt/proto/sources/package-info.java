@@ -22,4 +22,8 @@
  * <p>See the <a href="https://github.com/ai-pipestream/protomolt/blob/main/docs/acquire/gathering.md">Gathering
  * proto sources guide</a>.</p>
  */
+@ApiStability(StabilityTier.STABLE)
 package ai.protomolt.proto.sources;
+
+import ai.protomolt.proto.descriptors.ApiStability;
+import ai.protomolt.proto.descriptors.StabilityTier;

@@ -1,15 +1,23 @@
-# Compatibility checking
+# Compatibility checking and release baselines
 
-`protomolt-compat` detects breaking changes between two versions of a
-protobuf schema: programmatically, as a library. It is the write-gate a
-schema registry needs, a CI check for schema repositories, and a
-pre-publish guard in front of the [schema publishers](publishing.md).
+`protomolt-compat` detects breaking changes across ProtoMolt's contract surfaces
+programmatically. It serves three roles:
 
-The design separates *what changed* from *what you tolerate*: a diff engine
-produces typed changes with precise impact classification, and a policy
-layer evaluates them under a compatibility mode.
+1. **Protobuf schema write-gate** for schema registries, CI pipelines, and
+   pre-publish checks in front of the [schema publishers](publishing.md).
+2. **Stability tier model** (`StabilityTier`, `@ApiStability`, and
+   `ai.protomolt.proto.meta.v1` stability options) classifying declarations
+   across Java APIs, protobuf contracts, retained stored formats, REST routes,
+   and action envelopes.
+3. **Five-surface release-baseline gate** (`ReleaseBaselineGate`) comparing live
+   repository surfaces against the recorded snapshot under
+   `compatibility/baseline/`.
 
-## Checking
+The design separates *what changed* from *what policy permits*: diff engines
+observe typed changes with stable rule identifiers, and policy layers evaluate
+them against compatibility modes, stability tiers, and reviewed waivers.
+
+## Protobuf schema checking
 
 ```java
 var checker = CompatibilityChecker.create();   // wire-level rules
@@ -29,7 +37,7 @@ Overloads accept `FileDescriptorSet`s, single `FileDescriptor`s,
 `throwIfIncompatible()` raises `IncompatibleSchemaException` enumerating
 every violation's rule, path, and message.
 
-## Modes
+### Modes
 
 The modes follow schema-registry convention:
 
@@ -44,10 +52,10 @@ The modes follow schema-registry convention:
 Transitive modes use `checkAgainstHistory(history, newSet, mode)`; the
 non-transitive variants check only the most recent entry.
 
-## Rule layers
+### Rule layers
 
 By default the checker enforces **wire** semantics only: what protobuf
-binary encoding actually tolerates: which matches how Confluent Schema
+binary encoding actually tolerates, matching how Confluent Schema
 Registry judges protobuf schemas. Two stricter layers are opt-in:
 
 ```java
@@ -67,13 +75,13 @@ any non-`NONE` mode.
 The engine understands protobuf's real wire-compatibility groups: the
 varint-interchangeable integers, `sint*` zigzag as its own family,
 fixed-width groups, `string`/`bytes` asymmetry (`string → bytes` is safe,
-`bytes → string` is not), open enums interchanging with integers: plus
+`bytes → string` is not), open enums interchanging with integers, plus
 oneof moves, map key/value changes, reserved-number reuse, proto2
 `required` semantics, and gRPC method signature and streaming changes.
 Types are matched by fully-qualified name across the whole set, so moving a
 message between files is not a change.
 
-## With the publishers
+### With the publishers
 
 The registries enforce their own compatibility server-side; the local
 checker lets you fail earlier and with better diagnostics, or enforce
@@ -84,3 +92,121 @@ List<FileDescriptor> current = loader.loadDescriptors();
 checker.check(current, gathered, CompatibilityMode.FULL).throwIfIncompatible();
 publisher.publish(gathered, PublishOptions.defaults()).throwIfFailed();
 ```
+
+## Stability tiers across all five surfaces
+
+Every externally reachable or retained contract in ProtoMolt resolves to a
+`StabilityTier` (`ai.protomolt.proto.descriptors.StabilityTier`):
+
+| Tier | Gate enforcement | Meaning |
+|---|---|---|
+| `STABLE` | Enforced (`violatesGate = true`) | Supported public contract. Breaking changes fail closed unless covered by an explicit reviewed waiver or major release boundary. |
+| `DEPRECATED` | Enforced (`violatesGate = true`) | Scheduled for removal. Remains protected by compatibility gates until retired with a reviewed waiver or major release boundary. |
+| `EVOLVING` | Informational (`violatesGate = false`) | Public contract under active refinement; additive evolution is expected and breaking changes are surfaced in reports. |
+| `EXPERIMENTAL` | Exempt (`violatesGate = false`) | Incubating or opt-in surface; may change or be removed without a waiver. |
+| `INTERNAL` | Exempt (`violatesGate = false`) | Implementation detail (including `.internal` packages); excluded from external compatibility guarantees. |
+
+Transitioning a `STABLE` declaration to `DEPRECATED` is allowed without a waiver
+because `DEPRECATED` continues to enforce compatibility gates. Downgrading a
+`STABLE` or `DEPRECATED` declaration to `EVOLVING`, `EXPERIMENTAL`, or
+`INTERNAL` is treated as a breaking change (`*_STABILITY_DOWNGRADED`) so a
+protected contract cannot silently shed gate enforcement.
+
+### How stability is declared per surface
+
+1. **Java APIs (`CompatibilitySurface.JAVA_API`)**:
+   Annotate packages (`package-info.java`), classes, interfaces, records, enums,
+   constructors, methods, or fields with `@ApiStability(StabilityTier.STABLE)`
+   (retained at `RUNTIME`). `ApiStabilityResolver` resolves member stability
+   from member → declaring type → enclosing types → package → `.internal`
+   package convention. `JavaApiCompatibilityChecker` detects removed types,
+   constructors, methods, and fields; return-type and field-type changes;
+   visibility reductions; added `final` or `abstract` modifiers on extensible
+   types/methods; removed supertypes; and added abstract methods on interfaces
+   or abstract classes.
+2. **Protobuf contracts (`CompatibilitySurface.PROTOBUF`)**:
+   Declare file, message, field, enum, enum-value, service, or RPC method
+   stability with `(ai.protomolt.proto.meta.v1.file_stability)` through
+   `(ai.protomolt.proto.meta.v1.method_stability)` in
+   `ai/protomolt/proto/meta/v1/stability.proto`, or via `labels: { key: "stability", value: "..." }`
+   on `(ai.protomolt.proto.meta.v1.message)` / `(ai.protomolt.proto.meta.v1.field)`.
+   `DescriptorMetadata.stability(...)` resolves the effective tier with parent
+   and file inheritance. `ProtobufSurfaceCompatibilityChecker` combines
+   `SchemaDiff` and `CompatibilityChecker` with element-level stability tiers.
+3. **Stored formats (`CompatibilitySurface.STORED_FORMAT`)**:
+   `StoredFormatSnapshot` records retained persistence and repository schemas
+   (including `repo.document.v1` pinned to `BuiltinDocumentSchema`,
+   `repo.manifest.accession.v2`, `repo.manifest.document.v2`,
+   `receipt.signed-work-record.v1`, and `receipt.trust-snapshot.v1`).
+   `StoredFormatCompatibilityChecker` enforces format presence, root message
+   type identity, non-regressing `formatVersion`, optional exact closure SHA-256
+   pins, wire/JSON schema compatibility, and reservation of any removed field
+   number/name (`FIELD_REMOVED_NOT_RESERVED`).
+4. **REST routes (`CompatibilitySurface.REST_ROUTE`)**:
+   Declare route stability via `@ProtoRestExposed(stability = ...)` or
+   `ProtoRestMethod.Builder#stability(...)`. `RestRouteCompatibilityChecker`
+   checks route presence, path templates, `{param}` path parameter sequences,
+   accepted HTTP verbs, required query parameters, request/response media types
+   and message types, 2xx success status codes, and authentication requirements.
+5. **Action envelopes (`CompatibilitySurface.ACTION_ENVELOPE`)**:
+   `ProtoAction#stability()` resolves the action's stability tier from
+   `@ApiStability` on the action class (defaulting to `STABLE`).
+   `ActionEnvelopeCompatibilityChecker` checks action presence, `requiredScope`,
+   streaming mode, request/response message types, required JSON Schema input
+   properties, and input/output field types.
+
+## Release baseline lifecycle and CI gate
+
+The recorded baseline lives under `compatibility/baseline/`:
+
+- `manifest.json`: `ReleaseBaselineManifest` (`status`, `releaseVersion`,
+  `releaseTag`, `baselineNote`, and reviewed `waivers`)
+- `java-api.json`: `JavaApiSnapshot`
+- `protobuf-descriptors.binpb` and `protobuf-stability.json`:
+  `ProtobufSurfaceSnapshot`
+- `stored-formats.json`: `StoredFormatSnapshot` (including encoded descriptor
+  closures and fingerprints)
+- `rest-routes.json`: `RestRouteSnapshot`
+- `action-envelopes.json`: `ActionEnvelopeSnapshot`
+
+### Pre-release snapshot vs. released baseline
+
+`ReleaseBaselineStatus` enforces a strict boundary between in-repository
+development gating and external release guarantees:
+
+- **`UNRELEASED_INITIAL_SNAPSHOT`** (current repository state):
+  Enforces compatibility rules across all five surfaces in CI while explicitly
+  recording `releaseTag: ""`. ProtoMolt does **not** claim an external released
+  stability guarantee while the baseline status is `UNRELEASED_INITIAL_SNAPSHOT`.
+  `ReleaseBaselineManifest` rejects any non-empty `releaseTag` in this state.
+- **`RELEASED_BASELINE`**:
+  Cut when an official external release tag is published. Requires a non-blank
+  `releaseTag` and `releaseVersion`.
+
+### Running and advancing the baseline
+
+Verify current repository surfaces against `compatibility/baseline/`:
+
+```bash
+./gradlew :protomolt-system-tests:checkCompatibilityBaseline
+```
+
+Additive compatible changes (new optional protobuf fields, new Java classes or
+methods, new REST routes, new action verbs, or changes to `EXPERIMENTAL` /
+`INTERNAL` surfaces) pass `checkCompatibilityBaseline` without modifying
+`compatibility/baseline/`.
+
+When advancing the baseline snapshot (for example, to record newly stabilized
+contracts or after adding an explicit reviewed `CompatibilityWaiver` in
+`compatibility/baseline/manifest.json`):
+
+```bash
+./gradlew :protomolt-system-tests:updateCompatibilityBaseline
+```
+
+`updateCompatibilityBaseline` runs `ReleaseBaselineGate.advanceBaseline(...)`,
+which evaluates the new snapshot against the existing baseline first and refuses
+to overwrite the baseline if unwaived breaking changes exist on `STABLE` or
+`DEPRECATED` surfaces. Each `CompatibilityWaiver` in `manifest.json` must name
+an exact `id`, `surface`, `ruleId`, `targetPath`, `approvalRef`, and `reason`
+(wildcards such as `*` are rejected).

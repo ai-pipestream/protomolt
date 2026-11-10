@@ -23,4 +23,8 @@
  * See the <a href="https://github.com/ai-pipestream/protomolt/blob/main/docs/surface/actions.md">Actions
  * guide</a> for the catalog of verbs and their envelopes.</p>
  */
+@ApiStability(StabilityTier.STABLE)
 package ai.protomolt.proto.actions;
+
+import ai.protomolt.proto.descriptors.ApiStability;
+import ai.protomolt.proto.descriptors.StabilityTier;

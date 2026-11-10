@@ -1,5 +1,8 @@
 package ai.protomolt.proto.actions;
 
+import ai.protomolt.proto.descriptors.ApiStability;
+import ai.protomolt.proto.descriptors.ApiStabilityResolver;
+import ai.protomolt.proto.descriptors.StabilityTier;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.google.protobuf.Descriptors.Descriptor;
 import com.google.protobuf.Message;
@@ -24,6 +27,7 @@ import com.google.protobuf.Message;
  * kebab-case code, so callers can branch on machine-readable errors instead of parsing
  * messages.</p>
  */
+@ApiStability(StabilityTier.STABLE)
 public interface ProtoAction {
 
     /** Kebab-case, verb-first action name, e.g. {@code "validate-message"}. */
@@ -31,6 +35,14 @@ public interface ProtoAction {
 
     /** One sentence describing the action, written for a tool-using LLM. */
     String description();
+
+    /**
+     * Stability tier of this action's envelope contract. Defaults to the {@link ApiStability}
+     * annotation on the implementing class, or {@link StabilityTier#STABLE} when unannotated.
+     */
+    default StabilityTier stability() {
+        return ApiStabilityResolver.resolve(getClass(), StabilityTier.STABLE);
+    }
 
     /**
      * The scope this action requires, from {@link Scopes#VOCABULARY}. An action that keeps

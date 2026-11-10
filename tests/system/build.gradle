@@ -13,8 +13,16 @@ dependencies {
     testImplementation project(':protomolt-registry-service')
     testImplementation project(':protomolt-schema-confluent')
     testImplementation project(':protomolt-protobuf-validation')
+    testImplementation project(':protomolt-protobuf-metadata')
+    testImplementation project(':protomolt-helpers')
     testImplementation project(':protomolt-http-json')
     testImplementation project(':protomolt-http-jsonschema')
+    testImplementation project(':protomolt-http-rest')
+    testImplementation project(':protomolt-http-openapi')
+    testImplementation project(':protomolt-repo-admission')
+    testImplementation project(':protomolt-repo-proto')
+    testImplementation project(':protomolt-receipt')
+    testImplementation project(':protomolt-serve')
     testImplementation project(':protomolt-search-index-spi')
     testImplementation project(':protomolt-search-index-opensearch')
     testImplementation libs.jackson.databind
@@ -52,4 +60,22 @@ tasks.register('generateActionInventory', JavaExec) {
     classpath = sourceSets.test.runtimeClasspath
     mainClass = 'ai.protomolt.proto.mcp.CatalogInventoryGenerator'
     args rootProject.file('docs/generated/action-inventory.json').absolutePath
+}
+
+tasks.register('updateCompatibilityBaseline', JavaExec) {
+    group = 'verification'
+    description = 'Advances or regenerates the 5-surface release compatibility baseline in compatibility/baseline/'
+    dependsOn tasks.named('testClasses')
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'ai.protomolt.proto.compat.CompatibilityBaselineGenerator'
+    args '--update', rootProject.file('compatibility/baseline').absolutePath
+}
+
+tasks.register('checkCompatibilityBaseline', JavaExec) {
+    group = 'verification'
+    description = 'Verifies current repository surfaces against the recorded compatibility/baseline/ snapshot'
+    dependsOn tasks.named('testClasses')
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'ai.protomolt.proto.compat.CompatibilityBaselineGenerator'
+    args '--check', rootProject.file('compatibility/baseline').absolutePath
 }
