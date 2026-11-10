@@ -94,6 +94,11 @@ principal at `initialize`, `tools/list` serves only the tools whose scope the
 caller holds, and a call outside the scope is an `isError` result naming the
 missing scope.
 
+Every request on a session is authenticated again. A credential that no longer
+resolves, such as a revoked JDBC row, gets HTTP 401 even with a live session
+id. A valid credential for a different principal, the operator token included,
+gets HTTP 403 on another principal's session, for `DELETE` as well as `POST`.
+
 Each HTTP `initialize` request creates a bounded server-side session and returns
 an `Mcp-Session-Id` response header. Send that header and the negotiated
 `MCP-Protocol-Version` header on every subsequent request. Send
