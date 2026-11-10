@@ -4,4 +4,7 @@ dependencies {
     api libs.grpc.api
 
     testImplementation libs.grpc.inprocess
+    testImplementation libs.grpc.stub
+    // A real transport, so message sizes are measured on serialized bytes.
+    testRuntimeOnly libs.grpc.netty.shaded
 }
