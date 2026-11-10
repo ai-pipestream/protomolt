@@ -32,9 +32,11 @@ variables (`PROTOMOLT_GRPC_ALLOWED_SCHEMES`, `PROTOMOLT_GRPC_ALLOWED_HOSTS`,
 `PROTOMOLT_GRPC_MAX_ACTIVE_CHANNELS`). Allowlist values are comma-separated; booleans must be
 `true` or `false`. Invalid values fail startup before any server is opened.
 
-Credential, trust, and client-certificate references are intentionally opaque and are not
-accepted by the standard factory. A host that supports them must resolve references through an
-explicit channel factory, keep secret values out of profiles and logs, and retain the policy's
-target and deadline validation. Custom factories remain a compatibility seam and are not
+Credential, trust, and client-certificate references are opaque to the policy. The service
+workspace resolves them through host resolvers
+([service workspace](../surface/service-workspace.md)) and passes finished TLS
+`ChannelCredentials` to `ChannelFactory.open(target, credentials)`, which opens the channel
+under the same target validation and channel lease. Secret values are kept out of profiles and
+logs. Custom factories remain a compatibility seam and are not
 automatically bounded; migrate them to the policy-aware factory when outbound traffic is in
 scope.
