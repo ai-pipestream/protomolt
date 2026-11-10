@@ -13,8 +13,10 @@ import ai.protomolt.proto.descriptors.StabilityTier;
 import ai.protomolt.proto.meta.StabilityLevel;
 import ai.protomolt.proto.meta.StabilityOption;
 import ai.protomolt.proto.meta.StabilityProto;
+import com.google.protobuf.ByteString;
 import com.google.protobuf.DescriptorProtos;
 import com.google.protobuf.DescriptorProtos.FileDescriptorSet;
+import com.google.protobuf.UnknownFieldSet;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -586,6 +588,27 @@ class ReleaseBaselineGateTest {
         assertThat(waivedReport.isCompatible()).isTrue();
         assertThat(waivedReport.waivedChanges()).hasSize(1);
         assertThat(waivedReport.matchedWaivers()).containsExactly(removalWaiver);
+    }
+
+    @Test
+    void malformedStabilityOptionFailsClosedInsteadOfFallingBack() {
+        UnknownFieldSet malformed = UnknownFieldSet.newBuilder()
+                .addField(StabilityProto.fileStability.getNumber(),
+                        UnknownFieldSet.Field.newBuilder()
+                                .addLengthDelimited(ByteString.copyFrom(new byte[] {0x01}))
+                                .build())
+                .build();
+        DescriptorProtos.FileDescriptorProto file = DescriptorProtos.FileDescriptorProto.newBuilder()
+                .setSyntax("proto3")
+                .setName("broken/stability.proto")
+                .setPackage("broken")
+                .setOptions(DescriptorProtos.FileOptions.newBuilder().setUnknownFields(malformed))
+                .build();
+
+        assertThatThrownBy(() -> ProtobufSurfaceSnapshot.of(
+                FileDescriptorSet.newBuilder().addFile(file).build()))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining(StabilityProto.fileStability.getDescriptor().getFullName());
     }
 
     private static DescriptorProtos.FieldDescriptorProto field(

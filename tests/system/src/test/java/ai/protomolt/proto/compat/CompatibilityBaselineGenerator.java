@@ -188,7 +188,7 @@ public final class CompatibilityBaselineGenerator {
     private CompatibilityBaselineGenerator() {
     }
 
-    public static void main(String[] args) throws IOException {
+    public static void main(String[] args) throws Exception {
         if (args.length != 2 || (!"--update".equals(args[0]) && !"--check".equals(args[0]))) {
             throw new IllegalArgumentException(
                     "usage: CompatibilityBaselineGenerator <--update|--check> <baselineDir>");
@@ -215,7 +215,8 @@ public final class CompatibilityBaselineGenerator {
      * @param manifest manifest metadata and waivers to attach
      * @return the captured bundle
      */
-    public static ReleaseBaselineBundle captureLiveBundle(ReleaseBaselineManifest manifest) {
+    public static ReleaseBaselineBundle captureLiveBundle(ReleaseBaselineManifest manifest)
+            throws ProtoCompilationException {
         ActionContext context = ActionContext.create();
         ActionCatalog fullCatalog = ProtoMoltCatalog.full(context);
 
@@ -241,15 +242,62 @@ public final class CompatibilityBaselineGenerator {
         return JavaApiSnapshot.capture(TRACKED_JAVA_API_TYPES, StabilityTier.STABLE);
     }
 
-    private static ProtobufSurfaceSnapshot captureProtobufSurface() {
-        return ProtobufSurfaceSnapshot.fromFiles(List.of(
-                MetadataProto.getDescriptor(),
-                StabilityProto.getDescriptor(),
-                ValidateProto.getDescriptor(),
-                Document.getDescriptor().getFile(),
-                Accession.getDescriptor().getFile(),
-                SignedWorkRecord.getDescriptor().getFile(),
-                ProtoMoltServiceSchema.service().getFile()));
+    private static ProtobufSurfaceSnapshot captureProtobufSurface() throws ProtoCompilationException {
+        return ProtobufSurfaceSnapshot.fromFiles(compilePublishedDescriptors().fileDescriptors());
+    }
+
+    static CompiledProtos compilePublishedDescriptors() throws ProtoCompilationException {
+        Path root;
+        try {
+            root = repositoryRoot();
+        } catch (IOException e) {
+            throw new java.io.UncheckedIOException(e);
+        }
+        List<ProtoSource> sources = new ArrayList<>();
+        try (var paths = Files.walk(root)) {
+            paths.filter(Files::isRegularFile)
+                    .filter(path -> path.toString().endsWith(".proto"))
+                    .filter(path -> {
+                        String relative = relativePath(root, path);
+                        return relative.contains("/src/main/proto/")
+                                || relative.contains("/src/main/resources/");
+                    })
+                    .sorted()
+                    .forEach(path -> {
+                        try {
+                            sources.add(new ProtoSource(importPath(root, path),
+                                    Files.readString(path), path.toString()));
+                        } catch (IOException e) {
+                            throw new java.io.UncheckedIOException(e);
+                        }
+                    });
+        } catch (IOException e) {
+            throw new java.io.UncheckedIOException(e);
+        }
+        return new ProtoSourceCompiler().compile(ProtoSourceSet.of(sources));
+    }
+
+    private static String importPath(Path root, Path path) {
+        String relative = relativePath(root, path);
+        String sourceRoot = relative.substring(relative.indexOf("/src/main/") + "/src/main/".length());
+        int separator = sourceRoot.indexOf('/');
+        return sourceRoot.substring(separator + 1);
+    }
+
+    private static String relativePath(Path root, Path path) {
+        return root.relativize(path).toString().replace(root.getFileSystem().getSeparator(), "/");
+    }
+
+    private static Path repositoryRoot() throws IOException {
+        Path current = Path.of("").toAbsolutePath().normalize();
+        while (current != null && !Files.exists(current.resolve("settings.gradle"))) {
+            current = current.getParent();
+        }
+        if (current == null) {
+            throw new IOException("could not locate repository root from "
+                    + Path.of("").toAbsolutePath());
+        }
+        return current;
     }
 
     private static StoredFormatSnapshot captureStoredFormats() {

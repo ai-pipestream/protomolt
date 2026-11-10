@@ -3,6 +3,9 @@ package ai.protomolt.proto.compat;
 import ai.protomolt.proto.compat.ActionEnvelopeSnapshot.ActionEnvelopeEntry;
 import ai.protomolt.proto.compat.RestRouteSnapshot.RestRouteEntry;
 import ai.protomolt.proto.descriptors.StabilityTier;
+import ai.protomolt.proto.sources.CompiledProtos;
+import com.google.protobuf.DescriptorProtos.FileDescriptorProto;
+import com.google.protobuf.DescriptorProtos.FileDescriptorSet;
 import org.junit.jupiter.api.Test;
 
 import java.io.IOException;
@@ -115,6 +118,59 @@ class CompatibilityBaselineSystemTest {
         assertThatThrownBy(breakingReport::throwIfIncompatible)
                 .isInstanceOf(IncompatibleSurfaceException.class)
                 .hasMessageContaining(ActionEnvelopeCompatibilityChecker.ACTION_REMOVED);
+    }
+
+    @Test
+    void publishedInventoryIncludesCanonicalContractsAndRejectsDocumentServiceBreak() throws Exception {
+        ReleaseBaselineBundle recorded = ReleaseBaselineGate.load(
+                repositoryRoot().resolve("compatibility/baseline"));
+        List<String> descriptorPaths = recorded.protobuf().descriptorSet().getFileList().stream()
+                .map(FileDescriptorProto::getName)
+                .toList();
+        assertThat(descriptorPaths).contains(
+                "ai/protomolt/proto/repo/v2/document_service.proto",
+                "ai/protomolt/proto/repo/v2/manifest.proto",
+                "ai/protomolt/proto/repo/v1/drive.proto",
+                "ai/protomolt/proto/repo/archive/v1/archive_service.proto",
+                "ai/protomolt/proto/metric/v1/metric_service.proto",
+                "ai/protomolt/proto/emit/v1/renderer.proto",
+                "ai/protomolt/proto/authz/v1/access_policy.proto");
+
+        FileDescriptorSet.Builder brokenBuilder = recorded.protobuf().descriptorSet().toBuilder();
+        for (int i = 0; i < brokenBuilder.getFileCount(); i++) {
+            FileDescriptorProto file = brokenBuilder.getFile(i);
+            if (file.getName().equals("ai/protomolt/proto/repo/v2/document_service.proto")) {
+                brokenBuilder.setFile(i, file.toBuilder()
+                        .setService(0, file.getService(0).toBuilder().clearMethod())
+                        .build());
+            }
+        }
+        FileDescriptorSet brokenDescriptors = brokenBuilder.build();
+        ReleaseBaselineBundle broken = new ReleaseBaselineBundle(
+                recorded.manifest(),
+                recorded.javaApi(),
+                ProtobufSurfaceSnapshot.of(brokenDescriptors),
+                recorded.storedFormats(),
+                recorded.restRoutes(),
+                recorded.actionEnvelopes());
+        ReleaseBaselineReport report = ReleaseBaselineGate.evaluate(recorded, broken);
+        assertThat(report.unwaivedViolations())
+                .anyMatch(change -> change.ruleId().equals(ChangeRules.METHOD_REMOVED));
+        assertThatThrownBy(report::throwIfIncompatible)
+                .isInstanceOf(IncompatibleSurfaceException.class);
+    }
+
+    @Test
+    void publishedInventoryCompilesEveryMainSourceProto() throws Exception {
+        CompiledProtos compiled = CompatibilityBaselineGenerator.compilePublishedDescriptors();
+        assertThat(compiled.descriptorFor("ai/protomolt/proto/repo/v2/document_service.proto"))
+                .isPresent();
+        assertThat(compiled.descriptorFor("ai/protomolt/proto/repo/v2/manifest.proto"))
+                .isPresent();
+        assertThat(compiled.descriptorFor("ai/protomolt/proto/metric/v1/metric_service.proto"))
+                .isPresent();
+        assertThat(compiled.descriptorFor("ai/protomolt/proto/emit/v1/renderer.proto"))
+                .isPresent();
     }
 
     private static Path repositoryRoot() throws IOException {

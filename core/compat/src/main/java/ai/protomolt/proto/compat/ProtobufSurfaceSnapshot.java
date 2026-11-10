@@ -355,8 +355,9 @@ public record ProtobufSurfaceSnapshot(
                 && resolved.getUnknownFields().hasField(extension.getNumber())) {
             try {
                 resolved = parser.parseFrom(resolved.toByteString(), EXTENSIONS);
-            } catch (InvalidProtocolBufferException ignored) {
-                return Optional.empty();
+            } catch (InvalidProtocolBufferException invalid) {
+                throw new IllegalArgumentException(
+                        "Invalid protobuf stability option " + extension.getDescriptor().getFullName(), invalid);
             }
         }
         if (!resolved.hasField(extension.getDescriptor())) {

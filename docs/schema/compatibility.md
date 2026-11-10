@@ -185,6 +185,15 @@ development gating and external release guarantees:
 
 ### Running and advancing the baseline
 
+The protobuf descriptor snapshot is compiled from every `.proto` file under
+`src/main/proto` or `src/main/resources` through the existing
+`ProtoSourceCompiler`. It therefore includes the canonical `DocumentService`,
+archive, drive, metric, renderer, authorization and other main-source contracts,
+with their retained options and import closures. New contract files enter the
+snapshot automatically instead of depending on a hand-maintained generated-class
+list. Stability metadata that is present but malformed fails closed rather than
+being treated as absent.
+
 Verify current repository surfaces against `compatibility/baseline/`:
 
 ```bash
