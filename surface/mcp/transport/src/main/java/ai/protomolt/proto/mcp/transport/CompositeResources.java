@@ -75,11 +75,34 @@ public final class CompositeResources implements McpResources {
 
     @Override
     public Page page(ObjectMapper mapper, String cursor, int pageSize) {
-        return pageOver(delegates, mapper, cursor, pageSize, null);
+        return pageOver(delegates, mapper, cursor, pageSize,
+                (delegate, delegateCursor, remaining) ->
+                        delegate.page(mapper, delegateCursor, remaining));
     }
 
     @Override
     public Page page(ObjectMapper mapper, String cursor, int pageSize, Caller caller) {
+        return scopedPage(mapper, cursor, pageSize, caller,
+                (delegate, delegateCursor, remaining) ->
+                        delegate.page(mapper, delegateCursor, remaining, caller));
+    }
+
+    @Override
+    public Page pageTemplates(ObjectMapper mapper, String cursor, int pageSize) {
+        return pageOver(delegates, mapper, cursor, pageSize,
+                (delegate, delegateCursor, remaining) ->
+                        delegate.pageTemplates(mapper, delegateCursor, remaining));
+    }
+
+    @Override
+    public Page pageTemplates(ObjectMapper mapper, String cursor, int pageSize, Caller caller) {
+        return scopedPage(mapper, cursor, pageSize, caller,
+                (delegate, delegateCursor, remaining) ->
+                        delegate.pageTemplates(mapper, delegateCursor, remaining, caller));
+    }
+
+    private Page scopedPage(ObjectMapper mapper, String cursor, int pageSize, Caller caller,
+                            DelegatePager pager) {
         // The cursor indexes the caller-visible delegate list and carries the set of
         // delegates that were visible when it was issued. Scopes resolve per request,
         // so that set can change between pages; a cursor from a different set is
@@ -111,13 +134,13 @@ public final class CompositeResources implements McpResources {
             }
             inner = cursor.substring(dot + 1);
         }
-        Page page = pageOver(visible, mapper, inner, pageSize, caller);
+        Page page = pageOver(visible, mapper, inner, pageSize, pager);
         return page.nextCursor() == null ? page
                 : new Page(page.resources(), stamp + "." + page.nextCursor());
     }
 
     private Page pageOver(List<McpResources> served, ObjectMapper mapper, String cursor,
-                          int pageSize, Caller caller) {
+                          int pageSize, DelegatePager pager) {
         if (pageSize <= 0) {
             throw new IllegalArgumentException("page size must be positive");
         }
@@ -130,9 +153,7 @@ public final class CompositeResources implements McpResources {
         String delegateCursor = position.delegateCursor();
         while (delegateIndex < served.size() && result.size() < pageSize) {
             McpResources delegate = served.get(delegateIndex);
-            Page page = caller == null
-                    ? delegate.page(mapper, delegateCursor, pageSize - result.size())
-                    : delegate.page(mapper, delegateCursor, pageSize - result.size(), caller);
+            Page page = pager.page(delegate, delegateCursor, pageSize - result.size());
             page.resources().forEach(result::add);
             if (page.nextCursor() != null) {
                 return new Page(result, encode(delegateIndex, page.nextCursor()));
@@ -141,6 +162,11 @@ public final class CompositeResources implements McpResources {
             delegateCursor = null;
         }
         return new Page(result, null);
+    }
+
+    @FunctionalInterface
+    private interface DelegatePager {
+        Page page(McpResources delegate, String cursor, int pageSize);
     }
 
     @Override

@@ -192,6 +192,29 @@ class McpHttpSessionAuthTest {
         assertThat(whoami(callWhoAmI(carol, CAROL_TOKEN))).isEqualTo("carol");
     }
 
+    @Test
+    void aForeignLookupDoesNotRefreshSessionRecencyBeforeThe403() throws Exception {
+        Session alice = open(ALICE_TOKEN);
+        Session second = open(BOB_TOKEN);
+        for (int i = 2; i < McpHttpHandler.MAX_SESSIONS; i++) {
+            initializeOnly(BOB_TOKEN);
+        }
+
+        assertForeign(callWhoAmI(alice, BOB_TOKEN));
+        assertForeign(post(alice, BOB_TOKEN, """
+                [{"jsonrpc":"2.0","id":41,"method":"ping"}]
+                """));
+        assertForeign(delete(alice, BOB_TOKEN));
+        assertThat(get(alice, BOB_TOKEN).statusCode()).isEqualTo(405);
+
+        initializeOnly(BOB_TOKEN);
+
+        assertThat(callWhoAmI(alice, ALICE_TOKEN).statusCode()).isEqualTo(404);
+        HttpResponse<String> surviving = callWhoAmI(second, BOB_TOKEN);
+        assertThat(surviving.statusCode()).isEqualTo(200);
+        assertThat(whoami(surviving)).isEqualTo("bob");
+    }
+
     private List<String> toolNames(Session session, String token) throws Exception {
         HttpResponse<String> listed = post(session, token, """
                 {"jsonrpc":"2.0","id":51,"method":"tools/list","params":{}}
@@ -211,19 +234,23 @@ class McpHttpSessionAuthTest {
     }
 
     private Session open(String token) throws Exception {
+        Session session = initializeOnly(token);
+        assertThat(post(session, token, """
+                {"jsonrpc":"2.0","method":"notifications/initialized"}
+                """).statusCode()).isEqualTo(202);
+        return session;
+    }
+
+    private Session initializeOnly(String token) throws Exception {
         HttpResponse<String> init = client.send(request("""
                 {"jsonrpc":"2.0","id":1,"method":"initialize","params":
                  {"protocolVersion":"2025-06-18","capabilities":{},
                   "clientInfo":{"name":"auth-test","version":"0"}}}
                 """, "api_token", token), HttpResponse.BodyHandlers.ofString());
         assertThat(init.statusCode()).isEqualTo(200);
-        Session session = new Session(
+        return new Session(
                 init.headers().firstValue("Mcp-Session-Id").orElseThrow(),
                 MAPPER.readTree(init.body()).path("result").path("protocolVersion").asText());
-        assertThat(post(session, token, """
-                {"jsonrpc":"2.0","method":"notifications/initialized"}
-                """).statusCode()).isEqualTo(202);
-        return session;
     }
 
     private HttpResponse<String> readWorkspace(Session session, String token) throws Exception {
@@ -258,6 +285,15 @@ class McpHttpSessionAuthTest {
                         .header("Mcp-Session-Id", session.id())
                         .header("MCP-Protocol-Version", session.version())
                         .DELETE().build(),
+                HttpResponse.BodyHandlers.ofString());
+    }
+
+    private HttpResponse<String> get(Session session, String token) throws Exception {
+        return client.send(HttpRequest.newBuilder(URI.create(url))
+                        .header("api_token", token)
+                        .header("Mcp-Session-Id", session.id())
+                        .header("MCP-Protocol-Version", session.version())
+                        .GET().build(),
                 HttpResponse.BodyHandlers.ofString());
     }
 

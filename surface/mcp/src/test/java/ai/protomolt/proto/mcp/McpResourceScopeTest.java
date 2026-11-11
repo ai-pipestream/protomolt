@@ -443,6 +443,78 @@ class McpResourceScopeTest {
         assertThat(resumed.path("result").path("resources").size()).isPositive();
     }
 
+    @Test
+    void aTemplateCursorIssuedForOneVisibleSetIsRefusedForAnother() {
+        McpResources manyTemplates = new McpResources() {
+            @Override
+            public String requiredScope() {
+                return Scopes.SCHEMA_READ;
+            }
+
+            @Override
+            public boolean owns(String uri) {
+                return uri.startsWith("protomolt://paged-templates/");
+            }
+
+            @Override
+            public ArrayNode list(ObjectMapper mapper) {
+                return mapper.createArrayNode();
+            }
+
+            @Override
+            public ArrayNode templates(ObjectMapper mapper) {
+                ArrayNode templates = mapper.createArrayNode();
+                for (int i = 0; i < 150; i++) {
+                    templates.addObject()
+                            .put("uriTemplate", String.format("protomolt://paged-templates/{id}/%03d", i))
+                            .put("name", "template-" + i);
+                }
+                return templates;
+            }
+
+            @Override
+            public Optional<ObjectNode> read(ObjectMapper mapper, String uri) {
+                return Optional.empty();
+            }
+        };
+        McpServer paged = new McpServer(
+                ActionCatalog.defaults(ActionContext.create()),
+                CompositeResources.of(
+                        new ServiceProfileResources(profiles, store),
+                        manyTemplates,
+                        new DelegationResources(bridge)),
+                "test", "0");
+        Caller reader = Caller.scoped("ci-reader", Set.of(Scopes.SCHEMA_READ));
+        McpServer.Session session = readyOn(paged, reader);
+        ObjectNode first = session.handle(
+                request(10, "resources/templates/list", MAPPER.createObjectNode())).orElseThrow();
+        String cursor = first.path("result").path("nextCursor").asText(null);
+        assertThat(cursor).isNotNull();
+
+        Caller widened = Caller.scoped("ci-reader",
+                Set.of(Scopes.SCHEMA_READ, Scopes.SERVICE_INVOKE));
+        Caller narrowed = Caller.scoped("ci-reader", Set.of(Scopes.WORKER_COORDINATE));
+        for (Caller changed : List.of(widened, narrowed)) {
+            ObjectNode refused = session.handle(request(11, "resources/templates/list",
+                    MAPPER.createObjectNode().put("cursor", cursor)), changed).orElseThrow();
+            assertThat(refused.path("error").path("code").asInt())
+                    .as("%s", changed.scopes()).isEqualTo(-32602);
+            assertThat(refused.path("error").path("message").asText())
+                    .contains("different set of visible collections");
+            assertThat(refused.has("result")).isFalse();
+        }
+
+        List<ObjectNode> dispatched = new ArrayList<>();
+        session.dispatch(request(12, "resources/templates/list",
+                MAPPER.createObjectNode().put("cursor", cursor)),
+                reader, response -> response.ifPresent(dispatched::add));
+        assertThat(dispatched).hasSize(1);
+        ObjectNode resumed = dispatched.getFirst();
+        assertThat(resumed.has("error")).as("%s", resumed).isFalse();
+        assertThat(resumed.path("result").path("resourceTemplates")).hasSize(50);
+        assertThat(resumed.path("result").has("nextCursor")).isFalse();
+    }
+
     private static McpServer.Session readyOn(McpServer target, Caller caller) {
         McpServer.Session session = target.openSession(caller);
         ObjectNode initialize = MAPPER.createObjectNode();

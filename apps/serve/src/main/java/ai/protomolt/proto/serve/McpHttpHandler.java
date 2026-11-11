@@ -14,7 +14,9 @@ import java.io.IOException;
 import java.io.OutputStream;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
-import java.util.LinkedHashMap;
+import java.util.HashMap;
+import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
@@ -40,7 +42,7 @@ public final class McpHttpHandler implements HttpHandler, AutoCloseable {
     private static final String SCHEMA_FLAVOR_HEADER = "X-Schema-Flavor";
     private static final String SCHEMA_FLAVOR_MOONSHOT = "moonshot";
     private static final int MAX_BODY_BYTES = 16 * 1024 * 1024;
-    private static final int MAX_SESSIONS = 256;
+    static final int MAX_SESSIONS = 256;
     private static final String FOREIGN_SESSION =
             "MCP session was opened by a different principal";
 
@@ -49,11 +51,22 @@ public final class McpHttpHandler implements HttpHandler, AutoCloseable {
     private final CallerResolver resolver;
     private final ObjectMapper mapper = new ObjectMapper();
     private final ReentrantLock sessionLock = new ReentrantLock();
-    private final LinkedHashMap<String, OpenSession> sessions =
-            new LinkedHashMap<>(16, 0.75f, true);
+    private final Map<String, OpenSession> sessions = new HashMap<>();
+    private final LinkedHashSet<String> leastRecentlyUsed = new LinkedHashSet<>();
 
     /** A live session and the principal whose credential opened it. */
     private record OpenSession(McpServer.Session session, Caller owner) {
+    }
+
+    private enum LookupStatus {
+        MISSING,
+        FOREIGN,
+        OWNED
+    }
+
+    private record SessionLookup(LookupStatus status, McpServer.Session session) {
+        private static final SessionLookup MISSING = new SessionLookup(LookupStatus.MISSING, null);
+        private static final SessionLookup FOREIGN = new SessionLookup(LookupStatus.FOREIGN, null);
     }
 
     public McpHttpHandler(McpServer server) {
@@ -153,17 +166,17 @@ public final class McpHttpHandler implements HttpHandler, AutoCloseable {
         }
 
         String sessionId = exchange.getRequestHeaders().getFirst(SESSION_HEADER);
-        OpenSession open = open(sessionId);
-        if (open == null) {
+        SessionLookup lookup = open(sessionId, caller);
+        if (lookup.status() == LookupStatus.MISSING) {
             write(exchange, 404, error(message.get("id"), -32001,
                     "MCP session is missing or expired"), null);
             return;
         }
-        if (!ownedBy(open, caller)) {
+        if (lookup.status() == LookupStatus.FOREIGN) {
             write(exchange, 403, error(message.get("id"), -32000, FOREIGN_SESSION), null);
             return;
         }
-        McpServer.Session session = open.session();
+        McpServer.Session session = lookup.session();
         if (!validVersion(exchange, session)) {
             write(exchange, 400, error(message.get("id"), -32602,
                     "MCP-Protocol-Version must match the negotiated session version"), sessionId);
@@ -229,16 +242,16 @@ public final class McpHttpHandler implements HttpHandler, AutoCloseable {
             }
         }
         String sessionId = exchange.getRequestHeaders().getFirst(SESSION_HEADER);
-        OpenSession open = open(sessionId);
-        if (open == null) {
+        SessionLookup lookup = open(sessionId, caller);
+        if (lookup.status() == LookupStatus.MISSING) {
             write(exchange, 404, error(null, -32001, "MCP session is missing or expired"), null);
             return;
         }
-        if (!ownedBy(open, caller)) {
+        if (lookup.status() == LookupStatus.FOREIGN) {
             write(exchange, 403, error(null, -32000, FOREIGN_SESSION), null);
             return;
         }
-        McpServer.Session session = open.session();
+        McpServer.Session session = lookup.session();
         if (!validVersion(exchange, session)) {
             write(exchange, 400, error(null, -32602,
                     "MCP-Protocol-Version must match the negotiated session version"), sessionId);
@@ -325,16 +338,16 @@ public final class McpHttpHandler implements HttpHandler, AutoCloseable {
 
     private void deleteSession(HttpExchange exchange, Caller caller) throws IOException {
         String sessionId = exchange.getRequestHeaders().getFirst(SESSION_HEADER);
-        OpenSession open = open(sessionId);
-        if (open == null) {
+        SessionLookup lookup = open(sessionId, caller);
+        if (lookup.status() == LookupStatus.MISSING) {
             write(exchange, 404, error(null, -32001, "MCP session is missing or expired"), null);
             return;
         }
-        if (!ownedBy(open, caller)) {
+        if (lookup.status() == LookupStatus.FOREIGN) {
             write(exchange, 403, error(null, -32000, FOREIGN_SESSION), null);
             return;
         }
-        McpServer.Session session = open.session();
+        McpServer.Session session = lookup.session();
         if (!validVersion(exchange, session)) {
             write(exchange, 400, error(null, -32602,
                     "MCP-Protocol-Version must match the negotiated session version"), sessionId);
@@ -350,28 +363,45 @@ public final class McpHttpHandler implements HttpHandler, AutoCloseable {
 
     private void putSession(String id, OpenSession session) {
         OpenSession evicted = null;
+        OpenSession replaced;
         sessionLock.lock();
         try {
-            if (sessions.size() >= MAX_SESSIONS) {
-                // Access-ordered, so the first entry is the least-recently-used session.
-                evicted = sessions.pollFirstEntry().getValue();
+            if (!sessions.containsKey(id) && sessions.size() >= MAX_SESSIONS) {
+                String oldestId = leastRecentlyUsed.removeFirst();
+                evicted = sessions.remove(oldestId);
             }
-            sessions.put(id, session);
+            replaced = sessions.put(id, session);
+            leastRecentlyUsed.remove(id);
+            leastRecentlyUsed.addLast(id);
         } finally {
             sessionLock.unlock();
         }
         if (evicted != null) {
             evicted.session().close();
         }
+        if (replaced != null) {
+            replaced.session().close();
+        }
     }
 
-    private OpenSession open(String id) {
+    private SessionLookup open(String id, Caller caller) {
         if (id == null || id.isBlank()) {
-            return null;
+            return SessionLookup.MISSING;
         }
         sessionLock.lock();
         try {
-            return sessions.get(id);
+            OpenSession open = sessions.get(id);
+            if (open == null) {
+                return SessionLookup.MISSING;
+            }
+            if (!ownedBy(open, caller)) {
+                return SessionLookup.FOREIGN;
+            }
+            // Refresh recency only after ownership holds so a foreign 403 probe cannot
+            // promote the target session ahead of other live sessions in the LRU order.
+            leastRecentlyUsed.remove(id);
+            leastRecentlyUsed.addLast(id);
+            return new SessionLookup(LookupStatus.OWNED, open.session());
         } finally {
             sessionLock.unlock();
         }
@@ -397,6 +427,9 @@ public final class McpHttpHandler implements HttpHandler, AutoCloseable {
         sessionLock.lock();
         try {
             session = sessions.remove(id);
+            if (session != null) {
+                leastRecentlyUsed.remove(id);
+            }
         } finally {
             sessionLock.unlock();
         }
@@ -409,15 +442,16 @@ public final class McpHttpHandler implements HttpHandler, AutoCloseable {
     /** Closes every live MCP session when the host shuts down. */
     @Override
     public void close() {
-        Map<String, OpenSession> closing;
+        List<OpenSession> closing;
         sessionLock.lock();
         try {
-            closing = new LinkedHashMap<>(sessions);
+            closing = leastRecentlyUsed.stream().map(sessions::get).toList();
             sessions.clear();
+            leastRecentlyUsed.clear();
         } finally {
             sessionLock.unlock();
         }
-        closing.values().forEach(open -> open.session().close());
+        closing.forEach(open -> open.session().close());
     }
 
     private Caller callerFor(HttpExchange exchange) {

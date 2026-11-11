@@ -81,8 +81,17 @@ public final class McpServer {
         public Future<Optional<ObjectNode>> submit(JsonNode message, Caller requestCaller) {
             return session.submit(message, requestCaller, null);
         }
+        /**
+         * Dispatches a stream message as the session's opening caller (used by the operator
+         * stdio transport); per-request transports pass {@code requestCaller}.
+         */
         public void dispatch(JsonNode message, Consumer<Optional<ObjectNode>> completion) {
             session.dispatch(message, completion);
+        }
+        /** Dispatches a stream message as {@code requestCaller}; see the transport. */
+        public void dispatch(JsonNode message, Caller requestCaller,
+                Consumer<Optional<ObjectNode>> completion) {
+            session.dispatch(message, requestCaller, completion);
         }
         public void awaitInFlight(long timeoutMillis) { session.awaitInFlight(timeoutMillis); }
         @Override public void close() { session.close(); }

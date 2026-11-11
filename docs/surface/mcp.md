@@ -100,9 +100,9 @@ id. A valid credential for a different principal, the operator token included,
 gets HTTP 403 on another principal's session, for `DELETE` as well as `POST`.
 Scopes are read on each request rather than fixed at `initialize`: narrowing
 or widening a principal changes `tools/list`, `tools/call` and `resources/*`
-from its next request. A `resources/list` cursor issued under one set of
-visible collections is refused with `-32602` once that set changes; list
-again without a cursor.
+from its next request. A `resources/list` or `resources/templates/list` cursor
+issued under one set of visible collections is refused with `-32602` once that
+set changes; list again without a cursor.
 
 Each HTTP `initialize` request creates a bounded server-side session and returns
 an `Mcp-Session-Id` response header. Send that header and the negotiated

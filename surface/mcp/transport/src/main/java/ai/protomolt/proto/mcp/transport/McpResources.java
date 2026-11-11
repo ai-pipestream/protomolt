@@ -83,6 +83,11 @@ public interface McpResources {
         return page(mapper, () -> list(mapper), cursor, pageSize);
     }
 
+    /** Returns one bounded page of URI templates. */
+    default Page pageTemplates(ObjectMapper mapper, String cursor, int pageSize) {
+        return page(mapper, () -> templates(mapper), cursor, pageSize);
+    }
+
     /** Shared pagination for resource interfaces retained by compatibility adapters. */
     static Page page(ObjectMapper mapper, java.util.function.Supplier<ArrayNode> rows, String cursor, int pageSize) {
         if (pageSize <= 0) {
@@ -136,6 +141,19 @@ public interface McpResources {
         }
         return visibleTo(caller)
                 ? page(mapper, cursor, pageSize)
+                : new Page(mapper.createArrayNode(), null);
+    }
+
+    /**
+     * {@link #pageTemplates(ObjectMapper, String, int)} as {@code caller} sees it: an
+     * empty final page when not visible, so neither templates nor a continuation leak.
+     */
+    default Page pageTemplates(ObjectMapper mapper, String cursor, int pageSize, Caller caller) {
+        if (pageSize <= 0) {
+            throw new IllegalArgumentException("page size must be positive");
+        }
+        return visibleTo(caller)
+                ? pageTemplates(mapper, cursor, pageSize)
                 : new Page(mapper.createArrayNode(), null);
     }
 

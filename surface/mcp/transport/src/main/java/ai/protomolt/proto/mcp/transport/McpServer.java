@@ -374,18 +374,33 @@ public final class McpServer {
             return task;
         }
 
-        /** Dispatches a stream message, asynchronously tracking ready tool calls. */
+        /**
+         * Dispatches a stream message as the session's opening caller (used by the operator
+         * stdio transport), asynchronously tracking ready tool calls. Transports that
+         * re-resolve credentials per request use {@link #dispatch(JsonNode, Caller, Consumer)},
+         * {@link #handle(JsonNode, Caller)}, or {@link #submit(JsonNode, Caller, Consumer)}.
+         */
         public void dispatch(JsonNode message, Consumer<Optional<ObjectNode>> completion) {
+            dispatch(message, caller, completion);
+        }
+
+        /**
+         * Dispatches a stream message as {@code requestCaller}, asynchronously tracking ready
+         * tool calls under the same contract as {@link #handle(JsonNode, Caller)}.
+         */
+        public void dispatch(JsonNode message, Caller requestCaller,
+                             Consumer<Optional<ObjectNode>> completion) {
+            Objects.requireNonNull(requestCaller, "requestCaller");
             checkAsynchronousFailure();
             if (isToolCallReady(message)) {
                 try {
-                    submit(message, completion);
+                    submit(message, requestCaller, completion);
                 } catch (RejectedExecutionException e) {
                     completion.accept(Optional.of(JsonRpc.error(mapper, message.get("id"),
                             -32000, e.getMessage())));
                 }
             } else {
-                completion.accept(handle(message));
+                completion.accept(handle(message, requestCaller));
             }
         }
 
