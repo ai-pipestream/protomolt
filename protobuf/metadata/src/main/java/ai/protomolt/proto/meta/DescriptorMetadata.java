@@ -36,6 +36,12 @@ public final class DescriptorMetadata {
     /** Default stability tier for unannotated public protobuf definitions. */
     public static final StabilityTier DEFAULT_PROTO_STABILITY = StabilityTier.STABLE;
 
+    /** Maximum Unicode code-point length permitted in {@link StabilityOption#getSince()}. */
+    public static final int MAX_STABILITY_SINCE_LENGTH = 64;
+
+    /** Maximum Unicode code-point length permitted in {@link StabilityOption#getNotes()}. */
+    public static final int MAX_STABILITY_NOTES_LENGTH = 1024;
+
     /** Reads the metadata options when a descriptor was built without them registered. */
     private static final ExtensionRegistry EXTENSIONS = ExtensionRegistry.newInstance();
     private static final Map<FieldDescriptor, Optional<FieldMeta>> FIELD_META =
@@ -490,12 +496,14 @@ public final class DescriptorMetadata {
 
     /**
      * Converts a protobuf {@link StabilityOption} to a {@link StabilityTier}, failing closed
-     * when the option carries an unrecognized {@link StabilityLevel} wire value.
+     * when the option carries an unrecognized {@link StabilityLevel} wire value or exceeds
+     * declared field bounds.
      *
      * @param option the protobuf stability option (may be null)
      * @return the matching tier, or empty when {@code option} is null or its level is
      *         {@link StabilityLevel#STABILITY_LEVEL_UNSPECIFIED}
      * @throws IllegalArgumentException if {@code option} carries {@link StabilityLevel#UNRECOGNIZED}
+     *         or exceeds the {@code since} / {@code notes} length bounds
      */
     public static Optional<StabilityTier> toStabilityTier(StabilityOption option) {
         if (option == null) {
@@ -504,6 +512,16 @@ public final class DescriptorMetadata {
         if (option.getLevel() == StabilityLevel.UNRECOGNIZED) {
             throw new IllegalArgumentException(
                     "Unrecognized protobuf StabilityLevel wire value: " + option.getLevelValue());
+        }
+        String since = option.getSince();
+        if (since.codePointCount(0, since.length()) > MAX_STABILITY_SINCE_LENGTH) {
+            throw new IllegalArgumentException(
+                    "StabilityOption.since exceeds maximum length of " + MAX_STABILITY_SINCE_LENGTH);
+        }
+        String notes = option.getNotes();
+        if (notes.codePointCount(0, notes.length()) > MAX_STABILITY_NOTES_LENGTH) {
+            throw new IllegalArgumentException(
+                    "StabilityOption.notes exceeds maximum length of " + MAX_STABILITY_NOTES_LENGTH);
         }
         return toStabilityTier(option.getLevel());
     }

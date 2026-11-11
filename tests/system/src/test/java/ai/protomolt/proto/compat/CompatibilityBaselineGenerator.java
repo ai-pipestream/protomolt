@@ -269,7 +269,7 @@ public final class CompatibilityBaselineGenerator {
     }
 
     @SuppressWarnings("unchecked")
-    private static <T> T stubInterface(Class<T> iface) {
+    static <T> T stubInterface(Class<T> iface) {
         return (T) Proxy.newProxyInstance(
                 iface.getClassLoader(),
                 new Class<?>[]{iface},

@@ -1,6 +1,7 @@
 package ai.protomolt.proto.descriptors;
 
 import java.util.Locale;
+import java.util.Objects;
 import java.util.Optional;
 
 /**
@@ -157,14 +158,16 @@ public enum StabilityTier {
     }
 
     /**
-     * Parses a stability label or returns {@code fallback} when the input is null, blank,
-     * or unrecognized.
+     * Parses a stability label or returns {@code fallback} when the input is null or blank,
+     * failing closed when a non-blank label does not name a known tier.
      *
-     * @param raw the raw stability token
-     * @param fallback fallback tier when {@code raw} does not name a known tier
+     * @param raw the raw stability token (may be null or blank)
+     * @param fallback non-null fallback tier when {@code raw} is null or blank
      * @return the resolved tier
+     * @throws IllegalArgumentException if {@code raw} is non-blank and does not name a known tier
      */
     public static StabilityTier fromLabel(String raw, StabilityTier fallback) {
-        return parseOptional(raw).orElse(fallback);
+        Objects.requireNonNull(fallback, "fallback");
+        return parseExplicit(raw).orElse(fallback);
     }
 }

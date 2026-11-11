@@ -72,7 +72,8 @@ public record ProtoRestMethod(
                 summary,
                 description,
                 httpMethods,
-                exposed != null && exposed.isPresent() ? exposed.get().stability() : StabilityTier.STABLE);
+                declaredStability(exposed == null ? null : exposed.orElse(null))
+                        .orElse(StabilityTier.STABLE));
     }
 
     public ProtoRestMethod {
@@ -91,9 +92,26 @@ public record ProtoRestMethod(
                         .filter(Objects::nonNull)
                         .map(m -> m.toUpperCase(Locale.ROOT))
                         .toArray(String[]::new);
+        Optional<StabilityTier> exposedStability = exposed.flatMap(ProtoRestMethod::declaredStability);
         stability = stability == null
-                ? exposed.map(ProtoRestExposed::stability).orElse(StabilityTier.STABLE)
+                ? exposedStability.orElse(StabilityTier.STABLE)
                 : stability;
+    }
+
+    static Optional<StabilityTier> declaredStability(ProtoRestExposed exposed) {
+        if (exposed == null) {
+            return Optional.empty();
+        }
+        StabilityTier[] tiers = exposed.stability();
+        if (tiers == null || tiers.length == 0) {
+            return Optional.empty();
+        }
+        if (tiers.length > 1) {
+            throw new IllegalArgumentException(
+                    "@ProtoRestExposed.stability accepts at most one StabilityTier, got "
+                            + Arrays.toString(tiers));
+        }
+        return Optional.of(Objects.requireNonNull(tiers[0], "stability[0]"));
     }
 
     /** @return a defensive copy of the declared verbs (empty when unset) */

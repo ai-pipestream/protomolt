@@ -3,6 +3,8 @@ package ai.protomolt.proto.serve;
 import ai.protomolt.proto.actions.ActionCatalog;
 import ai.protomolt.proto.actions.ActionException;
 import ai.protomolt.proto.actions.Caller;
+import ai.protomolt.proto.descriptors.ApiStability;
+import ai.protomolt.proto.descriptors.StabilityTier;
 import ai.protomolt.proto.grpc.service.ContractActionBindings;
 import ai.protomolt.proto.grpc.service.CatalogBridge;
 import ai.protomolt.proto.grpc.service.contract.ProtoMoltServiceSchema;
@@ -82,21 +84,41 @@ public final class ProtoMoltRestMount {
     }
 
     /**
-     * Mounts {@code ProtoMoltService} plus every contributed gRPC service family and explicit
-     * task binding served by {@code protomolt-serve} when all optional roles are enabled.
+     * Registers {@code ProtoMoltService} plus every contributed gRPC service family and explicit
+     * task binding into {@code registry} strictly for offline route-inventory and contract
+     * inspection (such as compatibility baseline generation or OpenAPI schema inspection).
+     *
+     * <p><strong>Inventory-only — do not use for live HTTP serving:</strong> registered entries
+     * carry no authentication token or caller resolver and fail closed with
+     * {@link UnsupportedOperationException} if runtime request dispatch is attempted. Production
+     * hosts must call {@link #register(ProtoRestMethodRegistry, ActionCatalog, ApiTokenRequirement, Function, Collection, Map)}
+     * with explicit API token enforcement and caller resolution.</p>
      *
      * @param registry destination REST method registry
-     * @param catalog  action catalog supplying verb implementations
+     * @param catalog  action catalog supplying verb descriptors
      */
+    @ApiStability(StabilityTier.INTERNAL)
     public static void registerAllContributed(ProtoRestMethodRegistry registry,
                                               ActionCatalog catalog) {
-        register(
-                registry,
-                catalog,
-                null,
-                null,
-                GrpcMount.contributedServices(true, true, true),
-                WorkflowAuthorTaskMount.bindings());
+        List<ServiceDescriptor> services = new ArrayList<>();
+        services.add(ProtoMoltServiceSchema.service());
+        services.addAll(GrpcMount.contributedServices(true, true, true));
+        Map<String, Map<String, String>> explicitBindings = WorkflowAuthorTaskMount.bindings();
+        for (ServiceDescriptor service : services) {
+            for (Map.Entry<MethodDescriptor, String> binding :
+                    ContractActionBindings.mounted(catalog, service, explicitBindings).entrySet()) {
+                MethodDescriptor method = binding.getKey();
+                registry.register(
+                        service,
+                        method,
+                        request -> {
+                            throw new UnsupportedOperationException(
+                                    "Inventory-only REST registration does not dispatch requests; "
+                                            + "use ProtoMoltRestMount.register(...) with explicit API token and caller resolution");
+                        },
+                        null);
+            }
+        }
     }
 
     public static void register(ProtoRestMethodRegistry registry, ActionCatalog catalog,

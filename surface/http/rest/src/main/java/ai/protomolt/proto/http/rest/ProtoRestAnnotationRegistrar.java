@@ -10,6 +10,7 @@ import java.lang.reflect.Modifier;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.function.Function;
 
 /**
@@ -133,19 +134,18 @@ public final class ProtoRestAnnotationRegistrar {
             Method method,
             ProtoRestExposed typeExposed,
             ProtoRestExposed methodExposed) {
+        Optional<StabilityTier> methodExposedStability = ProtoRestMethod.declaredStability(methodExposed);
+        Optional<StabilityTier> typeExposedStability = ProtoRestMethod.declaredStability(typeExposed);
+        if (methodExposedStability.isPresent()) {
+            return methodExposedStability.get();
+        }
         if (method.isAnnotationPresent(ApiStability.class) || method.isAnnotationPresent(Deprecated.class)) {
             return ApiStabilityResolver.resolve(method, StabilityTier.STABLE);
         }
-        if (methodExposed.stability() != StabilityTier.STABLE) {
-            return methodExposed.stability();
+        if (typeExposedStability.isPresent()) {
+            return typeExposedStability.get();
         }
-        if (type.isAnnotationPresent(ApiStability.class) || type.isAnnotationPresent(Deprecated.class)) {
-            return ApiStabilityResolver.resolve(type, StabilityTier.STABLE);
-        }
-        if (typeExposed != null && typeExposed.stability() != StabilityTier.STABLE) {
-            return typeExposed.stability();
-        }
-        return ApiStabilityResolver.resolve(method, StabilityTier.STABLE);
+        return ApiStabilityResolver.resolve(type, StabilityTier.STABLE);
     }
 
     private static String resolveServiceName(

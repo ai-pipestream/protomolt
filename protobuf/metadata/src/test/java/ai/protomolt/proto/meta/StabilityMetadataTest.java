@@ -1,6 +1,8 @@
 package ai.protomolt.proto.meta;
 
 import ai.protomolt.proto.descriptors.StabilityTier;
+import ai.protomolt.proto.validate.ProtoValidator;
+import ai.protomolt.proto.validate.ValidationResult;
 import com.google.protobuf.ByteString;
 import com.google.protobuf.DescriptorProtos;
 import com.google.protobuf.Descriptors.Descriptor;
@@ -249,5 +251,55 @@ class StabilityMetadataTest {
                         .build(),
                 new FileDescriptor[0]);
         assertThat(DescriptorMetadata.stability(file)).isEqualTo(StabilityTier.EVOLVING);
+    }
+
+    @Test
+    void validatesStabilityOptionSchemaConstraintsAndRuntimeBounds() {
+        ProtoValidator validator = ProtoValidator.create();
+
+        StabilityOption valid = StabilityOption.newBuilder()
+                .setLevel(StabilityLevel.STABILITY_LEVEL_STABLE)
+                .setSince("1.2.0")
+                .setNotes("Public contract since 1.2.0")
+                .build();
+        assertThat(validator.validate(valid).valid()).isTrue();
+
+        StabilityOption unrecognizedLevel = StabilityOption.newBuilder()
+                .setLevelValue(99)
+                .build();
+        ValidationResult badLevelResult = validator.validate(unrecognizedLevel);
+        assertThat(badLevelResult.valid()).isFalse();
+        assertThat(badLevelResult.violations())
+                .hasSizeGreaterThanOrEqualTo(2)
+                .extracting(ValidationResult.Violation::path)
+                .containsOnly("level");
+
+        StabilityOption oversizedSince = StabilityOption.newBuilder()
+                .setLevel(StabilityLevel.STABILITY_LEVEL_STABLE)
+                .setSince("x".repeat(DescriptorMetadata.MAX_STABILITY_SINCE_LENGTH + 1))
+                .build();
+        ValidationResult badSinceResult = validator.validate(oversizedSince);
+        assertThat(badSinceResult.valid()).isFalse();
+        assertThat(badSinceResult.violations())
+                .hasSizeGreaterThanOrEqualTo(2)
+                .extracting(ValidationResult.Violation::path)
+                .containsOnly("since");
+        assertThatThrownBy(() -> DescriptorMetadata.toStabilityTier(oversizedSince))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("since");
+
+        StabilityOption oversizedNotes = StabilityOption.newBuilder()
+                .setLevel(StabilityLevel.STABILITY_LEVEL_STABLE)
+                .setNotes("n".repeat(DescriptorMetadata.MAX_STABILITY_NOTES_LENGTH + 1))
+                .build();
+        ValidationResult badNotesResult = validator.validate(oversizedNotes);
+        assertThat(badNotesResult.valid()).isFalse();
+        assertThat(badNotesResult.violations())
+                .hasSizeGreaterThanOrEqualTo(2)
+                .extracting(ValidationResult.Violation::path)
+                .containsOnly("notes");
+        assertThatThrownBy(() -> DescriptorMetadata.toStabilityTier(oversizedNotes))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("notes");
     }
 }

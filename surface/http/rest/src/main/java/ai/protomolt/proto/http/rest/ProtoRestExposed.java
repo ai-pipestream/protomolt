@@ -40,8 +40,11 @@ public @interface ProtoRestExposed {
     String description() default "";
 
     /**
-     * Stability tier of the exposed REST route (or default tier for methods on an annotated
-     * service class). Defaults to {@link StabilityTier#STABLE}.
+     * Optional stability tier override for the exposed REST route (or default tier for methods
+     * on an annotated service class). Empty (the default) means unset and inherits from
+     * {@link ApiStability}, enclosing declarations, or {@link StabilityTier#STABLE}. At most
+     * one tier may be specified; single-element syntax such as
+     * {@code @ProtoRestExposed(stability = StabilityTier.STABLE)} is supported.
      */
-    StabilityTier stability() default StabilityTier.STABLE;
+    StabilityTier[] stability() default {};
 }

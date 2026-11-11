@@ -10,6 +10,8 @@ option (file_stability) = {
   since: "0.1.0"
 };
 
+import "ai/protomolt/proto/validate/v1/validate.proto";
+import "buf/validate/validate.proto";
 import "google/protobuf/descriptor.proto";
 
 // Stability tier classification for protobuf files, messages, fields, enums,
@@ -32,11 +34,20 @@ enum StabilityLevel {
 // Stability metadata attached to a protobuf declaration via descriptor options.
 message StabilityOption {
   // Declared stability tier for this schema element.
-  StabilityLevel level = 1;
+  StabilityLevel level = 1 [
+    (ai.protomolt.proto.validate.v1.field).enum.defined_only = true,
+    (buf.validate.field).enum.defined_only = true
+  ];
   // Optional version or milestone when this tier took effect.
-  string since = 2;
+  string since = 2 [
+    (ai.protomolt.proto.validate.v1.field).string.max_len = 64,
+    (buf.validate.field).string.max_len = 64
+  ];
   // Optional migration or compatibility note.
-  string notes = 3;
+  string notes = 3 [
+    (ai.protomolt.proto.validate.v1.field).string.max_len = 1024,
+    (buf.validate.field).string.max_len = 1024
+  ];
 }
 
 extend google.protobuf.FileOptions {

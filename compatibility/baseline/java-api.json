@@ -37182,6 +37182,20 @@
           "stability" : "STABLE"
         },
         {
+          "name" : "open",
+          "parameterTypes" : [
+            "java.lang.String",
+            "io.grpc.ChannelCredentials"
+          ],
+          "returnType" : "io.grpc.ManagedChannel",
+          "visibility" : "PUBLIC",
+          "staticMethod" : false,
+          "finalMethod" : false,
+          "abstractMethod" : false,
+          "defaultMethod" : true,
+          "stability" : "STABLE"
+        },
+        {
           "name" : "policy",
           "parameterTypes" : [ ],
           "returnType" : "ai.protomolt.proto.grpc.policy.OutboundChannelPolicy",
@@ -37535,6 +37549,23 @@
           "stability" : "STABLE"
         },
         {
+          "name" : "execute",
+          "parameterTypes" : [
+            "com.google.protobuf.Message",
+            "ai.protomolt.proto.actions.ActionContext",
+            "io.grpc.Metadata",
+            "io.grpc.CallCredentials",
+            "io.grpc.ChannelCredentials"
+          ],
+          "returnType" : "com.google.protobuf.Message",
+          "visibility" : "PUBLIC",
+          "staticMethod" : false,
+          "finalMethod" : false,
+          "abstractMethod" : false,
+          "defaultMethod" : false,
+          "stability" : "STABLE"
+        },
+        {
           "name" : "executeStreaming",
           "parameterTypes" : [
             "com.google.protobuf.Message",
@@ -37589,6 +37620,24 @@
             "ai.protomolt.proto.actions.StreamEmitter",
             "io.grpc.Metadata",
             "io.grpc.CallCredentials"
+          ],
+          "returnType" : "void",
+          "visibility" : "PUBLIC",
+          "staticMethod" : false,
+          "finalMethod" : false,
+          "abstractMethod" : false,
+          "defaultMethod" : false,
+          "stability" : "STABLE"
+        },
+        {
+          "name" : "executeStreaming",
+          "parameterTypes" : [
+            "com.google.protobuf.Message",
+            "ai.protomolt.proto.actions.ActionContext",
+            "ai.protomolt.proto.actions.StreamEmitter",
+            "io.grpc.Metadata",
+            "io.grpc.CallCredentials",
+            "io.grpc.ChannelCredentials"
           ],
           "returnType" : "void",
           "visibility" : "PUBLIC",
@@ -37950,7 +37999,36 @@
           "name" : "reply",
           "parameterTypes" : [
             "io.grpc.Status",
+            "boolean"
+          ],
+          "returnType" : "io.grpc.Status",
+          "visibility" : "PUBLIC",
+          "staticMethod" : true,
+          "finalMethod" : false,
+          "abstractMethod" : false,
+          "defaultMethod" : false,
+          "stability" : "STABLE"
+        },
+        {
+          "name" : "reply",
+          "parameterTypes" : [
+            "io.grpc.Status",
             "io.grpc.CallCredentials"
+          ],
+          "returnType" : "io.grpc.Status",
+          "visibility" : "PUBLIC",
+          "staticMethod" : true,
+          "finalMethod" : false,
+          "abstractMethod" : false,
+          "defaultMethod" : false,
+          "stability" : "STABLE"
+        },
+        {
+          "name" : "reply",
+          "parameterTypes" : [
+            "io.grpc.Status",
+            "io.grpc.CallCredentials",
+            "io.grpc.ChannelCredentials"
           ],
           "returnType" : "io.grpc.Status",
           "visibility" : "PUBLIC",
@@ -40828,6 +40906,254 @@
       "fields" : [ ]
     },
     {
+      "className" : "ai.protomolt.proto.grpc.workspace.FileProfileTlsResolver",
+      "kind" : "CLASS",
+      "visibility" : "PUBLIC",
+      "finalType" : true,
+      "abstractType" : false,
+      "superclass" : "",
+      "interfaces" : [
+        "ai.protomolt.proto.grpc.workspace.ProfileTlsResolver"
+      ],
+      "stability" : "STABLE",
+      "constructors" : [
+        {
+          "parameterTypes" : [
+            "java.util.Set",
+            "java.util.Map",
+            "java.util.Map"
+          ],
+          "visibility" : "PUBLIC",
+          "stability" : "STABLE"
+        }
+      ],
+      "methods" : [
+        {
+          "name" : "channelCredentials",
+          "parameterTypes" : [
+            "ai.protomolt.proto.grpc.profile.v1.ServiceProfile",
+            "ai.protomolt.proto.grpc.profile.v1.ServiceEndpoint"
+          ],
+          "returnType" : "io.grpc.ChannelCredentials",
+          "visibility" : "PUBLIC",
+          "staticMethod" : false,
+          "finalMethod" : false,
+          "abstractMethod" : false,
+          "defaultMethod" : false,
+          "stability" : "STABLE"
+        }
+      ],
+      "fields" : [ ]
+    },
+    {
+      "className" : "ai.protomolt.proto.grpc.workspace.FileProfileTlsResolver$Binding",
+      "kind" : "RECORD",
+      "visibility" : "PUBLIC",
+      "finalType" : false,
+      "abstractType" : false,
+      "superclass" : "",
+      "interfaces" : [ ],
+      "stability" : "STABLE",
+      "constructors" : [
+        {
+          "parameterTypes" : [
+            "java.lang.String",
+            "java.lang.String",
+            "java.lang.String",
+            "int",
+            "java.lang.String",
+            "java.lang.String"
+          ],
+          "visibility" : "PUBLIC",
+          "stability" : "STABLE"
+        }
+      ],
+      "methods" : [
+        {
+          "name" : "clientCertificateRef",
+          "parameterTypes" : [ ],
+          "returnType" : "java.lang.String",
+          "visibility" : "PUBLIC",
+          "staticMethod" : false,
+          "finalMethod" : false,
+          "abstractMethod" : false,
+          "defaultMethod" : false,
+          "stability" : "STABLE"
+        },
+        {
+          "name" : "endpoint",
+          "parameterTypes" : [ ],
+          "returnType" : "java.lang.String",
+          "visibility" : "PUBLIC",
+          "staticMethod" : false,
+          "finalMethod" : false,
+          "abstractMethod" : false,
+          "defaultMethod" : false,
+          "stability" : "STABLE"
+        },
+        {
+          "name" : "equals",
+          "parameterTypes" : [
+            "java.lang.Object"
+          ],
+          "returnType" : "boolean",
+          "visibility" : "PUBLIC",
+          "staticMethod" : false,
+          "finalMethod" : true,
+          "abstractMethod" : false,
+          "defaultMethod" : false,
+          "stability" : "STABLE"
+        },
+        {
+          "name" : "hashCode",
+          "parameterTypes" : [ ],
+          "returnType" : "int",
+          "visibility" : "PUBLIC",
+          "staticMethod" : false,
+          "finalMethod" : true,
+          "abstractMethod" : false,
+          "defaultMethod" : false,
+          "stability" : "STABLE"
+        },
+        {
+          "name" : "host",
+          "parameterTypes" : [ ],
+          "returnType" : "java.lang.String",
+          "visibility" : "PUBLIC",
+          "staticMethod" : false,
+          "finalMethod" : false,
+          "abstractMethod" : false,
+          "defaultMethod" : false,
+          "stability" : "STABLE"
+        },
+        {
+          "name" : "port",
+          "parameterTypes" : [ ],
+          "returnType" : "int",
+          "visibility" : "PUBLIC",
+          "staticMethod" : false,
+          "finalMethod" : false,
+          "abstractMethod" : false,
+          "defaultMethod" : false,
+          "stability" : "STABLE"
+        },
+        {
+          "name" : "profile",
+          "parameterTypes" : [ ],
+          "returnType" : "java.lang.String",
+          "visibility" : "PUBLIC",
+          "staticMethod" : false,
+          "finalMethod" : false,
+          "abstractMethod" : false,
+          "defaultMethod" : false,
+          "stability" : "STABLE"
+        },
+        {
+          "name" : "toString",
+          "parameterTypes" : [ ],
+          "returnType" : "java.lang.String",
+          "visibility" : "PUBLIC",
+          "staticMethod" : false,
+          "finalMethod" : true,
+          "abstractMethod" : false,
+          "defaultMethod" : false,
+          "stability" : "STABLE"
+        },
+        {
+          "name" : "trustRef",
+          "parameterTypes" : [ ],
+          "returnType" : "java.lang.String",
+          "visibility" : "PUBLIC",
+          "staticMethod" : false,
+          "finalMethod" : false,
+          "abstractMethod" : false,
+          "defaultMethod" : false,
+          "stability" : "STABLE"
+        }
+      ],
+      "fields" : [ ]
+    },
+    {
+      "className" : "ai.protomolt.proto.grpc.workspace.FileProfileTlsResolver$KeyPairFiles",
+      "kind" : "RECORD",
+      "visibility" : "PUBLIC",
+      "finalType" : false,
+      "abstractType" : false,
+      "superclass" : "",
+      "interfaces" : [ ],
+      "stability" : "STABLE",
+      "constructors" : [
+        {
+          "parameterTypes" : [
+            "java.nio.file.Path",
+            "java.nio.file.Path"
+          ],
+          "visibility" : "PUBLIC",
+          "stability" : "STABLE"
+        }
+      ],
+      "methods" : [
+        {
+          "name" : "certificateChain",
+          "parameterTypes" : [ ],
+          "returnType" : "java.nio.file.Path",
+          "visibility" : "PUBLIC",
+          "staticMethod" : false,
+          "finalMethod" : false,
+          "abstractMethod" : false,
+          "defaultMethod" : false,
+          "stability" : "STABLE"
+        },
+        {
+          "name" : "equals",
+          "parameterTypes" : [
+            "java.lang.Object"
+          ],
+          "returnType" : "boolean",
+          "visibility" : "PUBLIC",
+          "staticMethod" : false,
+          "finalMethod" : true,
+          "abstractMethod" : false,
+          "defaultMethod" : false,
+          "stability" : "STABLE"
+        },
+        {
+          "name" : "hashCode",
+          "parameterTypes" : [ ],
+          "returnType" : "int",
+          "visibility" : "PUBLIC",
+          "staticMethod" : false,
+          "finalMethod" : true,
+          "abstractMethod" : false,
+          "defaultMethod" : false,
+          "stability" : "STABLE"
+        },
+        {
+          "name" : "privateKey",
+          "parameterTypes" : [ ],
+          "returnType" : "java.nio.file.Path",
+          "visibility" : "PUBLIC",
+          "staticMethod" : false,
+          "finalMethod" : false,
+          "abstractMethod" : false,
+          "defaultMethod" : false,
+          "stability" : "STABLE"
+        },
+        {
+          "name" : "toString",
+          "parameterTypes" : [ ],
+          "returnType" : "java.lang.String",
+          "visibility" : "PUBLIC",
+          "staticMethod" : false,
+          "finalMethod" : true,
+          "abstractMethod" : false,
+          "defaultMethod" : false,
+          "stability" : "STABLE"
+        }
+      ],
+      "fields" : [ ]
+    },
+    {
       "className" : "ai.protomolt.proto.grpc.workspace.ProfileCredentialResolver",
       "kind" : "INTERFACE",
       "visibility" : "PUBLIC",
@@ -40839,12 +41165,68 @@
       "constructors" : [ ],
       "methods" : [
         {
+          "name" : "channelCredentials",
+          "parameterTypes" : [
+            "ai.protomolt.proto.grpc.profile.v1.ServiceProfile",
+            "ai.protomolt.proto.grpc.profile.v1.ServiceEndpoint"
+          ],
+          "returnType" : "io.grpc.ChannelCredentials",
+          "visibility" : "PUBLIC",
+          "staticMethod" : false,
+          "finalMethod" : false,
+          "abstractMethod" : false,
+          "defaultMethod" : true,
+          "stability" : "STABLE"
+        },
+        {
           "name" : "headers",
           "parameterTypes" : [
             "ai.protomolt.proto.grpc.profile.v1.ServiceProfile",
             "ai.protomolt.proto.grpc.profile.v1.ServiceEndpoint"
           ],
           "returnType" : "io.grpc.Metadata",
+          "visibility" : "PUBLIC",
+          "staticMethod" : false,
+          "finalMethod" : false,
+          "abstractMethod" : false,
+          "defaultMethod" : false,
+          "stability" : "STABLE"
+        },
+        {
+          "name" : "withTls",
+          "parameterTypes" : [
+            "ai.protomolt.proto.grpc.workspace.ProfileCredentialResolver",
+            "ai.protomolt.proto.grpc.workspace.ProfileTlsResolver"
+          ],
+          "returnType" : "ai.protomolt.proto.grpc.workspace.ProfileCredentialResolver",
+          "visibility" : "PUBLIC",
+          "staticMethod" : true,
+          "finalMethod" : false,
+          "abstractMethod" : false,
+          "defaultMethod" : false,
+          "stability" : "STABLE"
+        }
+      ],
+      "fields" : [ ]
+    },
+    {
+      "className" : "ai.protomolt.proto.grpc.workspace.ProfileTlsResolver",
+      "kind" : "INTERFACE",
+      "visibility" : "PUBLIC",
+      "finalType" : false,
+      "abstractType" : false,
+      "superclass" : "",
+      "interfaces" : [ ],
+      "stability" : "STABLE",
+      "constructors" : [ ],
+      "methods" : [
+        {
+          "name" : "channelCredentials",
+          "parameterTypes" : [
+            "ai.protomolt.proto.grpc.profile.v1.ServiceProfile",
+            "ai.protomolt.proto.grpc.profile.v1.ServiceEndpoint"
+          ],
+          "returnType" : "io.grpc.ChannelCredentials",
           "visibility" : "PUBLIC",
           "staticMethod" : false,
           "finalMethod" : false,
@@ -44001,7 +44383,7 @@
         {
           "name" : "stability",
           "parameterTypes" : [ ],
-          "returnType" : "ai.protomolt.proto.descriptors.StabilityTier",
+          "returnType" : "ai.protomolt.proto.descriptors.StabilityTier[]",
           "visibility" : "PUBLIC",
           "staticMethod" : false,
           "finalMethod" : false,
@@ -60457,6 +60839,22 @@
         {
           "name" : "DEFAULT_PROTO_STABILITY",
           "fieldType" : "ai.protomolt.proto.descriptors.StabilityTier",
+          "visibility" : "PUBLIC",
+          "staticField" : true,
+          "finalField" : true,
+          "stability" : "STABLE"
+        },
+        {
+          "name" : "MAX_STABILITY_NOTES_LENGTH",
+          "fieldType" : "int",
+          "visibility" : "PUBLIC",
+          "staticField" : true,
+          "finalField" : true,
+          "stability" : "STABLE"
+        },
+        {
+          "name" : "MAX_STABILITY_SINCE_LENGTH",
+          "fieldType" : "int",
           "visibility" : "PUBLIC",
           "staticField" : true,
           "finalField" : true,
@@ -120444,7 +120842,7 @@
           "finalMethod" : false,
           "abstractMethod" : false,
           "defaultMethod" : false,
-          "stability" : "STABLE"
+          "stability" : "INTERNAL"
         }
       ],
       "fields" : [ ]

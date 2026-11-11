@@ -157,15 +157,18 @@ protected contract cannot silently shed gate enforcement.
 4. **REST routes (`CompatibilitySurface.REST_ROUTE`)**:
    Declare route stability via `@ProtoRestExposed(stability = ...)`,
    `ProtoRestMethod.Builder#stability(...)`, or live server route contracts
-   (`ProtoMoltRestMount.registerAllContributed`,
-   `SchemaRegistryServer.routeContracts`, `UploadHttpServer.routeContracts`, and
-   `IntakeHttpServer.routeContracts`). Because each standalone HTTP server
-   dispatches requests from the same route-contract definitions read by the
-   baseline generator, any route change perturbs the snapshot directly.
-   `RestRouteCompatibilityChecker` checks route presence, path templates,
-   `{param}` path parameter sequences, accepted HTTP verbs, required query
-   parameters, request/response media types and message types, 2xx success status
-   codes, and authentication requirements.
+   (`ProtoMoltRestMount.registerAllContributed` for offline route-inventory
+   inspection, plus `SchemaRegistryServer.routeContracts`,
+   `UploadHttpServer.routeContracts`, and `IntakeHttpServer.routeContracts`).
+   In the standalone HTTP servers, `routeId`, `pathTemplate`, and `httpMethods`
+   drive live HTTP request dispatch directly (along with `responseMediaType` in
+   `IntakeHttpServer`), while `successStatusCodes`, `requestType`/`responseType`,
+   and media types on the other standalone handlers record declared contract
+   metadata on the same `RouteContract` definitions read by the baseline
+   generator. `RestRouteCompatibilityChecker` checks route presence, path
+   templates, `{param}` path parameter sequences, accepted HTTP verbs, required
+   query parameters, request/response media types and message types, 2xx success
+   status codes, and authentication requirements.
 5. **Action envelopes (`CompatibilitySurface.ACTION_ENVELOPE`)**:
    `ProtoAction#stability()` resolves the action's stability tier from
    `@ApiStability` on the action class (defaulting to `STABLE`) across

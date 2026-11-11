@@ -97,8 +97,13 @@ class ApiStabilityResolverTest {
                 .isEqualTo(StabilityTier.STABLE);
         assertThat(StabilityTier.fromLabel("experimental", StabilityTier.STABLE))
                 .isEqualTo(StabilityTier.EXPERIMENTAL);
-        assertThat(StabilityTier.fromLabel("unknown-label", StabilityTier.EVOLVING))
+        assertThat(StabilityTier.fromLabel(null, StabilityTier.EVOLVING))
                 .isEqualTo(StabilityTier.EVOLVING);
+        assertThat(StabilityTier.fromLabel("   ", StabilityTier.EVOLVING))
+                .isEqualTo(StabilityTier.EVOLVING);
+        assertThatThrownBy(() -> StabilityTier.fromLabel("unknown-label", StabilityTier.EVOLVING))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("unknown-label");
 
         assertThat(StabilityTier.parseExplicit(null)).isEmpty();
         assertThat(StabilityTier.parseExplicit("   ")).isEmpty();

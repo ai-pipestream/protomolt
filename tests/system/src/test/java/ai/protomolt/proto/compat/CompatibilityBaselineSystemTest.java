@@ -1,13 +1,21 @@
 package ai.protomolt.proto.compat;
 
+import ai.protomolt.proto.actions.ActionCatalog;
+import ai.protomolt.proto.actions.ActionContext;
 import ai.protomolt.proto.compat.ActionEnvelopeSnapshot.ActionEnvelopeEntry;
 import ai.protomolt.proto.compat.JavaApiSnapshot.ClassEntry;
 import ai.protomolt.proto.compat.RestRouteSnapshot.RestRouteEntry;
 import ai.protomolt.proto.compat.StoredFormatSnapshot.StoredFormatEntry;
 import ai.protomolt.proto.descriptors.StabilityTier;
+import ai.protomolt.proto.grpc.service.ProtoMoltCatalog;
+import ai.protomolt.proto.http.rest.ProtoRestMethodRegistry;
+import ai.protomolt.proto.serve.ProtoMoltRestMount;
 import ai.protomolt.proto.sources.CompiledProtos;
+import ai.protomolt.proto.workflow.authoring.WorkflowAuthorTaskActions;
+import ai.protomolt.proto.workflow.authoring.WorkflowAuthorTaskOperations;
 import com.google.protobuf.DescriptorProtos.FileDescriptorProto;
 import com.google.protobuf.DescriptorProtos.FileDescriptorSet;
+import com.google.protobuf.Struct;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -46,7 +54,7 @@ class CompatibilityBaselineSystemTest {
         assertThat(recorded.manifest().releaseTag()).isEmpty();
         assertThat(recorded.manifest().status().hasExternalReleaseGuarantee()).isFalse();
 
-        assertThat(recorded.javaApi().classes()).hasSizeGreaterThanOrEqualTo(1_576);
+        assertThat(recorded.javaApi().classes()).hasSizeGreaterThanOrEqualTo(1_580);
         List<String> javaClassNames = recorded.javaApi().classes().stream()
                 .map(ClassEntry::className)
                 .toList();
@@ -54,6 +62,8 @@ class CompatibilityBaselineSystemTest {
                 "ai.protomolt.proto.compat.CompatibilityChecker",
                 "ai.protomolt.proto.compat.CompatibilityChecker$Builder",
                 "ai.protomolt.proto.grpc.policy.OutboundChannelPolicy$Builder",
+                "ai.protomolt.proto.grpc.workspace.ProfileTlsResolver",
+                "ai.protomolt.proto.grpc.workspace.FileProfileTlsResolver",
                 "ai.protomolt.proto.emit.parquet.ParquetEmitter",
                 "ai.protomolt.proto.emit.renderer.GrpcRendererProvider",
                 "ai.protomolt.proto.registry.service.SchemaRegistryServer",
@@ -312,6 +322,19 @@ class CompatibilityBaselineSystemTest {
         assertThatThrownBy(unusedReport::throwIfIncompatible)
                 .isInstanceOf(IncompatibleSurfaceException.class)
                 .hasMessageContaining("W-UNUSED-SYSTEM-TEST");
+    }
+
+    @Test
+    void inventoryOnlyRestRegistrationRefusesRuntimeDispatch() {
+        ActionCatalog catalog = ProtoMoltCatalog.full(ActionContext.create());
+        WorkflowAuthorTaskActions.register(
+                catalog, CompatibilityBaselineGenerator.stubInterface(WorkflowAuthorTaskOperations.class));
+        ProtoRestMethodRegistry registry = new ProtoRestMethodRegistry();
+        ProtoMoltRestMount.registerAllContributed(registry, catalog);
+        assertThat(registry.all()).isNotEmpty();
+        assertThatThrownBy(() -> registry.all().iterator().next().invoker().apply(Struct.getDefaultInstance()))
+                .isInstanceOf(UnsupportedOperationException.class)
+                .hasMessageContaining("Inventory-only REST registration");
     }
 
     private static Path repositoryRoot() throws IOException {
