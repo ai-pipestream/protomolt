@@ -6,6 +6,7 @@ option java_multiple_files = true;
 option java_package = "ai.protomolt.proto.authz";
 option java_outer_classname = "AccessPolicyProto";
 
+import "ai/protomolt/proto/types/v1/ranges.proto";
 import "ai/protomolt/proto/validate/v1/validate.proto";
 
 // The access-policy config document: named principals resolved from
@@ -67,8 +68,8 @@ message Principal {
 // compile-time rewrite the metric service applies before a query runs.
 // Denied members disappear from DescribeMapping and refuse QueryMetrics
 // by name; row filters are ANDed into every query the principal runs on
-// the subject, using the metric layer's own equality-set filter shape —
-// no new policy language.
+// the subject, using equality sets, typed date/numeric ranges, or
+// schema-checked boolean CEL predicates.
 message MetricAccess {
   // Members the principal may not see or query, by mapping subject.
   repeated MetricMemberDeny deny = 1;
@@ -97,9 +98,29 @@ message MetricMemberDeny {
   ];
 }
 
-// One equality-set row filter injected into every query the principal
-// runs on the subject.
+// One row-security filter injected into every query the principal runs on
+// the subject: an equality set over a keyword or bool dimension, a date or
+// numeric range over a date or numeric member, or a boolean CEL predicate
+// over the mapping's members and fields. Exactly one form.
 message MetricRowFilter {
+  option (ai.protomolt.proto.validate.v1.message) = {
+    cel: {
+      id: "metric_row_filter.one_form"
+      message: "metric row filter must specify exactly one of equals, range, long_range, double_range, or cel"
+      expression:
+        "(size(this.equals) > 0 ? 1 : 0)"
+        " + (has(this.range) ? 1 : 0)"
+        " + (has(this.long_range) ? 1 : 0)"
+        " + (has(this.double_range) ? 1 : 0)"
+        " + (this.cel != '' ? 1 : 0) == 1"
+    }
+    cel: {
+      id: "metric_row_filter.member_required"
+      message: "metric row filter using equals, range, long_range, or double_range requires a member name"
+      expression: "this.cel != '' || this.member != ''"
+    }
+  };
+
   // The mapping subject the filter applies to.
   string mapping_subject = 1 [
     (ai.protomolt.proto.validate.v1.field) = {
@@ -107,21 +128,32 @@ message MetricRowFilter {
       string: {slug: true, max_len: 128}
     }
   ];
-  // The dimension member the filter constrains.
+  // The member the filter constrains; required for equals, range, long_range,
+  // and double_range, optional for cel.
   string member = 2 [
     (ai.protomolt.proto.validate.v1.field) = {
-      required: true
-      string: {min_len: 1, max_len: 128}
+      string: {max_len: 128}
     }
   ];
-  // The values the member must equal (any of); non-empty.
+  // The values the member must equal (any of); non-empty when chosen.
   repeated string equals = 3 [
     (ai.protomolt.proto.validate.v1.field).repeated = {
-      min_items: 1
       unique: true
       items: {
         string: {min_len: 1}
       }
+    }
+  ];
+  // Date range over a DATE member; the canonical types.v1 day-grain range.
+  ai.protomolt.proto.types.v1.DateRange range = 4;
+  // Signed 64-bit integer range over a NUMERIC member.
+  ai.protomolt.proto.types.v1.LongRange long_range = 5;
+  // IEEE-754 double range over a NUMERIC member.
+  ai.protomolt.proto.types.v1.DoubleRange double_range = 6;
+  // Boolean CEL predicate over the mapping's members and fields.
+  string cel = 7 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      string: {max_len: 2048}
     }
   ];
 }

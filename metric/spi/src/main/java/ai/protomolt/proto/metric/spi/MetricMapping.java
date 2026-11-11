@@ -3,6 +3,7 @@ package ai.protomolt.proto.metric.spi;
 import ai.protomolt.proto.metric.Aggregate;
 import ai.protomolt.proto.metric.MemberRole;
 import ai.protomolt.proto.metric.TimeGrain;
+import com.google.protobuf.Descriptors.Descriptor;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -19,9 +20,19 @@ import java.util.Optional;
  * @param messageType the fully-qualified message type it was built from
  * @param members the queryable members, keyed by public name, in
  *        declaration order
+ * @param descriptor the backing protobuf message descriptor when built from a
+ *        schema, or {@code null} when constructed synthetically in tests
  */
 public record MetricMapping(
-        String subject, String messageType, Map<String, MetricMember> members) {
+        String subject,
+        String messageType,
+        Map<String, MetricMember> members,
+        Descriptor descriptor) {
+
+    public MetricMapping(
+            String subject, String messageType, Map<String, MetricMember> members) {
+        this(subject, messageType, members, null);
+    }
 
     public MetricMapping {
         members = new LinkedHashMap<>(members);

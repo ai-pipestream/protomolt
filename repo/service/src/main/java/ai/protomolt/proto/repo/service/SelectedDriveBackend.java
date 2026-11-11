@@ -3,6 +3,8 @@ package ai.protomolt.proto.repo.service;
 import ai.protomolt.proto.repo.container.ledger.DriveRecord;
 import ai.protomolt.proto.repo.engine.DriveProvisioner;
 import ai.protomolt.proto.repo.spi.RepositoryException;
+import ai.protomolt.proto.repo.v1.DriveCacheConfig;
+import ai.protomolt.proto.repo.v1.S3DriveConfig;
 import java.util.Objects;
 import java.util.function.Consumer;
 
@@ -34,9 +36,7 @@ final class SelectedDriveBackend implements Consumer<DriveRecord> {
             throw new RepositoryException(RepositoryException.Code.FAILED_PRECONDITION, "Per-drive provider options are not supported by this assembly");
         }
         boolean matches = switch (stored.getConfigCase()) {
-            case S3 -> Objects.equals(stored.getS3().getEndpointOverride(),
-                    config.s3Endpoint() == null ? "" : config.s3Endpoint())
-                    && stored.getS3().getForcePathStyle() == (config.s3Endpoint() != null);
+            case S3 -> matchesS3(stored.getS3());
             case REDIS -> stored.getRedis().getUri().equals(config.redisUri())
                     && stored.getRedis().getTtlSeconds() == config.redisTtlSeconds()
                     && stored.getRedis().getMaxObjectBytes() == config.redisMaxObjectBytes()
@@ -45,5 +45,26 @@ final class SelectedDriveBackend implements Consumer<DriveRecord> {
             default -> false;
         };
         if (!matches) throw new RepositoryException(RepositoryException.Code.FAILED_PRECONDITION, "Drive configuration differs from the selected backend");
+    }
+
+    private boolean matchesS3(S3DriveConfig s3) {
+        if (!Objects.equals(s3.getEndpointOverride(), config.s3Endpoint() == null ? "" : config.s3Endpoint())
+                || s3.getForcePathStyle() != (config.s3Endpoint() != null)) {
+            return false;
+        }
+        if (!s3.hasReadThroughCache()) {
+            return true;
+        }
+        if (!config.hasRedisCache()) {
+            return false;
+        }
+        DriveCacheConfig cache = s3.getReadThroughCache();
+        String cacheProvider = cache.getProvider().isEmpty() ? "valkey" : cache.getProvider();
+        return cacheProvider.equals(config.redisCompatibleProvider())
+                && cache.getUri().equals(config.redisUri())
+                && cache.getTtlSeconds() == config.redisTtlSeconds()
+                && cache.getMaxCacheableBytes() == config.redisMaxObjectBytes()
+                && cache.getKeyPrefix().isEmpty()
+                && cache.getCredentialsRef().isEmpty();
     }
 }

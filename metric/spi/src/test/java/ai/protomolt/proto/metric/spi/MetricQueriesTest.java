@@ -10,6 +10,10 @@ import ai.protomolt.proto.metric.QueryMetricsRequest;
 import ai.protomolt.proto.metric.QueryMetricsResponse;
 import ai.protomolt.proto.metric.TimeGrain;
 import ai.protomolt.proto.metric.spi.CompiledMetricQuery.DimensionKind;
+import ai.protomolt.proto.metric.spi.CompiledMetricQuery.NumericRangeFilter;
+import ai.protomolt.proto.metric.spi.CompiledMetricQuery.RowPredicate;
+import ai.protomolt.proto.types.DoubleRange;
+import ai.protomolt.proto.types.LongRange;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -438,5 +442,124 @@ class MetricQueriesTest {
         assertThat(response.getMembers(4).getFieldPath()).isEmpty();
         assertThat(response.getMembers(1).getDefaultGrain())
                 .isEqualTo(TimeGrain.TIME_GRAIN_MONTH);
+    }
+
+    @Test
+    void numericRangesAndCelPredicatesCompileAndValidateAgainstTheSchema() throws Exception {
+        MetricMapping mapping = mapping();
+        FakeExecutor lucene = FakeExecutor.lucene(List.of(
+                MetricRow.newBuilder().putMeasures("revenue", 100.0).build()));
+        Map<MetricBackend, MetricExecutor> single =
+                Map.of(MetricBackend.METRIC_BACKEND_LUCENE, lucene);
+
+        MetricQueries.query(mapping, single, request("revenue")
+                .addFilters(MetricFilter.newBuilder()
+                        .setMember("revenue")
+                        .setLongRange(LongRange.newBuilder()
+                                .setBegin(50L).setIncludeHead(false)
+                                .setEnd(500L).setIncludeTail(true)))
+                .addFilters(MetricFilter.newBuilder()
+                        .setMember("revenue")
+                        .setDoubleRange(DoubleRange.newBuilder()
+                                .setBegin(10.5).setIncludeHead(true)
+                                .setEnd(999.5).setIncludeTail(false)))
+                .addFilters(MetricFilter.newBuilder()
+                        .setCel("this.segment in ['smb', 'mid'] && (this.paying || revenue >= 100) && this.segment != 'ent'"))
+                .build());
+
+        assertThat(lucene.executed.numericRanges()).containsExactly(
+                NumericRangeFilter.ofLong("revenue", "amount_cents", "amount_cents", 51L, 500L),
+                NumericRangeFilter.ofDouble("revenue", "amount_cents", "amount_cents",
+                        10.5, true, 999.5, false));
+        assertThat(lucene.executed.predicates()).hasSize(1);
+        assertThat(lucene.executed.predicates().get(0)).isInstanceOf(RowPredicate.And.class);
+        assertThat(MetricRowPredicates.referencedMembers(
+                mapping, "this.amount_cents >= 100 && segment == 'smb'"))
+                .contains("revenue", "segment");
+
+        // Refusals: unknown field in CEL -> UNKNOWN_MEMBER
+        MetricRefusal unknownCelField = refusalOf(() -> MetricQueries.query(
+                mapping, single, request("revenue")
+                        .addFilters(MetricFilter.newBuilder()
+                                .setCel("this.unknown_field == 'x'"))
+                        .build()));
+        assertThat(unknownCelField.code()).isEqualTo(MetricRefusal.UNKNOWN_MEMBER);
+
+        // Refusals: type mismatch in CEL -> UNSUPPORTED_FILTER
+        MetricRefusal typeMismatchCel = refusalOf(() -> MetricQueries.query(
+                mapping, single, request("revenue")
+                        .addFilters(MetricFilter.newBuilder()
+                                .setCel("this.segment > 100"))
+                        .build()));
+        assertThat(typeMismatchCel.code()).isEqualTo(MetricRefusal.UNSUPPORTED_FILTER);
+
+        // Refusals: non-boolean CEL -> UNSUPPORTED_FILTER
+        MetricRefusal nonBooleanCel = refusalOf(() -> MetricQueries.query(
+                mapping, single, request("revenue")
+                        .addFilters(MetricFilter.newBuilder()
+                                .setCel("this.amount_cents + 1"))
+                        .build()));
+        assertThat(nonBooleanCel.code()).isEqualTo(MetricRefusal.UNSUPPORTED_FILTER);
+
+        // Refusals: calculated member in CEL -> UNSUPPORTED_FILTER
+        MetricRefusal calculatedInCel = refusalOf(() -> MetricQueries.query(
+                mapping, single, request("revenue")
+                        .addFilters(MetricFilter.newBuilder()
+                                .setCel("this.average_order > 10.0"))
+                        .build()));
+        assertThat(calculatedInCel.code()).isEqualTo(MetricRefusal.UNSUPPORTED_FILTER);
+
+        // Refusals: long_range on KEYWORD member -> UNSUPPORTED_FILTER
+        MetricRefusal rangeOnKeyword = refusalOf(() -> MetricQueries.query(
+                mapping, single, request("revenue")
+                        .addFilters(MetricFilter.newBuilder()
+                                .setMember("segment")
+                                .setLongRange(LongRange.newBuilder().setBegin(1L)))
+                        .build()));
+        assertThat(rangeOnKeyword.code()).isEqualTo(MetricRefusal.UNSUPPORTED_FILTER);
+
+        // Refusals: empty exclusive integer range (10, 11) -> UNSUPPORTED_FILTER
+        MetricRefusal emptyExclusiveLong = refusalOf(() -> MetricQueries.query(
+                mapping, single, request("revenue")
+                        .addFilters(MetricFilter.newBuilder()
+                                .setMember("revenue")
+                                .setLongRange(LongRange.newBuilder()
+                                        .setBegin(10L).setEnd(11L)
+                                        .setIncludeHead(false).setIncludeTail(false)))
+                        .build()));
+        assertThat(emptyExclusiveLong.code()).isEqualTo(MetricRefusal.UNSUPPORTED_FILTER);
+    }
+
+    @Test
+    void celIntegerBoundsAtTheSigned64BitEdgeCompileExactlyOrRefuse() throws Exception {
+        MetricMapping mapping = mapping();
+
+        assertThat(celPredicate(mapping, "revenue >= 9223372036854775807")).isEqualTo(
+                new RowPredicate.NumericRange(NumericRangeFilter.ofLong(
+                        "revenue", "amount_cents", "amount_cents", Long.MAX_VALUE, null)));
+        assertThat(celPredicate(mapping, "revenue <= -9223372036854775808")).isEqualTo(
+                new RowPredicate.NumericRange(NumericRangeFilter.ofLong(
+                        "revenue", "amount_cents", "amount_cents", null, Long.MIN_VALUE)));
+        assertThat(celPredicate(mapping, "revenue <= -(9223372036854775807)")).isEqualTo(
+                new RowPredicate.NumericRange(NumericRangeFilter.ofLong(
+                        "revenue", "amount_cents", "amount_cents", null, -Long.MAX_VALUE)));
+
+        for (String expression : List.of(
+                "revenue > 9223372036854775807",
+                "revenue < -9223372036854775808",
+                "revenue >= -(-9223372036854775808)",
+                "revenue == 9223372036854775808u")) {
+            MetricRefusal refusal = refusalOf(() -> celPredicate(mapping, expression));
+            assertThat(refusal.code()).as(expression).isEqualTo(MetricRefusal.UNSUPPORTED_FILTER);
+        }
+    }
+
+    private static RowPredicate celPredicate(MetricMapping mapping, String expression) {
+        FakeExecutor lucene = FakeExecutor.lucene(List.of(
+                MetricRow.newBuilder().putMeasures("revenue", 100.0).build()));
+        MetricQueries.query(mapping, Map.of(MetricBackend.METRIC_BACKEND_LUCENE, lucene),
+                request("revenue").addFilters(MetricFilter.newBuilder().setCel(expression)).build());
+        assertThat(lucene.executed.predicates()).hasSize(1);
+        return lucene.executed.predicates().get(0);
     }
 }

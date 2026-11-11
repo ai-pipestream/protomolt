@@ -1,6 +1,7 @@
 package ai.protomolt.proto.mcp;
 
 import ai.protomolt.proto.actions.ActionCatalog;
+import ai.protomolt.proto.actions.Caller;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
@@ -13,8 +14,13 @@ public final class WorkspaceResources implements McpResources {
     public WorkspaceResources(ActionCatalog catalog, String name, String version, String instructions) {
         delegate = new ai.protomolt.proto.mcp.transport.WorkspaceResources(catalog, name, version, instructions);
     }
+    @Override public boolean authenticatedOnly() { return delegate.authenticatedOnly(); }
+    @Override public boolean owns(String uri) { return delegate.owns(uri); }
     @Override public ArrayNode list(ObjectMapper mapper) { return delegate.list(mapper); }
     @Override public Optional<ObjectNode> read(ObjectMapper mapper, String uri) { return delegate.read(mapper, uri); }
+    @Override public Optional<ObjectNode> read(ObjectMapper mapper, String uri, Caller caller) {
+        return delegate.read(mapper, uri, caller);
+    }
     static ObjectNode toolCatalog(ActionCatalog catalog, ObjectMapper mapper) {
         return ai.protomolt.proto.mcp.transport.WorkspaceResources.toolCatalog(catalog, mapper);
     }

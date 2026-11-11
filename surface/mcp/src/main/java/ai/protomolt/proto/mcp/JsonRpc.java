@@ -12,6 +12,7 @@ final class JsonRpc {
     static final int INVALID_PARAMS = ai.protomolt.proto.mcp.transport.JsonRpc.INVALID_PARAMS;
     static final int INTERNAL_ERROR = ai.protomolt.proto.mcp.transport.JsonRpc.INTERNAL_ERROR;
     static final int RESOURCE_NOT_FOUND = ai.protomolt.proto.mcp.transport.JsonRpc.RESOURCE_NOT_FOUND;
+    static final int PERMISSION_DENIED = ai.protomolt.proto.mcp.transport.JsonRpc.PERMISSION_DENIED;
     private JsonRpc() {}
     static ObjectNode result(ObjectMapper mapper, JsonNode id, JsonNode result) {
         return ai.protomolt.proto.mcp.transport.JsonRpc.result(mapper, id, result);

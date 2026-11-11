@@ -36,8 +36,8 @@ and concurrency limits. Recheck resolved addresses before connecting.
 (with wildcard suffixes), port, plaintext and TLS toggles, a deadline
 ceiling, a leased concurrency semaphore, and syntactic target hardening down
 to DNS labels and IPv6 groups. Three of the five call sites route through it:
-reflection, invocation, and workflows. Still open: payload and message-size
-limits, which the policy does not express at all; resolved-address validation
+reflection, invocation, and workflows, and every policy channel caps message
+size in both directions. Still open: resolved-address validation
 and the re-check before connect, which the class deliberately does not do
 today (it validates without resolving); and pass-through for pipelines, whose
 transport takes a caller-supplied channel resolver, and for schema gathering,
@@ -290,15 +290,17 @@ already checked. The metric mapping's row and member security rewrites
 descriptions and queries from the caller. Design of record:
 [authorization scopes](authorization-scopes.md). Still open:
 
-- **MCP resources stay authenticated-only.** `tools/list` and `tools/call`
-  are scope-checked; resource reads (registry documents, service profiles,
-  delegation transcripts) are not, a recorded edge rather than a silent one.
+- **MCP resources are scope-checked (#822).** Each resource collection
+  declares its scope like an action: registry documents `schema-read`,
+  service profiles `service-invoke`, delegation workers/tasks/transcripts
+  `worker-coordinate`; `resources/list` serves only visible collections
+  and `resources/read` outside the scope is refused by name. Only the
+  workspace bootstrap stays authenticated-only, serving the caller's own
+  filtered tool inventory.
 - **Composable later, deliberately not in v1:** signed scope assertions,
   where a receipt-layer trust snapshot vouches for an external issuer's
   scope claims. The verification machinery exists; binding it to call
   credentials is its own decision.
-- **RANGE and CEL row filters** on metric access, which today expresses
-  row security as equality sets ([metric mapping](metric-mapping.md) v1.1).
 
 ### Transactional registry writes
 
@@ -319,8 +321,10 @@ Java APIs, protobuf contracts, stored formats, REST routes, and action
 envelopes. Enforce compatible changes in CI once a release baseline exists.
 
 Protobuf contracts are covered: CI runs `buf lint` and `buf breaking` against
-the pull request's base branch. Everything else is open — no inspector-driven
-MCP fixtures, no stability annotations of any kind, no Java binary-compatibility
+the pull request's base branch. MCP is covered by the `mcp-inspector` CI job,
+which drives the stdio and streamable-HTTP servers with the pinned official
+MCP Inspector CLI ([tests/mcp-inspector](../../tests/mcp-inspector/README.md)).
+Everything else is open — no stability annotations of any kind, no Java binary-compatibility
 tooling, and no REST-route or action-envelope check. Note that comparing
 against a base branch is not the same as comparing against a release baseline,
 which is what the last sentence asks for.

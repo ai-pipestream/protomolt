@@ -4,16 +4,17 @@
 
 import type { GenEnum, GenFile, GenMessage, GenService } from "@bufbuild/protobuf/codegenv2";
 import { enumDesc, fileDesc, messageDesc, serviceDesc } from "@bufbuild/protobuf/codegenv2";
+import { file_ai_protomolt_proto_validate_v1_validate } from "../../validate/v1/validate_pb";
+import { file_buf_validate_validate } from "../../../../../buf/validate/validate_pb";
 import type { Timestamp } from "@bufbuild/protobuf/wkt";
 import { file_google_protobuf_timestamp } from "@bufbuild/protobuf/wkt";
-import { file_ai_protomolt_proto_validate_v1_validate } from "../../validate/v1/validate_pb";
 import type { Message } from "@bufbuild/protobuf";
 
 /**
  * Describes the file ai/protomolt/proto/repo/v1/drive.proto.
  */
 export const file_ai_protomolt_proto_repo_v1_drive: GenFile = /*@__PURE__*/
-  fileDesc("CiZhaS9wcm90b21vbHQvcHJvdG8vcmVwby92MS9kcml2ZS5wcm90bxIaYWkucHJvdG9tb2x0LnByb3RvLnJlcG8udjEi+AMKBURyaXZlEhAKCGRyaXZlX2lkGAEgASgJEgwKBG5hbWUYAiABKAkSEgoKYWNjb3VudF9pZBgDIAEoCRI5Cgpkcml2ZV90eXBlGAQgASgOMiUuYWkucHJvdG9tb2x0LnByb3RvLnJlcG8udjEuRHJpdmVUeXBlEhAKCHByb3ZpZGVyGAUgASgJEg4KBmJ1Y2tldBgGIAEoCRIOCgZwcmVmaXgYByABKAkSDgoGcmVnaW9uGAggASgJEhcKD2NyZWRlbnRpYWxzX3JlZhgJIAEoCRI3CgZzdGF0dXMYCiABKA4yJy5haS5wcm90b21vbHQucHJvdG8ucmVwby52MS5Ecml2ZVN0YXR1cxJBCghtZXRhZGF0YRhjIAMoCzIvLmFpLnByb3RvbW9sdC5wcm90by5yZXBvLnYxLkRyaXZlLk1ldGFkYXRhRW50cnkSLgoKY3JlYXRlZF9hdBgMIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASSAoPcHJvdmlkZXJfY29uZmlnGA0gASgLMi8uYWkucHJvdG9tb2x0LnByb3RvLnJlcG8udjEuRHJpdmVQcm92aWRlckNvbmZpZxovCg1NZXRhZGF0YUVudHJ5EgsKA2tleRgBIAEoCRINCgV2YWx1ZRgCIAEoCToCOAEiRAoNUzNEcml2ZUNvbmZpZxIZChFlbmRwb2ludF9vdmVycmlkZRgBIAEoCRIYChBmb3JjZV9wYXRoX3N0eWxlGAIgASgIImIKEFJlZGlzRHJpdmVDb25maWcSCwoDdXJpGAEgASgJEhMKC3R0bF9zZWNvbmRzGAIgASgFEhgKEG1heF9vYmplY3RfYnl0ZXMYAyABKAMSEgoKa2V5X3ByZWZpeBgEIAEoCSJlChFSZW1vdGVEcml2ZUNvbmZpZxIlCgZ0YXJnZXQYASABKAlCFYrUueEBDwgBEgsQgCAaBi4qXFMuKhIpCgpkcml2ZV9uYW1lGAIgASgJQhWK1LnhAQ8IARILEIAIGgYuKlxTLioi1wIKE0RyaXZlUHJvdmlkZXJDb25maWcSNwoCczMYASABKAsyKS5haS5wcm90b21vbHQucHJvdG8ucmVwby52MS5TM0RyaXZlQ29uZmlnSAASPQoFcmVkaXMYAiABKAsyLC5haS5wcm90b21vbHQucHJvdG8ucmVwby52MS5SZWRpc0RyaXZlQ29uZmlnSAASPwoGcmVtb3RlGAMgASgLMi0uYWkucHJvdG9tb2x0LnByb3RvLnJlcG8udjEuUmVtb3RlRHJpdmVDb25maWdIABJNCgdvcHRpb25zGGMgAygLMjwuYWkucHJvdG9tb2x0LnByb3RvLnJlcG8udjEuRHJpdmVQcm92aWRlckNvbmZpZy5PcHRpb25zRW50cnkaLgoMT3B0aW9uc0VudHJ5EgsKA2tleRgBIAEoCRINCgV2YWx1ZRgCIAEoCToCOAFCCAoGY29uZmlnIpcDChJDcmVhdGVEcml2ZVJlcXVlc3QSDAoEbmFtZRgBIAEoCRISCgphY2NvdW50X2lkGAIgASgJEjkKCmRyaXZlX3R5cGUYAyABKA4yJS5haS5wcm90b21vbHQucHJvdG8ucmVwby52MS5Ecml2ZVR5cGUSEAoIcHJvdmlkZXIYBCABKAkSDgoGYnVja2V0GAUgASgJEg4KBnByZWZpeBgGIAEoCRIOCgZyZWdpb24YByABKAkSFwoPY3JlZGVudGlhbHNfcmVmGAggASgJEk4KCG1ldGFkYXRhGGMgAygLMjwuYWkucHJvdG9tb2x0LnByb3RvLnJlcG8udjEuQ3JlYXRlRHJpdmVSZXF1ZXN0Lk1ldGFkYXRhRW50cnkSSAoPcHJvdmlkZXJfY29uZmlnGAogASgLMi8uYWkucHJvdG9tb2x0LnByb3RvLnJlcG8udjEuRHJpdmVQcm92aWRlckNvbmZpZxovCg1NZXRhZGF0YUVudHJ5EgsKA2tleRgBIAEoCRINCgV2YWx1ZRgCIAEoCToCOAEiRwoTQ3JlYXRlRHJpdmVSZXNwb25zZRIwCgVkcml2ZRgBIAEoCzIhLmFpLnByb3RvbW9sdC5wcm90by5yZXBvLnYxLkRyaXZlIlcKD0dldERyaXZlUmVxdWVzdBISCghkcml2ZV9pZBgBIAEoCUgAEg4KBG5hbWUYAiABKAlIABISCgphY2NvdW50X2lkGAMgASgJQgwKCmNvb3JkaW5hdGUiRAoQR2V0RHJpdmVSZXNwb25zZRIwCgVkcml2ZRgBIAEoCzIhLmFpLnByb3RvbW9sdC5wcm90by5yZXBvLnYxLkRyaXZlIlIKEUxpc3REcml2ZXNSZXF1ZXN0EhIKCmFjY291bnRfaWQYASABKAkSDQoFbGltaXQYAiABKAUSGgoSY29udGludWF0aW9uX3Rva2VuGAMgASgJImgKEkxpc3REcml2ZXNSZXNwb25zZRIxCgZkcml2ZXMYASADKAsyIS5haS5wcm90b21vbHQucHJvdG8ucmVwby52MS5Ecml2ZRIfChduZXh0X2NvbnRpbnVhdGlvbl90b2tlbhgCIAEoCSpuCglEcml2ZVR5cGUSGgoWRFJJVkVfVFlQRV9VTlNQRUNJRklFRBAAEhUKEURSSVZFX1RZUEVfSU5UQUtFEAESFwoTRFJJVkVfVFlQRV9QSVBFTElORRACEhUKEURSSVZFX1RZUEVfQ1VTVE9NEAMqmQEKC0RyaXZlU3RhdHVzEhwKGERSSVZFX1NUQVRVU19VTlNQRUNJRklFRBAAEh0KGURSSVZFX1NUQVRVU19QUk9WSVNJT05JTkcQARIXChNEUklWRV9TVEFUVVNfQUNUSVZFEAISGgoWRFJJVkVfU1RBVFVTX1NVU1BFTkRFRBADEhgKFERSSVZFX1NUQVRVU19ERUxFVEVEEAQy0gIKDERyaXZlU2VydmljZRJuCgtDcmVhdGVEcml2ZRIuLmFpLnByb3RvbW9sdC5wcm90by5yZXBvLnYxLkNyZWF0ZURyaXZlUmVxdWVzdBovLmFpLnByb3RvbW9sdC5wcm90by5yZXBvLnYxLkNyZWF0ZURyaXZlUmVzcG9uc2USZQoIR2V0RHJpdmUSKy5haS5wcm90b21vbHQucHJvdG8ucmVwby52MS5HZXREcml2ZVJlcXVlc3QaLC5haS5wcm90b21vbHQucHJvdG8ucmVwby52MS5HZXREcml2ZVJlc3BvbnNlEmsKCkxpc3REcml2ZXMSLS5haS5wcm90b21vbHQucHJvdG8ucmVwby52MS5MaXN0RHJpdmVzUmVxdWVzdBouLmFpLnByb3RvbW9sdC5wcm90by5yZXBvLnYxLkxpc3REcml2ZXNSZXNwb25zZUIeChphaS5wcm90b21vbHQucHJvdG8ucmVwby52MVABYgZwcm90bzM", [file_google_protobuf_timestamp, file_ai_protomolt_proto_validate_v1_validate]);
+  fileDesc("CiZhaS9wcm90b21vbHQvcHJvdG8vcmVwby92MS9kcml2ZS5wcm90bxIaYWkucHJvdG9tb2x0LnByb3RvLnJlcG8udjEi+AMKBURyaXZlEhAKCGRyaXZlX2lkGAEgASgJEgwKBG5hbWUYAiABKAkSEgoKYWNjb3VudF9pZBgDIAEoCRI5Cgpkcml2ZV90eXBlGAQgASgOMiUuYWkucHJvdG9tb2x0LnByb3RvLnJlcG8udjEuRHJpdmVUeXBlEhAKCHByb3ZpZGVyGAUgASgJEg4KBmJ1Y2tldBgGIAEoCRIOCgZwcmVmaXgYByABKAkSDgoGcmVnaW9uGAggASgJEhcKD2NyZWRlbnRpYWxzX3JlZhgJIAEoCRI3CgZzdGF0dXMYCiABKA4yJy5haS5wcm90b21vbHQucHJvdG8ucmVwby52MS5Ecml2ZVN0YXR1cxJBCghtZXRhZGF0YRhjIAMoCzIvLmFpLnByb3RvbW9sdC5wcm90by5yZXBvLnYxLkRyaXZlLk1ldGFkYXRhRW50cnkSLgoKY3JlYXRlZF9hdBgMIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASSAoPcHJvdmlkZXJfY29uZmlnGA0gASgLMi8uYWkucHJvdG9tb2x0LnByb3RvLnJlcG8udjEuRHJpdmVQcm92aWRlckNvbmZpZxovCg1NZXRhZGF0YUVudHJ5EgsKA2tleRgBIAEoCRINCgV2YWx1ZRgCIAEoCToCOAEijgEKDVMzRHJpdmVDb25maWcSGQoRZW5kcG9pbnRfb3ZlcnJpZGUYASABKAkSGAoQZm9yY2VfcGF0aF9zdHlsZRgCIAEoCBJIChJyZWFkX3Rocm91Z2hfY2FjaGUYAyABKAsyLC5haS5wcm90b21vbHQucHJvdG8ucmVwby52MS5Ecml2ZUNhY2hlQ29uZmlnIsMCChBEcml2ZUNhY2hlQ29uZmlnEkkKCHByb3ZpZGVyGAEgASgJQje6SBdyFRggMhFeKHx2YWxrZXl8cmVkaXMpJIrUueEBFxIVECAaEV4ofHZhbGtleXxyZWRpcykkEjUKA3VyaRgCIAEoCUIoukgQyAEBcgsYgCAyBi4qXFMuKorUueEBDwgBEgsQgCAaBi4qXFMuKhImCgt0dGxfc2Vjb25kcxgDIAEoBUIRukgEGgIgAIrUueEBBBoCCAASLgoTbWF4X2NhY2hlYWJsZV9ieXRlcxgEIAEoA0IRukgEIgIgAIrUueEBBCICCAASJwoKa2V5X3ByZWZpeBgFIAEoCUITukgFcgMYgASK1LnhAQUSAxCABBIsCg9jcmVkZW50aWFsc19yZWYYBiABKAlCE7pIBXIDGIAEitS54QEFEgMQgAQiYgoQUmVkaXNEcml2ZUNvbmZpZxILCgN1cmkYASABKAkSEwoLdHRsX3NlY29uZHMYAiABKAUSGAoQbWF4X29iamVjdF9ieXRlcxgDIAEoAxISCgprZXlfcHJlZml4GAQgASgJImUKEVJlbW90ZURyaXZlQ29uZmlnEiUKBnRhcmdldBgBIAEoCUIVitS54QEPCAESCxCAIBoGLipcUy4qEikKCmRyaXZlX25hbWUYAiABKAlCFYrUueEBDwgBEgsQgAgaBi4qXFMuKiLXAgoTRHJpdmVQcm92aWRlckNvbmZpZxI3CgJzMxgBIAEoCzIpLmFpLnByb3RvbW9sdC5wcm90by5yZXBvLnYxLlMzRHJpdmVDb25maWdIABI9CgVyZWRpcxgCIAEoCzIsLmFpLnByb3RvbW9sdC5wcm90by5yZXBvLnYxLlJlZGlzRHJpdmVDb25maWdIABI/CgZyZW1vdGUYAyABKAsyLS5haS5wcm90b21vbHQucHJvdG8ucmVwby52MS5SZW1vdGVEcml2ZUNvbmZpZ0gAEk0KB29wdGlvbnMYYyADKAsyPC5haS5wcm90b21vbHQucHJvdG8ucmVwby52MS5Ecml2ZVByb3ZpZGVyQ29uZmlnLk9wdGlvbnNFbnRyeRouCgxPcHRpb25zRW50cnkSCwoDa2V5GAEgASgJEg0KBXZhbHVlGAIgASgJOgI4AUIICgZjb25maWcilwMKEkNyZWF0ZURyaXZlUmVxdWVzdBIMCgRuYW1lGAEgASgJEhIKCmFjY291bnRfaWQYAiABKAkSOQoKZHJpdmVfdHlwZRgDIAEoDjIlLmFpLnByb3RvbW9sdC5wcm90by5yZXBvLnYxLkRyaXZlVHlwZRIQCghwcm92aWRlchgEIAEoCRIOCgZidWNrZXQYBSABKAkSDgoGcHJlZml4GAYgASgJEg4KBnJlZ2lvbhgHIAEoCRIXCg9jcmVkZW50aWFsc19yZWYYCCABKAkSTgoIbWV0YWRhdGEYYyADKAsyPC5haS5wcm90b21vbHQucHJvdG8ucmVwby52MS5DcmVhdGVEcml2ZVJlcXVlc3QuTWV0YWRhdGFFbnRyeRJICg9wcm92aWRlcl9jb25maWcYCiABKAsyLy5haS5wcm90b21vbHQucHJvdG8ucmVwby52MS5Ecml2ZVByb3ZpZGVyQ29uZmlnGi8KDU1ldGFkYXRhRW50cnkSCwoDa2V5GAEgASgJEg0KBXZhbHVlGAIgASgJOgI4ASJHChNDcmVhdGVEcml2ZVJlc3BvbnNlEjAKBWRyaXZlGAEgASgLMiEuYWkucHJvdG9tb2x0LnByb3RvLnJlcG8udjEuRHJpdmUiVwoPR2V0RHJpdmVSZXF1ZXN0EhIKCGRyaXZlX2lkGAEgASgJSAASDgoEbmFtZRgCIAEoCUgAEhIKCmFjY291bnRfaWQYAyABKAlCDAoKY29vcmRpbmF0ZSJEChBHZXREcml2ZVJlc3BvbnNlEjAKBWRyaXZlGAEgASgLMiEuYWkucHJvdG9tb2x0LnByb3RvLnJlcG8udjEuRHJpdmUiUgoRTGlzdERyaXZlc1JlcXVlc3QSEgoKYWNjb3VudF9pZBgBIAEoCRINCgVsaW1pdBgCIAEoBRIaChJjb250aW51YXRpb25fdG9rZW4YAyABKAkiaAoSTGlzdERyaXZlc1Jlc3BvbnNlEjEKBmRyaXZlcxgBIAMoCzIhLmFpLnByb3RvbW9sdC5wcm90by5yZXBvLnYxLkRyaXZlEh8KF25leHRfY29udGludWF0aW9uX3Rva2VuGAIgASgJKm4KCURyaXZlVHlwZRIaChZEUklWRV9UWVBFX1VOU1BFQ0lGSUVEEAASFQoRRFJJVkVfVFlQRV9JTlRBS0UQARIXChNEUklWRV9UWVBFX1BJUEVMSU5FEAISFQoRRFJJVkVfVFlQRV9DVVNUT00QAyqZAQoLRHJpdmVTdGF0dXMSHAoYRFJJVkVfU1RBVFVTX1VOU1BFQ0lGSUVEEAASHQoZRFJJVkVfU1RBVFVTX1BST1ZJU0lPTklORxABEhcKE0RSSVZFX1NUQVRVU19BQ1RJVkUQAhIaChZEUklWRV9TVEFUVVNfU1VTUEVOREVEEAMSGAoURFJJVkVfU1RBVFVTX0RFTEVURUQQBDLSAgoMRHJpdmVTZXJ2aWNlEm4KC0NyZWF0ZURyaXZlEi4uYWkucHJvdG9tb2x0LnByb3RvLnJlcG8udjEuQ3JlYXRlRHJpdmVSZXF1ZXN0Gi8uYWkucHJvdG9tb2x0LnByb3RvLnJlcG8udjEuQ3JlYXRlRHJpdmVSZXNwb25zZRJlCghHZXREcml2ZRIrLmFpLnByb3RvbW9sdC5wcm90by5yZXBvLnYxLkdldERyaXZlUmVxdWVzdBosLmFpLnByb3RvbW9sdC5wcm90by5yZXBvLnYxLkdldERyaXZlUmVzcG9uc2USawoKTGlzdERyaXZlcxItLmFpLnByb3RvbW9sdC5wcm90by5yZXBvLnYxLkxpc3REcml2ZXNSZXF1ZXN0Gi4uYWkucHJvdG9tb2x0LnByb3RvLnJlcG8udjEuTGlzdERyaXZlc1Jlc3BvbnNlQh4KGmFpLnByb3RvbW9sdC5wcm90by5yZXBvLnYxUAFiBnByb3RvMw", [file_ai_protomolt_proto_validate_v1_validate, file_buf_validate_validate, file_google_protobuf_timestamp]);
 
 /**
  * A per-account storage namespace over an object-storage location.
@@ -140,6 +141,13 @@ export type S3DriveConfig = Message<"ai.protomolt.proto.repo.v1.S3DriveConfig"> 
    * @generated from field: bool force_path_style = 2;
    */
   forcePathStyle: boolean;
+
+  /**
+   * Optional per-drive read-through byte cache in front of this S3 backing store.
+   *
+   * @generated from field: ai.protomolt.proto.repo.v1.DriveCacheConfig read_through_cache = 3;
+   */
+  readThroughCache?: DriveCacheConfig | undefined;
 };
 
 /**
@@ -148,6 +156,62 @@ export type S3DriveConfig = Message<"ai.protomolt.proto.repo.v1.S3DriveConfig"> 
  */
 export const S3DriveConfigSchema: GenMessage<S3DriveConfig> = /*@__PURE__*/
   messageDesc(file_ai_protomolt_proto_repo_v1_drive, 1);
+
+/**
+ * Per-drive read-through byte cache configuration backed by an expiring Redis or Valkey store.
+ *
+ * @generated from message ai.protomolt.proto.repo.v1.DriveCacheConfig
+ */
+export type DriveCacheConfig = Message<"ai.protomolt.proto.repo.v1.DriveCacheConfig"> & {
+  /**
+   * Cache provider ("valkey" or "redis"; blank defaults to "valkey").
+   *
+   * @generated from field: string provider = 1;
+   */
+  provider: string;
+
+  /**
+   * Connection URI: redis://host:port[/db] or rediss://host:port[/db] (no inline credentials).
+   *
+   * @generated from field: string uri = 2;
+   */
+  uri: string;
+
+  /**
+   * Per-object cache time-to-live in seconds; must be positive (> 0).
+   *
+   * @generated from field: int32 ttl_seconds = 3;
+   */
+  ttlSeconds: number;
+
+  /**
+   * Maximum object size in bytes eligible for read-through caching; must be positive (> 0).
+   *
+   * @generated from field: int64 max_cacheable_bytes = 4;
+   */
+  maxCacheableBytes: bigint;
+
+  /**
+   * Optional key prefix applied to cached entries before physical backing isolation.
+   *
+   * @generated from field: string key_prefix = 5;
+   */
+  keyPrefix: string;
+
+  /**
+   * Reference to cache credentials resolved at IO time (e.g., "env:DRIVE_CACHE"); blank = unauthenticated.
+   *
+   * @generated from field: string credentials_ref = 6;
+   */
+  credentialsRef: string;
+};
+
+/**
+ * Describes the message ai.protomolt.proto.repo.v1.DriveCacheConfig.
+ * Use `create(DriveCacheConfigSchema)` to create a new message.
+ */
+export const DriveCacheConfigSchema: GenMessage<DriveCacheConfig> = /*@__PURE__*/
+  messageDesc(file_ai_protomolt_proto_repo_v1_drive, 2);
 
 /**
  * Pronounced knobs for a Redis-backed drive.
@@ -189,7 +253,7 @@ export type RedisDriveConfig = Message<"ai.protomolt.proto.repo.v1.RedisDriveCon
  * Use `create(RedisDriveConfigSchema)` to create a new message.
  */
 export const RedisDriveConfigSchema: GenMessage<RedisDriveConfig> = /*@__PURE__*/
-  messageDesc(file_ai_protomolt_proto_repo_v1_drive, 2);
+  messageDesc(file_ai_protomolt_proto_repo_v1_drive, 3);
 
 /**
  * Provider-specific configuration for a drive's backing store.
@@ -219,7 +283,7 @@ export type RemoteDriveConfig = Message<"ai.protomolt.proto.repo.v1.RemoteDriveC
  * Use `create(RemoteDriveConfigSchema)` to create a new message.
  */
 export const RemoteDriveConfigSchema: GenMessage<RemoteDriveConfig> = /*@__PURE__*/
-  messageDesc(file_ai_protomolt_proto_repo_v1_drive, 3);
+  messageDesc(file_ai_protomolt_proto_repo_v1_drive, 4);
 
 /**
  * Provider-specific drive settings persisted with the drive's storage identity.
@@ -271,7 +335,7 @@ export type DriveProviderConfig = Message<"ai.protomolt.proto.repo.v1.DriveProvi
  * Use `create(DriveProviderConfigSchema)` to create a new message.
  */
 export const DriveProviderConfigSchema: GenMessage<DriveProviderConfig> = /*@__PURE__*/
-  messageDesc(file_ai_protomolt_proto_repo_v1_drive, 4);
+  messageDesc(file_ai_protomolt_proto_repo_v1_drive, 5);
 
 /**
  * Request to provision a drive. Account provisioning calls this to create
@@ -357,7 +421,7 @@ export type CreateDriveRequest = Message<"ai.protomolt.proto.repo.v1.CreateDrive
  * Use `create(CreateDriveRequestSchema)` to create a new message.
  */
 export const CreateDriveRequestSchema: GenMessage<CreateDriveRequest> = /*@__PURE__*/
-  messageDesc(file_ai_protomolt_proto_repo_v1_drive, 5);
+  messageDesc(file_ai_protomolt_proto_repo_v1_drive, 6);
 
 /**
  * Response carrying the newly provisioned drive.
@@ -378,7 +442,7 @@ export type CreateDriveResponse = Message<"ai.protomolt.proto.repo.v1.CreateDriv
  * Use `create(CreateDriveResponseSchema)` to create a new message.
  */
 export const CreateDriveResponseSchema: GenMessage<CreateDriveResponse> = /*@__PURE__*/
-  messageDesc(file_ai_protomolt_proto_repo_v1_drive, 6);
+  messageDesc(file_ai_protomolt_proto_repo_v1_drive, 7);
 
 /**
  * Request to fetch one drive by id or by account-scoped name.
@@ -422,7 +486,7 @@ export type GetDriveRequest = Message<"ai.protomolt.proto.repo.v1.GetDriveReques
  * Use `create(GetDriveRequestSchema)` to create a new message.
  */
 export const GetDriveRequestSchema: GenMessage<GetDriveRequest> = /*@__PURE__*/
-  messageDesc(file_ai_protomolt_proto_repo_v1_drive, 7);
+  messageDesc(file_ai_protomolt_proto_repo_v1_drive, 8);
 
 /**
  * Response carrying the requested drive.
@@ -443,7 +507,7 @@ export type GetDriveResponse = Message<"ai.protomolt.proto.repo.v1.GetDriveRespo
  * Use `create(GetDriveResponseSchema)` to create a new message.
  */
 export const GetDriveResponseSchema: GenMessage<GetDriveResponse> = /*@__PURE__*/
-  messageDesc(file_ai_protomolt_proto_repo_v1_drive, 8);
+  messageDesc(file_ai_protomolt_proto_repo_v1_drive, 9);
 
 /**
  * Request to list an account's drives.
@@ -478,7 +542,7 @@ export type ListDrivesRequest = Message<"ai.protomolt.proto.repo.v1.ListDrivesRe
  * Use `create(ListDrivesRequestSchema)` to create a new message.
  */
 export const ListDrivesRequestSchema: GenMessage<ListDrivesRequest> = /*@__PURE__*/
-  messageDesc(file_ai_protomolt_proto_repo_v1_drive, 9);
+  messageDesc(file_ai_protomolt_proto_repo_v1_drive, 10);
 
 /**
  * Response containing a page of the account's drives.
@@ -506,7 +570,7 @@ export type ListDrivesResponse = Message<"ai.protomolt.proto.repo.v1.ListDrivesR
  * Use `create(ListDrivesResponseSchema)` to create a new message.
  */
 export const ListDrivesResponseSchema: GenMessage<ListDrivesResponse> = /*@__PURE__*/
-  messageDesc(file_ai_protomolt_proto_repo_v1_drive, 10);
+  messageDesc(file_ai_protomolt_proto_repo_v1_drive, 11);
 
 /**
  * What a drive is for. Intake drives hold staged source material; pipeline

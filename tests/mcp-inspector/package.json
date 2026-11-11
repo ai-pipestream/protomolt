@@ -1,0 +1,15 @@
+{
+  "name": "protomolt-mcp-inspector-lane",
+  "private": true,
+  "description": "Runs the official MCP Inspector CLI against ProtoMolt's stdio and streamable-HTTP MCP servers.",
+  "type": "module",
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "scripts": {
+    "self-test": "node run.mjs --self-test"
+  },
+  "devDependencies": {
+    "@modelcontextprotocol/inspector": "2.12.0"
+  }
+}

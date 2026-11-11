@@ -53,38 +53,47 @@ message MemberRef {
   TimeGrain grain = 2;
 }
 
-// One filter over a member: an equality set over a keyword or bool
-// dimension, a date range over a DATE dimension, or a path prefix over a
-// TREE_PATH dimension. Exactly one form.
+// One filter over a mapping: an equality set over a keyword or bool
+// dimension, a date range over a DATE dimension, a numeric range over a
+// NUMERIC member, a path prefix over a TREE_PATH dimension, or a boolean
+// CEL predicate over the mapping's members and fields. Exactly one form.
 message MetricFilter {
-  // The mapping member name the filter applies to. Required.
+  // The mapping member name the filter applies to; required for equals,
+  // range, long_range, double_range, and prefix, optional for cel.
   string member = 1 [
     (ai.protomolt.proto.validate.v1.field) = {
-      required: true
-      string: {min_len: 1, max_len: 200}
+      string: {max_len: 200}
     }
   ];
   // Equality set: a row matches when the member equals any value, compared
   // against the dimension's rendered form (the same strings result rows
-  // carry). An empty set without a range is refused by the compiler; it
-  // would silently match nothing.
+  // carry). An empty set without another filter form is refused by the
+  // compiler; it would silently match nothing.
   repeated string equals = 2 [
     (ai.protomolt.proto.validate.v1.field) = {
       repeated: {max_items: 100, items: {string: {min_len: 1, max_len: 200}}}
     }
   ];
-  // Date range over a DATE dimension; exactly one of equals/range. The
-  // canonical types.v1 day-grain range: ISO calendar-day bounds, an unset
-  // bound is an open end, an absent inclusivity flag means included, and
-  // excluding a bound drops that entire day. The type's own rules refuse
-  // an empty or inverted range at the gate.
+  // Date range over a DATE dimension; the canonical types.v1 day-grain range:
+  // ISO calendar-day bounds, an unset bound is an open end, an absent
+  // inclusivity flag means included, and excluding a bound drops that entire
+  // day. The type's own rules refuse an empty or inverted range at the gate.
   ai.protomolt.proto.types.v1.DateRange range = 3;
   // Descendant-or-self filter over a TREE_PATH dimension: a row matches
   // when its path is this path or any path below it. Root-first segments,
   // wire-plain like every TreePath; the type's own rules refuse an empty
-  // path or a segment containing the "/" render delimiter. Exactly one of
-  // equals/range/prefix.
+  // path or a segment containing the "/" render delimiter.
   ai.protomolt.proto.types.v1.TreePath prefix = 4;
+  // Signed 64-bit integer range over a NUMERIC member.
+  ai.protomolt.proto.types.v1.LongRange long_range = 5;
+  // IEEE-754 double range over a NUMERIC member.
+  ai.protomolt.proto.types.v1.DoubleRange double_range = 6;
+  // Boolean CEL predicate over the mapping's members and fields.
+  string cel = 7 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      string: {max_len: 2048}
+    }
+  ];
 }
 
 // One aggregate query against a mapping subject.

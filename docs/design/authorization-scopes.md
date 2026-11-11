@@ -163,7 +163,7 @@ never a thread-local guessed at later.
 |---|---|
 | gRPC service | The token interceptor resolves the caller onto the call context; the per-method handler checks the action's scope before dispatch |
 | REST gateway | The per-route token check resolves the caller; a missing scope is `403` with the same named refusal (`401` stays what it means: not authenticated) |
-| MCP over HTTP | The caller is pinned to the session at `initialize`; `tools/list` serves only tools whose scope the caller holds; `tools/call` refuses the rest by name |
+| MCP over HTTP | The caller is pinned to the session at `initialize`; each later request is authenticated again, refused with HTTP 401 when its credential no longer resolves and with HTTP 403 when it resolves to a principal other than the session's (the operator token included); `tools/list` serves only tools whose scope the caller holds; `tools/call` refuses the rest by name. Resource collections declare their scope the same way actions do (`McpResources.requiredScope()`): `resources/list` and `resources/templates/list` serve only visible collections, and `resources/read` outside the scope is refused by name before any contents are produced, as JSON-RPC error `-32050` with a message starting `permission-denied:`; the refusal is decided from the URI namespace alone, so it reads no store and does not reveal whether the addressed resource exists — registry documents under `schema-read`, service profiles under `service-invoke`, delegation workers/tasks/transcripts under `worker-coordinate`. A collection declaring no scope is refused to scoped callers; only the workspace bootstrap, which describes the server and the caller's own tool inventory, stays behind authentication alone |
 | Registry server | Route-table split before dispatch: reads, writes, and action execution each name their scope |
 | Search and metric services | An identity interceptor beside the validating one, mounted only when the service is started with a resolver; a service without one stays an open, trusted-network surface, as today |
 | Console sessions | A console login issues an HttpOnly session bound to a principal's scopes, never to the operator token, through the shared `ConsoleSessions` mechanism: serve's task console and the search console both use it, and a session retains the credential it presented so a console can hand it to guarded peers |
@@ -301,10 +301,13 @@ credential.
   compile-time rewrite consumes the caller identity this layer
   establishes and its own `metric_access` section on the policy
   document: denied members disappear from descriptions and refuse
-  queries by name, and per-principal row filters are ANDed into every
-  reduction as ordinary equality filters, with rollup subjects and the
-  rebuild verb fail-closed for restricted principals — see
-  [the metric mapping design](metric-mapping.md).
+  queries (and caller CEL predicates referencing them) by name, and
+  per-principal row filters (`equals`, `range`, `long_range`,
+  `double_range`, and boolean `cel` predicates over the subject's
+  rows) are validated against the mapping schema and ANDed into every
+  reduction before aggregation, with invalid policy rules, rollup
+  subjects, and the rebuild verb fail-closed for restricted principals
+  — see [the metric mapping design](metric-mapping.md).
 - **It does not issue credentials.** There is no token mint, no
   expiry, no JWT parsing. A credential is an opaque string whose
   digest a policy names; issuance and distribution belong to the
@@ -315,11 +318,12 @@ credential.
   application-level claim inside an already-authorized coordinator
   stream; `worker-coordinate` gates who may open that stream, not
   which worker id it may assert.
-- **MCP resources stay behind authentication.** `tools/list` and
-  `tools/call` are scope-checked; the resource reads (registry
-  documents, service profiles, delegation transcripts) remain
-  authenticated-only in this version, a recorded edge rather than a
-  silent one.
+- **MCP resources carry no per-account partitioning.** Resource reads
+  are scope-checked like tool calls, but the underlying stores
+  (registry, service profiles, delegation bridge) are node-global:
+  a principal holding the collection's scope sees the whole
+  collection, exactly as with the corresponding actions. Account
+  boundaries inside a collection would be tenancy, below.
 - **It is not tenancy.** The intake service's account-bound scope, with
   its per-account axes, stays exactly as it is; this vocabulary gates
   the operator-facing surfaces. Mapping external principals onto

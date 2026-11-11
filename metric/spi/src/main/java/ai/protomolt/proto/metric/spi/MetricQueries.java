@@ -18,9 +18,13 @@ import ai.protomolt.proto.metric.spi.CompiledMetricQuery.Dimension;
 import ai.protomolt.proto.metric.spi.CompiledMetricQuery.DimensionKind;
 import ai.protomolt.proto.metric.spi.CompiledMetricQuery.EqualsFilter;
 import ai.protomolt.proto.metric.spi.CompiledMetricQuery.Measure;
+import ai.protomolt.proto.metric.spi.CompiledMetricQuery.NumericRangeFilter;
+import ai.protomolt.proto.metric.spi.CompiledMetricQuery.RowPredicate;
 import ai.protomolt.proto.metric.spi.MetricMapping.FieldKind;
 import ai.protomolt.proto.metric.spi.MetricMapping.MetricMember;
 import ai.protomolt.proto.types.DateRange;
+import ai.protomolt.proto.types.DoubleRange;
+import ai.protomolt.proto.types.LongRange;
 import dev.cel.common.types.SimpleType;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -243,57 +247,218 @@ public final class MetricQueries {
         List<EqualsFilter> filters = new ArrayList<>();
         List<CompiledMetricQuery.DateRangeFilter> dateRanges = new ArrayList<>();
         List<CompiledMetricQuery.PathPrefixFilter> pathPrefixes = new ArrayList<>();
+        List<NumericRangeFilter> numericRanges = new ArrayList<>();
+        List<RowPredicate> predicates = new ArrayList<>();
         for (MetricFilter filter : request.getFiltersList()) {
-            MetricMember member = member(mapping, filter.getMember());
-            if (member.role() != MemberRole.MEMBER_ROLE_DIMENSION) {
-                throw new MetricRefusal(MetricRefusal.ROLE_MISMATCH,
-                        "'" + filter.getMember() + "' is a measure; filters apply to dimensions",
-                        dimensionNames(mapping));
-            }
-            if ((filter.hasRange() ? 1 : 0) + (filter.hasPrefix() ? 1 : 0)
-                    + (filter.getEqualsCount() > 0 ? 1 : 0) > 1) {
-                throw new MetricRefusal(MetricRefusal.UNSUPPORTED_FILTER,
-                        "filter on '" + filter.getMember() + "' declares more than one"
-                                + " form; pick equality, range, or prefix", List.of());
-            }
-            if (filter.hasRange()) {
-                dateRanges.add(dateRange(member, filter));
-                continue;
-            }
-            if (filter.hasPrefix()) {
-                pathPrefixes.add(pathPrefix(member, filter));
-                continue;
-            }
-            if (filter.getEqualsCount() == 0) {
-                throw new MetricRefusal(MetricRefusal.UNSUPPORTED_FILTER,
-                        "filter on '" + filter.getMember()
-                                + "' has an empty equality set, which would match nothing",
-                        List.of());
-            }
-            DimensionKind kind = switch (member.kind()) {
-                case KEYWORD -> DimensionKind.TERM;
-                case BOOLEAN -> DimensionKind.BOOLEAN;
-                case TREE_PATH -> throw new MetricRefusal(MetricRefusal.UNSUPPORTED_FILTER,
-                        "equality on '" + filter.getMember() + "' would silently match any"
-                                + " descendant of the value; a TREE_PATH dimension filters"
-                                + " by prefix", List.of());
-                default -> throw new MetricRefusal(MetricRefusal.UNSUPPORTED_FILTER,
-                        "filter on '" + filter.getMember() + "' needs a keyword or bool "
-                                + "dimension, got " + member.kind()
-                                + (member.kind() == FieldKind.DATE
-                                        ? "; a DATE dimension filters by range" : ""),
-                        List.of());
-            };
-            filters.add(new EqualsFilter(
-                    member.name(), member.fieldName(), member.fieldPath(), kind,
-                    filter.getEqualsList()));
+            compileFilter(mapping, filter, filters, dateRanges, pathPrefixes,
+                    numericRanges, predicates);
         }
 
         return new Plan(
                 new CompiledMetricQuery(mapping.subject(), backend, measures, dimensions,
-                        filters, dateRanges, pathPrefixes, request.getLimit()),
+                        filters, dateRanges, pathPrefixes, numericRanges, predicates,
+                        request.getLimit()),
                 requested.stream().map(MetricMember::name).toList(),
                 calculated);
+    }
+
+    /**
+     * Validates and compiles one {@link MetricFilter} against {@code mapping}.
+     * Exposed so access-policy rewrites can verify policy row filters against
+     * the target mapping before query compilation.
+     */
+    public static void validateFilter(MetricMapping mapping, MetricFilter filter) {
+        compileFilter(mapping, filter, new ArrayList<>(), new ArrayList<>(),
+                new ArrayList<>(), new ArrayList<>(), new ArrayList<>());
+    }
+
+    private static void compileFilter(
+            MetricMapping mapping,
+            MetricFilter filter,
+            List<EqualsFilter> filters,
+            List<CompiledMetricQuery.DateRangeFilter> dateRanges,
+            List<CompiledMetricQuery.PathPrefixFilter> pathPrefixes,
+            List<NumericRangeFilter> numericRanges,
+            List<RowPredicate> predicates) {
+        int forms = (filter.hasRange() ? 1 : 0)
+                + (filter.hasPrefix() ? 1 : 0)
+                + (filter.hasLongRange() ? 1 : 0)
+                + (filter.hasDoubleRange() ? 1 : 0)
+                + (!filter.getCel().isEmpty() ? 1 : 0)
+                + (filter.getEqualsCount() > 0 ? 1 : 0);
+        if (!filter.getCel().isEmpty()) {
+            if (forms > 1) {
+                throw new MetricRefusal(MetricRefusal.UNSUPPORTED_FILTER,
+                        "filter declares more than one form; pick equality, range, prefix, or cel",
+                        List.of());
+            }
+            if (!filter.getMember().isEmpty()) {
+                member(mapping, filter.getMember());
+            }
+            predicates.add(MetricRowPredicates.compile(mapping, filter.getCel()));
+            return;
+        }
+        MetricMember member = member(mapping, filter.getMember());
+        if (forms > 1) {
+            throw new MetricRefusal(MetricRefusal.UNSUPPORTED_FILTER,
+                    "filter on '" + filter.getMember() + "' declares more than one"
+                            + " form; pick equality, range, or prefix", List.of());
+        }
+        if (filter.hasLongRange()) {
+            numericRanges.add(longRange(member, filter));
+            return;
+        }
+        if (filter.hasDoubleRange()) {
+            numericRanges.add(doubleRange(member, filter));
+            return;
+        }
+        if (member.role() != MemberRole.MEMBER_ROLE_DIMENSION) {
+            throw new MetricRefusal(MetricRefusal.ROLE_MISMATCH,
+                    "'" + filter.getMember() + "' is a measure; filters apply to dimensions",
+                    dimensionNames(mapping));
+        }
+        if (filter.hasRange()) {
+            dateRanges.add(dateRange(member, filter));
+            return;
+        }
+        if (filter.hasPrefix()) {
+            pathPrefixes.add(pathPrefix(member, filter));
+            return;
+        }
+        if (filter.getEqualsCount() == 0) {
+            throw new MetricRefusal(MetricRefusal.UNSUPPORTED_FILTER,
+                    "filter on '" + filter.getMember()
+                            + "' has an empty equality set, which would match nothing",
+                    List.of());
+        }
+        DimensionKind kind = switch (member.kind()) {
+            case KEYWORD -> DimensionKind.TERM;
+            case BOOLEAN -> DimensionKind.BOOLEAN;
+            case TREE_PATH -> throw new MetricRefusal(MetricRefusal.UNSUPPORTED_FILTER,
+                    "equality on '" + filter.getMember() + "' would silently match any"
+                            + " descendant of the value; a TREE_PATH dimension filters"
+                            + " by prefix", List.of());
+            default -> throw new MetricRefusal(MetricRefusal.UNSUPPORTED_FILTER,
+                    "filter on '" + filter.getMember() + "' needs a keyword or bool "
+                            + "dimension, got " + member.kind()
+                            + (member.kind() == FieldKind.DATE
+                                    ? "; a DATE dimension filters by range" : ""),
+                    List.of());
+        };
+        filters.add(new EqualsFilter(
+                member.name(), member.fieldName(), member.fieldPath(), kind,
+                filter.getEqualsList()));
+    }
+
+    /** One 64-bit integer range filter over a NUMERIC member. */
+    private static NumericRangeFilter longRange(MetricMember member, MetricFilter filter) {
+        requireNumericMember(member, filter.getMember(), "long_range");
+        LongRange range = filter.getLongRange();
+        if (!range.hasBegin() && !range.hasEnd()) {
+            throw new MetricRefusal(MetricRefusal.UNSUPPORTED_FILTER,
+                    "long_range on '" + filter.getMember() + "' has no bounds; give begin,"
+                            + " end, or both", List.of());
+        }
+        if (!range.hasBegin() && range.hasIncludeHead()) {
+            throw new MetricRefusal(MetricRefusal.UNSUPPORTED_FILTER,
+                    "long_range on '" + filter.getMember()
+                            + "' sets include_head without begin", List.of());
+        }
+        if (!range.hasEnd() && range.hasIncludeTail()) {
+            throw new MetricRefusal(MetricRefusal.UNSUPPORTED_FILTER,
+                    "long_range on '" + filter.getMember()
+                            + "' sets include_tail without end", List.of());
+        }
+        Long gte = null;
+        Long lte = null;
+        try {
+            if (range.hasBegin()) {
+                boolean inclusive = !range.hasIncludeHead() || range.getIncludeHead();
+                gte = inclusive ? range.getBegin() : Math.addExact(range.getBegin(), 1L);
+            }
+            if (range.hasEnd()) {
+                boolean inclusive = !range.hasIncludeTail() || range.getIncludeTail();
+                lte = inclusive ? range.getEnd() : Math.subtractExact(range.getEnd(), 1L);
+            }
+        } catch (ArithmeticException e) {
+            throw new MetricRefusal(MetricRefusal.UNSUPPORTED_FILTER,
+                    "long_range on '" + filter.getMember()
+                            + "' overflows 64-bit integer bounds", List.of());
+        }
+        if (gte != null && lte != null && gte > lte) {
+            throw new MetricRefusal(MetricRefusal.UNSUPPORTED_FILTER,
+                    "long_range on '" + filter.getMember()
+                            + "' is inverted or empty: no integer lies within the bounds",
+                    List.of());
+        }
+        return NumericRangeFilter.ofLong(
+                member.name(), member.fieldName(), member.fieldPath(), gte, lte);
+    }
+
+    /** One IEEE-754 double range filter over a NUMERIC member. */
+    private static NumericRangeFilter doubleRange(MetricMember member, MetricFilter filter) {
+        requireNumericMember(member, filter.getMember(), "double_range");
+        DoubleRange range = filter.getDoubleRange();
+        if (!range.hasBegin() && !range.hasEnd()) {
+            throw new MetricRefusal(MetricRefusal.UNSUPPORTED_FILTER,
+                    "double_range on '" + filter.getMember() + "' has no bounds; give begin,"
+                            + " end, or both", List.of());
+        }
+        if (!range.hasBegin() && range.hasIncludeHead()) {
+            throw new MetricRefusal(MetricRefusal.UNSUPPORTED_FILTER,
+                    "double_range on '" + filter.getMember()
+                            + "' sets include_head without begin", List.of());
+        }
+        if (!range.hasEnd() && range.hasIncludeTail()) {
+            throw new MetricRefusal(MetricRefusal.UNSUPPORTED_FILTER,
+                    "double_range on '" + filter.getMember()
+                            + "' sets include_tail without end", List.of());
+        }
+        Double lower = null;
+        boolean lowerInclusive = !range.hasIncludeHead() || range.getIncludeHead();
+        if (range.hasBegin()) {
+            if (!Double.isFinite(range.getBegin())) {
+                throw new MetricRefusal(MetricRefusal.UNSUPPORTED_FILTER,
+                        "double_range begin on '" + filter.getMember() + "' must be finite",
+                        List.of());
+            }
+            lower = range.getBegin();
+        }
+        Double upper = null;
+        boolean upperInclusive = !range.hasIncludeTail() || range.getIncludeTail();
+        if (range.hasEnd()) {
+            if (!Double.isFinite(range.getEnd())) {
+                throw new MetricRefusal(MetricRefusal.UNSUPPORTED_FILTER,
+                        "double_range end on '" + filter.getMember() + "' must be finite",
+                        List.of());
+            }
+            upper = range.getEnd();
+        }
+        if (lower != null && upper != null) {
+            if (lower > upper || (lower.doubleValue() == upper.doubleValue()
+                    && (!lowerInclusive || !upperInclusive))) {
+                throw new MetricRefusal(MetricRefusal.UNSUPPORTED_FILTER,
+                        "double_range on '" + filter.getMember()
+                                + "' is inverted or empty", List.of());
+            }
+        }
+        return NumericRangeFilter.ofDouble(
+                member.name(), member.fieldName(), member.fieldPath(),
+                lower, lowerInclusive, upper, upperInclusive);
+    }
+
+    private static void requireNumericMember(
+            MetricMember member, String name, String filterKind) {
+        if (member.kind() != FieldKind.NUMERIC) {
+            throw new MetricRefusal(MetricRefusal.UNSUPPORTED_FILTER,
+                    filterKind + " on '" + name + "' needs a NUMERIC member, got "
+                            + member.kind(), List.of());
+        }
+        if (member.calculated() || member.fieldName().isEmpty()) {
+            throw new MetricRefusal(MetricRefusal.UNSUPPORTED_FILTER,
+                    filterKind + " on '" + name + "' requires a physical numeric field",
+                    List.of());
+        }
     }
 
     /** One date-range filter, bounds resolved to inclusive UTC epoch millis. */

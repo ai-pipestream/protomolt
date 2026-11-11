@@ -21,6 +21,9 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.ServiceLoader;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.function.UnaryOperator;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -36,6 +39,7 @@ class TurboembedEmbeddingProviderIT {
     private TurboembedEmbeddingProvider provider;
     private Status failure;
     private String savedCap;
+    private String savedAdmissionTimeout;
     private volatile boolean hold;
     private final java.util.concurrent.LinkedBlockingQueue<Runnable> held = new java.util.concurrent.LinkedBlockingQueue<>();
     private final java.util.concurrent.atomic.AtomicInteger inFlight = new java.util.concurrent.atomic.AtomicInteger();
@@ -44,6 +48,7 @@ class TurboembedEmbeddingProviderIT {
     @BeforeEach
     void start() throws Exception {
         savedCap = System.clearProperty(TurboembedEmbeddingProvider.MAX_IN_FLIGHT_PROPERTY);
+        savedAdmissionTimeout = System.clearProperty(TurboembedEmbeddingProvider.ADMISSION_TIMEOUT_PROPERTY);
         String name = InProcessServerBuilder.generateName();
         server = InProcessServerBuilder.forName(name).directExecutor()
                 .addService(new GRPCInferenceServiceGrpc.GRPCInferenceServiceImplBase() {
@@ -88,6 +93,11 @@ class TurboembedEmbeddingProviderIT {
             System.clearProperty(TurboembedEmbeddingProvider.MAX_IN_FLIGHT_PROPERTY);
         } else {
             System.setProperty(TurboembedEmbeddingProvider.MAX_IN_FLIGHT_PROPERTY, savedCap);
+        }
+        if (savedAdmissionTimeout == null) {
+            System.clearProperty(TurboembedEmbeddingProvider.ADMISSION_TIMEOUT_PROPERTY);
+        } else {
+            System.setProperty(TurboembedEmbeddingProvider.ADMISSION_TIMEOUT_PROPERTY, savedAdmissionTimeout);
         }
         provider.close();
         channel.shutdownNow();
@@ -158,6 +168,46 @@ class TurboembedEmbeddingProviderIT {
         }
         assertThat(requests).isEmpty();
         System.setProperty(TurboembedEmbeddingProvider.MAX_IN_FLIGHT_PROPERTY, "1");
+        assertThat(provider.embed("valid")).containsExactly(5, 1);
+    }
+
+    @Test
+    void configuredAdmissionTimeoutBoundsTheWaitForASlot() throws Exception {
+        System.setProperty(TurboembedEmbeddingProvider.MAX_IN_FLIGHT_PROPERTY, "1");
+        System.setProperty(TurboembedEmbeddingProvider.ADMISSION_TIMEOUT_PROPERTY, "1");
+        hold = true;
+        try (var other = new TurboembedEmbeddingProvider(channel,
+                new TurboembedEmbeddingProvider.Model("bundle", "revision-1", DIGEST, 2));
+             var executor = Executors.newVirtualThreadPerTaskExecutor()) {
+            var active = executor.submit(() -> other.embed("active"));
+            Runnable answer = held.poll(10, TimeUnit.SECONDS);
+            assertThat(answer).isNotNull();
+            long started = System.nanoTime();
+            assertThatThrownBy(() -> provider.embed("waits"))
+                    .isInstanceOf(IllegalStateException.class)
+                    .hasCauseInstanceOf(TimeoutException.class);
+            assertThat(TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started)).isBetween(900L, 10_000L);
+            assertThat(requests).hasSize(1);
+            hold = false;
+            answer.run();
+            assertThat(active.get(10, TimeUnit.SECONDS)).containsExactly(6, 1);
+            assertThat(provider.embed("after")).containsExactly(5, 1);
+        }
+    }
+
+    @Test
+    void invalidAdmissionTimeoutRefusesBeforeSendingAnyRpcNamingBothKnobs() {
+        String overflow = Long.toString(Long.MAX_VALUE / 1_000_000_000L + 1);
+        for (String value : List.of("0", "-1", "soon", overflow)) {
+            System.setProperty(TurboembedEmbeddingProvider.ADMISSION_TIMEOUT_PROPERTY, value);
+            assertThatThrownBy(() -> provider.embed("x"))
+                    .isInstanceOf(IllegalStateException.class)
+                    .hasMessageContaining(TurboembedEmbeddingProvider.ADMISSION_TIMEOUT_PROPERTY)
+                    .hasMessageContaining(TurboembedEmbeddingProvider.ADMISSION_TIMEOUT_ENVIRONMENT_VARIABLE)
+                    .hasMessageContaining(value);
+        }
+        assertThat(requests).isEmpty();
+        System.setProperty(TurboembedEmbeddingProvider.ADMISSION_TIMEOUT_PROPERTY, "5");
         assertThat(provider.embed("valid")).containsExactly(5, 1);
     }
 

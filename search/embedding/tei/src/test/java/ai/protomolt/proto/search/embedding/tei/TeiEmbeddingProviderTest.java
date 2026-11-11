@@ -24,6 +24,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.LinkedBlockingDeque;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -37,12 +38,14 @@ class TeiEmbeddingProviderTest {
     private String savedTargetProperty;
     private String savedTruncateProperty;
     private String savedMaxInFlightProperty;
+    private String savedAdmissionTimeoutProperty;
 
     @BeforeEach
     void startInProcessServer() throws IOException {
         savedTargetProperty = System.clearProperty(TeiEmbeddingProvider.TARGET_PROPERTY);
         savedTruncateProperty = System.clearProperty(TeiEmbeddingProvider.TRUNCATE_PROPERTY);
         savedMaxInFlightProperty = System.clearProperty(TeiEmbeddingProvider.MAX_IN_FLIGHT_PROPERTY);
+        savedAdmissionTimeoutProperty = System.clearProperty(TeiEmbeddingProvider.ADMISSION_TIMEOUT_PROPERTY);
         serverName = "tei-" + UUID.randomUUID();
         fake = new FakeEmbed();
         server = InProcessServerBuilder.forName(serverName)
@@ -71,6 +74,11 @@ class TeiEmbeddingProviderTest {
             System.clearProperty(TeiEmbeddingProvider.MAX_IN_FLIGHT_PROPERTY);
         } else {
             System.setProperty(TeiEmbeddingProvider.MAX_IN_FLIGHT_PROPERTY, savedMaxInFlightProperty);
+        }
+        if (savedAdmissionTimeoutProperty == null) {
+            System.clearProperty(TeiEmbeddingProvider.ADMISSION_TIMEOUT_PROPERTY);
+        } else {
+            System.setProperty(TeiEmbeddingProvider.ADMISSION_TIMEOUT_PROPERTY, savedAdmissionTimeoutProperty);
         }
     }
 
@@ -248,6 +256,41 @@ class TeiEmbeddingProviderTest {
 
         assertThat(batch.get(10, TimeUnit.SECONDS)).hasSize(5);
         assertThat(fake.peakInFlight()).isEqualTo(3);
+    }
+
+    @Test
+    void configuredAdmissionTimeoutBoundsTheWaitForASlot() throws Exception {
+        var config = Map.of(TeiEmbeddingProvider.MAX_IN_FLIGHT_ENVIRONMENT_VARIABLE, "1",
+                TeiEmbeddingProvider.ADMISSION_TIMEOUT_ENVIRONMENT_VARIABLE, "1");
+        try (var holder = new TeiEmbeddingProvider(channel, config);
+             var waiter = new TeiEmbeddingProvider(channel, config)) {
+            fake.hold = true;
+            CompletableFuture<float[]> held = CompletableFuture.supplyAsync(() -> holder.embed("held"));
+            awaitHeld(1);
+            long started = System.nanoTime();
+            assertThatThrownBy(() -> waiter.embed("waits"))
+                    .isInstanceOf(IllegalStateException.class)
+                    .hasCauseInstanceOf(TimeoutException.class);
+            long waitedMillis = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started);
+            assertThat(waitedMillis).isBetween(900L, 10_000L);
+            fake.hold = false;
+            fake.answerOneHeld();
+            assertThat(held.get(10, TimeUnit.SECONDS)).containsExactly(FakeEmbed.vectorFor("held"));
+            assertThat(fake.requests).extracting(EmbedRequest::getInputs).doesNotContain("waits");
+        }
+    }
+
+    @Test
+    void nonPositiveAdmissionTimeoutIsRefusedNamingBothKnobs() {
+        for (String bad : List.of("0", "-1", "soon")) {
+            TeiEmbeddingProvider provider = new TeiEmbeddingProvider(channel,
+                    Map.of(TeiEmbeddingProvider.ADMISSION_TIMEOUT_ENVIRONMENT_VARIABLE, bad));
+            assertThatThrownBy(() -> provider.embed("x"))
+                    .isInstanceOf(IllegalStateException.class)
+                    .hasMessageContaining(TeiEmbeddingProvider.ADMISSION_TIMEOUT_PROPERTY)
+                    .hasMessageContaining(TeiEmbeddingProvider.ADMISSION_TIMEOUT_ENVIRONMENT_VARIABLE)
+                    .hasMessageContaining(bad);
+        }
     }
 
     private void awaitHeld(int count) throws InterruptedException {

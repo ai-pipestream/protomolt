@@ -253,8 +253,18 @@ instance never resets another instance's budget. Existing channel ownership
 rules still apply (TEI caller-owned `close` is a no-op; Turboembed closes its
 provider but leaves a caller-owned channel open).
 
-Admission waits on the calling thread for at most 30 seconds, is interruptible,
-and preserves the interruption or timeout cause. The RPC then has its own
+Admission waits on the calling thread for at most 30 seconds by default, is
+interruptible, and preserves the interruption or timeout cause. The wait is
+per call, so callers need not agree on it; raise it where many concurrent
+batches share a slow server and a longer queue is preferable to failing:
+
+| Provider | System property | Environment fallback | Default |
+|---|---|---|---|
+| TEI | `protomolt.embeddings.tei.admission-timeout-seconds` | `PROTOMOLT_TEI_ADMISSION_TIMEOUT_SECONDS` | 30 |
+| Turboembed | `protomolt.embeddings.turboembed.admission-timeout-seconds` | `PROTOMOLT_TURBOEMBED_ADMISSION_TIMEOUT_SECONDS` | 30 |
+
+A timeout must be a positive whole number of seconds, at most 9223372036
+(the largest whole-second wait that fits in nanoseconds). The RPC then has its own
 30-second deadline. Permits are released on every return or failure. Turboembed
 keeps its sequential batches of at most 32 texts and acquires admission per RPC.
 TEI uses bounded worker futures rather than allocating one future per text;

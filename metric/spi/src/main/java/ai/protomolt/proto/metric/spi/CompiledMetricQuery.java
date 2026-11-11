@@ -4,6 +4,8 @@ import ai.protomolt.proto.metric.Aggregate;
 import ai.protomolt.proto.metric.MetricBackend;
 import ai.protomolt.proto.metric.TimeGrain;
 import java.util.List;
+import java.util.Objects;
+import java.util.Set;
 
 /**
  * One aggregate query after the SPI has resolved every name and refused
@@ -21,6 +23,10 @@ import java.util.List;
  *        order, bounds already resolved to inclusive UTC epoch millis
  * @param pathPrefixes the query-wide descendant-or-self filters (AND) over
  *        TREE_PATH dimensions, in request order, paths already rendered
+ * @param numericRanges the query-wide numeric-range filters (AND), in
+ *        request order
+ * @param predicates the query-wide boolean row predicates (AND) compiled
+ *        from CEL row-security or query filters, in request order
  * @param limit maximum result rows; already bounds-checked
  */
 public record CompiledMetricQuery(
@@ -31,7 +37,22 @@ public record CompiledMetricQuery(
         List<EqualsFilter> filters,
         List<DateRangeFilter> dateRanges,
         List<PathPrefixFilter> pathPrefixes,
+        List<NumericRangeFilter> numericRanges,
+        List<RowPredicate> predicates,
         int limit) {
+
+    public CompiledMetricQuery(
+            String subject,
+            MetricBackend backend,
+            List<Measure> measures,
+            List<Dimension> dimensions,
+            List<EqualsFilter> filters,
+            List<DateRangeFilter> dateRanges,
+            List<PathPrefixFilter> pathPrefixes,
+            int limit) {
+        this(subject, backend, measures, dimensions, filters, dateRanges,
+                pathPrefixes, List.of(), List.of(), limit);
+    }
 
     public CompiledMetricQuery {
         measures = List.copyOf(measures);
@@ -39,6 +60,8 @@ public record CompiledMetricQuery(
         filters = List.copyOf(filters);
         dateRanges = List.copyOf(dateRanges);
         pathPrefixes = List.copyOf(pathPrefixes);
+        numericRanges = List.copyOf(numericRanges);
+        predicates = List.copyOf(predicates);
     }
 
     /**
@@ -136,6 +159,128 @@ public record CompiledMetricQuery(
             List<String> values) {
         public EqualsFilter {
             values = List.copyOf(values);
+        }
+    }
+
+    /**
+     * One numeric range filter over a {@code NUMERIC} member or field:
+     * {@code integral} is true when compiled from a 64-bit integer range
+     * (inclusive {@code gteLong}/{@code lteLong}), and false when compiled
+     * from a double range ({@code lowerDouble}/{@code upperDouble} with
+     * {@code lowerInclusive}/{@code upperInclusive}). A {@code null} bound
+     * is unbounded on that side; never both.
+     *
+     * @param member the public member name, for evidence and errors
+     * @param fieldName the engine's physical field name
+     * @param fieldPath the proto field path (dot-joined field names)
+     * @param integral true when integer bounds, false when floating-point bounds
+     * @param gteLong inclusive 64-bit integer lower bound when {@code integral}
+     * @param lteLong inclusive 64-bit integer upper bound when {@code integral}
+     * @param lowerDouble floating-point lower bound when not {@code integral}
+     * @param upperDouble floating-point upper bound when not {@code integral}
+     * @param lowerInclusive whether {@code lowerDouble} is inclusive
+     * @param upperInclusive whether {@code upperDouble} is inclusive
+     */
+    public record NumericRangeFilter(
+            String member,
+            String fieldName,
+            String fieldPath,
+            boolean integral,
+            Long gteLong,
+            Long lteLong,
+            Double lowerDouble,
+            Double upperDouble,
+            boolean lowerInclusive,
+            boolean upperInclusive) {
+
+        /** Creates an inclusive 64-bit integer range filter. */
+        public static NumericRangeFilter ofLong(
+                String member, String fieldName, String fieldPath,
+                Long gteLong, Long lteLong) {
+            return new NumericRangeFilter(
+                    member, fieldName, fieldPath, true,
+                    gteLong, lteLong, null, null, true, true);
+        }
+
+        /** Creates an IEEE-754 double range filter. */
+        public static NumericRangeFilter ofDouble(
+                String member, String fieldName, String fieldPath,
+                Double lowerDouble, boolean lowerInclusive,
+                Double upperDouble, boolean upperInclusive) {
+            return new NumericRangeFilter(
+                    member, fieldName, fieldPath, false,
+                    null, null, lowerDouble, upperDouble,
+                    lowerInclusive, upperInclusive);
+        }
+    }
+
+    /**
+     * A compiled boolean row predicate produced from a schema-checked CEL
+     * row-security or query filter expression.
+     */
+    public sealed interface RowPredicate
+            permits RowPredicate.And,
+                    RowPredicate.Or,
+                    RowPredicate.Not,
+                    RowPredicate.Terms,
+                    RowPredicate.NumericRange,
+                    RowPredicate.DateRange {
+
+        /** Logical conjunction of child predicates. */
+        record And(List<RowPredicate> children) implements RowPredicate {
+            public And {
+                if (children == null || children.isEmpty()) {
+                    throw new IllegalArgumentException("And requires at least one child");
+                }
+                children = List.copyOf(children);
+            }
+        }
+
+        /** Logical disjunction of child predicates. */
+        record Or(List<RowPredicate> children) implements RowPredicate {
+            public Or {
+                if (children == null || children.isEmpty()) {
+                    throw new IllegalArgumentException("Or requires at least one child");
+                }
+                children = List.copyOf(children);
+            }
+        }
+
+        /**
+         * Logical negation of a child predicate, guarded by field-presence
+         * checks on the referenced fields so documents/rows missing the
+         * field do not falsely match a negated condition.
+         */
+        record Not(
+                RowPredicate child,
+                Set<String> fieldNames,
+                List<String> fieldPaths) implements RowPredicate {
+            public Not {
+                Objects.requireNonNull(child, "child");
+                fieldNames = Set.copyOf(fieldNames);
+                fieldPaths = List.copyOf(fieldPaths);
+            }
+        }
+
+        /** Equality or membership predicate over a keyword or boolean field. */
+        record Terms(EqualsFilter filter) implements RowPredicate {
+            public Terms {
+                Objects.requireNonNull(filter, "filter");
+            }
+        }
+
+        /** Numeric comparison or range predicate over a numeric field. */
+        record NumericRange(NumericRangeFilter filter) implements RowPredicate {
+            public NumericRange {
+                Objects.requireNonNull(filter, "filter");
+            }
+        }
+
+        /** Date range or comparison predicate over a timestamp field. */
+        record DateRange(DateRangeFilter filter) implements RowPredicate {
+            public DateRange {
+                Objects.requireNonNull(filter, "filter");
+            }
         }
     }
 }

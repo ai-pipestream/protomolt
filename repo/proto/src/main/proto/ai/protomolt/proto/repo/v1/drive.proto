@@ -2,8 +2,9 @@ syntax = "proto3";
 
 package ai.protomolt.proto.repo.v1;
 
-import "google/protobuf/timestamp.proto";
 import "ai/protomolt/proto/validate/v1/validate.proto";
+import "buf/validate/validate.proto";
+import "google/protobuf/timestamp.proto";
 
 option java_multiple_files = true;
 option java_package = "ai.protomolt.proto.repo.v1";
@@ -81,6 +82,70 @@ message S3DriveConfig {
   string endpoint_override = 1;
   // Use path-style addressing (required by most S3-compatible stores).
   bool force_path_style = 2;
+  // Optional per-drive read-through byte cache in front of this S3 backing store.
+  DriveCacheConfig read_through_cache = 3;
+}
+
+// Per-drive read-through byte cache configuration backed by an expiring Redis or Valkey store.
+message DriveCacheConfig {
+  // Cache provider ("valkey" or "redis"; blank defaults to "valkey").
+  string provider = 1 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      string: {
+        max_len: 32
+        pattern: "^(|valkey|redis)$"
+      }
+    },
+    (buf.validate.field).string = {
+      max_len: 32
+      pattern: "^(|valkey|redis)$"
+    }
+  ];
+  // Connection URI: redis://host:port[/db] or rediss://host:port[/db] (no inline credentials).
+  string uri = 2 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      required: true
+      string: {
+        max_len: 4096
+        pattern: ".*\\S.*"
+      }
+    },
+    (buf.validate.field) = {
+      required: true
+      string: {
+        max_len: 4096
+        pattern: ".*\\S.*"
+      }
+    }
+  ];
+  // Per-object cache time-to-live in seconds; must be positive (> 0).
+  int32 ttl_seconds = 3 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      int32: {gt: 0}
+    },
+    (buf.validate.field).int32.gt = 0
+  ];
+  // Maximum object size in bytes eligible for read-through caching; must be positive (> 0).
+  int64 max_cacheable_bytes = 4 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      int64: {gt: 0}
+    },
+    (buf.validate.field).int64.gt = 0
+  ];
+  // Optional key prefix applied to cached entries before physical backing isolation.
+  string key_prefix = 5 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      string: {max_len: 512}
+    },
+    (buf.validate.field).string.max_len = 512
+  ];
+  // Reference to cache credentials resolved at IO time (e.g., "env:DRIVE_CACHE"); blank = unauthenticated.
+  string credentials_ref = 6 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      string: {max_len: 512}
+    },
+    (buf.validate.field).string.max_len = 512
+  ];
 }
 
 // Pronounced knobs for a Redis-backed drive.

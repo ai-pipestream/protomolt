@@ -38,7 +38,9 @@ requests no truncation and unquantized vectors, and accepts only finite FP32
 batches of every purpose split at 32 texts. All instances share a process-wide
 RPC cap, default 8, configured by `protomolt.embeddings.turboembed.max-in-flight`
 or `PROTOMOLT_TURBOEMBED_MAX_IN_FLIGHT`. Admission has a separate interruptible
-30-second timeout. Overlapping configurations must agree; see the
+timeout, 30 seconds unless `protomolt.embeddings.turboembed.admission-timeout-seconds`
+or `PROTOMOLT_TURBOEMBED_ADMISSION_TIMEOUT_SECONDS` sets it. The wait applies per call, so
+configurations may differ on it; overlapping configurations must agree on the in-flight cap. See the
 [configuration and lifecycle contract](../../../docs/search/embeddings.md#process-wide-tei-and-turboembed-admission).
 A server with a smaller capacity refuses;
 there is no client retry that changes the input, model, purpose or precision.

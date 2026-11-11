@@ -1,5 +1,6 @@
 package ai.protomolt.proto.mcp;
 
+import ai.protomolt.proto.actions.Scopes;
 import ai.protomolt.proto.grpc.profile.ServiceProfileRepository;
 import ai.protomolt.proto.grpc.profile.v1.ServiceProfile;
 import ai.protomolt.proto.grpc.workspace.ServiceDescriptorInspection;
@@ -31,6 +32,20 @@ public final class ServiceProfileResources implements McpResources {
                                    SchemaRegistryStore registry) {
         this.repository = java.util.Objects.requireNonNull(repository, "repository");
         this.registry = registry;
+    }
+
+    /**
+     * Service profiles carry connection endpoints and reflected contracts; the
+     * service-workspace actions over the same data require {@code service-invoke}.
+     */
+    @Override
+    public String requiredScope() {
+        return Scopes.SERVICE_INVOKE;
+    }
+
+    @Override
+    public boolean owns(String uri) {
+        return ROOT.equals(uri) || uri.startsWith(ROOT + "/");
     }
 
     @Override

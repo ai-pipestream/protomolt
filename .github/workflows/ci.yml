@@ -186,6 +186,11 @@ jobs:
   # not just measured once.
   conformance:
     runs-on: ubuntu-latest
+    env:
+      CONFORMANCE_EXECUTOR: protobuf/validation-conformance/build/install/protomolt-protobuf-validation-conformance/bin/protomolt-protobuf-validation-conformance
+      # The complete corpus at the pinned runner; move it together with the pin.
+      CONFORMANCE_SUMMARY: 'PASS (failed: 0, skipped: 0, passed: 2880, total: 2880)'
+      CONFORMANCE_SUITE_TIMEOUT: 30s
     steps:
       - uses: actions/checkout@v4
 
@@ -209,10 +214,81 @@ jobs:
       - name: Build the conformance executor
         run: ./gradlew :protomolt-protobuf-validation-conformance:installDist --max-workers=2 --console=plain
 
-      - name: Run the full conformance suite
+      # All three comparison modes gate: default structure, exact violation
+      # prose, and compile-time vs runtime error classification. No case
+      # filters, expected-failure lists, or skips in any mode. Each step also
+      # requires the full-corpus summary, so a shrunk or filtered run fails
+      # even when the runner exits 0. The per-suite timeout is raised from the
+      # runner's 5s default so a slow hosted runner cannot fail a suite that
+      # would pass; it changes no comparison.
+      - name: Run the full conformance suite (default)
+        shell: bash
         run: |
-          protovalidate-conformance \
-            protobuf/validation-conformance/build/install/protomolt-protobuf-validation-conformance/bin/protomolt-protobuf-validation-conformance
+          set -euo pipefail
+          protovalidate-conformance --timeout "${CONFORMANCE_SUITE_TIMEOUT}" \
+            "${CONFORMANCE_EXECUTOR}" 2>&1 | tee conformance-default.log
+          grep -qF "${CONFORMANCE_SUMMARY}" conformance-default.log
+
+      - name: Run the full conformance suite (strict_message)
+        shell: bash
+        run: |
+          set -euo pipefail
+          protovalidate-conformance --timeout "${CONFORMANCE_SUITE_TIMEOUT}" --strict_message \
+            "${CONFORMANCE_EXECUTOR}" 2>&1 | tee conformance-strict-message.log
+          grep -qF "${CONFORMANCE_SUMMARY}" conformance-strict-message.log
+
+      - name: Run the full conformance suite (strict_error)
+        shell: bash
+        run: |
+          set -euo pipefail
+          protovalidate-conformance --timeout "${CONFORMANCE_SUITE_TIMEOUT}" --strict_error \
+            "${CONFORMANCE_EXECUTOR}" 2>&1 | tee conformance-strict-error.log
+          grep -qF "${CONFORMANCE_SUMMARY}" conformance-strict-error.log
+
+  # Drives the stdio and streamable-HTTP MCP servers with the official MCP
+  # Inspector CLI, pinned with its whole tree in tests/mcp-inspector's lockfile.
+  # The self-test proves each fixture break fails the checks; the main run must
+  # report the full check count, so a removed check fails like a failing one.
+  mcp-inspector:
+    runs-on: ubuntu-latest
+    env:
+      MCP_INSPECTOR_SUMMARY: 'PASS (failed: 0, passed: 18)'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '25'
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: tests/mcp-inspector/package-lock.json
+
+      - name: Build the stdio and HTTP MCP servers
+        run: ./gradlew :protomolt-mcp:installDist :protomolt-serve:installDist --max-workers=2 --console=plain
+
+      - name: Install the pinned inspector
+        working-directory: tests/mcp-inspector
+        run: npm ci --ignore-scripts
+
+      - name: Self-test the lane against broken fixtures
+        working-directory: tests/mcp-inspector
+        run: node run.mjs --self-test
+
+      - name: Run the inspector against ProtoMolt
+        shell: bash
+        run: |
+          set -euo pipefail
+          node tests/mcp-inspector/run.mjs \
+            --stdio surface/mcp/build/install/protomolt-mcp/bin/protomolt-mcp \
+            --serve apps/serve/build/install/protomolt-serve/bin/protomolt-serve \
+            2>&1 | tee mcp-inspector.log
+          grep -qxF "${MCP_INSPECTOR_SUMMARY}" mcp-inspector.log
 
   # Runs the live-registry integration suites (Apicurio native v3, Apicurio
   # ccompat, and a genuine Confluent Schema Registry backed by Redpanda) that

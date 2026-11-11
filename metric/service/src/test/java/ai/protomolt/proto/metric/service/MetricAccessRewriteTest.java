@@ -3,6 +3,9 @@ package ai.protomolt.proto.metric.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import ai.protomolt.proto.actions.ActionCatalog;
+import ai.protomolt.proto.actions.ActionContext;
+import ai.protomolt.proto.actions.ActionException;
 import ai.protomolt.proto.actions.Caller;
 import ai.protomolt.proto.actions.Scopes;
 import ai.protomolt.proto.authz.AccessPolicy;
@@ -16,13 +19,16 @@ import ai.protomolt.proto.metric.DescribeMappingRequest;
 import ai.protomolt.proto.metric.MemberRef;
 import ai.protomolt.proto.metric.MemberRole;
 import ai.protomolt.proto.metric.MetricBackend;
+import ai.protomolt.proto.metric.MetricFilter;
 import ai.protomolt.proto.metric.MetricServiceGrpc;
 import ai.protomolt.proto.metric.QueryMetricsRequest;
 import ai.protomolt.proto.metric.RebuildRollupRequest;
 import ai.protomolt.proto.metric.TimeGrain;
+import ai.protomolt.proto.metric.spi.CompiledMetricQuery.NumericRangeFilter;
 import ai.protomolt.proto.metric.spi.MetricMapping;
 import ai.protomolt.proto.metric.spi.MetricMapping.FieldKind;
 import ai.protomolt.proto.metric.spi.MetricMapping.MetricMember;
+import ai.protomolt.proto.types.LongRange;
 import io.grpc.ManagedChannel;
 import io.grpc.Metadata;
 import io.grpc.Status;
@@ -56,6 +62,7 @@ class MetricAccessRewriteTest {
     private static final String MISCONFIGURED = "misconfigured-cred";
 
     private static final AtomicReference<AccessPolicy> policy = new AtomicReference<>();
+    private static MetricMapping ordersMapping;
     private static MetricServicesTest.FakeExecutor executor;
     private static MetricServices service;
     private static ManagedChannel channel;
@@ -105,6 +112,7 @@ class MetricAccessRewriteTest {
                 "amount_cents", "amount_cents", FieldKind.NUMERIC, List.of(), "", List.of(),
                 TimeGrain.TIME_GRAIN_UNSPECIFIED, "", ""));
         MetricMapping mapping = new MetricMapping("orders", "test.Order", members);
+        ordersMapping = mapping;
         executor = new MetricServicesTest.FakeExecutor();
         ServedMetricSubject orders = new ServedMetricSubject(mapping,
                 Map.of(MetricBackend.METRIC_BACKEND_LUCENE, executor));
@@ -248,6 +256,96 @@ class MetricAccessRewriteTest {
                         assertThat(e.getStatus().getCode())
                                 .isEqualTo(Status.Code.PERMISSION_DENIED);
                         assertThat(e.getStatus().getDescription()).contains("revenue");
+                    });
+        } finally {
+            policy.set(before);
+        }
+    }
+
+    @Test
+    void rangeAndCelRowFiltersComposeAndFailClosedOnInvalidPolicyOrDeniedProbe() throws Exception {
+        AccessPolicy before = policy.get();
+        try {
+            policy.set(policyOf(
+                    MetricAccess.newBuilder()
+                            .addDeny(MetricMemberDeny.newBuilder()
+                                    .setMappingSubject("orders")
+                                    .addMembers("segment"))
+                            .addRowFilters(MetricRowFilter.newBuilder()
+                                    .setMappingSubject("orders")
+                                    .setMember("segment")
+                                    .addEquals("smb"))
+                            .addRowFilters(MetricRowFilter.newBuilder()
+                                    .setMappingSubject("orders")
+                                    .setMember("revenue")
+                                    .setLongRange(LongRange.newBuilder()
+                                            .setBegin(100L)
+                                            .setEnd(1000L)))
+                            .addRowFilters(MetricRowFilter.newBuilder()
+                                    .setMappingSubject("orders")
+                                    .setCel("this.segment != 'ent' && this.revenue >= 50"))
+                            .build(),
+                    MetricAccess.newBuilder()
+                            .addRowFilters(MetricRowFilter.newBuilder()
+                                    .setMappingSubject("orders")
+                                    .setCel("this.segment > 100"))
+                            .build()));
+
+            executor.executed = null;
+            assertThat(stub(RESTRICTED).queryMetrics(revenue("orders")).getRowsCount())
+                    .isEqualTo(1);
+            assertThat(executor.executed.filters())
+                    .anySatisfy(f -> assertThat(f.values()).containsExactly("smb"));
+            assertThat(executor.executed.numericRanges()).containsExactly(
+                    NumericRangeFilter.ofLong(
+                            "revenue", "amount_cents", "amount_cents", 100L, 1000L));
+            assertThat(executor.executed.predicates()).hasSize(1);
+
+            // Probing a denied member through a caller CEL filter is refused as PERMISSION_DENIED.
+            assertThatThrownBy(() -> stub(RESTRICTED).queryMetrics(revenue("orders")
+                    .toBuilder()
+                    .addFilters(MetricFilter.newBuilder()
+                            .setCel("this.segment == 'smb'"))
+                    .build()))
+                    .isInstanceOfSatisfying(StatusRuntimeException.class, e -> {
+                        assertThat(e.getStatus().getCode())
+                                .isEqualTo(Status.Code.PERMISSION_DENIED);
+                        assertThat(e.getStatus().getDescription())
+                                .contains("restricted")
+                                .contains("segment");
+                    });
+
+            // A policy with a type-mismatched CEL expression fails closed as FAILED_PRECONDITION.
+            assertThatThrownBy(() -> stub(MISCONFIGURED).queryMetrics(revenue("orders")))
+                    .isInstanceOfSatisfying(StatusRuntimeException.class, e -> {
+                        assertThat(e.getStatus().getCode())
+                                .isEqualTo(Status.Code.FAILED_PRECONDITION);
+                        assertThat(e.getStatus().getDescription())
+                                .contains("access policy")
+                                .contains("misconfigured");
+                    });
+
+            // MetricActions enforce the exact same row-security and member-deny rules.
+            ActionCatalog catalog = ActionCatalog.empty(ActionContext.create());
+            ServedMetricSubject served = new ServedMetricSubject(
+                    ordersMapping, Map.of(MetricBackend.METRIC_BACKEND_LUCENE, executor));
+            MetricActions.over(Map.of("orders", served), null, null, policy::get)
+                    .forEach(catalog::register);
+            Caller restrictedCaller = Caller.scoped("restricted", Set.of(Scopes.METRICS_QUERY));
+            executor.executed = null;
+            catalog.execute("query-metrics", revenue("orders"), restrictedCaller);
+            assertThat(executor.executed.numericRanges()).hasSize(1);
+            assertThat(executor.executed.predicates()).hasSize(1);
+
+            assertThatThrownBy(() -> catalog.execute(
+                    "query-metrics",
+                    revenue("orders").toBuilder()
+                            .addFilters(MetricFilter.newBuilder().setCel("this.segment == 'smb'"))
+                            .build(),
+                    restrictedCaller))
+                    .isInstanceOfSatisfying(ActionException.class, e -> {
+                        assertThat(e.code()).isEqualTo("permission-denied");
+                        assertThat(e.getMessage()).contains("segment");
                     });
         } finally {
             policy.set(before);

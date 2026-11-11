@@ -2,6 +2,8 @@
 # Lint only — codegen stays protoc / protobuf-gradle-plugin. Not a runtime dependency.
 version: v2
 modules:
+  - path: sink/emit/renderer/src/main/proto
+    name: buf.build/ai-pipestream/renderer
   - path: transform/workflow/authoring/src/main/proto
     name: buf.build/ai-pipestream/workflow-authoring
   - path: apps/correction/src/main/proto

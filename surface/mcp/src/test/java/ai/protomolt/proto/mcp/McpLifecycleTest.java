@@ -354,6 +354,11 @@ class McpLifecycleTest {
     @FunctionalInterface
     private interface ResourceList extends McpResources {
         @Override
+        default boolean owns(String uri) {
+            return uri.startsWith("protomolt://test/");
+        }
+
+        @Override
         default Optional<ObjectNode> read(ObjectMapper mapper, String uri) {
             return Optional.empty();
         }

@@ -1,6 +1,7 @@
 package ai.protomolt.proto.mcp.transport;
 
 import ai.protomolt.proto.actions.ActionCatalog;
+import ai.protomolt.proto.actions.Caller;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
@@ -43,8 +44,27 @@ public final class WorkspaceResources implements McpResources {
         return resources;
     }
 
+    /**
+     * The workspace only describes the server to its caller — identity, guidance, and
+     * the caller's own tool inventory — so it stays behind authentication alone.
+     */
+    @Override
+    public boolean authenticatedOnly() {
+        return true;
+    }
+
+    @Override
+    public boolean owns(String uri) {
+        return URI.equals(uri);
+    }
+
     @Override
     public Optional<ObjectNode> read(ObjectMapper mapper, String uri) {
+        return read(mapper, uri, Caller.operator());
+    }
+
+    @Override
+    public Optional<ObjectNode> read(ObjectMapper mapper, String uri, Caller caller) {
         if (!URI.equals(uri)) {
             return Optional.empty();
         }
@@ -53,7 +73,9 @@ public final class WorkspaceResources implements McpResources {
         server.put("name", serverName);
         server.put("version", serverVersion);
         server.put("protocolVersion", McpServer.PROTOCOL_VERSION);
-        document.set("toolCatalog", toolCatalog(catalog, mapper));
+        // The inventory is the caller's own view, exactly as tools/list serves it:
+        // names of tools outside the caller's scopes are not the caller's to learn.
+        document.set("toolCatalog", toolCatalog(catalog.list(caller), mapper));
         document.put("instructions", instructions);
         document.put("refreshGuidance", "Compare the live tool count and fingerprint with the "
                 + "client-visible catalog; reconnect the MCP client when they differ.");

@@ -14,13 +14,13 @@ kafka = "4.4.0"
 # org.apache.kafka.common.utils.internals, and Confluent 8.4.0 is compiled for that
 # layout (8.3.x for the old one), so bumping only one of them breaks the interop tests.
 # Test-scoped interop only.
-confluent = "8.4.0"
+confluent = "8.4.1"
 testcontainers = "2.0.5"
 opensearch-testcontainers = "4.1.0"
 micrometer = "1.17.2"
 swagger-ui = "5.34.1"
 jackson = "2.23.0"
-quarkus = "3.40.1.1"
+quarkus = "3.40.1.2"
 axion-release = "1.21.4"
 nmcp = "1.6.2"
 grpc = "1.85.1"
@@ -55,7 +55,7 @@ hadoop = "3.5.0"
 iceberg = "1.12.0"
 duckdb = "1.5.6.0"
 sqlite-jdbc = "3.54.1.0"
-awssdk = "2.57.11"
+awssdk = "2.57.12"
 maven-resolver = "1.9.27"
 # Pairs with the maven-resolver 1.9.x line above; 3.10.x pulls in maven-resolver 2.x,
 # which drops DefaultTrackingFileManager and breaks maven-resolver-supplier 1.9.x.
