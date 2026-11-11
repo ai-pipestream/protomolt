@@ -1,0 +1,214 @@
+diff --git a/buildtools-common/get_binaryen.sh b/buildtools-common/get_binaryen.sh
+index 6dbeeb4..1e537cc 100755
+--- a/buildtools-common/get_binaryen.sh
++++ b/buildtools-common/get_binaryen.sh
+@@ -1,7 +1,7 @@
+ #!/usr/bin/env bash
+ set -euxo pipefail
+ 
+-BINARYEN_VERSION=123
++BINARYEN_VERSION=133
+ 
+ SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &> /dev/null && pwd)
+ 
+@@ -15,6 +15,7 @@ mkdir -p "${SCRIPT_DIR}/tools"
+     cd "${SCRIPT_DIR}/tools"
+     echo "Downloading binaryen..."
+     curl --fail -L "$BINARYEN_URL" -o "$BINARYEN_TAR"
++    echo "2dc9c7813f5375db93d96ead4b78222fcc3e2677bbb832297af4797782a37489  ${BINARYEN_TAR}" | sha256sum --check --strict
+     tar xvf "$BINARYEN_TAR"
+ 
+     rm "$BINARYEN_TAR"
+diff --git a/buildtools-common/get_grpcjava.sh b/buildtools-common/get_grpcjava.sh
+index c986973..1578d52 100755
+--- a/buildtools-common/get_grpcjava.sh
++++ b/buildtools-common/get_grpcjava.sh
+@@ -3,10 +3,14 @@ set -euxo pipefail
+ 
+ SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &> /dev/null && pwd)
+ 
+-mkdir -p "${SCRIPT_DIR}/grpcjava"
++rm -rf "${SCRIPT_DIR}/grpcjava"
+ 
+ GRPC_VERSION=$(awk '{$1=$1};1' < "${SCRIPT_DIR}/grpcjava-version.txt")
+-curl --fail -L "https://github.com/grpc/grpc-java/archive/refs/tags/${GRPC_VERSION}.tar.gz" \
+-    | tar -xz --strip-components 1 -C "${SCRIPT_DIR}/grpcjava"
++git -c advice.detachedHead=false clone --depth 1 --branch "${GRPC_VERSION}" \
++    https://github.com/grpc/grpc-java.git "${SCRIPT_DIR}/grpcjava"
++# The tag must still resolve to the exact reviewed commit (v1.85.1). A git
++# commit is stable where GitHub's generated source archives are not.
++test "$(git -C "${SCRIPT_DIR}/grpcjava" rev-parse HEAD)" = "54c634aed4b5c78a29d0fa51d9282e9538722543" \
++    || { echo "ERROR: grpc-java ${GRPC_VERSION} is not the pinned commit" >&2; exit 1; }
+ 
+ cp -R "${SCRIPT_DIR}/grpcjava/compiler/src/java_plugin/cpp" "${SCRIPT_DIR}/protobuf/src/grpcjava"
+\ No newline at end of file
+diff --git a/buildtools-common/get_protobuf.sh b/buildtools-common/get_protobuf.sh
+index 2039213..f7e83d7 100755
+--- a/buildtools-common/get_protobuf.sh
++++ b/buildtools-common/get_protobuf.sh
+@@ -10,4 +10,7 @@ rm -rf "${SCRIPT_DIR}/protobuf"
+ PROTOBUF_VERSION=$(awk '{$1=$1};1' < "${SCRIPT_DIR}/protobuf-version.txt")
+ git clone --depth 1 --branch "${PROTOBUF_VERSION}" https://github.com/protocolbuffers/protobuf.git "${SCRIPT_DIR}/protobuf"
+ cd "${SCRIPT_DIR}/protobuf"
++# The tag must still resolve to the exact reviewed commit (v36.2).
++test "$(git rev-parse HEAD)" = "2c74169b34066ceb8ddb6b882fcb3fb32d737a55" \
++    || { echo "ERROR: protobuf ${PROTOBUF_VERSION} is not the pinned commit" >&2; exit 1; }
+ git submodule update --init --recursive
+diff --git a/buildtools-common/get_wasi_sdk.sh b/buildtools-common/get_wasi_sdk.sh
+index 379f688..c1b9ad8 100755
+--- a/buildtools-common/get_wasi_sdk.sh
++++ b/buildtools-common/get_wasi_sdk.sh
+@@ -1,7 +1,7 @@
+ #!/usr/bin/env bash
+ set -euxo pipefail
+ 
+-WASI_SDK_VERSION=25
++WASI_SDK_VERSION=34
+ WASI_SDK_MINOR_VERSION=0
+ 
+ SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &> /dev/null && pwd)
+@@ -25,6 +25,12 @@ mkdir -p "${SCRIPT_DIR}/tools"
+     cd "${SCRIPT_DIR}/tools"
+     echo "Downloading wasi-sdk..."
+     curl --fail -L "$WASI_SDK_URL" -o "$WASI_SDK_TAR"
++    # The pinned build image is linux/amd64 only (see buildtools-v4/Dockerfile).
++    case "${WASI_SDK_ARCH}" in
++        x86_64-linux) WASI_SDK_SHA256=b761e3a0721dbae9c09a0059e5fdb2bf917d1b4a8a7b430fb3b5aafb0984b2c4 ;;
++        *) echo "ERROR: no pinned wasi-sdk checksum for ${WASI_SDK_ARCH}; the pinned build runs on x86_64-linux" >&2; exit 1 ;;
++    esac
++    echo "${WASI_SDK_SHA256}  ${WASI_SDK_TAR}" | sha256sum --check --strict
+     tar xvf "$WASI_SDK_TAR"
+ 
+     rm "$WASI_SDK_TAR"
+diff --git a/buildtools-common/grpcjava-version.txt b/buildtools-common/grpcjava-version.txt
+index 26f4e1e..0904fd4 100644
+--- a/buildtools-common/grpcjava-version.txt
++++ b/buildtools-common/grpcjava-version.txt
+@@ -1 +1 @@
+-v1.79.0
++v1.85.1
+diff --git a/buildtools-common/optimize_protoc-wrapper.sh b/buildtools-common/optimize_protoc-wrapper.sh
+index 12eb99a..ba2e336 100755
+--- a/buildtools-common/optimize_protoc-wrapper.sh
++++ b/buildtools-common/optimize_protoc-wrapper.sh
+@@ -3,6 +3,6 @@ set -euxo pipefail
+ 
+ SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &> /dev/null && pwd)
+ 
+-BINARYEN_PATH=${SCRIPT_DIR}/tools/binaryen-version_123
++BINARYEN_PATH=${SCRIPT_DIR}/tools/binaryen-version_133
+ 
+ "${BINARYEN_PATH}/bin/wasm-opt" -o build/protoc-wrapper.wasm --low-memory-unused --converge -O3 --strip-debug build/protoc-wrapper
+diff --git a/buildtools-common/patch_protobuf.sh b/buildtools-common/patch_protobuf.sh
+index 824dcb3..0f2086e 100755
+--- a/buildtools-common/patch_protobuf.sh
++++ b/buildtools-common/patch_protobuf.sh
+@@ -19,6 +19,13 @@ set_target_properties(protoc-wrapper PROPERTIES VERSION ${protobuf_VERSION})
+ add_dependencies(plugins protoc-wrapper)
+ EOF
+ 
++# Pin the CMake FetchContent abseil input to the exact commit of its
++# 20250512.1 tag instead of the movable tag name.
++sed -i 's/set(abseil-cpp-version "20250512.1")/set(abseil-cpp-version "76bb24329e8bf5f39704eb10d21b9a80befa7c81")/' \
++    "${SCRIPT_DIR}/protobuf/cmake/dependencies.cmake"
++grep -q 'set(abseil-cpp-version "76bb24329e8bf5f39704eb10d21b9a80befa7c81")' \
++    "${SCRIPT_DIR}/protobuf/cmake/dependencies.cmake"
++
+ rm "${SCRIPT_DIR}"/protobuf/src/google/protobuf/compiler/subprocess.* "${SCRIPT_DIR}"/protobuf/src/google/protobuf/compiler/command_line_interface.*
+ sed -i '/src\/google\/protobuf\/compiler\/subprocess\./d' "${SCRIPT_DIR}"/protobuf/src/file_lists.cmake
+ sed -i '/src\/google\/protobuf\/compiler\/command_line_interface\./d' "${SCRIPT_DIR}"/protobuf/src/file_lists.cmake
+diff --git a/buildtools-common/prepare_build.sh b/buildtools-common/prepare_build.sh
+index 6a740a6..58a7302 100755
+--- a/buildtools-common/prepare_build.sh
++++ b/buildtools-common/prepare_build.sh
+@@ -13,7 +13,21 @@ case "${ARCH,,}" in
+     *) echo "ERROR: unsupported architecture ${ARCH}" >&2; exit 1 ;;
+ esac
+ 
+-WASI_SDK_PATH=${SCRIPT_DIR}/tools/wasi-sdk-25.0-${WASI_SDK_ARCH}
++WASI_SDK_PATH=${SCRIPT_DIR}/tools/wasi-sdk-34.0-${WASI_SDK_ARCH}
++
++# WASI SDK 34 builds its threaded sysroot only for wasm32-wasip1-threads:
++# wasi-sdk PR 637 removed the deprecated wasm32-wasi-threads target from
++# WASI_SDK_TARGETS, but share/cmake/wasi-sdk-pthread.cmake still sets
++# `triple wasm32-wasi-threads`, so clang finds no crt1.o or libc for it.
++# Derive a toolchain file that differs from the shipped one in that line
++# only, next to it so its relative WASI_SDK_PREFIX still resolves.
++PTHREAD_TOOLCHAIN="${WASI_SDK_PATH}/share/cmake/wasi-sdk-pthread.cmake"
++P1_THREADS_TOOLCHAIN="${WASI_SDK_PATH}/share/cmake/wasi-sdk-p1-threads.cmake"
++test -d "${WASI_SDK_PATH}/share/wasi-sysroot/lib/wasm32-wasip1-threads"
++sed 's/^set(triple wasm32-wasi-threads)$/set(triple wasm32-wasip1-threads)/' \
++    "${PTHREAD_TOOLCHAIN}" > "${P1_THREADS_TOOLCHAIN}"
++test "$(diff "${PTHREAD_TOOLCHAIN}" "${P1_THREADS_TOOLCHAIN}" | grep -c '^[<>]')" = 2
++grep -qx 'set(triple wasm32-wasip1-threads)' "${P1_THREADS_TOOLCHAIN}"
+ 
+ # Detect protobuf version to set appropriate API defines
+ # Check if protobuf-version.txt exists (it should be in the workspace root)
+@@ -36,7 +50,12 @@ fi
+ 
+ CFLAGS="-D_WASI_EMULATED_MMAN -D_WASI_EMULATED_PROCESS_CLOCKS -D_WASI_EMULATED_SIGNAL -DABSL_HAVE_MMAP -DABSL_FORCE_THREAD_IDENTITY_MODE=1 -DWASM_WAMR -isystem ${SCRIPT_DIR}/protobuf/wasm-stubs"
+ CXXFLAGS="$CFLAGS -fno-exceptions $PROTOBUF_API_DEFINE"
+-LDFLAGS="-lwasi-emulated-process-clocks -lwasi-emulated-mman -lwasi-emulated-signal -Wl,--max-memory=4294967296 -Wl,--global-base=1024"
++# LLVM 22 and later (WASI SDK 34 ships LLVM 23) default wasm-ld to
++# --stack-first, which places the 64 KiB stack below static data and
++# rejects a --global-base smaller than the stack. The former
++# --global-base=1024 only restated the old non-stack-first default, so it
++# is dropped and the stack-first layout is kept.
++LDFLAGS="-lwasi-emulated-process-clocks -lwasi-emulated-mman -lwasi-emulated-signal -Wl,--max-memory=4294967296"
+ 
+ mkdir -p "$SCRIPT_DIR/build"
+ 
+@@ -44,7 +63,7 @@ mkdir -p "$SCRIPT_DIR/build"
+     cd "$SCRIPT_DIR/build"
+ 
+     cmake \
+-        -DCMAKE_TOOLCHAIN_FILE="$WASI_SDK_PATH/share/cmake/wasi-sdk-pthread.cmake" \
++        -DCMAKE_TOOLCHAIN_FILE="${P1_THREADS_TOOLCHAIN}" \
+         -DCMAKE_BUILD_TYPE=Release \
+         -DCMAKE_C_FLAGS="$CFLAGS" \
+         -DCMAKE_CXX_FLAGS="$CXXFLAGS" \
+diff --git a/buildtools-v4/Dockerfile b/buildtools-v4/Dockerfile
+index 9268af1..c222d1b 100644
+--- a/buildtools-v4/Dockerfile
++++ b/buildtools-v4/Dockerfile
+@@ -1,7 +1,29 @@
+-FROM ubuntu:24.04
+-
+-# Install dependencies
+-RUN apt-get update && apt-get install -y git patch curl wget cmake && rm -rf /var/lib/apt/lists/*
++# The build runs on linux/amd64 only. The Ubuntu snapshot service serves
++# the amd64 archive but not ubuntu-ports, so an arm64 image could not pin
++# its packages; an arm64 host runs this amd64 image under emulation. The
++# WASM output does not depend on the build architecture.
++FROM --platform=linux/amd64 ubuntu:24.04@sha256:fe81560990fae86dc4743202b2cb4d3df98d0bcf949173cecef15ce1127ef852
++
++# Install dependencies from a fixed Ubuntu archive snapshot so package
++# versions cannot drift between rebuilds (see
++# core/codegen/provenance/README.md in the protomolt repository).
++# The snapshot host redirects to HTTPS and the base image ships no CA
++# bundle, so TLS peer verification is off for that one host only; package
++# integrity and origin authentication come from apt's signed Release
++# files, as with the plain-HTTP archive this recipe used before. The
++# source rewrite is checked, so an image whose sources do not match fails
++# here instead of installing unpinned packages.
++RUN sed -i \
++      -e 's|http://archive.ubuntu.com/ubuntu/|http://snapshot.ubuntu.com/ubuntu/20261024T120000Z/|' \
++      -e 's|http://security.ubuntu.com/ubuntu/|http://snapshot.ubuntu.com/ubuntu/20261024T120000Z/|' \
++      /etc/apt/sources.list.d/ubuntu.sources \
++ && grep -q 'snapshot.ubuntu.com/ubuntu/20261024T120000Z/' /etc/apt/sources.list.d/ubuntu.sources \
++ && ! grep -q -e 'archive.ubuntu.com' -e 'security.ubuntu.com' -e 'ports.ubuntu.com' \
++      /etc/apt/sources.list.d/ubuntu.sources \
++ && printf 'Acquire::https::snapshot.ubuntu.com::Verify-Peer "false";\nAcquire::https::snapshot.ubuntu.com::Verify-Host "false";\n' \
++      > /etc/apt/apt.conf.d/99snapshot-tls \
++ && apt-get -o Acquire::Check-Valid-Until=false update \
++ && apt-get install -y git patch curl wget cmake && rm -rf /var/lib/apt/lists/*
+ 
+ WORKDIR /workspace
+ 
+diff --git a/buildtools-v4/protobuf-version.txt b/buildtools-v4/protobuf-version.txt
+index d92e3e3..a33df8e 100644
+--- a/buildtools-v4/protobuf-version.txt
++++ b/buildtools-v4/protobuf-version.txt
+@@ -1 +1 @@
+-v34.1
++v36.2

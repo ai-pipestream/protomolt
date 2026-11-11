@@ -9,22 +9,15 @@ code. An item with nothing left open does not belong here at all.
 
 ## Service connectivity
 
-### Authenticated reflection
+### Profile TLS from host configuration
 
-Service profiles can name an opaque credential reference. Apply host-resolved
-gRPC call credentials consistently to registration, refresh, inspection, and
-invocation. Start with `env:` bearer credentials. Keep credential values out
-of profiles, descriptor artifacts, summaries, logs, and errors.
-
-The contract half exists and the behavior half does not. A profile carries
-`credential_ref`, `trust_ref`, and `client_certificate_ref`, and profile
-validation refuses anything that is not a namespaced `<scheme>:<name>`
-reference, so raw secrets cannot be stored. Every gRPC path that would use
-one then refuses it by name with `unsupported-transport`, which is the
-honest placeholder: registration, refresh, and invocation all require a
-credential resolver that is never supplied, and no `CallCredentials` is
-constructed anywhere in the repo. An `env:` resolver already exists for the
-inference lane and is the piece to reach across, not rebuild.
+Let an operator configure profile TLS material on the launchers, not only in
+code. Bearer references (`env:`) and TLS references (`trust_ref`,
+`client_certificate_ref`) resolve on every gRPC path through
+`EnvProfileCredentialResolver` and `FileProfileTlsResolver`, as described in
+the [service workspace guide](../surface/service-workspace.md). Still open:
+serve and the platform expose no flag or environment variable that builds
+those resolvers' approved bindings, so a host has to wire them in code.
 
 ### Shared outbound policy
 
@@ -334,9 +327,12 @@ which is what the last sentence asks for.
 Digest-pin generator build images and archives. Package the required license
 and notice material and keep the binary checksum enforced by the build.
 
-The checksum half is done and stays done: the build verifies the embedded
-binary's SHA-256 against a recorded provenance file as part of `check`, and
-the provenance notes pin the upstream commit and tool versions. Open: the
-build image and downloaded tool archives are not digest-pinned, so a rebuild
-is not hermetic, and the repository `NOTICE` carries no attribution for the
-components compiled into the binary.
+The build verifies the embedded binary's SHA-256 against a recorded
+provenance file as part of `check`. The rebuild script pins every generator
+input through a reviewed patch applied to the pinned protobuf4j recipe: the
+`linux/amd64` Docker base image by digest, apt to a fixed Ubuntu snapshot,
+the WASI SDK and Binaryen archives by SHA-256 (verified before extraction),
+and the grpc-java, protobuf and Abseil git inputs to exact commits (see
+`core/codegen/provenance/README.md`). The repository `NOTICE` attributes
+every component compiled into the binary, with full license texts under
+`licenses/`, packaged in the `protomolt-codegen` jar under `META-INF/`.

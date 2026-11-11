@@ -77,8 +77,24 @@ reference; changing any of them requires a new host-approved binding. The
 resolver reuses the inference SPI's environment resolver and bearer validation.
 Without a host resolver, or when the referenced environment variable is unset,
 empty, or invalid, `credential_ref` fails closed with `credential-unavailable`
-before a channel opens. Custom trust and client-certificate references still
-fail with `unsupported-transport`.
+before a channel opens.
+
+Custom trust and client-certificate references need a TLS endpoint and a host
+TLS resolver; otherwise every path refuses them with `unsupported-transport`
+before a channel opens. `FileProfileTlsResolver` is the bundled one. Each
+binding pins the profile name, endpoint name, host, port, `trust_ref` and
+`client_certificate_ref`. The host maps each trust reference to a PEM bundle of
+CA certificates, which replaces the JDK roots for that endpoint, and each
+client-certificate reference to a PEM certificate chain (leaf first) and an
+unencrypted PKCS#8 PEM key. Combine it with a bearer resolver through
+`ProfileCredentialResolver.withTls`. The files are read each time a channel
+opens, so replacing them rotates the material for the next call. An unapproved
+endpoint, an unknown reference, or a file that is missing or does not parse
+fails with `credential-unavailable` before a channel opens; the refusal names
+neither the files nor their contents. Registration, refresh, inspection,
+`service-invoke` and the reflected verbs all present the same material. A
+channel factory that cannot carry TLS channel credentials refuses instead of
+opening a default channel.
 
 Registration, refresh, unary and server-streaming `service-invoke`, and the
 reflected verbs attach the bearer token through gRPC `CallCredentials`, which
@@ -86,7 +102,8 @@ re-resolves the reference on every call, so rotated material is picked up and
 nothing is cached on a channel. A server that rejects the token fails the call
 with `UNAUTHENTICATED`; there is no anonymous fallback. Authenticated calls
 surface only the upstream status code — descriptions, causes, and trailers are
-withheld because an endpoint can echo the presented credential in its refusal —
+withheld because an endpoint can echo the presented credential or client
+identity in its refusal —
 while unauthenticated calls keep their diagnostics. Credential values never
 appear in profiles, descriptor artifacts, replies, or errors — only the opaque
 reference does.

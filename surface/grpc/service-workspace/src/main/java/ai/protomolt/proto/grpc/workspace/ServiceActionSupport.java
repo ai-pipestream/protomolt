@@ -21,6 +21,7 @@ import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.google.protobuf.util.JsonFormat;
 import io.grpc.CallCredentials;
+import io.grpc.ChannelCredentials;
 import io.grpc.ManagedChannel;
 import io.grpc.Channel;
 import io.grpc.Status;
@@ -100,11 +101,13 @@ final class ServiceActionSupport {
         try {
             ServiceProfileValidation.validateConnectionProfile(profile);
         } catch (IllegalArgumentException e) {
-            throw invalid(e.getMessage(), "/profile");
+            throw invalid(e.getMessage(), "/profile", e);
         }
         ServiceEndpoint endpoint = endpoint(profile, endpointName);
         CallCredentials callCredentials =
                 ProfileCredentials.callCredentials(profile, endpoint, credentials);
+        ChannelCredentials tlsCredentials =
+                ProfileCredentials.channelCredentials(profile, endpoint, credentials);
         String target = target(endpoint);
         boolean tls = endpoint.getTransport() == Transport.TRANSPORT_TLS;
         try {
@@ -112,13 +115,14 @@ final class ServiceActionSupport {
             channels.validateDeadline(deadlineMs);
         } catch (IllegalArgumentException e) {
             throw invalid(e.getMessage(), e.getMessage().contains("deadline")
-                    ? "/deadlineMs" : "/profile/endpoints");
+                    ? "/deadlineMs" : "/profile/endpoints", e);
         }
         ManagedChannel channel;
         try {
-            channel = channels.open(target, tls);
+            channel = tlsCredentials == null
+                    ? channels.open(target, tls) : channels.open(target, tlsCredentials);
         } catch (IllegalArgumentException e) {
-            throw invalid(e.getMessage(), "/profile/endpoints");
+            throw invalid(e.getMessage(), "/profile/endpoints", e);
         }
         ReflectionClient.Result reflected;
         try {
@@ -128,9 +132,10 @@ final class ServiceActionSupport {
                     ? ReflectionClient.discover(reflectedChannel, deadlineMs)
                     : ReflectionClient.discover(reflectedChannel, deadlineMs, channels.policy());
         } catch (ReflectionException e) {
-            // The upstream refusal can carry the presented credential in its status text;
-            // authenticated reflection keeps the status code, not the diagnostics.
-            if (callCredentials != null) {
+            // The upstream refusal can carry the presented credential or client identity in
+            // its status text; authenticated reflection keeps the status code, not the
+            // diagnostics.
+            if (callCredentials != null || tlsCredentials != null) {
                 String code = Status.fromThrowable(e).getCode().name();
                 throw new ReflectionException("reflection failed against the authenticated endpoint: "
                         + code + " (upstream status withheld)");
@@ -145,7 +150,7 @@ final class ServiceActionSupport {
             GoogleDescriptorLoader.fromDescriptorSet(reflected.descriptorSet());
         } catch (Exception e) {
             throw new ActionException("invalid-descriptor",
-                    "reflected descriptor set could not be linked");
+                    "reflected descriptor set could not be linked", null, e);
         }
         String fingerprint = ServiceProfileValidation.sha256(descriptorBytes);
         DescriptorArtifact artifact = DescriptorArtifact.newBuilder()
@@ -168,7 +173,7 @@ final class ServiceActionSupport {
             }
             repository.save(updated);
         } catch (IllegalArgumentException e) {
-            throw invalid(e.getMessage(), "/profile");
+            throw invalid(e.getMessage(), "/profile", e);
         } catch (IOException e) {
             throw storage("save service profile '" + profile.getName() + "'", e);
         }
@@ -250,12 +255,19 @@ final class ServiceActionSupport {
         return new ActionException("invalid-input", message + " (at '" + pointer + "')", details);
     }
 
+    static ActionException invalid(String message, String pointer, Throwable cause) {
+        ObjectNode details = JsonNodeFactory.instance.objectNode();
+        details.put("pointer", pointer);
+        return new ActionException(
+                "invalid-input", message + " (at '" + pointer + "')", details, cause);
+    }
+
     static ActionException notFound(String name) {
         return new ActionException("not-found", "service profile '" + name + "' was not found");
     }
 
     static ActionException storage(String operation, IOException error) {
-        return new ActionException("storage-error", "Failed to " + operation);
+        return new ActionException("storage-error", "Failed to " + operation, null, error);
     }
 
     static String target(ServiceEndpoint endpoint) {
