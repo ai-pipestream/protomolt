@@ -36,8 +36,8 @@ and concurrency limits. Recheck resolved addresses before connecting.
 (with wildcard suffixes), port, plaintext and TLS toggles, a deadline
 ceiling, a leased concurrency semaphore, and syntactic target hardening down
 to DNS labels and IPv6 groups. Three of the five call sites route through it:
-reflection, invocation, and workflows. Still open: payload and message-size
-limits, which the policy does not express at all; resolved-address validation
+reflection, invocation, and workflows, and every policy channel caps message
+size in both directions. Still open: resolved-address validation
 and the re-check before connect, which the class deliberately does not do
 today (it validates without resolving); and pass-through for pipelines, whose
 transport takes a caller-supplied channel resolver, and for schema gathering,

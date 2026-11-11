@@ -190,7 +190,12 @@ class ProtoMoltServeTest {
                 "--grpc-allow-plaintext", "false",
                 "--grpc-allow-tls", "true",
                 "--grpc-max-deadline-ms", "5000",
-                "--grpc-max-active-channels", "3"});
+                "--grpc-max-active-channels", "3",
+                "--grpc-max-inbound-message-bytes", "2048",
+                "--grpc-max-outbound-message-bytes", "1024"});
+
+        assertThat(options.outboundPolicy().maxInboundMessageBytes()).isEqualTo(2048);
+        assertThat(options.outboundPolicy().maxOutboundMessageBytes()).isEqualTo(1024);
 
         assertThat(options.outboundPolicy().validateTarget("api.example.com:443", true)
                 .scheme()).isEqualTo("dns");
