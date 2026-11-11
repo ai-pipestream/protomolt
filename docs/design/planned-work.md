@@ -334,9 +334,12 @@ which is what the last sentence asks for.
 Digest-pin generator build images and archives. Package the required license
 and notice material and keep the binary checksum enforced by the build.
 
-The checksum half is done and stays done: the build verifies the embedded
-binary's SHA-256 against a recorded provenance file as part of `check`, and
-the provenance notes pin the upstream commit and tool versions. Open: the
-build image and downloaded tool archives are not digest-pinned, so a rebuild
-is not hermetic, and the repository `NOTICE` carries no attribution for the
-components compiled into the binary.
+The build verifies the embedded binary's SHA-256 against a recorded
+provenance file as part of `check`. The rebuild script pins every generator
+input through a reviewed patch applied to the pinned protobuf4j recipe: the
+`linux/amd64` Docker base image by digest, apt to a fixed Ubuntu snapshot,
+the WASI SDK and Binaryen archives by SHA-256 (verified before extraction),
+and the grpc-java, protobuf and Abseil git inputs to exact commits (see
+`core/codegen/provenance/README.md`). The repository `NOTICE` attributes
+every component compiled into the binary, with full license texts under
+`licenses/`, packaged in the `protomolt-codegen` jar under `META-INF/`.
