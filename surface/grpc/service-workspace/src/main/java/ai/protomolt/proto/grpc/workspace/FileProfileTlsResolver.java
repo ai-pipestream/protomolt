@@ -34,8 +34,10 @@ import javax.net.ssl.TrustManagerFactory;
  * <p>A profile's {@code trust_ref} and {@code client_certificate_ref} are opaque names; this
  * resolver maps each name to files through host configuration, never through the profile. The
  * files are read every time a channel opens, so replacing them rotates the material for the
- * next call. A trust reference replaces the system roots with its bundle. Every failure is a
- * {@code credential-unavailable} refusal that names neither the files nor their contents.
+ * next call. A trust reference replaces the system roots with its bundle. Non-TLS endpoints
+ * are refused with {@code unsupported-transport}; every unapproved reference or unreadable or
+ * malformed file is a {@code credential-unavailable} refusal whose wire message names neither
+ * the files nor their contents.
  */
 public final class FileProfileTlsResolver implements ProfileTlsResolver {
 
@@ -176,12 +178,18 @@ public final class FileProfileTlsResolver implements ProfileTlsResolver {
     private static PrivateKey privateKey(Path file) throws IOException, GeneralSecurityException {
         String pem = Files.readString(file, StandardCharsets.US_ASCII);
         int begin = pem.indexOf(KEY_BEGIN);
-        int end = pem.indexOf(KEY_END);
-        if (begin < 0 || end < begin || pem.indexOf(KEY_BEGIN, begin + 1) >= 0) {
+        if (begin < 0) {
             throw new GeneralSecurityException("expected exactly one PKCS#8 private key");
         }
-        byte[] der = Base64.getMimeDecoder()
-                .decode(pem.substring(begin + KEY_BEGIN.length(), end));
+        int contentStart = begin + KEY_BEGIN.length();
+        int end = pem.indexOf(KEY_END, contentStart);
+        if (end < 0
+                || pem.indexOf(KEY_BEGIN, contentStart) >= 0
+                || pem.indexOf(KEY_END) != end
+                || pem.indexOf(KEY_END, end + KEY_END.length()) >= 0) {
+            throw new GeneralSecurityException("expected exactly one PKCS#8 private key");
+        }
+        byte[] der = Base64.getMimeDecoder().decode(pem.substring(contentStart, end));
         PKCS8EncodedKeySpec spec = new PKCS8EncodedKeySpec(der);
         GeneralSecurityException unsupported =
                 new GeneralSecurityException("unsupported private key algorithm");

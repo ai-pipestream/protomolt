@@ -102,7 +102,8 @@ re-resolves the reference on every call, so rotated material is picked up and
 nothing is cached on a channel. A server that rejects the token fails the call
 with `UNAUTHENTICATED`; there is no anonymous fallback. Authenticated calls
 surface only the upstream status code — descriptions, causes, and trailers are
-withheld because an endpoint can echo the presented credential in its refusal —
+withheld because an endpoint can echo the presented credential or client
+identity in its refusal —
 while unauthenticated calls keep their diagnostics. Credential values never
 appear in profiles, descriptor artifacts, replies, or errors — only the opaque
 reference does.

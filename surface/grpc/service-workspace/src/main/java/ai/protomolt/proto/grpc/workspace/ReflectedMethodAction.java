@@ -7,6 +7,7 @@ import ai.protomolt.proto.actions.ProtoAction;
 import ai.protomolt.proto.actions.Scopes;
 import ai.protomolt.proto.grpc.invoke.ChannelFactory;
 import ai.protomolt.proto.grpc.invoke.DynamicGrpcCalls;
+import ai.protomolt.proto.grpc.invoke.UpstreamStatus;
 import ai.protomolt.proto.grpc.profile.ServiceProfileRepository;
 import ai.protomolt.proto.grpc.profile.v1.ServiceEndpoint;
 import ai.protomolt.proto.grpc.profile.v1.ServiceProfile;
@@ -22,6 +23,7 @@ import io.grpc.ChannelCredentials;
 import io.grpc.CallOptions;
 import io.grpc.ManagedChannel;
 import io.grpc.Metadata;
+import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
 
 import java.io.IOException;
@@ -115,12 +117,18 @@ final class ReflectedMethodAction implements ProtoAction {
         try {
             channels.validateDeadline(deadline);
         } catch (IllegalArgumentException invalid) {
-            throw new ActionException("invalid-profile", "profile method deadline is not allowed");
+            throw new ActionException(
+                    "invalid-profile", "profile method deadline is not allowed", null, invalid);
         }
-        ManagedChannel channel = tlsCredentials == null
-                ? channels.open(ServiceActionSupport.target(endpoint),
-                        endpoint.getTransport() == Transport.TRANSPORT_TLS)
-                : channels.open(ServiceActionSupport.target(endpoint), tlsCredentials);
+        ManagedChannel channel;
+        try {
+            channel = tlsCredentials == null
+                    ? channels.open(ServiceActionSupport.target(endpoint),
+                            endpoint.getTransport() == Transport.TRANSPORT_TLS)
+                    : channels.open(ServiceActionSupport.target(endpoint), tlsCredentials);
+        } catch (IllegalArgumentException e) {
+            throw ServiceActionSupport.invalid(e.getMessage(), "/profile/endpoints", e);
+        }
         try {
             CallOptions options =
                     CallOptions.DEFAULT.withDeadlineAfter(deadline, TimeUnit.MILLISECONDS);
@@ -145,9 +153,11 @@ final class ReflectedMethodAction implements ProtoAction {
             return response;
         } catch (StatusRuntimeException e) {
             // Credentialed verbs surface the code only; the upstream text may echo the
-            // credential that was presented. Unauthenticated verbs keep their diagnostics.
-            String detail = callCredentials == null ? ": " + e.getStatus().getDescription() : "";
-            throw new ActionException("upstream-" + e.getStatus().getCode().name()
+            // credential or client identity that was presented. Unauthenticated verbs keep
+            // their diagnostics.
+            Status status = UpstreamStatus.reply(e.getStatus(), callCredentials, tlsCredentials);
+            String detail = status.getDescription() == null ? "" : ": " + status.getDescription();
+            throw new ActionException("upstream-" + status.getCode().name()
                     .toLowerCase(java.util.Locale.ROOT).replace('_', '-'),
                     method.getFullName() + " failed" + detail);
         } finally {

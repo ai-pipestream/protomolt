@@ -152,8 +152,9 @@ public final class GrpcInvokeAction implements StreamingAction {
             }
         } catch (StatusRuntimeException e) {
             // Credentialed calls surface the code only; the upstream text may echo the
-            // credential that was presented.
-            Status status = UpstreamStatus.reply(e.getStatus(), plan.credentials());
+            // credential or client identity that was presented.
+            Status status = UpstreamStatus.reply(
+                    e.getStatus(), plan.credentials(), plan.channelCredentials());
             result.set("ok", false).set("status", status.getCode().name());
             if (status.getDescription() != null) {
                 result.set("description", status.getDescription());
@@ -227,14 +228,16 @@ public final class GrpcInvokeAction implements StreamingAction {
                     }
                     Status terminal = stream.terminalStatus();
                     if (terminal != null && !terminal.isOk()) {
-                        emitter.emit(terminal(UpstreamStatus.reply(terminal, plan.credentials())));
+                        emitter.emit(terminal(UpstreamStatus.reply(
+                                terminal, plan.credentials(), plan.channelCredentials())));
                         return;
                     }
                 }
             }
             emitter.emit(okTerminal());
         } catch (StatusRuntimeException e) {
-            emitter.emit(terminal(UpstreamStatus.reply(e.getStatus(), plan.credentials())));
+            emitter.emit(terminal(UpstreamStatus.reply(
+                    e.getStatus(), plan.credentials(), plan.channelCredentials())));
         } finally {
             channel.shutdownNow();
         }
@@ -277,7 +280,7 @@ public final class GrpcInvokeAction implements StreamingAction {
                     ? channelFactory.open(plan.target(), plan.tls())
                     : channelFactory.open(plan.target(), plan.channelCredentials());
         } catch (IllegalArgumentException e) {
-            throw invalidInput(e.getMessage(), "/target");
+            throw invalidInput(e.getMessage(), "/target", e);
         }
     }
 
@@ -302,7 +305,7 @@ public final class GrpcInvokeAction implements StreamingAction {
             channelFactory.validateDeadline(deadlineMs);
         } catch (IllegalArgumentException e) {
             throw invalidInput(e.getMessage(), e.getMessage().contains("deadline")
-                    ? "/deadlineMs" : "/target");
+                    ? "/deadlineMs" : "/target", e);
         }
 
         SchemaResolver.ResolvedSchema schema = SchemaResolver.resolve(input, "schema", context);
@@ -318,7 +321,7 @@ public final class GrpcInvokeAction implements StreamingAction {
             request = context.transcoder().fromJsonDynamic(requestNode.toString(), method.getInputType());
         } catch (RuntimeException e) {
             throw invalidInput("Request does not parse as " + method.getInputType().getFullName()
-                    + ": " + e.getMessage(), "/request");
+                    + ": " + e.getMessage(), "/request", e);
         }
         ValidationResult nested = ValidationResult.validate(request);
         if (!nested.valid()) {
@@ -413,5 +416,12 @@ public final class GrpcInvokeAction implements StreamingAction {
         ObjectNode details = JsonNodeFactory.instance.objectNode();
         details.put("pointer", pointer);
         return new ActionException("invalid-input", message + " (at '" + pointer + "')", details);
+    }
+
+    private static ActionException invalidInput(String message, String pointer, Throwable cause) {
+        ObjectNode details = JsonNodeFactory.instance.objectNode();
+        details.put("pointer", pointer);
+        return new ActionException(
+                "invalid-input", message + " (at '" + pointer + "')", details, cause);
     }
 }

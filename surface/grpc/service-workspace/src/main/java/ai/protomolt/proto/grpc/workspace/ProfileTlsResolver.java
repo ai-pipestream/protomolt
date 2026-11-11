@@ -17,6 +17,7 @@ public interface ProfileTlsResolver {
 
     /**
      * Channel credentials for one TLS endpoint naming at least one TLS reference. Fails with
+     * {@code unsupported-transport} when called for a non-TLS endpoint, and with
      * {@code credential-unavailable} when a reference is not approved for the endpoint or its
      * material cannot be loaded; never answers null.
      */

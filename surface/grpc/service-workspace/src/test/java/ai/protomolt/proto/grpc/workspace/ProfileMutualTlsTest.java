@@ -6,10 +6,18 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import ai.protomolt.proto.actions.ActionCatalog;
 import ai.protomolt.proto.actions.ActionContext;
 import ai.protomolt.proto.actions.ActionException;
+import ai.protomolt.proto.actions.CatalogContract;
+import ai.protomolt.proto.actions.StreamingAction;
 import ai.protomolt.proto.grpc.invoke.ChannelFactory;
+import ai.protomolt.proto.grpc.policy.OutboundChannelPolicy;
+import ai.protomolt.proto.grpc.policy.OutboundChannelPolicyException;
 import ai.protomolt.proto.grpc.profile.FileSystemServiceProfileRepository;
+import ai.protomolt.proto.grpc.profile.v1.ServiceEndpoint;
+import ai.protomolt.proto.grpc.profile.v1.ServiceProfile;
+import ai.protomolt.proto.grpc.profile.v1.Transport;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.google.protobuf.Message;
 import io.grpc.ChannelCredentials;
 import io.grpc.Grpc;
 import io.grpc.ManagedChannel;
@@ -19,6 +27,7 @@ import io.grpc.ServerCall;
 import io.grpc.ServerCallHandler;
 import io.grpc.ServerInterceptor;
 import io.grpc.ServerInterceptors;
+import io.grpc.Status;
 import io.grpc.TlsServerCredentials;
 import io.grpc.protobuf.services.HealthStatusManager;
 import io.grpc.protobuf.services.ProtoReflectionServiceV1;
@@ -28,6 +37,7 @@ import java.nio.file.Files;
 import java.nio.file.NoSuchFileException;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
+import java.security.GeneralSecurityException;
 import java.security.KeyStore;
 import java.security.PrivateKey;
 import java.security.cert.X509Certificate;
@@ -37,6 +47,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import javax.net.ssl.SSLPeerUnverifiedException;
 import javax.net.ssl.SSLSession;
@@ -77,6 +88,7 @@ class ProfileMutualTlsTest {
     Path directory;
 
     private final AtomicReference<String> presentedClient = new AtomicReference<>();
+    private final AtomicBoolean rejectEchoingIdentity = new AtomicBoolean();
     private Server tlsServer;
     private int port;
     private Path trustFile;
@@ -109,7 +121,16 @@ class ProfileMutualTlsTest {
                 SSLSession session = call.getAttributes().get(Grpc.TRANSPORT_ATTR_SSL_SESSION);
                 try {
                     X509Certificate peer = (X509Certificate) session.getPeerCertificates()[0];
-                    presentedClient.set(peer.getSubjectX500Principal().getName());
+                    String subject = peer.getSubjectX500Principal().getName();
+                    presentedClient.set(subject);
+                    if (rejectEchoingIdentity.get()) {
+                        Metadata trailers = new Metadata();
+                        trailers.put(Metadata.Key.of(
+                                "x-peer-subject", Metadata.ASCII_STRING_MARSHALLER), subject);
+                        call.close(Status.PERMISSION_DENIED
+                                .withDescription("denied client " + subject), trailers);
+                        return new ServerCall.Listener<>() {};
+                    }
                 } catch (SSLPeerUnverifiedException e) {
                     presentedClient.set(null);
                 }
@@ -282,6 +303,198 @@ class ProfileMutualTlsTest {
                     assertThat(refused.getMessage()).contains("need TLS transport");
                 });
         assertThat(presentedClient.get()).isNull();
+    }
+
+    @Test
+    void overlappingOrMisorderedPemKeyMarkersFailWithCredentialUnavailable() throws Exception {
+        FileProfileTlsResolver tlsResolver = new FileProfileTlsResolver(
+                Set.of(binding(TRUST_REF, CLIENT_REF)),
+                Map.of(TRUST_REF, trustFile),
+                Map.of(CLIENT_REF, new FileProfileTlsResolver.KeyPairFiles(
+                        clientCertificateFile, clientKeyFile)));
+        ActionCatalog working = catalog(ProfileCredentialResolver.withTls(null, tlsResolver));
+        working.execute("service-register", registerInput(CLIENT_REF));
+        presentedClient.set(null);
+
+        ServiceProfile profile = ServiceProfile.newBuilder().setName(PROFILE).build();
+        ServiceEndpoint endpoint = ServiceEndpoint.newBuilder()
+                .setName("local")
+                .setHost("localhost")
+                .setPort(port)
+                .setTransport(Transport.TRANSPORT_TLS)
+                .setTrustRef(TRUST_REF)
+                .setClientCertificateRef(CLIENT_REF)
+                .build();
+
+        for (String malformedKey : List.of(
+                "-----BEGIN PRIVATE KEY-----END PRIVATE KEY-----",
+                "-----END PRIVATE KEY-----\n-----BEGIN PRIVATE KEY-----\nAAAA\n"
+                        + "-----END PRIVATE KEY-----\n",
+                "-----BEGIN PRIVATE KEY-----\nAAAA\n-----END PRIVATE KEY-----\n"
+                        + "-----END PRIVATE KEY-----\n")) {
+            Files.writeString(clientKeyFile, malformedKey, StandardCharsets.US_ASCII);
+
+            assertThatThrownBy(() -> tlsResolver.channelCredentials(profile, endpoint))
+                    .isInstanceOfSatisfying(ActionException.class, refused -> {
+                        assertThat(refused.code()).isEqualTo("credential-unavailable");
+                        assertThat(refused.getMessage()).contains("TLS material could not be loaded");
+                        assertThat(refused.getCause()).isInstanceOf(GeneralSecurityException.class);
+                        assertNoMaterial(refused.getMessage());
+                    });
+            assertRefused(working, "TLS material could not be loaded");
+            assertThatThrownBy(() -> working.execute("mtls-health-check", MAPPER.createObjectNode()))
+                    .isInstanceOfSatisfying(ActionException.class, refused -> {
+                        assertThat(refused.code()).isEqualTo("credential-unavailable");
+                        assertThat(refused.getCause()).isInstanceOf(GeneralSecurityException.class);
+                        assertNoMaterial(refused.getMessage());
+                    });
+        }
+    }
+
+    @Test
+    void refusingChannelFactoryTranslatesToInvalidInputWithCauseAcrossVerbs() throws Exception {
+        FileProfileTlsResolver.Binding allowed = binding(TRUST_REF, CLIENT_REF);
+        ProfileCredentialResolver tlsResolver = resolver(allowed);
+        FileSystemServiceProfileRepository repository =
+                new FileSystemServiceProfileRepository(directory.resolve("profiles"));
+        ActionCatalog registered = ServiceWorkspaceActions.register(
+                ActionCatalog.defaults(ActionContext.create()), repository, null,
+                channels, tlsResolver);
+        registered.execute("service-register", registerInput(CLIENT_REF));
+        presentedClient.set(null);
+
+        // A lambda ChannelFactory inherits the default open(target, ChannelCredentials),
+        // which refuses custom TLS credentials with IllegalArgumentException.
+        ChannelFactory lambdaFactory = (target, tls) -> {
+            throw new AssertionError("must not fall back to default channel open");
+        };
+        ActionCatalog refusingCustomTls = ServiceWorkspaceActions.register(
+                ActionCatalog.defaults(ActionContext.create()), repository, null,
+                lambdaFactory, tlsResolver);
+        ReflectedServiceActions.registerStored(
+                refusingCustomTls, repository, null, lambdaFactory, tlsResolver);
+
+        assertThatThrownBy(() -> refusingCustomTls.execute(
+                "mtls-health-check", MAPPER.createObjectNode()))
+                .isInstanceOfSatisfying(ActionException.class, refused -> {
+                    assertThat(refused.code()).isEqualTo("invalid-input");
+                    assertThat(refused.getMessage())
+                            .contains("cannot present custom TLS credentials");
+                    assertThat(refused.details()).isPresent().get()
+                            .extracting(node -> node.path("pointer").asText())
+                            .isEqualTo("/profile/endpoints");
+                    assertThat(refused.getCause()).isInstanceOf(IllegalArgumentException.class);
+                });
+        assertThatThrownBy(() -> refusingCustomTls.execute("service-invoke", checkInput()))
+                .isInstanceOfSatisfying(ActionException.class, refused -> {
+                    assertThat(refused.code()).isEqualTo("invalid-input");
+                    assertThat(refused.getMessage())
+                            .contains("cannot present custom TLS credentials");
+                    assertThat(refused.details()).isPresent().get()
+                            .extracting(node -> node.path("pointer").asText())
+                            .isEqualTo("/target");
+                    assertThat(refused.getCause()).isInstanceOf(IllegalArgumentException.class);
+                });
+        assertThatThrownBy(() -> refusingCustomTls.execute("service-refresh",
+                MAPPER.createObjectNode().put("name", PROFILE)))
+                .isInstanceOfSatisfying(ActionException.class, refused -> {
+                    assertThat(refused.code()).isEqualTo("invalid-input");
+                    assertThat(refused.details()).isPresent().get()
+                            .extracting(node -> node.path("pointer").asText())
+                            .isEqualTo("/profile/endpoints");
+                    assertThat(refused.getCause()).isInstanceOf(IllegalArgumentException.class);
+                });
+
+        // Policy refusals on both the credentialed and non-credentialed reflected verb branches
+        // also translate to invalid-input and retain OutboundChannelPolicyException as cause.
+        ChannelFactory hostBlocked = ChannelFactory.standard(OutboundChannelPolicy.builder()
+                .allowedHosts(Set.of("allowed.example"))
+                .build());
+        ActionCatalog policyBlocked = ActionCatalog.defaults(ActionContext.create());
+        ReflectedServiceActions.registerStored(
+                policyBlocked, repository, null, hostBlocked, tlsResolver);
+        assertThatThrownBy(() -> policyBlocked.execute(
+                "mtls-health-check", MAPPER.createObjectNode()))
+                .isInstanceOfSatisfying(ActionException.class, refused -> {
+                    assertThat(refused.code()).isEqualTo("invalid-input");
+                    assertThat(refused.getCause())
+                            .isInstanceOf(OutboundChannelPolicyException.class);
+                });
+
+        ServiceProfile stored = repository.find(PROFILE).orElseThrow();
+        ServiceProfile uncredentialed = stored.toBuilder()
+                .setName("plain-health")
+                .setEndpoints(0, stored.getEndpoints(0).toBuilder()
+                        .clearTrustRef()
+                        .clearClientCertificateRef()
+                        .setTransport(Transport.TRANSPORT_PLAINTEXT))
+                .build();
+        repository.save(uncredentialed);
+        ReflectedServiceActions.register(policyBlocked, uncredentialed, repository, null,
+                hostBlocked);
+        assertThatThrownBy(() -> policyBlocked.execute(
+                "plain-health-check", MAPPER.createObjectNode()))
+                .isInstanceOfSatisfying(ActionException.class, refused -> {
+                    assertThat(refused.code()).isEqualTo("invalid-input");
+                    assertThat(refused.getCause())
+                            .isInstanceOf(OutboundChannelPolicyException.class);
+                });
+        assertThat(presentedClient.get()).isNull();
+    }
+
+    @Test
+    void mtlsOnlyCallsWithholdUpstreamStatusDescriptionsAcrossEveryPath() throws Exception {
+        ActionCatalog catalog = catalog(resolver(binding(TRUST_REF, CLIENT_REF)));
+
+        rejectEchoingIdentity.set(true);
+        ObjectNode rejectedRegister = catalog.execute("service-register", registerInput(CLIENT_REF));
+        assertThat(rejectedRegister.path("ok").asBoolean()).isFalse();
+        assertThat(rejectedRegister.path("error").asText())
+                .contains("PERMISSION_DENIED", "withheld");
+        assertThat(rejectedRegister.toString()).doesNotContain("CN=client-one");
+
+        rejectEchoingIdentity.set(false);
+        assertThat(catalog.execute("service-register", registerInput(CLIENT_REF))
+                .path("ok").asBoolean()).isTrue();
+
+        rejectEchoingIdentity.set(true);
+        ObjectNode rejectedRefresh = catalog.execute("service-refresh",
+                MAPPER.createObjectNode().put("name", PROFILE));
+        assertThat(rejectedRefresh.path("ok").asBoolean()).isFalse();
+        assertThat(rejectedRefresh.path("error").asText())
+                .contains("PERMISSION_DENIED", "withheld");
+        assertThat(rejectedRefresh.toString()).doesNotContain("CN=client-one");
+
+        ObjectNode unary = catalog.execute("service-invoke", checkInput());
+        assertThat(unary.path("ok").asBoolean()).isFalse();
+        assertThat(unary.path("status").asText()).isEqualTo("PERMISSION_DENIED");
+        assertThat(unary.path("description").asText()).isEmpty();
+        assertThat(unary.toString()).doesNotContain("CN=client-one");
+
+        ObjectNode watchInput = MAPPER.createObjectNode()
+                .put("name", PROFILE)
+                .put("method", "grpc.health.v1.Health/Watch");
+        watchInput.putObject("request").put("service", "");
+        StreamingAction serviceInvoke = (StreamingAction) catalog.get("service-invoke");
+        Message request = ServiceActionJson.parse(
+                watchInput, "ServiceInvokeRequest", "service-invoke");
+        List<Message> emitted = new ArrayList<>();
+        serviceInvoke.executeStreaming(request, ActionContext.create(), emitted::add);
+        assertThat(emitted).isNotEmpty();
+        ObjectNode terminal = CatalogContract.toReply(
+                emitted.get(emitted.size() - 1), "service-invoke");
+        assertThat(terminal.path("ok").asBoolean()).isFalse();
+        assertThat(terminal.path("status").asText()).isEqualTo("PERMISSION_DENIED");
+        assertThat(terminal.path("description").asText()).isEmpty();
+        assertThat(emitted.toString()).doesNotContain("CN=client-one");
+
+        assertThatThrownBy(() -> catalog.execute("mtls-health-check", MAPPER.createObjectNode()))
+                .isInstanceOfSatisfying(ActionException.class, refused -> {
+                    assertThat(refused.code()).isEqualTo("upstream-permission-denied");
+                    assertThat(refused.getMessage())
+                            .isEqualTo("grpc.health.v1.Health.Check failed")
+                            .doesNotContain("CN=client-one");
+                });
     }
 
     private void assertRefused(ActionCatalog catalog, String message) {

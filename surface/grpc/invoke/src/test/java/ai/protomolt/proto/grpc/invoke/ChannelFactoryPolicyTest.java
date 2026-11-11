@@ -3,6 +3,7 @@ package ai.protomolt.proto.grpc.invoke;
 import ai.protomolt.proto.grpc.policy.OutboundChannelPolicy;
 import io.grpc.ChannelCredentials;
 import io.grpc.ManagedChannel;
+import io.grpc.Status;
 import io.grpc.TlsChannelCredentials;
 import org.junit.jupiter.api.Test;
 
@@ -66,5 +67,22 @@ class ChannelFactoryPolicyTest {
                 TlsChannelCredentials.create()))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("cannot present custom TLS credentials");
+    }
+
+    @Test
+    void upstreamStatusWithholdsDetailsWhenChannelCredentialsArePresent() {
+        Status detailed = Status.PERMISSION_DENIED
+                .withDescription("client CN=service-a denied")
+                .withCause(new IllegalStateException("peer detail"));
+
+        Status uncredentialed = UpstreamStatus.reply(detailed, null, null);
+        assertThat(uncredentialed.getDescription()).isEqualTo("client CN=service-a denied");
+        assertThat(uncredentialed.getCause()).isNotNull();
+
+        Status tlsCredentialed = UpstreamStatus.reply(
+                detailed, null, TlsChannelCredentials.create());
+        assertThat(tlsCredentialed.getCode()).isEqualTo(Status.Code.PERMISSION_DENIED);
+        assertThat(tlsCredentialed.getDescription()).isNull();
+        assertThat(tlsCredentialed.getCause()).isNull();
     }
 }
