@@ -295,6 +295,8 @@ naming the variable on a malformed value.
 | `PROTOMOLT_GRPC_ALLOW_TLS` | `true` | boolean |
 | `PROTOMOLT_GRPC_MAX_DEADLINE_MS` | `60000` | integer |
 | `PROTOMOLT_GRPC_MAX_ACTIVE_CHANNELS` | `64` | integer |
+| `PROTOMOLT_GRPC_MAX_INBOUND_MESSAGE_BYTES` | `4194304` | positive integer; largest response message on an outbound channel |
+| `PROTOMOLT_GRPC_MAX_OUTBOUND_MESSAGE_BYTES` | `4194304` | positive integer; largest request message on an outbound channel |
 | `PROTOMOLT_INFERENCE_MODELS` | unset = empty catalog | model catalog entries |
 | `PROTOMOLT_TASK_CONSOLE_TOKEN` | unset = console sessions off | token text |
 | `PROTOMOLT_TASK_CONSOLE_SESSION_SECONDS` | `43200` | integer |

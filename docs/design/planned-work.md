@@ -36,8 +36,8 @@ and concurrency limits. Recheck resolved addresses before connecting.
 (with wildcard suffixes), port, plaintext and TLS toggles, a deadline
 ceiling, a leased concurrency semaphore, and syntactic target hardening down
 to DNS labels and IPv6 groups. Three of the five call sites route through it:
-reflection, invocation, and workflows. Still open: payload and message-size
-limits, which the policy does not express at all; resolved-address validation
+reflection, invocation, and workflows, and every policy channel caps message
+size in both directions. Still open: resolved-address validation
 and the re-check before connect, which the class deliberately does not do
 today (it validates without resolving); and pass-through for pipelines, whose
 transport takes a caller-supplied channel resolver, and for schema gathering,
@@ -321,8 +321,10 @@ Java APIs, protobuf contracts, stored formats, REST routes, and action
 envelopes. Enforce compatible changes in CI once a release baseline exists.
 
 Protobuf contracts are covered: CI runs `buf lint` and `buf breaking` against
-the pull request's base branch. Everything else is open — no inspector-driven
-MCP fixtures, no stability annotations of any kind, no Java binary-compatibility
+the pull request's base branch. MCP is covered by the `mcp-inspector` CI job,
+which drives the stdio and streamable-HTTP servers with the pinned official
+MCP Inspector CLI ([tests/mcp-inspector](../../tests/mcp-inspector/README.md)).
+Everything else is open — no stability annotations of any kind, no Java binary-compatibility
 tooling, and no REST-route or action-envelope check. Note that comparing
 against a base branch is not the same as comparing against a release baseline,
 which is what the last sentence asks for.

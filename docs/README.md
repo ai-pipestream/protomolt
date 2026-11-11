@@ -174,6 +174,7 @@ These design documents describe current behavior or current plans:
 - [Well-known types](design/well-known-types.md): the validated typed commons, wire-plain and server-strict
 - [Archive version metadata](design/archive-version-metadata.md): descriptive metadata snapshots for archive versions
 - [Worker harness guide](design/worker-harness-guide.md): failing and working invocations for delegation workers
+- [Graph standards contracts](design/graph-standards-contracts.md): proposal under review (#816) for graph capabilities, W3C parity, encodings and repository-aware publication
 - [Website feature inventory](website-feature-inventory.md): capability inventory prepared for the website team
 
 The repository design source of record is
