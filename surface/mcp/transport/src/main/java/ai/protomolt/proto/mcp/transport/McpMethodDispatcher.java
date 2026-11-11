@@ -207,15 +207,7 @@ final class McpMethodDispatcher {
         if (params == null || !params.isObject()) {
             throw new IllegalArgumentException("resources/list params must be an object");
         }
-        JsonNode cursor = params.get("cursor");
-        String cursorValue = null;
-        if (cursor != null && !cursor.isNull()) {
-            if (!cursor.isTextual() || cursor.asText().isBlank()) {
-                throw new IllegalArgumentException(
-                        "resources/list cursor must be a non-empty string");
-            }
-            cursorValue = cursor.asText();
-        }
+        String cursorValue = cursorText(params.get("cursor"), "resources/list");
         if (resources == null && cursorValue != null) {
             throw new IllegalArgumentException("resource cursor is invalid");
         }
@@ -235,40 +227,29 @@ final class McpMethodDispatcher {
             throw new IllegalArgumentException(
                     "resources/templates/list params must be an object");
         }
-        int offset = cursorOffset(params.get("cursor"), "resource template");
-        ArrayNode all = resources.templates(mapper, caller);
-        if (offset > all.size()) {
-            throw new IllegalArgumentException("resource template cursor is invalid");
+        String cursorValue = cursorText(params.get("cursor"), "resources/templates/list");
+        if (resources == null && cursorValue != null) {
+            throw new IllegalArgumentException("resource cursor is invalid");
         }
-        int end = Math.min(offset + RESOURCE_PAGE_SIZE, all.size());
-        ArrayNode page = mapper.createArrayNode();
-        for (int i = offset; i < end; i++) {
-            page.add(all.get(i));
-        }
+        McpResources.Page page = resources == null
+                ? new McpResources.Page(mapper.createArrayNode(), null)
+                : resources.pageTemplates(mapper, cursorValue, RESOURCE_PAGE_SIZE, caller);
         ObjectNode result = mapper.createObjectNode();
-        result.set("resourceTemplates", page);
-        if (end < all.size()) {
-            result.put("nextCursor", Integer.toString(end));
+        result.set("resourceTemplates", page.resources());
+        if (page.nextCursor() != null) {
+            result.put("nextCursor", page.nextCursor());
         }
         return result;
     }
 
-    private static int cursorOffset(JsonNode cursor, String label) {
+    private static String cursorText(JsonNode cursor, String method) {
         if (cursor == null || cursor.isNull()) {
-            return 0;
+            return null;
         }
         if (!cursor.isTextual() || cursor.asText().isBlank()) {
-            throw new IllegalArgumentException(label + " cursor must be a non-empty string");
+            throw new IllegalArgumentException(method + " cursor must be a non-empty string");
         }
-        try {
-            int offset = Integer.parseInt(cursor.asText());
-            if (offset < 0) {
-                throw new NumberFormatException();
-            }
-            return offset;
-        } catch (NumberFormatException e) {
-            throw new IllegalArgumentException(label + " cursor is invalid");
-        }
+        return cursor.asText();
     }
 
     Optional<ObjectNode> readResource(JsonNode params, Caller caller) {

@@ -40,6 +40,14 @@ public final class CompositeResources implements McpResources {
         var page = delegate.page(mapper, cursor, size, caller);
         return new Page(page.resources(), page.nextCursor());
     }
+    @Override public Page pageTemplates(ObjectMapper mapper, String cursor, int size) {
+        var page = delegate.pageTemplates(mapper, cursor, size);
+        return new Page(page.resources(), page.nextCursor());
+    }
+    @Override public Page pageTemplates(ObjectMapper mapper, String cursor, int size, Caller caller) {
+        var page = delegate.pageTemplates(mapper, cursor, size, caller);
+        return new Page(page.resources(), page.nextCursor());
+    }
     @Override public Optional<ObjectNode> read(ObjectMapper mapper, String uri) { return delegate.read(mapper, uri); }
     @Override public Optional<ObjectNode> read(ObjectMapper mapper, String uri, Caller caller) {
         return delegate.read(mapper, uri, caller);

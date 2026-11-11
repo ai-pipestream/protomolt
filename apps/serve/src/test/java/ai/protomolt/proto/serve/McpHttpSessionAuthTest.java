@@ -36,8 +36,9 @@ import org.junit.jupiter.api.Test;
 /**
  * Per-request authentication on the streamable HTTP MCP transport (#845). The session id
  * alone never authorizes: each request's credential is resolved again, a credential the
- * resolver no longer knows is refused with 401, and a valid credential for a different
- * principal is refused with 403 on a session it did not open.
+ * resolver no longer knows is refused with 401, a valid credential for a different
+ * principal is refused with 403 on a session it did not open, and the scopes the
+ * credential resolves to now are the ones the request runs with.
  */
 class McpHttpSessionAuthTest {
 
@@ -47,6 +48,7 @@ class McpHttpSessionAuthTest {
     private static final String ALICE_ROTATED_TOKEN = "alice-rotated-secret";
     private static final String BOB_TOKEN = "bob-secret";
     private static final String NAMED_OPERATOR_TOKEN = "named-operator-secret";
+    private static final String CAROL_TOKEN = "carol-secret";
 
     private final Map<String, Caller> credentials = new ConcurrentHashMap<>();
     private final AtomicInteger executions = new AtomicInteger();
@@ -159,6 +161,69 @@ class McpHttpSessionAuthTest {
         assertThat(delete(alice, ALICE_ROTATED_TOKEN).statusCode()).isEqualTo(204);
     }
 
+    @Test
+    void aNarrowedScopeAppliesFromTheNextRequest() throws Exception {
+        Session alice = open(ALICE_TOKEN);
+        assertThat(whoami(callWhoAmI(alice, ALICE_TOKEN))).isEqualTo("alice");
+        assertThat(executions).hasValue(1);
+
+        credentials.put(ALICE_TOKEN, Caller.scoped("alice", Set.of(Scopes.SEARCH_QUERY)));
+
+        assertThat(toolNames(alice, ALICE_TOKEN)).doesNotContain("whoami");
+        HttpResponse<String> denied = callWhoAmI(alice, ALICE_TOKEN);
+        assertThat(denied.statusCode()).isEqualTo(200);
+        JsonNode result = MAPPER.readTree(denied.body()).path("result");
+        assertThat(result.path("isError").asBoolean()).isTrue();
+        assertThat(result.path("content").get(0).path("text").asText())
+                .contains(Scopes.SCHEMA_READ);
+        assertThat(executions).hasValue(1);
+    }
+
+    @Test
+    void aWidenedScopeAppliesFromTheNextRequest() throws Exception {
+        credentials.put(CAROL_TOKEN, Caller.scoped("carol", Set.of(Scopes.SEARCH_QUERY)));
+        Session carol = open(CAROL_TOKEN);
+        assertThat(toolNames(carol, CAROL_TOKEN)).doesNotContain("whoami");
+
+        credentials.put(CAROL_TOKEN, Caller.scoped("carol",
+                Set.of(Scopes.SEARCH_QUERY, Scopes.SCHEMA_READ)));
+
+        assertThat(toolNames(carol, CAROL_TOKEN)).contains("whoami");
+        assertThat(whoami(callWhoAmI(carol, CAROL_TOKEN))).isEqualTo("carol");
+    }
+
+    @Test
+    void aForeignLookupDoesNotRefreshSessionRecencyBeforeThe403() throws Exception {
+        Session alice = open(ALICE_TOKEN);
+        Session second = open(BOB_TOKEN);
+        for (int i = 2; i < McpHttpHandler.MAX_SESSIONS; i++) {
+            initializeOnly(BOB_TOKEN);
+        }
+
+        assertForeign(callWhoAmI(alice, BOB_TOKEN));
+        assertForeign(post(alice, BOB_TOKEN, """
+                [{"jsonrpc":"2.0","id":41,"method":"ping"}]
+                """));
+        assertForeign(delete(alice, BOB_TOKEN));
+        assertThat(get(alice, BOB_TOKEN).statusCode()).isEqualTo(405);
+
+        initializeOnly(BOB_TOKEN);
+
+        assertThat(callWhoAmI(alice, ALICE_TOKEN).statusCode()).isEqualTo(404);
+        HttpResponse<String> surviving = callWhoAmI(second, BOB_TOKEN);
+        assertThat(surviving.statusCode()).isEqualTo(200);
+        assertThat(whoami(surviving)).isEqualTo("bob");
+    }
+
+    private List<String> toolNames(Session session, String token) throws Exception {
+        HttpResponse<String> listed = post(session, token, """
+                {"jsonrpc":"2.0","id":51,"method":"tools/list","params":{}}
+                """);
+        assertThat(listed.statusCode()).isEqualTo(200);
+        return MAPPER.readTree(listed.body()).path("result").path("tools")
+                .findValuesAsText("name");
+    }
+
     private static void assertForeign(HttpResponse<String> response) throws Exception {
         assertThat(response.statusCode()).isEqualTo(403);
         JsonNode body = MAPPER.readTree(response.body());
@@ -169,19 +234,23 @@ class McpHttpSessionAuthTest {
     }
 
     private Session open(String token) throws Exception {
+        Session session = initializeOnly(token);
+        assertThat(post(session, token, """
+                {"jsonrpc":"2.0","method":"notifications/initialized"}
+                """).statusCode()).isEqualTo(202);
+        return session;
+    }
+
+    private Session initializeOnly(String token) throws Exception {
         HttpResponse<String> init = client.send(request("""
                 {"jsonrpc":"2.0","id":1,"method":"initialize","params":
                  {"protocolVersion":"2025-06-18","capabilities":{},
                   "clientInfo":{"name":"auth-test","version":"0"}}}
                 """, "api_token", token), HttpResponse.BodyHandlers.ofString());
         assertThat(init.statusCode()).isEqualTo(200);
-        Session session = new Session(
+        return new Session(
                 init.headers().firstValue("Mcp-Session-Id").orElseThrow(),
                 MAPPER.readTree(init.body()).path("result").path("protocolVersion").asText());
-        assertThat(post(session, token, """
-                {"jsonrpc":"2.0","method":"notifications/initialized"}
-                """).statusCode()).isEqualTo(202);
-        return session;
     }
 
     private HttpResponse<String> readWorkspace(Session session, String token) throws Exception {
@@ -216,6 +285,15 @@ class McpHttpSessionAuthTest {
                         .header("Mcp-Session-Id", session.id())
                         .header("MCP-Protocol-Version", session.version())
                         .DELETE().build(),
+                HttpResponse.BodyHandlers.ofString());
+    }
+
+    private HttpResponse<String> get(Session session, String token) throws Exception {
+        return client.send(HttpRequest.newBuilder(URI.create(url))
+                        .header("api_token", token)
+                        .header("Mcp-Session-Id", session.id())
+                        .header("MCP-Protocol-Version", session.version())
+                        .GET().build(),
                 HttpResponse.BodyHandlers.ofString());
     }
 

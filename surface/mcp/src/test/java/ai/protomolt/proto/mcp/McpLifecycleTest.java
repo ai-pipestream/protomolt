@@ -147,7 +147,7 @@ class McpLifecycleTest {
         JsonNode first = server.handle(request(1, "resources/templates/list", null))
                 .orElseThrow().path("result");
         assertThat(first.path("resourceTemplates")).hasSize(100);
-        assertThat(first.path("nextCursor").asText()).isEqualTo("100");
+        assertThat(first.path("nextCursor").asText()).isNotBlank();
         JsonNode second = server.handle(request(2, "resources/templates/list",
                         params("cursor", first.path("nextCursor").asText())))
                 .orElseThrow().path("result");
