@@ -15,6 +15,8 @@ dependencies {
     implementation libs.protobuf.java.util
 
     testImplementation libs.grpc.inprocess
+    // A real TLS server and channel, so the mTLS tests run a full handshake.
+    testImplementation libs.grpc.netty.shaded
     testImplementation libs.grpc.protobuf
     testImplementation libs.grpc.services
     testImplementation libs.jgit

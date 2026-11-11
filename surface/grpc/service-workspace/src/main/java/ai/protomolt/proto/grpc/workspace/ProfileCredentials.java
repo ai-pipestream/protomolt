@@ -3,7 +3,9 @@ package ai.protomolt.proto.grpc.workspace;
 import ai.protomolt.proto.actions.ActionException;
 import ai.protomolt.proto.grpc.profile.v1.ServiceEndpoint;
 import ai.protomolt.proto.grpc.profile.v1.ServiceProfile;
+import ai.protomolt.proto.grpc.profile.v1.Transport;
 import io.grpc.CallCredentials;
+import io.grpc.ChannelCredentials;
 import io.grpc.CallOptions;
 import io.grpc.Channel;
 import io.grpc.ClientCall;
@@ -12,7 +14,7 @@ import io.grpc.ClientInterceptors;
 import io.grpc.Metadata;
 import io.grpc.MethodDescriptor;
 
-/** Rejects unresolved TLS material and keeps resolved bearer headers off the wire contract. */
+/** Rejects unresolved TLS material and keeps resolved credentials off the wire contract. */
 final class ProfileCredentials {
     private ProfileCredentials() {}
 
@@ -39,6 +41,7 @@ final class ProfileCredentials {
      */
     static void requireResolvable(ServiceProfile profile, ServiceEndpoint endpoint,
                                   ProfileCredentialResolver resolver) throws ActionException {
+        channelCredentials(profile, endpoint, resolver);
         if (endpoint.getCredentialRef().isBlank()) {
             return;
         }
@@ -60,12 +63,36 @@ final class ProfileCredentials {
         });
     }
 
-    static Metadata headers(ServiceProfile profile, ServiceEndpoint endpoint,
-                            ProfileCredentialResolver resolver) throws ActionException {
-        if (!endpoint.getTrustRef().isBlank() || !endpoint.getClientCertificateRef().isBlank()) {
+    /**
+     * The TLS channel credentials for one endpoint, or null when it names neither a trust nor
+     * a client-certificate reference. Either reference requires TLS transport and a resolver
+     * with TLS support; the material is loaded here, before any channel opens.
+     */
+    static ChannelCredentials channelCredentials(ServiceProfile profile,
+                                                 ServiceEndpoint endpoint,
+                                                 ProfileCredentialResolver resolver)
+            throws ActionException {
+        if (endpoint.getTrustRef().isBlank() && endpoint.getClientCertificateRef().isBlank()) {
+            return null;
+        }
+        if (endpoint.getTransport() != Transport.TRANSPORT_TLS) {
+            throw new ActionException("unsupported-transport",
+                    "trust and client-certificate references need TLS transport");
+        }
+        if (resolver == null) {
             throw new ActionException("unsupported-transport",
                     "custom trust and client-certificate references need a configured TLS resolver");
         }
+        ChannelCredentials credentials = resolver.channelCredentials(profile, endpoint);
+        if (credentials == null) {
+            throw new ActionException("credential-unavailable",
+                    "profile TLS material could not be resolved");
+        }
+        return credentials;
+    }
+
+    static Metadata headers(ServiceProfile profile, ServiceEndpoint endpoint,
+                            ProfileCredentialResolver resolver) throws ActionException {
         if (endpoint.getCredentialRef().isBlank()) return new Metadata();
         if (resolver == null) {
             throw new ActionException("credential-unavailable",
