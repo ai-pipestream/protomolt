@@ -41,14 +41,20 @@ public final class McpHttpHandler implements HttpHandler, AutoCloseable {
     private static final String SCHEMA_FLAVOR_MOONSHOT = "moonshot";
     private static final int MAX_BODY_BYTES = 16 * 1024 * 1024;
     private static final int MAX_SESSIONS = 256;
+    private static final String FOREIGN_SESSION =
+            "MCP session was opened by a different principal";
 
     private final McpServer server;
     private final byte[] apiToken;
     private final CallerResolver resolver;
     private final ObjectMapper mapper = new ObjectMapper();
     private final ReentrantLock sessionLock = new ReentrantLock();
-    private final LinkedHashMap<String, McpServer.Session> sessions =
+    private final LinkedHashMap<String, OpenSession> sessions =
             new LinkedHashMap<>(16, 0.75f, true);
+
+    /** A live session and the principal whose credential opened it. */
+    private record OpenSession(McpServer.Session session, Caller owner) {
+    }
 
     public McpHttpHandler(McpServer server) {
         this(server, null);
@@ -60,8 +66,9 @@ public final class McpHttpHandler implements HttpHandler, AutoCloseable {
 
     /**
      * With a resolver, a credential a mounted access policy names authenticates as its
-     * principal; the caller is pinned to the session it initializes. A non-null resolver
-     * requires the operator token.
+     * principal; the caller is pinned to the session it initializes. Every later request on
+     * that session must present a credential resolving to the same principal, or it is
+     * refused with HTTP 403. A non-null resolver requires the operator token.
      */
     public McpHttpHandler(McpServer server, String apiToken,
                           CallerResolver resolver) {
@@ -91,7 +98,7 @@ public final class McpHttpHandler implements HttpHandler, AutoCloseable {
         }
         String method = exchange.getRequestMethod();
         if ("DELETE".equalsIgnoreCase(method)) {
-            deleteSession(exchange);
+            deleteSession(exchange, caller);
             return;
         }
         if (!"POST".equalsIgnoreCase(method)) {
@@ -128,7 +135,7 @@ public final class McpHttpHandler implements HttpHandler, AutoCloseable {
             return;
         }
         if (message.isArray()) {
-            handleBatch(exchange, message);
+            handleBatch(exchange, message, caller);
             return;
         }
         if (!message.isObject()) {
@@ -144,12 +151,17 @@ public final class McpHttpHandler implements HttpHandler, AutoCloseable {
         }
 
         String sessionId = exchange.getRequestHeaders().getFirst(SESSION_HEADER);
-        McpServer.Session session = lookup(sessionId);
-        if (session == null) {
+        OpenSession open = open(sessionId);
+        if (open == null) {
             write(exchange, 404, error(message.get("id"), -32001,
                     "MCP session is missing or expired"), null);
             return;
         }
+        if (!ownedBy(open, caller)) {
+            write(exchange, 403, error(message.get("id"), -32000, FOREIGN_SESSION), null);
+            return;
+        }
+        McpServer.Session session = open.session();
         if (!validVersion(exchange, session)) {
             write(exchange, 400, error(message.get("id"), -32602,
                     "MCP-Protocol-Version must match the negotiated session version"), sessionId);
@@ -199,7 +211,8 @@ public final class McpHttpHandler implements HttpHandler, AutoCloseable {
      * JSON-RPC batches remain supported for established sessions. Initialize is deliberately
      * excluded because one HTTP request must create exactly one session header.
      */
-    private void handleBatch(HttpExchange exchange, JsonNode batch) throws IOException {
+    private void handleBatch(HttpExchange exchange, JsonNode batch, Caller caller)
+            throws IOException {
         if (batch.isEmpty()) {
             write(exchange, 400, error(null, -32600, "Invalid request: empty batch"), null);
             return;
@@ -212,11 +225,16 @@ public final class McpHttpHandler implements HttpHandler, AutoCloseable {
             }
         }
         String sessionId = exchange.getRequestHeaders().getFirst(SESSION_HEADER);
-        McpServer.Session session = lookup(sessionId);
-        if (session == null) {
+        OpenSession open = open(sessionId);
+        if (open == null) {
             write(exchange, 404, error(null, -32001, "MCP session is missing or expired"), null);
             return;
         }
+        if (!ownedBy(open, caller)) {
+            write(exchange, 403, error(null, -32000, FOREIGN_SESSION), null);
+            return;
+        }
+        McpServer.Session session = open.session();
         if (!validVersion(exchange, session)) {
             write(exchange, 400, error(null, -32602,
                     "MCP-Protocol-Version must match the negotiated session version"), sessionId);
@@ -289,7 +307,7 @@ public final class McpHttpHandler implements HttpHandler, AutoCloseable {
             return;
         }
         String sessionId = UUID.randomUUID().toString();
-        putSession(sessionId, session);
+        putSession(sessionId, new OpenSession(session, caller));
         exchange.getResponseHeaders().set(SESSION_HEADER, sessionId);
         write(exchange, 200, response.get(), sessionId);
     }
@@ -299,13 +317,18 @@ public final class McpHttpHandler implements HttpHandler, AutoCloseable {
         return header != null && header.equals(session.negotiatedProtocolVersion());
     }
 
-    private void deleteSession(HttpExchange exchange) throws IOException {
+    private void deleteSession(HttpExchange exchange, Caller caller) throws IOException {
         String sessionId = exchange.getRequestHeaders().getFirst(SESSION_HEADER);
-        McpServer.Session session = lookup(sessionId);
-        if (session == null) {
+        OpenSession open = open(sessionId);
+        if (open == null) {
             write(exchange, 404, error(null, -32001, "MCP session is missing or expired"), null);
             return;
         }
+        if (!ownedBy(open, caller)) {
+            write(exchange, 403, error(null, -32000, FOREIGN_SESSION), null);
+            return;
+        }
+        McpServer.Session session = open.session();
         if (!validVersion(exchange, session)) {
             write(exchange, 400, error(null, -32602,
                     "MCP-Protocol-Version must match the negotiated session version"), sessionId);
@@ -319,8 +342,8 @@ public final class McpHttpHandler implements HttpHandler, AutoCloseable {
         exchange.close();
     }
 
-    private void putSession(String id, McpServer.Session session) {
-        McpServer.Session evicted = null;
+    private void putSession(String id, OpenSession session) {
+        OpenSession evicted = null;
         sessionLock.lock();
         try {
             if (sessions.size() >= MAX_SESSIONS) {
@@ -332,11 +355,11 @@ public final class McpHttpHandler implements HttpHandler, AutoCloseable {
             sessionLock.unlock();
         }
         if (evicted != null) {
-            evicted.close();
+            evicted.session().close();
         }
     }
 
-    private McpServer.Session lookup(String id) {
+    private OpenSession open(String id) {
         if (id == null || id.isBlank()) {
             return null;
         }
@@ -348,8 +371,23 @@ public final class McpHttpHandler implements HttpHandler, AutoCloseable {
         }
     }
 
-    private McpServer.Session removeSession(String id) {
-        McpServer.Session session;
+    /**
+     * Whether {@code caller}, resolved from this request's credential, is the principal that
+     * opened the session. Without a configured token every request runs as the operator, so
+     * there is no other principal to tell apart. Scopes are not compared: a principal whose
+     * scopes changed is still the same principal.
+     */
+    private boolean ownedBy(OpenSession open, Caller caller) {
+        if (apiToken == null) {
+            return true;
+        }
+        Caller owner = open.owner();
+        return owner.unrestricted() == caller.unrestricted()
+                && owner.name().equals(caller.name());
+    }
+
+    private OpenSession removeSession(String id) {
+        OpenSession session;
         sessionLock.lock();
         try {
             session = sessions.remove(id);
@@ -357,7 +395,7 @@ public final class McpHttpHandler implements HttpHandler, AutoCloseable {
             sessionLock.unlock();
         }
         if (session != null) {
-            session.close();
+            session.session().close();
         }
         return session;
     }
@@ -365,7 +403,7 @@ public final class McpHttpHandler implements HttpHandler, AutoCloseable {
     /** Closes every live MCP session when the host shuts down. */
     @Override
     public void close() {
-        Map<String, McpServer.Session> closing;
+        Map<String, OpenSession> closing;
         sessionLock.lock();
         try {
             closing = new LinkedHashMap<>(sessions);
@@ -373,7 +411,7 @@ public final class McpHttpHandler implements HttpHandler, AutoCloseable {
         } finally {
             sessionLock.unlock();
         }
-        closing.values().forEach(McpServer.Session::close);
+        closing.values().forEach(open -> open.session().close());
     }
 
     private Caller callerFor(HttpExchange exchange) {

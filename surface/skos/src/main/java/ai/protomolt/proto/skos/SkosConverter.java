@@ -50,6 +50,7 @@ import org.apache.jena.riot.RDFFormat;
 import org.apache.jena.riot.RDFParser;
 import org.apache.jena.riot.RiotException;
 import org.apache.jena.riot.system.ErrorHandlerFactory;
+import org.apache.jena.riot.system.StreamRDF;
 import org.apache.jena.riot.system.StreamRDFBase;
 import org.apache.jena.riot.system.StreamRDFWriter;
 
@@ -188,6 +189,24 @@ public final class SkosConverter {
                 graph.close();
             }
         }
+    }
+
+    /**
+     * Exports a scheme as triples into {@code destination}, the same triples
+     * {@link #write(ConceptScheme, OutputStream, Format)} serializes, with no text syntax in
+     * between. The destination is started and finished here.
+     *
+     * @param scheme validated config document to export
+     * @param destination receiver of the exported triples
+     * @throws IllegalArgumentException if the scheme cannot be exported losslessly as supported RDF
+     */
+    public void write(ConceptScheme scheme, StreamRDF destination) {
+        Objects.requireNonNull(destination, "destination");
+        requireScheme(scheme);
+        var triples = toTriples(scheme);
+        destination.start();
+        triples.forEach(destination::triple);
+        destination.finish();
     }
 
     /**

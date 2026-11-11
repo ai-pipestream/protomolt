@@ -318,6 +318,10 @@ public final class ProtoMoltServe implements AutoCloseable {
             boolean allowTls = envBoolean("PROTOMOLT_GRPC_ALLOW_TLS", true);
             long maxDeadlineMs = envLong("PROTOMOLT_GRPC_MAX_DEADLINE_MS", 60_000L);
             int maxActiveChannels = envInt("PROTOMOLT_GRPC_MAX_ACTIVE_CHANNELS", 64);
+            int maxInboundMessageBytes = envInt("PROTOMOLT_GRPC_MAX_INBOUND_MESSAGE_BYTES",
+                    OutboundChannelPolicy.DEFAULT_MAX_MESSAGE_BYTES);
+            int maxOutboundMessageBytes = envInt("PROTOMOLT_GRPC_MAX_OUTBOUND_MESSAGE_BYTES",
+                    OutboundChannelPolicy.DEFAULT_MAX_MESSAGE_BYTES);
             String inferenceModelsEnv = System.getenv("PROTOMOLT_INFERENCE_MODELS");
             String delegationRepoEndpoint = System.getenv("PROTOMOLT_DELEGATION_REPO_ENDPOINT");
             boolean delegationRepoTls = envBoolean("PROTOMOLT_DELEGATION_REPO_TLS", false);
@@ -419,6 +423,12 @@ public final class ProtoMoltServe implements AutoCloseable {
                     case "--grpc-max-active-channels" ->
                             maxActiveChannels = parseInt(requireValue(args, ++i),
                                     "--grpc-max-active-channels");
+                    case "--grpc-max-inbound-message-bytes" ->
+                            maxInboundMessageBytes = parseInt(requireValue(args, ++i),
+                                    "--grpc-max-inbound-message-bytes");
+                    case "--grpc-max-outbound-message-bytes" ->
+                            maxOutboundMessageBytes = parseInt(requireValue(args, ++i),
+                                    "--grpc-max-outbound-message-bytes");
                     case "--demo" -> demo = true;
                     case "--help", "-h" -> {
                         System.err.println("usage: protomolt-serve [--host <addr>] [--grpc-port <n>] "
@@ -443,6 +453,8 @@ public final class ProtoMoltServe implements AutoCloseable {
                                 + "[--grpc-allow-tls <true|false>] "
                                 + "[--grpc-max-deadline-ms <n>] "
                                 + "[--grpc-max-active-channels <n>] "
+                                + "[--grpc-max-inbound-message-bytes <n>] "
+                                + "[--grpc-max-outbound-message-bytes <n>] "
                                 + "[--delegation-repo-endpoint <host:port|in-process:name> "
                                 + "[--delegation-repo-tls <true|false>] "
                                 + "[--delegation-repo-drive <name>] "
@@ -547,7 +559,8 @@ public final class ProtoMoltServe implements AutoCloseable {
             Set<Integer> portSet = allowedPorts == null
                     ? null : parsePorts(allowedPorts);
             OutboundChannelPolicy outboundPolicy = outboundPolicy(schemeSet, hostSet, portSet,
-                    allowPlaintext, allowTls, maxDeadlineMs, maxActiveChannels);
+                    allowPlaintext, allowTls, maxDeadlineMs, maxActiveChannels,
+                    maxInboundMessageBytes, maxOutboundMessageBytes);
             WorkflowAuthoringOptions workflowAuthoring = null;
             if ((authoringPolicySha256 != null && !authoringPolicySha256.isBlank())
                     || authoringAuthorizationDir != null) {
@@ -648,7 +661,9 @@ public final class ProtoMoltServe implements AutoCloseable {
                                                             boolean allowPlaintext,
                                                             boolean allowTls,
                                                             long maxDeadlineMs,
-                                                            int maxActiveChannels) {
+                                                            int maxActiveChannels,
+                                                            int maxInboundMessageBytes,
+                                                            int maxOutboundMessageBytes) {
             if (maxDeadlineMs <= 0) {
                 throw new IllegalArgumentException("grpc max deadline must be positive");
             }
@@ -656,7 +671,9 @@ public final class ProtoMoltServe implements AutoCloseable {
                     .allowPlaintext(allowPlaintext)
                     .allowTls(allowTls)
                     .maxDeadline(Duration.ofMillis(maxDeadlineMs))
-                    .maxActiveChannels(maxActiveChannels);
+                    .maxActiveChannels(maxActiveChannels)
+                    .maxInboundMessageBytes(maxInboundMessageBytes)
+                    .maxOutboundMessageBytes(maxOutboundMessageBytes);
             if (schemes != null) {
                 builder.allowedSchemes(schemes);
             }
