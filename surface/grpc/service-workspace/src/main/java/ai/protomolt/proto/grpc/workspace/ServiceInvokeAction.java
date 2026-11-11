@@ -19,6 +19,8 @@ import ai.protomolt.proto.registry.SchemaRegistryStore;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.google.protobuf.Message;
 import io.grpc.CallCredentials;
+import io.grpc.ChannelCredentials;
+import io.grpc.Metadata;
 
 import com.google.protobuf.Descriptors.Descriptor;
 import java.io.IOException;
@@ -82,7 +84,8 @@ public final class ServiceInvokeAction implements StreamingAction {
         // and endpoint the call went to, and the descriptor it was typed against.
         return Reply.of(responseType())
                 .copyFrom(delegate.execute(invocation.delegateRequest(), context,
-                        invocation.credentials()))
+                        new Metadata(), invocation.credentials(),
+                        invocation.tlsCredentials()))
                 .set("serviceProfile", invocation.profile().getName())
                 .set("endpoint", invocation.endpoint().getName())
                 .set("descriptorFingerprint",
@@ -95,7 +98,7 @@ public final class ServiceInvokeAction implements StreamingAction {
             throws ActionException {
         Invocation invocation = prepare(input, context);
         delegate.executeStreaming(invocation.delegateRequest(), context, emitter,
-                invocation.credentials());
+                new Metadata(), invocation.credentials(), invocation.tlsCredentials());
     }
 
     private Invocation prepare(Message input, ActionContext context) throws ActionException {
@@ -117,6 +120,8 @@ public final class ServiceInvokeAction implements StreamingAction {
         ProfileMethodPolicy.requireAllowed(policy, method);
         CallCredentials callCredentials =
                 ProfileCredentials.callCredentials(profile, endpoint, credentials);
+        ChannelCredentials tlsCredentials =
+                ProfileCredentials.channelCredentials(profile, endpoint, credentials);
 
         DescriptorArtifact artifact;
         try {
@@ -137,7 +142,8 @@ public final class ServiceInvokeAction implements StreamingAction {
                 .set("descriptorSetBase64", Base64.getEncoder()
                         .encodeToString(artifact.getDescriptorSet().toByteArray()))
                 .build();
-        return new Invocation(profile, endpoint, delegated.build(), callCredentials);
+        return new Invocation(profile, endpoint, delegated.build(), callCredentials,
+                tlsCredentials);
     }
 
 
@@ -153,6 +159,7 @@ public final class ServiceInvokeAction implements StreamingAction {
     }
 
     private record Invocation(ServiceProfile profile, ServiceEndpoint endpoint,
-                              Message delegateRequest, CallCredentials credentials) {
+                              Message delegateRequest, CallCredentials credentials,
+                              ChannelCredentials tlsCredentials) {
     }
 }

@@ -40,3 +40,21 @@ tasks.register('verifyEmbeddedWasm') {
 tasks.named('check') {
     dependsOn('verifyEmbeddedWasm')
 }
+
+// Ship the attribution material for the components compiled into the embedded
+// WASM binary inside the jar that carries the binary.
+tasks.named('jar') {
+    from(rootProject.file('LICENSE')) { into('META-INF') }
+    from(rootProject.file('NOTICE')) { into('META-INF') }
+    from(rootProject.file('licenses')) {
+        include('LICENSE-protobuf.txt', 'LICENSE-utf8_range.txt',
+                'LICENSE-llvm.txt', 'LICENSE-wasi-libc.txt',
+                'LICENSE-wasi-libc-apache-llvm.txt', 'LICENSE-wasi-libc-mit.txt',
+                'LICENSE-wasi-libc-cloudlibc.txt', 'LICENSE-wasi-libc-musl.txt',
+                'LICENSE-wasi-libc-musl-fts.txt',
+                'NOTICE-wasi-libc-musl-fts.txt', 'NOTICE-wasi-libc-dlmalloc.txt',
+                'NOTICE-wasi-libc-emmalloc.txt',
+                'NOTICE-grpc-java.txt')
+        into('META-INF/licenses')
+    }
+}
