@@ -10,7 +10,12 @@ import com.google.protobuf.Message;
 import com.google.protobuf.Timestamp;
 import org.junit.jupiter.api.Test;
 
+import java.io.File;
+import java.net.URL;
+import java.net.URLClassLoader;
+import java.nio.file.Path;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -141,5 +146,39 @@ class ProtovalidateRuleSourceTest {
         ProtoValidator validator = ProtoValidator.create();
         assertThat(validator.validate(validUser().setName("ab").build()).violations())
                 .anyMatch(v -> v.ruleId().equals("string.min_len"));
+    }
+
+    @Test
+    void serviceLoaderDiscoversTheDialectInIsolatedClassLoaderWhenTcclDiffers() throws Exception {
+        String classpath = System.getProperty("java.class.path", "");
+        List<URL> urls = new ArrayList<>();
+        int start = 0;
+        while (start <= classpath.length()) {
+            int sep = classpath.indexOf(File.pathSeparatorChar, start);
+            String entry = sep < 0 ? classpath.substring(start) : classpath.substring(start, sep);
+            if (!entry.isEmpty()) {
+                urls.add(Path.of(entry).toUri().toURL());
+            }
+            if (sep < 0) {
+                break;
+            }
+            start = sep + 1;
+        }
+
+        // Keep Thread.currentThread().getContextClassLoader() pointing at the outer AppClassLoader
+        // while loading ValidationRuleSources in a platform-parented isolated URLClassLoader.
+        try (URLClassLoader isolated = new URLClassLoader(
+                urls.toArray(URL[]::new), ClassLoader.getPlatformClassLoader())) {
+            Class<?> isolatedSourcesClass = Class.forName(
+                    ValidationRuleSources.class.getName(), true, isolated);
+            assertThat(isolatedSourcesClass).isNotSameAs(ValidationRuleSources.class);
+
+            List<?> discovered = (List<?>) isolatedSourcesClass.getMethod("defaults").invoke(null);
+            assertThat(discovered)
+                    .extracting(o -> o.getClass().getName())
+                    .contains(ProtovalidateRuleSource.class.getName());
+            assertThat(discovered)
+                    .allMatch(o -> o.getClass().getClassLoader() == isolated);
+        }
     }
 }
