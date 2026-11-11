@@ -7,6 +7,7 @@ import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class ApiStabilityResolverTest {
 
@@ -98,5 +99,12 @@ class ApiStabilityResolverTest {
                 .isEqualTo(StabilityTier.EXPERIMENTAL);
         assertThat(StabilityTier.fromLabel("unknown-label", StabilityTier.EVOLVING))
                 .isEqualTo(StabilityTier.EVOLVING);
+
+        assertThat(StabilityTier.parseExplicit(null)).isEmpty();
+        assertThat(StabilityTier.parseExplicit("   ")).isEmpty();
+        assertThat(StabilityTier.parseExplicit("evolving")).contains(StabilityTier.EVOLVING);
+        assertThatThrownBy(() -> StabilityTier.parseExplicit("bogus"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("bogus");
     }
 }

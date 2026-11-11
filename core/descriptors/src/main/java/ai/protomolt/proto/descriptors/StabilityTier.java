@@ -133,6 +133,30 @@ public enum StabilityTier {
     }
 
     /**
+     * Parses an explicit stability label into a {@link StabilityTier}, failing closed when a
+     * non-blank label is unrecognized.
+     *
+     * <p>Unlike {@link #parseOptional(String)}, this method rejects misspelled or unknown
+     * non-blank stability tokens so invalid metadata cannot silently fall back to an
+     * inherited or default tier.</p>
+     *
+     * @param raw the raw stability token (may be null or blank)
+     * @return the matching tier, or {@link Optional#empty()} when {@code raw} is null or blank
+     * @throws IllegalArgumentException if {@code raw} is non-blank and does not name a known tier
+     */
+    public static Optional<StabilityTier> parseExplicit(String raw) {
+        if (raw == null) {
+            return Optional.empty();
+        }
+        String normalized = raw.trim();
+        if (normalized.isEmpty()) {
+            return Optional.empty();
+        }
+        return Optional.of(parseOptional(normalized).orElseThrow(() ->
+                new IllegalArgumentException("Unrecognized stability label: '" + raw + "'")));
+    }
+
+    /**
      * Parses a stability label or returns {@code fallback} when the input is null, blank,
      * or unrecognized.
      *

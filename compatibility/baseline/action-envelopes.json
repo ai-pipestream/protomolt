@@ -1,6 +1,29 @@
 {
   "actions" : [
     {
+      "name" : "accept-workflow-task",
+      "requiredScope" : "workflow-author",
+      "streaming" : false,
+      "requestTypeName" : "ai.protomolt.proto.delegation.v1.AcceptTaskRequest",
+      "responseTypeName" : "ai.protomolt.proto.delegation.v1.AcceptTaskResponse",
+      "requiredInputFields" : [
+        "attempt",
+        "taskId",
+        "workerId"
+      ],
+      "inputFieldTypes" : {
+        "attempt" : "INT32",
+        "task_id" : "STRING",
+        "worker_id" : "STRING"
+      },
+      "outputFieldTypes" : {
+        "attempt" : "INT32",
+        "ok" : "BOOL",
+        "task_id" : "STRING"
+      },
+      "stability" : "STABLE"
+    },
+    {
       "name" : "check-compat",
       "requiredScope" : "schema-read",
       "streaming" : false,
@@ -128,6 +151,353 @@
       "stability" : "STABLE"
     },
     {
+      "name" : "delegation-accept",
+      "requiredScope" : "worker-coordinate",
+      "streaming" : false,
+      "requestTypeName" : "ai.protomolt.proto.delegation.v1.AcceptTaskRequest",
+      "responseTypeName" : "ai.protomolt.proto.delegation.v1.AcceptTaskResponse",
+      "requiredInputFields" : [
+        "attempt",
+        "taskId",
+        "workerId"
+      ],
+      "inputFieldTypes" : {
+        "attempt" : "INT32",
+        "task_id" : "STRING",
+        "worker_id" : "STRING"
+      },
+      "outputFieldTypes" : {
+        "attempt" : "INT32",
+        "ok" : "BOOL",
+        "task_id" : "STRING"
+      },
+      "stability" : "STABLE"
+    },
+    {
+      "name" : "delegation-cancel",
+      "requiredScope" : "worker-coordinate",
+      "streaming" : false,
+      "requestTypeName" : "ai.protomolt.proto.delegation.v1.CancelTaskRequest",
+      "responseTypeName" : "ai.protomolt.proto.delegation.v1.CancelTaskResponse",
+      "requiredInputFields" : [
+        "reason",
+        "taskId"
+      ],
+      "inputFieldTypes" : {
+        "reason" : "STRING",
+        "task_id" : "STRING"
+      },
+      "outputFieldTypes" : {
+        "ok" : "BOOL",
+        "task_id" : "STRING"
+      },
+      "stability" : "STABLE"
+    },
+    {
+      "name" : "delegation-candidate",
+      "requiredScope" : "worker-coordinate",
+      "streaming" : false,
+      "requestTypeName" : "ai.protomolt.proto.delegation.v1.SubmitCandidateRequest",
+      "responseTypeName" : "ai.protomolt.proto.delegation.v1.SubmitCandidateResponse",
+      "requiredInputFields" : [
+        "candidate",
+        "taskId",
+        "workerId"
+      ],
+      "inputFieldTypes" : {
+        "candidate" : "ai.protomolt.proto.delegation.v1.CompletionCandidate",
+        "task_id" : "STRING",
+        "worker_id" : "STRING"
+      },
+      "outputFieldTypes" : {
+        "attempt" : "INT32",
+        "ok" : "BOOL",
+        "revision" : "INT32",
+        "task_id" : "STRING"
+      },
+      "stability" : "STABLE"
+    },
+    {
+      "name" : "delegation-checkpoint",
+      "requiredScope" : "worker-coordinate",
+      "streaming" : false,
+      "requestTypeName" : "ai.protomolt.proto.delegation.v1.RecordCheckpointRequest",
+      "responseTypeName" : "ai.protomolt.proto.delegation.v1.RecordCheckpointResponse",
+      "requiredInputFields" : [
+        "attempt",
+        "resumeToken",
+        "taskId",
+        "workerId"
+      ],
+      "inputFieldTypes" : {
+        "attempt" : "INT32",
+        "note" : "STRING",
+        "resume_token" : "STRING",
+        "state" : "ai.protomolt.proto.grpc.workflow.v1.ArtifactReference",
+        "task_id" : "STRING",
+        "worker_id" : "STRING"
+      },
+      "outputFieldTypes" : {
+        "checkpoint_seq" : "INT32",
+        "ok" : "BOOL",
+        "resume_token" : "STRING"
+      },
+      "stability" : "STABLE"
+    },
+    {
+      "name" : "delegation-message",
+      "requiredScope" : "worker-coordinate",
+      "streaming" : false,
+      "requestTypeName" : "ai.protomolt.proto.delegation.v1.SendTaskMessageRequest",
+      "responseTypeName" : "ai.protomolt.proto.delegation.v1.SendTaskMessageResponse",
+      "requiredInputFields" : [
+        "kind",
+        "sender",
+        "taskId",
+        "text"
+      ],
+      "inputFieldTypes" : {
+        "artifacts" : "repeated ai.protomolt.proto.grpc.workflow.v1.ArtifactReference",
+        "kind" : "ai.protomolt.proto.delegation.v1.TaskMessageKind",
+        "recipient" : "STRING",
+        "reply_to" : "STRING",
+        "sender" : "STRING",
+        "task_id" : "STRING",
+        "text" : "STRING"
+      },
+      "outputFieldTypes" : {
+        "message" : "ai.protomolt.proto.delegation.v1.TaskMessage",
+        "ok" : "BOOL"
+      },
+      "stability" : "STABLE"
+    },
+    {
+      "name" : "delegation-offer",
+      "requiredScope" : "worker-coordinate",
+      "streaming" : false,
+      "requestTypeName" : "ai.protomolt.proto.delegation.v1.OfferTaskRequest",
+      "responseTypeName" : "ai.protomolt.proto.delegation.v1.OfferTaskResponse",
+      "requiredInputFields" : [
+        "spec",
+        "workerId"
+      ],
+      "inputFieldTypes" : {
+        "lease_seconds" : "INT32",
+        "resume_from" : "ai.protomolt.proto.delegation.v1.CheckpointReference",
+        "spec" : "ai.protomolt.proto.delegation.v1.TaskSpec",
+        "task_id" : "STRING",
+        "worker_id" : "STRING"
+      },
+      "outputFieldTypes" : {
+        "offer" : "ai.protomolt.proto.delegation.v1.TaskOffer",
+        "ok" : "BOOL",
+        "task_id" : "STRING"
+      },
+      "stability" : "STABLE"
+    },
+    {
+      "name" : "delegation-progress",
+      "requiredScope" : "worker-coordinate",
+      "streaming" : false,
+      "requestTypeName" : "ai.protomolt.proto.delegation.v1.ReportProgressRequest",
+      "responseTypeName" : "ai.protomolt.proto.delegation.v1.ReportProgressResponse",
+      "requiredInputFields" : [
+        "attempt",
+        "message",
+        "taskId",
+        "workerId"
+      ],
+      "inputFieldTypes" : {
+        "attempt" : "INT32",
+        "message" : "STRING",
+        "task_id" : "STRING",
+        "worker_id" : "STRING"
+      },
+      "outputFieldTypes" : {
+        "ok" : "BOOL",
+        "progress_seq" : "INT32"
+      },
+      "stability" : "STABLE"
+    },
+    {
+      "name" : "delegation-reject",
+      "requiredScope" : "worker-coordinate",
+      "streaming" : false,
+      "requestTypeName" : "ai.protomolt.proto.delegation.v1.RejectTaskRequest",
+      "responseTypeName" : "ai.protomolt.proto.delegation.v1.RejectTaskResponse",
+      "requiredInputFields" : [
+        "attempt",
+        "reason",
+        "taskId",
+        "workerId"
+      ],
+      "inputFieldTypes" : {
+        "attempt" : "INT32",
+        "reason" : "STRING",
+        "retryable" : "BOOL",
+        "task_id" : "STRING",
+        "worker_id" : "STRING"
+      },
+      "outputFieldTypes" : {
+        "attempt" : "INT32",
+        "ok" : "BOOL",
+        "task_id" : "STRING"
+      },
+      "stability" : "STABLE"
+    },
+    {
+      "name" : "delegation-review",
+      "requiredScope" : "worker-coordinate",
+      "streaming" : false,
+      "requestTypeName" : "ai.protomolt.proto.delegation.v1.ReviewCandidateRequest",
+      "responseTypeName" : "ai.protomolt.proto.delegation.v1.ReviewCandidateResponse",
+      "requiredInputFields" : [
+        "decision",
+        "taskId"
+      ],
+      "inputFieldTypes" : {
+        "attempt" : "INT32",
+        "decision" : "ai.protomolt.proto.delegation.v1.ReviewDecision",
+        "failed_checks" : "repeated STRING",
+        "feedback" : "STRING",
+        "revision" : "INT32",
+        "task_id" : "STRING",
+        "verdict" : "STRING"
+      },
+      "outputFieldTypes" : {
+        "decision" : "ai.protomolt.proto.delegation.v1.ReviewDecision",
+        "ok" : "BOOL",
+        "task_id" : "STRING"
+      },
+      "stability" : "STABLE"
+    },
+    {
+      "name" : "delegation-review-retry",
+      "requiredScope" : "worker-coordinate",
+      "streaming" : false,
+      "requestTypeName" : "ai.protomolt.proto.delegation.v1.RetryCandidateReviewRequest",
+      "responseTypeName" : "ai.protomolt.proto.delegation.v1.RetryCandidateReviewResponse",
+      "requiredInputFields" : [
+        "expectedInvocationId",
+        "retryId",
+        "taskId"
+      ],
+      "inputFieldTypes" : {
+        "attempt" : "INT32",
+        "expected_invocation_id" : "STRING",
+        "retry_id" : "STRING",
+        "revision" : "INT32",
+        "task_id" : "STRING"
+      },
+      "outputFieldTypes" : {
+        "identity" : "ai.protomolt.proto.delegation.v1.CandidateReviewIdentity",
+        "request" : "ai.protomolt.proto.delegation.v1.RetryCandidateReviewRequest"
+      },
+      "stability" : "STABLE"
+    },
+    {
+      "name" : "delegation-transcript",
+      "requiredScope" : "worker-coordinate",
+      "streaming" : false,
+      "requestTypeName" : "ai.protomolt.proto.delegation.v1.ReadTranscriptRequest",
+      "responseTypeName" : "ai.protomolt.proto.delegation.v1.ReadTranscriptResponse",
+      "requiredInputFields" : [ ],
+      "inputFieldTypes" : {
+        "after_cursor" : "INT64",
+        "max_entries" : "INT32",
+        "task_id" : "STRING"
+      },
+      "outputFieldTypes" : {
+        "cursor" : "INT64",
+        "events" : "repeated ai.protomolt.proto.delegation.v1.ObservedEvent",
+        "ok" : "BOOL",
+        "truncated" : "BOOL"
+      },
+      "stability" : "STABLE"
+    },
+    {
+      "name" : "delegation-watch",
+      "requiredScope" : "worker-coordinate",
+      "streaming" : false,
+      "requestTypeName" : "ai.protomolt.proto.delegation.v1.WatchEventsRequest",
+      "responseTypeName" : "ai.protomolt.proto.delegation.v1.WatchEventsResponse",
+      "requiredInputFields" : [ ],
+      "inputFieldTypes" : {
+        "after_cursor" : "INT64",
+        "max_events" : "INT32",
+        "task_id" : "STRING",
+        "timeout_ms" : "INT32"
+      },
+      "outputFieldTypes" : {
+        "cursor" : "INT64",
+        "events" : "repeated ai.protomolt.proto.delegation.v1.ObservedEvent",
+        "ok" : "BOOL",
+        "timed_out" : "BOOL",
+        "truncated" : "BOOL"
+      },
+      "stability" : "STABLE"
+    },
+    {
+      "name" : "delegation-worker-list",
+      "requiredScope" : "worker-coordinate",
+      "streaming" : false,
+      "requestTypeName" : "ai.protomolt.proto.delegation.v1.ListWorkersRequest",
+      "responseTypeName" : "ai.protomolt.proto.delegation.v1.ListWorkersResponse",
+      "requiredInputFields" : [ ],
+      "inputFieldTypes" : { },
+      "outputFieldTypes" : {
+        "ok" : "BOOL",
+        "truncated" : "BOOL",
+        "workers" : "repeated ai.protomolt.proto.delegation.v1.WorkerRegistrationSummary"
+      },
+      "stability" : "STABLE"
+    },
+    {
+      "name" : "delegation-worker-register",
+      "requiredScope" : "worker-coordinate",
+      "streaming" : false,
+      "requestTypeName" : "ai.protomolt.proto.delegation.v1.RegisterWorkerRequest",
+      "responseTypeName" : "ai.protomolt.proto.delegation.v1.RegisterWorkerResponse",
+      "requiredInputFields" : [
+        "workerId"
+      ],
+      "inputFieldTypes" : {
+        "capabilities" : "repeated ai.protomolt.proto.delegation.v1.WorkerCapability",
+        "model" : "STRING",
+        "model_version" : "STRING",
+        "provider" : "STRING",
+        "worker_id" : "STRING"
+      },
+      "outputFieldTypes" : {
+        "admitted" : "BOOL",
+        "ok" : "BOOL",
+        "reason" : "STRING",
+        "session_id" : "STRING",
+        "worker_id" : "STRING"
+      },
+      "stability" : "STABLE"
+    },
+    {
+      "name" : "describe-mapping",
+      "requiredScope" : "metrics-query",
+      "streaming" : false,
+      "requestTypeName" : "ai.protomolt.proto.metric.v1.DescribeMappingRequest",
+      "responseTypeName" : "ai.protomolt.proto.metric.v1.DescribeMappingResponse",
+      "requiredInputFields" : [
+        "mappingSubject"
+      ],
+      "inputFieldTypes" : {
+        "mapping_subject" : "STRING"
+      },
+      "outputFieldTypes" : {
+        "backends" : "repeated ai.protomolt.proto.metric.v1.MetricBackend",
+        "mapping_subject" : "STRING",
+        "members" : "repeated ai.protomolt.proto.metric.v1.MappingMember",
+        "message_type" : "STRING"
+      },
+      "stability" : "STABLE"
+    },
+    {
       "name" : "diff-schemas",
       "requiredScope" : "schema-read",
       "streaming" : false,
@@ -165,6 +535,23 @@
         "files" : "map<STRING,STRING>",
         "ok" : "BOOL",
         "zip_base64" : "STRING"
+      },
+      "stability" : "STABLE"
+    },
+    {
+      "name" : "ensure-workflow-author-registration",
+      "requiredScope" : "workflow-author",
+      "streaming" : false,
+      "requestTypeName" : "ai.protomolt.proto.workflow.authoring.v1.EnsureWorkflowAuthorRegistrationRequest",
+      "responseTypeName" : "ai.protomolt.proto.workflow.authoring.v1.EnsureWorkflowAuthorRegistrationResponse",
+      "requiredInputFields" : [
+        "registration"
+      ],
+      "inputFieldTypes" : {
+        "registration" : "ai.protomolt.proto.delegation.v1.RegisterWorkerRequest"
+      },
+      "outputFieldTypes" : {
+        "registration" : "ai.protomolt.proto.delegation.v1.RegisterWorkerResponse"
       },
       "stability" : "STABLE"
     },
@@ -315,6 +702,28 @@
       "stability" : "STABLE"
     },
     {
+      "name" : "get-accepted-workflow",
+      "requiredScope" : "workflow-launch",
+      "streaming" : false,
+      "requestTypeName" : "ai.protomolt.proto.workflow.authoring.v1.GetAcceptedWorkflowRequest",
+      "responseTypeName" : "ai.protomolt.proto.samples.starter.v1.WorkflowAcceptedCandidate",
+      "requiredInputFields" : [
+        "taskId"
+      ],
+      "inputFieldTypes" : {
+        "task_id" : "STRING"
+      },
+      "outputFieldTypes" : {
+        "accepted_entry_sha256" : "STRING",
+        "attempt" : "INT32",
+        "candidate_sha256" : "STRING",
+        "revision" : "INT32",
+        "task_id" : "STRING",
+        "task_spec_sha256" : "STRING"
+      },
+      "stability" : "STABLE"
+    },
+    {
       "name" : "get-job",
       "requiredScope" : "service-invoke",
       "streaming" : false,
@@ -330,6 +739,85 @@
         "error" : "STRING",
         "job" : "ai.protomolt.proto.grpc.service.v1.WorkflowRun",
         "ok" : "BOOL"
+      },
+      "stability" : "STABLE"
+    },
+    {
+      "name" : "get-workflow-author-context",
+      "requiredScope" : "workflow-author",
+      "streaming" : false,
+      "requestTypeName" : "ai.protomolt.proto.workflow.authoring.v1.GetWorkflowAuthorContextRequest",
+      "responseTypeName" : "ai.protomolt.proto.workflow.authoring.v1.GetWorkflowAuthorContextResponse",
+      "requiredInputFields" : [
+        "taskId"
+      ],
+      "inputFieldTypes" : {
+        "attempt" : "INT32",
+        "task_id" : "STRING"
+      },
+      "outputFieldTypes" : {
+        "attempt" : "INT32",
+        "descriptor_set" : "BYTES",
+        "descriptors" : "ai.protomolt.proto.grpc.workflow.v1.ArtifactReference",
+        "offer_entry" : "ai.protomolt.proto.delegation.v1.TranscriptEntry",
+        "offer_entry_sha256" : "STRING",
+        "permitted_calls" : "repeated ai.protomolt.proto.samples.starter.v1.WorkflowPermittedCall",
+        "policy" : "ai.protomolt.proto.grpc.workflow.v1.ArtifactReference",
+        "task_id" : "STRING"
+      },
+      "stability" : "STABLE"
+    },
+    {
+      "name" : "get-workflow-authoring-template",
+      "requiredScope" : "worker-coordinate",
+      "streaming" : false,
+      "requestTypeName" : "ai.protomolt.proto.workflow.authoring.v1.GetWorkflowAuthoringTemplateRequest",
+      "responseTypeName" : "ai.protomolt.proto.workflow.authoring.v1.GetWorkflowAuthoringTemplateResponse",
+      "requiredInputFields" : [ ],
+      "inputFieldTypes" : { },
+      "outputFieldTypes" : {
+        "template" : "ai.protomolt.proto.workflow.authoring.v1.WorkflowAuthoringTemplate",
+        "template_sha256" : "STRING"
+      },
+      "stability" : "STABLE"
+    },
+    {
+      "name" : "get-workflow-launch-input-contract",
+      "requiredScope" : "workflow-launch",
+      "streaming" : false,
+      "requestTypeName" : "ai.protomolt.proto.workflow.authoring.v1.GetWorkflowLaunchInputContractRequest",
+      "responseTypeName" : "ai.protomolt.proto.workflow.authoring.v1.GetWorkflowLaunchInputContractResponse",
+      "requiredInputFields" : [
+        "acceptance"
+      ],
+      "inputFieldTypes" : {
+        "acceptance" : "ai.protomolt.proto.samples.starter.v1.WorkflowAcceptedCandidate"
+      },
+      "outputFieldTypes" : {
+        "acceptance" : "ai.protomolt.proto.samples.starter.v1.WorkflowAcceptedCandidate",
+        "descriptor_set" : "BYTES",
+        "descriptors" : "ai.protomolt.proto.grpc.workflow.v1.ArtifactReference",
+        "input_type" : "STRING"
+      },
+      "stability" : "STABLE"
+    },
+    {
+      "name" : "get-workflow-launch-status",
+      "requiredScope" : "workflow-launch",
+      "streaming" : false,
+      "requestTypeName" : "ai.protomolt.proto.workflow.authoring.v1.GetWorkflowLaunchStatusRequest",
+      "responseTypeName" : "ai.protomolt.proto.workflow.authoring.v1.GetWorkflowLaunchStatusResponse",
+      "requiredInputFields" : [
+        "request"
+      ],
+      "inputFieldTypes" : {
+        "request" : "ai.protomolt.proto.samples.starter.v1.WorkflowAuthoringLaunchRequest"
+      },
+      "outputFieldTypes" : {
+        "authorized_not_queued" : "BOOL",
+        "job" : "ai.protomolt.proto.workflow.authoring.v1.WorkflowLaunchJobStatus",
+        "not_authorized" : "BOOL",
+        "request" : "ai.protomolt.proto.samples.starter.v1.WorkflowAuthoringLaunchRequest"
       },
       "stability" : "STABLE"
     },
@@ -475,6 +963,28 @@
       "stability" : "STABLE"
     },
     {
+      "name" : "launch-accepted-workflow",
+      "requiredScope" : "workflow-launch",
+      "streaming" : false,
+      "requestTypeName" : "ai.protomolt.proto.samples.starter.v1.WorkflowAuthoringLaunchRequest",
+      "responseTypeName" : "ai.protomolt.proto.samples.starter.v1.WorkflowAuthoringLaunchResult",
+      "requiredInputFields" : [
+        "acceptance",
+        "input",
+        "launchId"
+      ],
+      "inputFieldTypes" : {
+        "acceptance" : "ai.protomolt.proto.samples.starter.v1.WorkflowAcceptedCandidate",
+        "input" : "ai.protomolt.proto.grpc.workflow.v1.ArtifactReference",
+        "launch_id" : "STRING"
+      },
+      "outputFieldTypes" : {
+        "authorization" : "ai.protomolt.proto.grpc.workflow.v1.ArtifactReference",
+        "job_id" : "STRING"
+      },
+      "stability" : "STABLE"
+    },
+    {
       "name" : "list-jobs",
       "requiredScope" : "service-invoke",
       "streaming" : false,
@@ -581,6 +1091,143 @@
       "stability" : "STABLE"
     },
     {
+      "name" : "mesh-capacity-update",
+      "requiredScope" : "worker-coordinate",
+      "streaming" : false,
+      "requestTypeName" : "ai.protomolt.proto.mesh.cluster.v1.UpdateCapacityRequest",
+      "responseTypeName" : "ai.protomolt.proto.mesh.cluster.v1.UpdateCapacityResponse",
+      "requiredInputFields" : [
+        "capacity"
+      ],
+      "inputFieldTypes" : {
+        "capacity" : "ai.protomolt.proto.mesh.cluster.v1.CapacityAdvertisement"
+      },
+      "outputFieldTypes" : {
+        "commit" : "ai.protomolt.proto.mesh.cluster.v1.DirectoryCommit"
+      },
+      "stability" : "STABLE"
+    },
+    {
+      "name" : "mesh-node-heartbeat",
+      "requiredScope" : "worker-coordinate",
+      "streaming" : false,
+      "requestTypeName" : "ai.protomolt.proto.mesh.cluster.v1.HeartbeatRequest",
+      "responseTypeName" : "ai.protomolt.proto.mesh.cluster.v1.HeartbeatResponse",
+      "requiredInputFields" : [
+        "presence"
+      ],
+      "inputFieldTypes" : {
+        "presence" : "ai.protomolt.proto.mesh.cluster.v1.NodePresence"
+      },
+      "outputFieldTypes" : {
+        "commit" : "ai.protomolt.proto.mesh.cluster.v1.DirectoryCommit"
+      },
+      "stability" : "STABLE"
+    },
+    {
+      "name" : "mesh-node-register",
+      "requiredScope" : "worker-coordinate",
+      "streaming" : false,
+      "requestTypeName" : "ai.protomolt.proto.mesh.cluster.v1.RegisterNodeRequest",
+      "responseTypeName" : "ai.protomolt.proto.mesh.cluster.v1.RegisterNodeResponse",
+      "requiredInputFields" : [
+        "advertisement"
+      ],
+      "inputFieldTypes" : {
+        "advertisement" : "ai.protomolt.proto.mesh.cluster.v1.NodeAdvertisement"
+      },
+      "outputFieldTypes" : {
+        "commit" : "ai.protomolt.proto.mesh.cluster.v1.DirectoryCommit"
+      },
+      "stability" : "STABLE"
+    },
+    {
+      "name" : "mesh-processor-register",
+      "requiredScope" : "worker-coordinate",
+      "streaming" : false,
+      "requestTypeName" : "ai.protomolt.proto.mesh.cluster.v1.RegisterProcessorRequest",
+      "responseTypeName" : "ai.protomolt.proto.mesh.cluster.v1.RegisterProcessorResponse",
+      "requiredInputFields" : [
+        "advertisement"
+      ],
+      "inputFieldTypes" : {
+        "advertisement" : "ai.protomolt.proto.mesh.cluster.v1.ProcessorAdvertisement"
+      },
+      "outputFieldTypes" : {
+        "commit" : "ai.protomolt.proto.mesh.cluster.v1.DirectoryCommit"
+      },
+      "stability" : "STABLE"
+    },
+    {
+      "name" : "mesh-snapshot",
+      "requiredScope" : "worker-coordinate",
+      "streaming" : false,
+      "requestTypeName" : "ai.protomolt.proto.mesh.cluster.v1.GetSnapshotRequest",
+      "responseTypeName" : "ai.protomolt.proto.mesh.cluster.v1.GetSnapshotResponse",
+      "requiredInputFields" : [ ],
+      "inputFieldTypes" : { },
+      "outputFieldTypes" : {
+        "snapshot" : "ai.protomolt.proto.mesh.cluster.v1.ClusterSnapshot"
+      },
+      "stability" : "STABLE"
+    },
+    {
+      "name" : "mesh-sweep",
+      "requiredScope" : "worker-coordinate",
+      "streaming" : false,
+      "requestTypeName" : "ai.protomolt.proto.mesh.cluster.v1.SweepRequest",
+      "responseTypeName" : "ai.protomolt.proto.mesh.cluster.v1.SweepResponse",
+      "requiredInputFields" : [ ],
+      "inputFieldTypes" : { },
+      "outputFieldTypes" : {
+        "events" : "repeated ai.protomolt.proto.mesh.cluster.v1.ClusterEvent",
+        "snapshot_seq" : "INT64"
+      },
+      "stability" : "STABLE"
+    },
+    {
+      "name" : "prepare-workflow-candidate",
+      "requiredScope" : "workflow-author",
+      "streaming" : false,
+      "requestTypeName" : "ai.protomolt.proto.workflow.authoring.v1.PrepareWorkflowCandidateRequest",
+      "responseTypeName" : "ai.protomolt.proto.workflow.authoring.v1.PrepareWorkflowCandidateResponse",
+      "requiredInputFields" : [
+        "preparationId",
+        "taskId"
+      ],
+      "inputFieldTypes" : {
+        "attempt" : "INT32",
+        "executable_source_json" : "BYTES",
+        "preparation_id" : "STRING",
+        "revision" : "INT32",
+        "task_id" : "STRING"
+      },
+      "outputFieldTypes" : {
+        "authored" : "ai.protomolt.proto.samples.starter.v1.WorkflowAuthoringDeliverable",
+        "binding" : "ai.protomolt.proto.workflow.authoring.v1.WorkflowPreparationBinding"
+      },
+      "stability" : "STABLE"
+    },
+    {
+      "name" : "prepare-workflow-launch-input",
+      "requiredScope" : "workflow-launch",
+      "streaming" : false,
+      "requestTypeName" : "ai.protomolt.proto.workflow.authoring.v1.PrepareWorkflowLaunchInputRequest",
+      "responseTypeName" : "ai.protomolt.proto.workflow.authoring.v1.PrepareWorkflowLaunchInputResponse",
+      "requiredInputFields" : [
+        "acceptance"
+      ],
+      "inputFieldTypes" : {
+        "acceptance" : "ai.protomolt.proto.samples.starter.v1.WorkflowAcceptedCandidate",
+        "input_json" : "BYTES"
+      },
+      "outputFieldTypes" : {
+        "acceptance" : "ai.protomolt.proto.samples.starter.v1.WorkflowAcceptedCandidate",
+        "input" : "ai.protomolt.proto.grpc.workflow.v1.ArtifactReference"
+      },
+      "stability" : "STABLE"
+    },
+    {
       "name" : "promote-workflow",
       "requiredScope" : "workflow-run",
       "streaming" : false,
@@ -597,6 +1244,181 @@
       "outputFieldTypes" : {
         "promoted" : "BOOL",
         "versioned_workflow" : "google.protobuf.Struct"
+      },
+      "stability" : "STABLE"
+    },
+    {
+      "name" : "publish-config",
+      "requiredScope" : "schema-write",
+      "streaming" : false,
+      "requestTypeName" : "ai.protomolt.proto.schema.registry.v1.PublishConfigRequest",
+      "responseTypeName" : "ai.protomolt.proto.schema.registry.v1.PublishConfigResponse",
+      "requiredInputFields" : [
+        "config",
+        "messageType",
+        "name"
+      ],
+      "inputFieldTypes" : {
+        "config" : "google.protobuf.Struct",
+        "message_type" : "STRING",
+        "name" : "STRING"
+      },
+      "outputFieldTypes" : {
+        "message_type" : "STRING",
+        "name" : "STRING",
+        "version" : "STRING"
+      },
+      "stability" : "STABLE"
+    },
+    {
+      "name" : "pull-jdbc",
+      "requiredScope" : "service-invoke",
+      "streaming" : false,
+      "requestTypeName" : "ai.protomolt.proto.acquire.pull.v1.PullFromJdbcRequest",
+      "responseTypeName" : "ai.protomolt.proto.acquire.pull.v1.PullFromJdbcResponse",
+      "requiredInputFields" : [
+        "datasourceId",
+        "idColumn",
+        "query",
+        "watermarkColumn"
+      ],
+      "inputFieldTypes" : {
+        "datasource_id" : "STRING",
+        "drive" : "STRING",
+        "id_column" : "STRING",
+        "max_rows" : "INT32",
+        "query" : "STRING",
+        "watermark" : "STRING",
+        "watermark_column" : "STRING"
+      },
+      "outputFieldTypes" : {
+        "report" : "ai.protomolt.proto.acquire.pull.v1.PullReport"
+      },
+      "stability" : "STABLE"
+    },
+    {
+      "name" : "pull-s3",
+      "requiredScope" : "service-invoke",
+      "streaming" : false,
+      "requestTypeName" : "ai.protomolt.proto.acquire.pull.v1.PullFromS3Request",
+      "responseTypeName" : "ai.protomolt.proto.acquire.pull.v1.PullFromS3Response",
+      "requiredInputFields" : [
+        "bucket",
+        "datasourceId"
+      ],
+      "inputFieldTypes" : {
+        "bucket" : "STRING",
+        "datasource_id" : "STRING",
+        "drive" : "STRING",
+        "max_objects" : "INT32",
+        "prefix" : "STRING",
+        "watermark" : "STRING"
+      },
+      "outputFieldTypes" : {
+        "report" : "ai.protomolt.proto.acquire.pull.v1.PullReport"
+      },
+      "stability" : "STABLE"
+    },
+    {
+      "name" : "query-metrics",
+      "requiredScope" : "metrics-query",
+      "streaming" : false,
+      "requestTypeName" : "ai.protomolt.proto.metric.v1.QueryMetricsRequest",
+      "responseTypeName" : "ai.protomolt.proto.metric.v1.QueryMetricsResponse",
+      "requiredInputFields" : [
+        "limit",
+        "mappingSubject"
+      ],
+      "inputFieldTypes" : {
+        "backend" : "ai.protomolt.proto.metric.v1.MetricBackend",
+        "dimensions" : "repeated ai.protomolt.proto.metric.v1.MemberRef",
+        "filters" : "repeated ai.protomolt.proto.metric.v1.MetricFilter",
+        "limit" : "INT32",
+        "mapping_subject" : "STRING",
+        "measures" : "repeated STRING"
+      },
+      "outputFieldTypes" : {
+        "backend" : "ai.protomolt.proto.metric.v1.MetricBackend",
+        "mapping_subject" : "STRING",
+        "physical_plan" : "STRING",
+        "row_count" : "INT32",
+        "rows" : "repeated ai.protomolt.proto.metric.v1.MetricRow"
+      },
+      "stability" : "STABLE"
+    },
+    {
+      "name" : "read-workflow-author-assignments",
+      "requiredScope" : "workflow-author",
+      "streaming" : false,
+      "requestTypeName" : "ai.protomolt.proto.workflow.authoring.v1.ReadWorkflowAuthorAssignmentsRequest",
+      "responseTypeName" : "ai.protomolt.proto.workflow.authoring.v1.ReadWorkflowAuthorAssignmentsResponse",
+      "requiredInputFields" : [ ],
+      "inputFieldTypes" : {
+        "after_cursor" : "INT64",
+        "max_assignments" : "INT32"
+      },
+      "outputFieldTypes" : {
+        "after_cursor" : "INT64",
+        "assignments" : "repeated ai.protomolt.proto.workflow.authoring.v1.WorkflowAuthorAssignment",
+        "cursor" : "INT64",
+        "truncated" : "BOOL",
+        "worker_id" : "STRING"
+      },
+      "stability" : "STABLE"
+    },
+    {
+      "name" : "read-workflow-author-events",
+      "requiredScope" : "workflow-author",
+      "streaming" : false,
+      "requestTypeName" : "ai.protomolt.proto.workflow.authoring.v1.ReadWorkflowAuthorEventsRequest",
+      "responseTypeName" : "ai.protomolt.proto.workflow.authoring.v1.ReadWorkflowAuthorEventsResponse",
+      "requiredInputFields" : [
+        "taskId"
+      ],
+      "inputFieldTypes" : {
+        "after_cursor" : "INT64",
+        "attempt" : "INT32",
+        "max_events" : "INT32",
+        "task_id" : "STRING"
+      },
+      "outputFieldTypes" : {
+        "after_cursor" : "INT64",
+        "attempt" : "INT32",
+        "cursor" : "INT64",
+        "events" : "repeated ai.protomolt.proto.delegation.v1.ObservedEvent",
+        "task_id" : "STRING",
+        "truncated" : "BOOL"
+      },
+      "stability" : "STABLE"
+    },
+    {
+      "name" : "rebuild-rollup",
+      "requiredScope" : "metrics-rebuild",
+      "streaming" : false,
+      "requestTypeName" : "ai.protomolt.proto.metric.v1.RebuildRollupRequest",
+      "responseTypeName" : "ai.protomolt.proto.metric.v1.RebuildRollupResponse",
+      "requiredInputFields" : [
+        "mappingSubject",
+        "table"
+      ],
+      "inputFieldTypes" : {
+        "backend" : "ai.protomolt.proto.metric.v1.MetricBackend",
+        "dimensions" : "repeated ai.protomolt.proto.metric.v1.MemberRef",
+        "enrichment" : "ai.protomolt.proto.metric.v1.RollupEnrichment",
+        "filters" : "repeated ai.protomolt.proto.metric.v1.MetricFilter",
+        "mapping_subject" : "STRING",
+        "measures" : "repeated STRING",
+        "table" : "STRING"
+      },
+      "outputFieldTypes" : {
+        "backend" : "ai.protomolt.proto.metric.v1.MetricBackend",
+        "enriched_from" : "STRING",
+        "mapping_subject" : "STRING",
+        "physical_plan" : "STRING",
+        "rows_unenriched" : "INT64",
+        "rows_written" : "INT64",
+        "snapshot_id" : "INT64",
+        "table" : "STRING"
       },
       "stability" : "STABLE"
     },
@@ -645,6 +1467,70 @@
         "file_count" : "INT32",
         "ok" : "BOOL",
         "services" : "repeated STRING"
+      },
+      "stability" : "STABLE"
+    },
+    {
+      "name" : "register-workflow-author",
+      "requiredScope" : "workflow-author",
+      "streaming" : false,
+      "requestTypeName" : "ai.protomolt.proto.delegation.v1.RegisterWorkerRequest",
+      "responseTypeName" : "ai.protomolt.proto.delegation.v1.RegisterWorkerResponse",
+      "requiredInputFields" : [
+        "workerId"
+      ],
+      "inputFieldTypes" : {
+        "capabilities" : "repeated ai.protomolt.proto.delegation.v1.WorkerCapability",
+        "model" : "STRING",
+        "model_version" : "STRING",
+        "provider" : "STRING",
+        "worker_id" : "STRING"
+      },
+      "outputFieldTypes" : {
+        "admitted" : "BOOL",
+        "ok" : "BOOL",
+        "reason" : "STRING",
+        "session_id" : "STRING",
+        "worker_id" : "STRING"
+      },
+      "stability" : "STABLE"
+    },
+    {
+      "name" : "registry-remotes",
+      "requiredScope" : "schema-write",
+      "streaming" : false,
+      "requestTypeName" : "ai.protomolt.proto.schema.registry.v1.RegistryRemotesRequest",
+      "responseTypeName" : "ai.protomolt.proto.schema.registry.v1.RegistryRemotesResponse",
+      "requiredInputFields" : [
+        "operation"
+      ],
+      "inputFieldTypes" : {
+        "name" : "STRING",
+        "operation" : "ai.protomolt.proto.schema.registry.v1.RemoteOperation",
+        "url" : "STRING"
+      },
+      "outputFieldTypes" : {
+        "remotes" : "repeated ai.protomolt.proto.schema.registry.v1.RemoteRegistry"
+      },
+      "stability" : "STABLE"
+    },
+    {
+      "name" : "registry-sync",
+      "requiredScope" : "schema-write",
+      "streaming" : false,
+      "requestTypeName" : "ai.protomolt.proto.schema.registry.v1.RegistrySyncRequest",
+      "responseTypeName" : "ai.protomolt.proto.schema.registry.v1.RegistrySyncResponse",
+      "requiredInputFields" : [
+        "remote"
+      ],
+      "inputFieldTypes" : {
+        "remote" : "STRING"
+      },
+      "outputFieldTypes" : {
+        "descriptors_imported" : "INT32",
+        "errors" : "repeated STRING",
+        "remote" : "STRING",
+        "subjects" : "repeated ai.protomolt.proto.schema.registry.v1.ImportedSubject"
       },
       "stability" : "STABLE"
     },
@@ -713,6 +1599,33 @@
       "stability" : "STABLE"
     },
     {
+      "name" : "replay-documents",
+      "requiredScope" : "search-index",
+      "streaming" : false,
+      "requestTypeName" : "ai.protomolt.proto.search.v1.ReplayDocumentsRequest",
+      "responseTypeName" : "ai.protomolt.proto.search.v1.ReplayDocumentsResponse",
+      "requiredInputFields" : [
+        "accountId",
+        "mappingSubject",
+        "workflowName"
+      ],
+      "inputFieldTypes" : {
+        "account_id" : "STRING",
+        "graph_address_id" : "STRING",
+        "mapping_subject" : "STRING",
+        "prune" : "BOOL",
+        "replay_id" : "STRING",
+        "workflow_name" : "STRING"
+      },
+      "outputFieldTypes" : {
+        "job_ids" : "repeated STRING",
+        "pruned" : "INT32",
+        "pruned_doc_ids" : "repeated STRING",
+        "submitted" : "INT32"
+      },
+      "stability" : "STABLE"
+    },
+    {
       "name" : "replay-workflow",
       "requiredScope" : "workflow-run",
       "streaming" : false,
@@ -756,6 +1669,30 @@
         "output" : "google.protobuf.Struct",
         "output_type" : "STRING",
         "steps" : "repeated ai.protomolt.proto.grpc.service.v1.WorkflowStepResult"
+      },
+      "stability" : "STABLE"
+    },
+    {
+      "name" : "search",
+      "requiredScope" : "search-query",
+      "streaming" : false,
+      "requestTypeName" : "ai.protomolt.proto.search.v1.SearchRequest",
+      "responseTypeName" : "ai.protomolt.proto.search.v1.SearchResponse",
+      "requiredInputFields" : [
+        "k",
+        "lane",
+        "mappingSubject",
+        "query"
+      ],
+      "inputFieldTypes" : {
+        "fields" : "repeated STRING",
+        "k" : "INT32",
+        "lane" : "ai.protomolt.proto.search.v1.SearchLane",
+        "mapping_subject" : "STRING",
+        "query" : "STRING"
+      },
+      "outputFieldTypes" : {
+        "hits" : "repeated ai.protomolt.proto.search.v1.SearchHit"
       },
       "stability" : "STABLE"
     },
@@ -868,6 +1805,30 @@
       "stability" : "STABLE"
     },
     {
+      "name" : "start-workflow-authoring",
+      "requiredScope" : "worker-coordinate",
+      "streaming" : false,
+      "requestTypeName" : "ai.protomolt.proto.workflow.authoring.v1.StartWorkflowAuthoringRequest",
+      "responseTypeName" : "ai.protomolt.proto.workflow.authoring.v1.StartWorkflowAuthoringResponse",
+      "requiredInputFields" : [
+        "objective",
+        "taskId",
+        "templateSha256",
+        "workerId"
+      ],
+      "inputFieldTypes" : {
+        "objective" : "STRING",
+        "task_id" : "STRING",
+        "template_sha256" : "STRING",
+        "worker_id" : "STRING"
+      },
+      "outputFieldTypes" : {
+        "offer" : "ai.protomolt.proto.delegation.v1.TaskOffer",
+        "request" : "ai.protomolt.proto.workflow.authoring.v1.StartWorkflowAuthoringRequest"
+      },
+      "stability" : "STABLE"
+    },
+    {
       "name" : "submit-workflow",
       "requiredScope" : "workflow-run",
       "streaming" : false,
@@ -888,6 +1849,30 @@
         "job_id" : "STRING",
         "ok" : "BOOL",
         "status" : "STRING"
+      },
+      "stability" : "STABLE"
+    },
+    {
+      "name" : "submit-workflow-candidate",
+      "requiredScope" : "workflow-author",
+      "streaming" : false,
+      "requestTypeName" : "ai.protomolt.proto.delegation.v1.SubmitCandidateRequest",
+      "responseTypeName" : "ai.protomolt.proto.delegation.v1.SubmitCandidateResponse",
+      "requiredInputFields" : [
+        "candidate",
+        "taskId",
+        "workerId"
+      ],
+      "inputFieldTypes" : {
+        "candidate" : "ai.protomolt.proto.delegation.v1.CompletionCandidate",
+        "task_id" : "STRING",
+        "worker_id" : "STRING"
+      },
+      "outputFieldTypes" : {
+        "attempt" : "INT32",
+        "ok" : "BOOL",
+        "revision" : "INT32",
+        "task_id" : "STRING"
       },
       "stability" : "STABLE"
     },

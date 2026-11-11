@@ -1,14 +1,18 @@
 package ai.protomolt.proto.compat;
 
 import ai.protomolt.proto.compat.ActionEnvelopeSnapshot.ActionEnvelopeEntry;
+import ai.protomolt.proto.compat.JavaApiSnapshot.ClassEntry;
 import ai.protomolt.proto.compat.RestRouteSnapshot.RestRouteEntry;
+import ai.protomolt.proto.compat.StoredFormatSnapshot.StoredFormatEntry;
 import ai.protomolt.proto.descriptors.StabilityTier;
 import ai.protomolt.proto.sources.CompiledProtos;
 import com.google.protobuf.DescriptorProtos.FileDescriptorProto;
 import com.google.protobuf.DescriptorProtos.FileDescriptorSet;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -20,8 +24,8 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
  * Verifies the checked-in five-surface compatibility baseline under {@code compatibility/baseline/}
- * against the live repository surfaces and ensures breaking mutations fail closed while
- * additive changes pass.
+ * against the live repository surfaces and ensures breaking mutations, stability-map tampering,
+ * and unused waivers fail closed while additive changes pass.
  */
 class CompatibilityBaselineSystemTest {
 
@@ -42,11 +46,72 @@ class CompatibilityBaselineSystemTest {
         assertThat(recorded.manifest().releaseTag()).isEmpty();
         assertThat(recorded.manifest().status().hasExternalReleaseGuarantee()).isFalse();
 
-        assertThat(recorded.javaApi().classes()).isNotEmpty();
-        assertThat(recorded.protobuf().descriptorSet().getFileCount()).isGreaterThan(0);
-        assertThat(recorded.storedFormats().formats()).hasSizeGreaterThanOrEqualTo(5);
-        assertThat(recorded.restRoutes().routes()).isNotEmpty();
-        assertThat(recorded.actionEnvelopes().actions()).hasSize(44);
+        assertThat(recorded.javaApi().classes()).hasSizeGreaterThanOrEqualTo(1_576);
+        List<String> javaClassNames = recorded.javaApi().classes().stream()
+                .map(ClassEntry::className)
+                .toList();
+        assertThat(javaClassNames).contains(
+                "ai.protomolt.proto.compat.CompatibilityChecker",
+                "ai.protomolt.proto.compat.CompatibilityChecker$Builder",
+                "ai.protomolt.proto.grpc.policy.OutboundChannelPolicy$Builder",
+                "ai.protomolt.proto.emit.parquet.ParquetEmitter",
+                "ai.protomolt.proto.emit.renderer.GrpcRendererProvider",
+                "ai.protomolt.proto.registry.service.SchemaRegistryServer",
+                "ai.protomolt.proto.registry.service.SchemaRegistryServer$RouteContract",
+                "ai.protomolt.proto.repo.v2.DocumentServiceGrpc");
+        assertThat(javaClassNames)
+                .noneMatch(name -> name.contains(".samples.")
+                        || name.contains(".examples.")
+                        || name.contains(".correction."));
+
+        assertThat(recorded.protobuf().descriptorSet().getFileCount()).isGreaterThanOrEqualTo(138);
+        assertThat(recorded.protobuf().elementStability()).hasSizeGreaterThanOrEqualTo(9_974);
+
+        assertThat(recorded.storedFormats().formats()).hasSizeGreaterThanOrEqualTo(21);
+        assertThat(recorded.storedFormats().formats().stream()
+                .map(StoredFormatEntry::formatId)
+                .toList())
+                .contains(
+                        "repo.document.v1",
+                        "repo.drive.v1",
+                        "repo.manifest.accession.v2",
+                        "repo.manifest.document.v2",
+                        "repo.catalog.entry.v2",
+                        "repo.archive.v1",
+                        "authz.access-policy.v1",
+                        "receipt.signed-work-record.v1",
+                        "receipt.trust-snapshot.v1",
+                        "grpc.service-profile.v1",
+                        "mesh.cluster.event-log.v1",
+                        "delegation.encrypted-repository-state.v1",
+                        "workflow.definition.v1",
+                        "workflow.run-evidence.v1");
+
+        assertThat(recorded.restRoutes().routes()).hasSizeGreaterThanOrEqualTo(98);
+        assertThat(recorded.restRoutes().routes().stream()
+                .map(RestRouteEntry::routeId)
+                .toList())
+                .contains(
+                        "schema-registry:native.descriptor-set",
+                        "repo-http:documents.upload",
+                        "repo-http:archive.upload",
+                        "intake-http:intake.upload")
+                .anyMatch(id -> id.startsWith("grpc-json:"));
+
+        assertThat(recorded.actionEnvelopes().actions()).hasSizeGreaterThanOrEqualTo(89);
+        assertThat(recorded.actionEnvelopes().actions().stream()
+                .map(ActionEnvelopeEntry::name)
+                .toList())
+                .contains(
+                        "delegation-offer",
+                        "query-metrics",
+                        "mesh-node-register",
+                        "publish-config",
+                        "registry-sync",
+                        "search",
+                        "replay-documents",
+                        "pull-jdbc",
+                        "pull-s3");
 
         ReleaseBaselineBundle live = CompatibilityBaselineGenerator.captureLiveBundle(recorded.manifest());
         ReleaseBaselineReport report = ReleaseBaselineGate.evaluate(recorded, live);
@@ -161,7 +226,7 @@ class CompatibilityBaselineSystemTest {
     }
 
     @Test
-    void publishedInventoryCompilesEveryMainSourceProto() throws Exception {
+    void publishedInventoryCompilesBomModuleProtosAndExcludesUnpublishedFixtures() throws Exception {
         CompiledProtos compiled = CompatibilityBaselineGenerator.compilePublishedDescriptors();
         assertThat(compiled.descriptorFor("ai/protomolt/proto/repo/v2/document_service.proto"))
                 .isPresent();
@@ -171,6 +236,82 @@ class CompatibilityBaselineSystemTest {
                 .isPresent();
         assertThat(compiled.descriptorFor("ai/protomolt/proto/emit/v1/renderer.proto"))
                 .isPresent();
+        assertThat(compiled.descriptorFor("ai/protomolt/proto/meta/v1/stability.proto"))
+                .isPresent();
+        assertThat(compiled.descriptorSet().getFileList().stream()
+                .map(FileDescriptorProto::getName)
+                .toList())
+                .doesNotContain(
+                        "demo_shop.proto",
+                        "demo/search/v1/demo_search.proto",
+                        "ai/protomolt/proto/samples/authoring/v1/authoring_fixture.proto",
+                        "ai/protomolt/proto/samples/starter/v1/coordination_report.proto",
+                        "ai/protomolt/proto/correction/v1/correction.proto",
+                        "court/v1/opinion_metadata.proto")
+                .noneMatch(name -> name.contains("/examples/")
+                        || name.contains("/correction/"));
+    }
+
+    @Test
+    void tamperingWithProtobufStabilityJsonOrAddingUnusedWaiverFailsClosed(@TempDir Path tempDir)
+            throws Exception {
+        Path baselineDir = repositoryRoot().resolve("compatibility/baseline");
+        for (String file : List.of(
+                ReleaseBaselineGate.MANIFEST_FILE,
+                ReleaseBaselineGate.JAVA_API_FILE,
+                ReleaseBaselineGate.PROTOBUF_DESCRIPTORS_FILE,
+                ReleaseBaselineGate.PROTOBUF_STABILITY_FILE,
+                ReleaseBaselineGate.STORED_FORMATS_FILE,
+                ReleaseBaselineGate.REST_ROUTES_FILE,
+                ReleaseBaselineGate.ACTION_ENVELOPES_FILE)) {
+            Files.copy(baselineDir.resolve(file), tempDir.resolve(file));
+        }
+
+        String originalStability = Files.readString(
+                tempDir.resolve(ReleaseBaselineGate.PROTOBUF_STABILITY_FILE),
+                StandardCharsets.UTF_8);
+        int firstStable = originalStability.indexOf("\"STABLE\"");
+        assertThat(firstStable).isNotNegative();
+        String tamperedStability = originalStability.substring(0, firstStable)
+                + "\"EVOLVING\""
+                + originalStability.substring(firstStable + "\"STABLE\"".length());
+        Files.writeString(
+                tempDir.resolve(ReleaseBaselineGate.PROTOBUF_STABILITY_FILE),
+                tamperedStability,
+                StandardCharsets.UTF_8);
+
+        assertThatThrownBy(() -> ReleaseBaselineGate.load(tempDir))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining(ReleaseBaselineGate.PROTOBUF_STABILITY_FILE);
+
+        ReleaseBaselineBundle recorded = ReleaseBaselineGate.load(baselineDir);
+        ReleaseBaselineManifest manifestWithUnusedWaiver = new ReleaseBaselineManifest(
+                recorded.manifest().schemaVersion(),
+                recorded.manifest().status(),
+                recorded.manifest().releaseVersion(),
+                recorded.manifest().releaseTag(),
+                recorded.manifest().baselineNote(),
+                List.of(new CompatibilityWaiver(
+                        "W-UNUSED-SYSTEM-TEST",
+                        CompatibilitySurface.ACTION_ENVELOPE,
+                        ActionEnvelopeCompatibilityChecker.ACTION_REMOVED,
+                        "nonexistent-action",
+                        "#827",
+                        "unused waiver must fail closed")));
+        ReleaseBaselineBundle recordedWithUnusedWaiver = new ReleaseBaselineBundle(
+                manifestWithUnusedWaiver,
+                recorded.javaApi(),
+                recorded.protobuf(),
+                recorded.storedFormats(),
+                recorded.restRoutes(),
+                recorded.actionEnvelopes());
+
+        ReleaseBaselineReport unusedReport = ReleaseBaselineGate.evaluate(recordedWithUnusedWaiver, recorded);
+        assertThat(unusedReport.isCompatible()).isFalse();
+        assertThat(unusedReport.unusedWaivers()).hasSize(1);
+        assertThatThrownBy(unusedReport::throwIfIncompatible)
+                .isInstanceOf(IncompatibleSurfaceException.class)
+                .hasMessageContaining("W-UNUSED-SYSTEM-TEST");
     }
 
     private static Path repositoryRoot() throws IOException {

@@ -7,7 +7,7 @@ dependencies {
     // Intake rides the repo wire contract only — the DocumentServiceGrpc
     // blocking stub, never repo container/service internals.
     implementation project(':protomolt-repo-proto')
-    implementation project(':protomolt-descriptors')
+    api project(':protomolt-descriptors')
     implementation libs.grpc.netty.shaded
     implementation libs.grpc.services
     implementation libs.grpc.inprocess

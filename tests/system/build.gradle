@@ -1,13 +1,35 @@
 description = 'Unpublished end-to-end system tests exercising the toolkit across module boundaries'
 
+evaluationDependsOn(':bom')
+
+def publishedBomModuleNames = rootProject.project(':bom')
+        .configurations
+        .api
+        .dependencyConstraints
+        .collect { it.name }
+
+configurations {
+    compatibilityInventory {
+        canBeConsumed = false
+        canBeResolved = true
+    }
+}
+
 dependencies {
     testImplementation project(':protomolt-schema-registry-git')
+    testImplementation project(':protomolt-schema-registry-git-service')
     testImplementation project(':protomolt-grpc-service')
+    testImplementation project(':protomolt-grpc-service-contract')
+    testImplementation project(':protomolt-grpc-service-profile')
+    testImplementation project(':protomolt-grpc-workflow')
     testImplementation project(':protomolt-mcp')
     testImplementation project(':protomolt-descriptors')
     testImplementation project(':protomolt-sources')
     testImplementation project(':protomolt-acquire-gather')
     testImplementation project(':protomolt-acquire-gather-git')
+    testImplementation project(':protomolt-acquire-pull')
+    testImplementation project(':protomolt-acquire-jdbc')
+    testImplementation project(':protomolt-acquire-s3')
     testImplementation project(':protomolt-compat')
     testImplementation project(':protomolt-registry')
     testImplementation project(':protomolt-registry-service')
@@ -19,12 +41,23 @@ dependencies {
     testImplementation project(':protomolt-http-jsonschema')
     testImplementation project(':protomolt-http-rest')
     testImplementation project(':protomolt-http-openapi')
+    testImplementation project(':protomolt-authz')
+    testImplementation project(':protomolt-delegation')
+    testImplementation project(':protomolt-delegation-proto')
+    testImplementation project(':protomolt-delegation-repository')
+    testImplementation project(':protomolt-emit-renderer')
+    testImplementation project(':protomolt-mesh-proto')
+    testImplementation project(':protomolt-mesh-cluster')
+    testImplementation project(':protomolt-metric-service')
     testImplementation project(':protomolt-repo-admission')
     testImplementation project(':protomolt-repo-proto')
     testImplementation project(':protomolt-receipt')
     testImplementation project(':protomolt-serve')
     testImplementation project(':protomolt-search-index-spi')
     testImplementation project(':protomolt-search-index-opensearch')
+    testImplementation project(':protomolt-search-service')
+    testImplementation project(':protomolt-workflow-authoring')
+    testImplementation libs.awssdk.s3
     testImplementation libs.jackson.databind
     testImplementation libs.jgit
 
@@ -46,10 +79,55 @@ dependencies {
     testImplementation project(':protomolt-protobuf-seo')
     // The court corpus fixture rides the samples jar's resources.
     testImplementation project(':samples')
+    testRuntimeOnly libs.hadoop.client.api
+    testRuntimeOnly libs.kafka.clients
+    testRuntimeOnly libs.kafka.connect.api
+    testRuntimeOnly libs.javax.annotation.api
+    testRuntimeOnly libs.tomcat.annotations.api
     testImplementation libs.grpc.inprocess
     testImplementation libs.testcontainers.postgresql
     testImplementation libs.testcontainers.localstack
     testImplementation libs.testcontainers.junit.jupiter
+
+    // Complete published BOM inventory scanned in an isolated child ClassLoader so
+    // framework-specific loggers (Quarkus JBoss LogManager, CLI slf4j-nop) never
+    // pollute the system-test JVM runtime classpath.
+    publishedBomModuleNames.each { moduleName ->
+        compatibilityInventory project(":${moduleName}")
+    }
+    compatibilityInventory platform(libs.quarkus.bom)
+    compatibilityInventory libs.hadoop.client.api
+    compatibilityInventory libs.kafka.connect.api
+    compatibilityInventory libs.kafka.clients
+    compatibilityInventory libs.spring.context
+    compatibilityInventory libs.spring.web
+    compatibilityInventory libs.spring.boot.autoconfigure
+    compatibilityInventory libs.micronaut.inject
+    compatibilityInventory libs.javax.annotation.api
+    compatibilityInventory libs.tomcat.annotations.api
+}
+
+def compatibilityInventoryFile = layout.buildDirectory.file('compatibility-inventory/classpath.txt')
+
+def writeCompatibilityInventoryClasspath = tasks.register('writeCompatibilityInventoryClasspath') {
+    description = 'Writes resolved published BOM inventory classpath entries for CompatibilityBaselineGenerator'
+    inputs.files(configurations.compatibilityInventory)
+    outputs.file(compatibilityInventoryFile)
+    outputs.cacheIf { false }
+    doLast {
+        File out = compatibilityInventoryFile.get().asFile
+        out.parentFile.mkdirs()
+        out.text = configurations.compatibilityInventory.files
+                .collect { it.absolutePath }
+                .join('\n') + '\n'
+    }
+}
+
+tasks.withType(Test).configureEach {
+    dependsOn writeCompatibilityInventoryClasspath
+    jvmArgumentProviders.add({
+        ["-Dprotomolt.compat.inventoryClasspathFile=${compatibilityInventoryFile.get().asFile.absolutePath}".toString()]
+    } as CommandLineArgumentProvider)
 }
 
 // The checked-in action inventory is generated from the actual full and standalone
@@ -65,17 +143,27 @@ tasks.register('generateActionInventory', JavaExec) {
 tasks.register('updateCompatibilityBaseline', JavaExec) {
     group = 'verification'
     description = 'Advances or regenerates the 5-surface release compatibility baseline in compatibility/baseline/'
-    dependsOn tasks.named('testClasses')
+    dependsOn tasks.named('testClasses'), writeCompatibilityInventoryClasspath
     classpath = sourceSets.test.runtimeClasspath
     mainClass = 'ai.protomolt.proto.compat.CompatibilityBaselineGenerator'
+    if (System.getProperty('protomolt.compat.allowMajorReleaseBreak') != null) {
+        systemProperty 'protomolt.compat.allowMajorReleaseBreak',
+                System.getProperty('protomolt.compat.allowMajorReleaseBreak')
+    }
+    jvmArgumentProviders.add({
+        ["-Dprotomolt.compat.inventoryClasspathFile=${compatibilityInventoryFile.get().asFile.absolutePath}".toString()]
+    } as CommandLineArgumentProvider)
     args '--update', rootProject.file('compatibility/baseline').absolutePath
 }
 
 tasks.register('checkCompatibilityBaseline', JavaExec) {
     group = 'verification'
     description = 'Verifies current repository surfaces against the recorded compatibility/baseline/ snapshot'
-    dependsOn tasks.named('testClasses')
+    dependsOn tasks.named('testClasses'), writeCompatibilityInventoryClasspath
     classpath = sourceSets.test.runtimeClasspath
     mainClass = 'ai.protomolt.proto.compat.CompatibilityBaselineGenerator'
+    jvmArgumentProviders.add({
+        ["-Dprotomolt.compat.inventoryClasspathFile=${compatibilityInventoryFile.get().asFile.absolutePath}".toString()]
+    } as CommandLineArgumentProvider)
     args '--check', rootProject.file('compatibility/baseline').absolutePath
 }

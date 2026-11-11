@@ -81,6 +81,24 @@ public final class ProtoMoltRestMount {
         register(registry, catalog, apiToken, callers, contributed, Map.of());
     }
 
+    /**
+     * Mounts {@code ProtoMoltService} plus every contributed gRPC service family and explicit
+     * task binding served by {@code protomolt-serve} when all optional roles are enabled.
+     *
+     * @param registry destination REST method registry
+     * @param catalog  action catalog supplying verb implementations
+     */
+    public static void registerAllContributed(ProtoRestMethodRegistry registry,
+                                              ActionCatalog catalog) {
+        register(
+                registry,
+                catalog,
+                null,
+                null,
+                GrpcMount.contributedServices(true, true, true),
+                WorkflowAuthorTaskMount.bindings());
+    }
+
     public static void register(ProtoRestMethodRegistry registry, ActionCatalog catalog,
                                 ApiTokenRequirement apiToken,
                                 Function<Map<String, String>, Caller> callers,

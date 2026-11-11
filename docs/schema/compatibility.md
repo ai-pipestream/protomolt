@@ -119,41 +119,61 @@ protected contract cannot silently shed gate enforcement.
    constructors, methods, or fields with `@ApiStability(StabilityTier.STABLE)`
    (retained at `RUNTIME`). `ApiStabilityResolver` resolves member stability
    from member → declaring type → enclosing types → package → `.internal`
-   package convention. `JavaApiCompatibilityChecker` detects removed types,
-   constructors, methods, and fields; return-type and field-type changes;
-   visibility reductions; added `final` or `abstract` modifiers on extensible
-   types/methods; removed supertypes; and added abstract methods on interfaces
-   or abstract classes.
+   package convention. `JavaApiSnapshot` discovers all exported top-level and
+   recursively declared nested `public`/`protected` types across every published
+   module in `bom/build.gradle` (excluding unpublished `samples/`, `examples/`,
+   `tests/`, and internal demo modules). `JavaApiCompatibilityChecker` detects
+   removed types, constructors, methods, and fields; return-type and field-type
+   changes; visibility reductions; added `final` or `abstract` modifiers on
+   extensible types/methods; removed supertypes; and added abstract methods on
+   interfaces or abstract classes.
 2. **Protobuf contracts (`CompatibilitySurface.PROTOBUF`)**:
    Declare file, message, field, enum, enum-value, service, or RPC method
    stability with `(ai.protomolt.proto.meta.v1.file_stability)` through
    `(ai.protomolt.proto.meta.v1.method_stability)` in
-   `ai/protomolt/proto/meta/v1/stability.proto`, or via `labels: { key: "stability", value: "..." }`
-   on `(ai.protomolt.proto.meta.v1.message)` / `(ai.protomolt.proto.meta.v1.field)`.
+   `ai/protomolt/proto/meta/v1/stability.proto`, or via
+   `labels: { key: "stability", value: "..." }` on
+   `(ai.protomolt.proto.meta.v1.message)` / `(ai.protomolt.proto.meta.v1.field)`.
    `DescriptorMetadata.stability(...)` resolves the effective tier with parent
-   and file inheritance. `ProtobufSurfaceCompatibilityChecker` combines
-   `SchemaDiff` and `CompatibilityChecker` with element-level stability tiers.
+   and file inheritance, failing closed with `IllegalArgumentException` if
+   present stability wire bytes cannot be parsed, if `StabilityLevel` carries an
+   unrecognized enum wire value, or if `labels["stability"]` contains an
+   unrecognized non-blank tier name (while preserving forward-compatible unknown
+   protobuf fields). `ProtobufSurfaceCompatibilityChecker` combines `SchemaDiff`
+   and `CompatibilityChecker` with element-level stability tiers.
 3. **Stored formats (`CompatibilitySurface.STORED_FORMAT`)**:
-   `StoredFormatSnapshot` records retained persistence and repository schemas
-   (including `repo.document.v1` pinned to `BuiltinDocumentSchema`,
-   `repo.manifest.accession.v2`, `repo.manifest.document.v2`,
-   `receipt.signed-work-record.v1`, and `receipt.trust-snapshot.v1`).
-   `StoredFormatCompatibilityChecker` enforces format presence, root message
-   type identity, non-regressing `formatVersion`, optional exact closure SHA-256
-   pins, wire/JSON schema compatibility, and reservation of any removed field
-   number/name (`FIELD_REMOVED_NOT_RESERVED`).
+   `StoredFormatSnapshot` records retained persistence, repository, archive,
+   authorization, receipt, gRPC profile, mesh, delegation, and workflow schemas
+   (21 root formats, including `repo.document.v1` pinned to
+   `BuiltinDocumentSchema`, `repo.drive.v1`, `repo.manifest.accession.v2`,
+   `repo.manifest.document.v2`, `repo.catalog.entry.v2`, `repo.archive.v1`,
+   `authz.access-policy.v1`, `receipt.signed-work-record.v1`,
+   `receipt.trust-snapshot.v1`, `grpc.service-profile.v1`,
+   `mesh.cluster.event-log.v1`, `delegation.encrypted-repository-state.v1`, and
+   `workflow.definition.v1`). `StoredFormatCompatibilityChecker` enforces format
+   presence, root message type identity, non-regressing `formatVersion`, optional
+   exact closure SHA-256 pins, wire/JSON schema compatibility, and reservation of
+   any removed field number/name (`FIELD_REMOVED_NOT_RESERVED`).
 4. **REST routes (`CompatibilitySurface.REST_ROUTE`)**:
-   Declare route stability via `@ProtoRestExposed(stability = ...)` or
-   `ProtoRestMethod.Builder#stability(...)`. `RestRouteCompatibilityChecker`
-   checks route presence, path templates, `{param}` path parameter sequences,
-   accepted HTTP verbs, required query parameters, request/response media types
-   and message types, 2xx success status codes, and authentication requirements.
+   Declare route stability via `@ProtoRestExposed(stability = ...)`,
+   `ProtoRestMethod.Builder#stability(...)`, or live server route contracts
+   (`ProtoMoltRestMount.registerAllContributed`,
+   `SchemaRegistryServer.routeContracts`, `UploadHttpServer.routeContracts`, and
+   `IntakeHttpServer.routeContracts`). Because each standalone HTTP server
+   dispatches requests from the same route-contract definitions read by the
+   baseline generator, any route change perturbs the snapshot directly.
+   `RestRouteCompatibilityChecker` checks route presence, path templates,
+   `{param}` path parameter sequences, accepted HTTP verbs, required query
+   parameters, request/response media types and message types, 2xx success status
+   codes, and authentication requirements.
 5. **Action envelopes (`CompatibilitySurface.ACTION_ENVELOPE`)**:
    `ProtoAction#stability()` resolves the action's stability tier from
-   `@ApiStability` on the action class (defaulting to `STABLE`).
-   `ActionEnvelopeCompatibilityChecker` checks action presence, `requiredScope`,
-   streaming mode, request/response message types, required JSON Schema input
-   properties, and input/output field types.
+   `@ApiStability` on the action class (defaulting to `STABLE`) across
+   `ProtoMoltCatalog.full(...)`, delegation, metric, mesh/cluster, registry
+   federation/config, search/replay, JDBC/S3 pull, and workflow-authoring action
+   suites. `ActionEnvelopeCompatibilityChecker` checks action presence,
+   `requiredScope`, streaming mode, request/response message types, required JSON
+   Schema input properties, and input/output field types.
 
 ## Release baseline lifecycle and CI gate
 
@@ -163,7 +183,9 @@ The recorded baseline lives under `compatibility/baseline/`:
   `releaseTag`, `baselineNote`, and reviewed `waivers`)
 - `java-api.json`: `JavaApiSnapshot`
 - `protobuf-descriptors.binpb` and `protobuf-stability.json`:
-  `ProtobufSurfaceSnapshot`
+  `ProtobufSurfaceSnapshot` (`ReleaseBaselineGate.load` verifies that
+  `protobuf-stability.json` matches the stability map derived from
+  `protobuf-descriptors.binpb` and fails closed on any drift)
 - `stored-formats.json`: `StoredFormatSnapshot` (including encoded descriptor
   closures and fingerprints)
 - `rest-routes.json`: `RestRouteSnapshot`
@@ -185,14 +207,13 @@ development gating and external release guarantees:
 
 ### Running and advancing the baseline
 
-The protobuf descriptor snapshot is compiled from every `.proto` file under
-`src/main/proto` or `src/main/resources` through the existing
-`ProtoSourceCompiler`. It therefore includes the canonical `DocumentService`,
-archive, drive, metric, renderer, authorization and other main-source contracts,
-with their retained options and import closures. New contract files enter the
-snapshot automatically instead of depending on a hand-maintained generated-class
-list. Stability metadata that is present but malformed fails closed rather than
-being treated as absent.
+Both the Java API classpath and the protobuf descriptor snapshot are derived
+from the published module inventory in `bom/build.gradle`, compiling every
+published `.proto` file under `src/main/proto` or `src/main/resources` (excluding
+unpublished sample, fixture, and conformance modules) through
+`ProtoSourceCompiler` and asserting non-empty snapshots before writing. New
+published modules and contracts enter the snapshot automatically instead of
+depending on a hand-maintained generated-class list.
 
 Verify current repository surfaces against `compatibility/baseline/`:
 
@@ -214,8 +235,9 @@ contracts or after adding an explicit reviewed `CompatibilityWaiver` in
 ```
 
 `updateCompatibilityBaseline` runs `ReleaseBaselineGate.advanceBaseline(...)`,
-which evaluates the new snapshot against the existing baseline first and refuses
-to overwrite the baseline if unwaived breaking changes exist on `STABLE` or
-`DEPRECATED` surfaces. Each `CompatibilityWaiver` in `manifest.json` must name
-an exact `id`, `surface`, `ruleId`, `targetPath`, `approvalRef`, and `reason`
-(wildcards such as `*` are rejected).
+which evaluates the new snapshot against the existing baseline first, refuses to
+overwrite the baseline if unwaived breaking changes or stale unused waivers
+exist, and retires consumed waivers from `manifest.json` once the baseline
+advances past the waived break. Each `CompatibilityWaiver` in `manifest.json`
+must name an exact `id`, `surface`, `ruleId`, `targetPath`, `approvalRef`, and
+`reason` (wildcards such as `*` are rejected, and unused waivers fail closed).

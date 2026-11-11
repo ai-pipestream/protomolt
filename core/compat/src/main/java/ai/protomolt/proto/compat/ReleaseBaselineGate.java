@@ -23,6 +23,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.TreeMap;
 
 /**
  * Release-baseline compatibility gate and snapshot serializer for all five
@@ -184,7 +185,14 @@ public final class ReleaseBaselineGate {
         Map<String, StabilityTier> protoStability = MAPPER.readValue(
                 baselineDir.resolve(PROTOBUF_STABILITY_FILE).toFile(),
                 new TypeReference<Map<String, StabilityTier>>() {});
-        ProtobufSurfaceSnapshot protobuf = new ProtobufSurfaceSnapshot(descriptorSet, protoStability);
+        ProtobufSurfaceSnapshot protobuf = ProtobufSurfaceSnapshot.of(descriptorSet);
+        Map<String, StabilityTier> normalizedProtoStability =
+                protoStability == null ? Map.of() : new TreeMap<>(protoStability);
+        if (!protobuf.elementStability().equals(normalizedProtoStability)) {
+            throw new IllegalArgumentException(
+                    PROTOBUF_STABILITY_FILE + " does not match stability metadata derived from "
+                            + PROTOBUF_DESCRIPTORS_FILE);
+        }
         StoredFormatsWire storedWire = MAPPER.readValue(
                 baselineDir.resolve(STORED_FORMATS_FILE).toFile(),
                 StoredFormatsWire.class);
@@ -231,14 +239,53 @@ public final class ReleaseBaselineGate {
         if (Files.exists(manifestPath)) {
             ReleaseBaselineBundle existing = load(baselineDir);
             report = evaluate(existing, candidateBundle);
-            if (!allowMajorReleaseBreak) {
-                report.throwIfIncompatible();
-            }
         } else {
             report = evaluate(candidateBundle, candidateBundle);
         }
-        save(baselineDir, candidateBundle);
+        if (!allowMajorReleaseBreak) {
+            report.throwIfIncompatible();
+        }
+        save(baselineDir, retireWaivers(candidateBundle, report.matchedWaivers(), allowMajorReleaseBreak));
         return report;
+    }
+
+    private static ReleaseBaselineBundle retireWaivers(
+            ReleaseBaselineBundle bundle,
+            List<CompatibilityWaiver> matchedWaivers,
+            boolean retireAll) {
+        ReleaseBaselineManifest manifest = bundle.manifest();
+        if (manifest.waivers().isEmpty()) {
+            return bundle;
+        }
+        List<CompatibilityWaiver> remaining;
+        if (retireAll) {
+            remaining = List.of();
+        } else {
+            Set<String> matchedIds = new LinkedHashSet<>();
+            for (CompatibilityWaiver matched : matchedWaivers) {
+                matchedIds.add(matched.id());
+            }
+            remaining = manifest.waivers().stream()
+                    .filter(waiver -> !matchedIds.contains(waiver.id()))
+                    .toList();
+        }
+        if (remaining.size() == manifest.waivers().size()) {
+            return bundle;
+        }
+        ReleaseBaselineManifest updatedManifest = new ReleaseBaselineManifest(
+                manifest.schemaVersion(),
+                manifest.status(),
+                manifest.releaseVersion(),
+                manifest.releaseTag(),
+                manifest.baselineNote(),
+                remaining);
+        return new ReleaseBaselineBundle(
+                updatedManifest,
+                bundle.javaApi(),
+                bundle.protobuf(),
+                bundle.storedFormats(),
+                bundle.restRoutes(),
+                bundle.actionEnvelopes());
     }
 
     private static CompatibilityWaiver findMatchingWaiver(

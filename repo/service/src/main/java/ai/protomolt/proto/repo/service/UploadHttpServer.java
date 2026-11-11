@@ -6,6 +6,8 @@ import ai.protomolt.proto.actions.Caller;
 import ai.protomolt.proto.authz.AuthenticatedCaller;
 import ai.protomolt.proto.authz.RequestCallerResolver;
 import ai.protomolt.proto.authz.RequestHeaders;
+import ai.protomolt.proto.descriptors.ApiStability;
+import ai.protomolt.proto.descriptors.StabilityTier;
 import ai.protomolt.proto.http.connect.ConnectGateway;
 import ai.protomolt.proto.repo.archive.DocumentArchive;
 import ai.protomolt.proto.repo.archive.RenditionUploads;
@@ -38,6 +40,8 @@ import java.security.MessageDigest;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
@@ -58,6 +62,7 @@ import java.util.function.Supplier;
  * per-attempt keys; the receipt returns the committed reference, including on
  * deduplicated uploads.
  */
+@ApiStability(StabilityTier.STABLE)
 public final class UploadHttpServer implements AutoCloseable {
 
     /** The claim-check store's upload route. */
@@ -66,11 +71,111 @@ public final class UploadHttpServer implements AutoCloseable {
     /** The archive's upload route (served when the archive surface is wired). */
     public static final String ARCHIVE_UPLOAD_PATH = "/v1/archive:upload";
 
+    /** Canonical route ID for {@link #UPLOAD_PATH}. */
+    public static final String ROUTE_DOCUMENTS_UPLOAD = "repo-http:documents.upload";
+
+    /** Canonical route ID for {@link #ARCHIVE_UPLOAD_PATH}. */
+    public static final String ROUTE_ARCHIVE_UPLOAD = "repo-http:archive.upload";
+
     /**
      * The path reserved for the Connect gateway; an extra route can neither be it nor sit
      * under it.
      */
     public static final String CONNECT_PATH = "/connect";
+
+    /**
+     * Declarative HTTP route contract served by {@link UploadHttpServer}, shared between
+     * live context registration/dispatch and release-baseline compatibility snapshots.
+     *
+     * @param routeId                 canonical route identifier
+     * @param pathTemplate            URI path template
+     * @param httpMethods             allowed uppercase HTTP methods
+     * @param pathParameters          ordered path parameter names
+     * @param requiredQueryParameters required query parameter names
+     * @param requestMediaType        expected request media type
+     * @param responseMediaType       default response media type
+     * @param requestType             logical request payload contract name
+     * @param responseType            logical response payload contract name
+     * @param successStatusCodes      documented HTTP status codes for the endpoint
+     * @param authRequired            whether authentication is required
+     * @param stability               declared stability tier
+     */
+    @ApiStability(StabilityTier.STABLE)
+    public record RouteContract(
+            String routeId,
+            String pathTemplate,
+            List<String> httpMethods,
+            List<String> pathParameters,
+            List<String> requiredQueryParameters,
+            String requestMediaType,
+            String responseMediaType,
+            String requestType,
+            String responseType,
+            List<Integer> successStatusCodes,
+            boolean authRequired,
+            StabilityTier stability) {
+
+        public RouteContract {
+            Objects.requireNonNull(routeId, "routeId");
+            Objects.requireNonNull(pathTemplate, "pathTemplate");
+            httpMethods = List.copyOf(Objects.requireNonNull(httpMethods, "httpMethods"));
+            pathParameters = List.copyOf(Objects.requireNonNull(pathParameters, "pathParameters"));
+            requiredQueryParameters = List.copyOf(
+                    Objects.requireNonNull(requiredQueryParameters, "requiredQueryParameters"));
+            requestMediaType = Objects.requireNonNull(requestMediaType, "requestMediaType");
+            responseMediaType = Objects.requireNonNull(responseMediaType, "responseMediaType");
+            requestType = Objects.requireNonNull(requestType, "requestType");
+            responseType = Objects.requireNonNull(responseType, "responseType");
+            successStatusCodes = List.copyOf(
+                    Objects.requireNonNull(successStatusCodes, "successStatusCodes"));
+            Objects.requireNonNull(stability, "stability");
+        }
+
+        boolean allowsMethod(String method) {
+            return method != null && httpMethods.contains(method.toUpperCase(Locale.ROOT));
+        }
+    }
+
+    private static final RouteContract DOCUMENTS_UPLOAD_ROUTE = new RouteContract(
+            ROUTE_DOCUMENTS_UPLOAD,
+            UPLOAD_PATH,
+            List.of("POST"),
+            List.of(),
+            List.of(),
+            "application/octet-stream",
+            "application/json; charset=utf-8",
+            "bytes",
+            "ai.protomolt.proto.repo.v2.UploadDocumentResponse",
+            List.of(200, 400, 401, 403, 404, 409, 411, 429, 503),
+            true,
+            StabilityTier.STABLE);
+
+    private static final RouteContract ARCHIVE_UPLOAD_ROUTE = new RouteContract(
+            ROUTE_ARCHIVE_UPLOAD,
+            ARCHIVE_UPLOAD_PATH,
+            List.of("POST"),
+            List.of(),
+            List.of(),
+            "application/octet-stream",
+            "application/protobuf",
+            "bytes",
+            "ai.protomolt.proto.repo.archive.v1.UploadRenditionResponse",
+            List.of(200, 400, 401, 403, 404, 409, 411, 429, 502, 503),
+            true,
+            StabilityTier.STABLE);
+
+    private static final List<RouteContract> ROUTE_CONTRACTS =
+            List.of(DOCUMENTS_UPLOAD_ROUTE, ARCHIVE_UPLOAD_ROUTE);
+
+    /**
+     * Returns the immutable list of binary upload {@link RouteContract}s served by
+     * {@link UploadHttpServer}.
+     *
+     * @return immutable ordered route contracts
+     */
+    public static List<RouteContract> routeContracts() {
+        return ROUTE_CONTRACTS;
+    }
 
     private static final Logger LOG = LoggerFactory.getLogger(UploadHttpServer.class);
     private static final int STREAM_CHUNK_BYTES = 64 * 1024;
@@ -388,10 +493,10 @@ public final class UploadHttpServer implements AutoCloseable {
         this.executor = pool;
         try {
             if (documentUploads != null) {
-                created.createContext(UPLOAD_PATH, documentUploads);
+                created.createContext(DOCUMENTS_UPLOAD_ROUTE.pathTemplate(), documentUploads);
             }
             if (v2ArchiveUploads != null) {
-                created.createContext(ARCHIVE_UPLOAD_PATH, this::handleArchive);
+                created.createContext(ARCHIVE_UPLOAD_ROUTE.pathTemplate(), this::handleArchive);
             }
             created.createContext(RepositoryConsole.PATH, console.handler());
             routes.forEach(created::createContext);
@@ -488,10 +593,10 @@ public final class UploadHttpServer implements AutoCloseable {
     private void handleArchive(HttpExchange exchange) throws IOException {
         try {
             ResolvedCaller resolved = resolveArchiveCaller(exchange);
-            if (!ARCHIVE_UPLOAD_PATH.equals(exchange.getRequestURI().getPath())) {
+            if (!ARCHIVE_UPLOAD_ROUTE.pathTemplate().equals(exchange.getRequestURI().getPath())) {
                 throw new HttpError(404, "unknown route " + exchange.getRequestURI().getPath());
             }
-            if (!"POST".equalsIgnoreCase(exchange.getRequestMethod())) {
+            if (!ARCHIVE_UPLOAD_ROUTE.allowsMethod(exchange.getRequestMethod())) {
                 throw new HttpError(405, "method not allowed: " + exchange.getRequestMethod());
             }
             archiveUpload(exchange, resolved);

@@ -328,11 +328,11 @@ Java APIs, stored formats, REST routes, and action envelopes carry stability
 tiers (`StabilityTier`, `@ApiStability`, and
 `ai.protomolt.proto.meta.v1` stability options) and are gated in CI against
 `compatibility/baseline/` via `ReleaseBaselineGate` and
-`:protomolt-system-tests:checkCompatibilityBaseline`. The descriptor snapshot
-compiles every main-source proto through `ProtoSourceCompiler`. The checked-in
-baseline manifest is explicitly marked `UNRELEASED_INITIAL_SNAPSHOT`
-(`releaseTag: ""`), so no external released stability guarantee is claimed
-before the first release tag is cut.
+`:protomolt-system-tests:checkCompatibilityBaseline`. The Java API and protobuf descriptor snapshots derive from the published module
+inventory in `bom/build.gradle`, compiling every published `.proto` contract
+through `ProtoSourceCompiler`. The checked-in baseline manifest is explicitly
+marked `UNRELEASED_INITIAL_SNAPSHOT` (`releaseTag: ""`), so no external released
+stability guarantee is claimed before the first release tag is cut.
 
 ### WASM generator supply chain
 

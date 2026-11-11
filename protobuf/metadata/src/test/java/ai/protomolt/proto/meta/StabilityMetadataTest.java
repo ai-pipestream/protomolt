@@ -1,6 +1,7 @@
 package ai.protomolt.proto.meta;
 
 import ai.protomolt.proto.descriptors.StabilityTier;
+import com.google.protobuf.ByteString;
 import com.google.protobuf.DescriptorProtos;
 import com.google.protobuf.Descriptors.Descriptor;
 import com.google.protobuf.Descriptors.EnumDescriptor;
@@ -8,9 +9,11 @@ import com.google.protobuf.Descriptors.FieldDescriptor;
 import com.google.protobuf.Descriptors.FileDescriptor;
 import com.google.protobuf.Descriptors.MethodDescriptor;
 import com.google.protobuf.Descriptors.ServiceDescriptor;
+import com.google.protobuf.UnknownFieldSet;
 import org.junit.jupiter.api.Test;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class StabilityMetadataTest {
 
@@ -143,5 +146,108 @@ class StabilityMetadataTest {
         assertThat(DescriptorMetadata.stability(service)).isEqualTo(StabilityTier.STABLE);
         assertThat(DescriptorMetadata.stability(stableMethod)).isEqualTo(StabilityTier.STABLE);
         assertThat(DescriptorMetadata.stability(expMethod)).isEqualTo(StabilityTier.EXPERIMENTAL);
+    }
+
+    @Test
+    void failsClosedOnUnrecognizedEnumLevelInvalidStabilityLabelAndCorruptOptionBytes() throws Exception {
+        DescriptorProtos.FileDescriptorProto unrecognizedFileProto = DescriptorProtos.FileDescriptorProto.newBuilder()
+                .setSyntax("proto3")
+                .setName("example/v1/unrecognized.proto")
+                .setPackage("example.v1")
+                .setOptions(DescriptorProtos.FileOptions.newBuilder()
+                        .setExtension(
+                                StabilityProto.fileStability,
+                                StabilityOption.newBuilder()
+                                        .setLevelValue(99)
+                                        .build())
+                        .build())
+                .build();
+        FileDescriptor unrecognizedFile = FileDescriptor.buildFrom(unrecognizedFileProto, new FileDescriptor[0]);
+        assertThatThrownBy(() -> DescriptorMetadata.stability(unrecognizedFile))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("99");
+
+        DescriptorProtos.FileDescriptorProto bogusLabelProto = DescriptorProtos.FileDescriptorProto.newBuilder()
+                .setSyntax("proto3")
+                .setName("example/v1/bogus_label.proto")
+                .setPackage("example.v1")
+                .addMessageType(DescriptorProtos.DescriptorProto.newBuilder()
+                        .setName("Record")
+                        .setOptions(DescriptorProtos.MessageOptions.newBuilder()
+                                .setExtension(
+                                        MetadataProto.message,
+                                        MessageMeta.newBuilder()
+                                                .putLabels(DescriptorMetadata.STABILITY_LABEL_KEY, "bogus")
+                                                .build())
+                                .build())
+                        .addField(DescriptorProtos.FieldDescriptorProto.newBuilder()
+                                .setName("id")
+                                .setNumber(1)
+                                .setType(DescriptorProtos.FieldDescriptorProto.Type.TYPE_STRING)
+                                .setOptions(DescriptorProtos.FieldOptions.newBuilder()
+                                        .setExtension(
+                                                MetadataProto.field,
+                                                FieldMeta.newBuilder()
+                                                        .putLabels(DescriptorMetadata.STABILITY_LABEL_KEY, "not-a-tier")
+                                                        .build())
+                                        .build())))
+                .build();
+        FileDescriptor bogusLabelFile = FileDescriptor.buildFrom(bogusLabelProto, new FileDescriptor[0]);
+        Descriptor bogusMessage = bogusLabelFile.findMessageTypeByName("Record");
+        FieldDescriptor bogusField = bogusMessage.findFieldByName("id");
+        assertThatThrownBy(() -> DescriptorMetadata.stability(bogusMessage))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("bogus");
+        assertThatThrownBy(() -> DescriptorMetadata.stability(bogusField))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("not-a-tier");
+
+        DescriptorProtos.FileOptions corruptFileOptions = DescriptorProtos.FileOptions.newBuilder()
+                .setUnknownFields(UnknownFieldSet.newBuilder()
+                        .addField(
+                                StabilityProto.FILE_STABILITY_FIELD_NUMBER,
+                                UnknownFieldSet.Field.newBuilder()
+                                        .addLengthDelimited(ByteString.copyFrom(new byte[]{(byte) 0xFF, (byte) 0xFF}))
+                                        .build())
+                        .build())
+                .build();
+        FileDescriptor corruptFile = FileDescriptor.buildFrom(
+                DescriptorProtos.FileDescriptorProto.newBuilder()
+                        .setSyntax("proto3")
+                        .setName("example/v1/corrupt.proto")
+                        .setPackage("example.v1")
+                        .setOptions(corruptFileOptions)
+                        .build(),
+                new FileDescriptor[0]);
+        assertThatThrownBy(() -> DescriptorMetadata.stability(corruptFile))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void preservesForwardCompatibleUnknownFieldsInStabilityOptions() throws Exception {
+        StabilityOption forwardOption = StabilityOption.newBuilder()
+                .setLevel(StabilityLevel.STABILITY_LEVEL_EVOLVING)
+                .setUnknownFields(UnknownFieldSet.newBuilder()
+                        .addField(
+                                55,
+                                UnknownFieldSet.Field.newBuilder()
+                                        .addLengthDelimited(ByteString.copyFromUtf8("future-hint"))
+                                        .build())
+                        .build())
+                .build();
+        DescriptorProtos.FileOptions unparsedOptions = DescriptorProtos.FileOptions.parseFrom(
+                DescriptorProtos.FileOptions.newBuilder()
+                        .setExtension(StabilityProto.fileStability, forwardOption)
+                        .build()
+                        .toByteString());
+        FileDescriptor file = FileDescriptor.buildFrom(
+                DescriptorProtos.FileDescriptorProto.newBuilder()
+                        .setSyntax("proto3")
+                        .setName("example/v1/forward.proto")
+                        .setPackage("example.v1")
+                        .setOptions(unparsedOptions)
+                        .build(),
+                new FileDescriptor[0]);
+        assertThat(DescriptorMetadata.stability(file)).isEqualTo(StabilityTier.EVOLVING);
     }
 }

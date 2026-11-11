@@ -5,6 +5,10 @@ package ai.protomolt.proto.meta.v1;
 option java_multiple_files = true;
 option java_package = "ai.protomolt.proto.meta";
 option java_outer_classname = "StabilityProto";
+option (file_stability) = {
+  level: STABILITY_LEVEL_STABLE
+  since: "0.1.0"
+};
 
 import "google/protobuf/descriptor.proto";
 

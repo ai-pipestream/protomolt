@@ -38,12 +38,12 @@ public record ReleaseBaselineReport(
     /**
      * Whether the candidate bundle is compatible with the recorded baseline (no unwaived
      * breaking changes on {@link StabilityTier#STABLE} or {@link StabilityTier#DEPRECATED}
-     * surfaces).
+     * surfaces and no unused compatibility waivers).
      *
-     * @return {@code true} when {@link #unwaivedViolations()} is empty
+     * @return {@code true} when both {@link #unwaivedViolations()} and {@link #unusedWaivers()} are empty
      */
     public boolean isCompatible() {
-        return unwaivedViolations.isEmpty();
+        return unwaivedViolations.isEmpty() && unusedWaivers.isEmpty();
     }
 
     /**
@@ -70,13 +70,13 @@ public record ReleaseBaselineReport(
 
     /**
      * Fails closed by throwing {@link IncompatibleSurfaceException} if any unwaived
-     * violations were found.
+     * violations or unused waivers were found.
      *
      * @throws IncompatibleSurfaceException if {@link #isCompatible()} is {@code false}
      */
     public void throwIfIncompatible() {
-        if (!unwaivedViolations.isEmpty()) {
-            throw new IncompatibleSurfaceException(unwaivedViolations);
+        if (!isCompatible()) {
+            throw new IncompatibleSurfaceException(unwaivedViolations, unusedWaivers);
         }
     }
 }

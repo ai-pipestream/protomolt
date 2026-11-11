@@ -42,6 +42,9 @@ public record JavaApiSnapshot(List<ClassEntry> classes) {
         Map<String, ClassEntry> map = new LinkedHashMap<>();
         for (ClassEntry entry : classes) {
             map.put(entry.className(), entry);
+            if (entry.className().indexOf('$') >= 0) {
+                map.putIfAbsent(entry.className().replace('$', '.'), entry);
+            }
         }
         return Map.copyOf(map);
     }
@@ -58,7 +61,8 @@ public record JavaApiSnapshot(List<ClassEntry> classes) {
     }
 
     /**
-     * Captures the exported API snapshot of the supplied classes.
+     * Captures the exported API snapshot of the supplied classes and their exported nested
+     * member types.
      *
      * @param types        classes to inspect
      * @param fallbackTier fallback stability tier when a declaration has no explicit annotation
@@ -67,11 +71,32 @@ public record JavaApiSnapshot(List<ClassEntry> classes) {
     public static JavaApiSnapshot capture(Collection<Class<?>> types, StabilityTier fallbackTier) {
         Objects.requireNonNull(types, "types");
         Objects.requireNonNull(fallbackTier, "fallbackTier");
-        List<ClassEntry> entries = new ArrayList<>();
+        Map<String, ClassEntry> entriesByName = new LinkedHashMap<>();
         for (Class<?> type : types) {
-            entries.add(captureClass(type, fallbackTier));
+            captureHierarchy(type, fallbackTier, entriesByName);
         }
-        return new JavaApiSnapshot(entries);
+        return new JavaApiSnapshot(new ArrayList<>(entriesByName.values()));
+    }
+
+    private static void captureHierarchy(
+            Class<?> type,
+            StabilityTier fallbackTier,
+            Map<String, ClassEntry> entriesByName) {
+        Objects.requireNonNull(type, "type");
+        if (entriesByName.containsKey(type.getName())) {
+            return;
+        }
+        entriesByName.put(type.getName(), captureClass(type, fallbackTier));
+        Class<?>[] declaredClasses = type.getDeclaredClasses();
+        Arrays.sort(declaredClasses, Comparator.comparing(Class::getName));
+        for (Class<?> nested : declaredClasses) {
+            if (nested.isSynthetic() || nested.isAnonymousClass() || nested.isLocalClass()) {
+                continue;
+            }
+            if (Visibility.fromModifiers(nested.getModifiers()).isExported()) {
+                captureHierarchy(nested, fallbackTier, entriesByName);
+            }
+        }
     }
 
     /**
@@ -170,7 +195,7 @@ public record JavaApiSnapshot(List<ClassEntry> classes) {
         }
 
         return new ClassEntry(
-                typeName(type),
+                type.getName(),
                 kind,
                 visibility,
                 finalType,

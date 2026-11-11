@@ -7,7 +7,6 @@ import ai.protomolt.proto.meta.DescriptorMetadata;
 import ai.protomolt.proto.meta.FieldMeta;
 import ai.protomolt.proto.meta.MessageMeta;
 import ai.protomolt.proto.meta.MetadataProto;
-import ai.protomolt.proto.meta.StabilityOption;
 import ai.protomolt.proto.meta.StabilityProto;
 import com.google.protobuf.DescriptorProtos.DescriptorProto;
 import com.google.protobuf.DescriptorProtos.EnumDescriptorProto;
@@ -224,7 +223,7 @@ public record ProtobufSurfaceSnapshot(
         FileOptions options = file.getOptions();
         Optional<StabilityTier> explicit = readOption(
                 options, StabilityProto.fileStability, FileOptions.parser())
-                .flatMap(opt -> DescriptorMetadata.toStabilityTier(opt.getLevel()));
+                .flatMap(DescriptorMetadata::toStabilityTier);
         if (explicit.isPresent()) {
             return applyDeprecated(explicit.get(), options.getDeprecated());
         }
@@ -241,12 +240,12 @@ public record ProtobufSurfaceSnapshot(
         MessageOptions options = message.getOptions();
         Optional<StabilityTier> explicit = readOption(
                 options, StabilityProto.messageStability, MessageOptions.parser())
-                .flatMap(opt -> DescriptorMetadata.toStabilityTier(opt.getLevel()));
+                .flatMap(DescriptorMetadata::toStabilityTier);
         if (explicit.isEmpty()) {
             explicit = readOption(options, MetadataProto.message, MessageOptions.parser())
                     .map(MessageMeta::getLabelsMap)
                     .map(labels -> labels.get(DescriptorMetadata.STABILITY_LABEL_KEY))
-                    .flatMap(StabilityTier::parseOptional);
+                    .flatMap(StabilityTier::parseExplicit);
         }
         if (explicit.isPresent()) {
             return applyDeprecated(explicit.get(), options.getDeprecated());
@@ -261,12 +260,12 @@ public record ProtobufSurfaceSnapshot(
         FieldOptions options = field.getOptions();
         Optional<StabilityTier> explicit = readOption(
                 options, StabilityProto.fieldStability, FieldOptions.parser())
-                .flatMap(opt -> DescriptorMetadata.toStabilityTier(opt.getLevel()));
+                .flatMap(DescriptorMetadata::toStabilityTier);
         if (explicit.isEmpty()) {
             explicit = readOption(options, MetadataProto.field, FieldOptions.parser())
                     .map(FieldMeta::getLabelsMap)
                     .map(labels -> labels.get(DescriptorMetadata.STABILITY_LABEL_KEY))
-                    .flatMap(StabilityTier::parseOptional);
+                    .flatMap(StabilityTier::parseExplicit);
         }
         if (explicit.isPresent()) {
             return applyDeprecated(explicit.get(), options.getDeprecated());
@@ -281,7 +280,7 @@ public record ProtobufSurfaceSnapshot(
         EnumOptions options = enumProto.getOptions();
         Optional<StabilityTier> explicit = readOption(
                 options, StabilityProto.enumStability, EnumOptions.parser())
-                .flatMap(opt -> DescriptorMetadata.toStabilityTier(opt.getLevel()));
+                .flatMap(DescriptorMetadata::toStabilityTier);
         if (explicit.isPresent()) {
             return applyDeprecated(explicit.get(), options.getDeprecated());
         }
@@ -297,7 +296,7 @@ public record ProtobufSurfaceSnapshot(
         EnumValueOptions options = valueProto.getOptions();
         Optional<StabilityTier> explicit = readOption(
                 options, StabilityProto.enumValueStability, EnumValueOptions.parser())
-                .flatMap(opt -> DescriptorMetadata.toStabilityTier(opt.getLevel()));
+                .flatMap(DescriptorMetadata::toStabilityTier);
         if (explicit.isPresent()) {
             return applyDeprecated(explicit.get(), options.getDeprecated());
         }
@@ -313,7 +312,7 @@ public record ProtobufSurfaceSnapshot(
         ServiceOptions options = serviceProto.getOptions();
         Optional<StabilityTier> explicit = readOption(
                 options, StabilityProto.serviceStability, ServiceOptions.parser())
-                .flatMap(opt -> DescriptorMetadata.toStabilityTier(opt.getLevel()));
+                .flatMap(DescriptorMetadata::toStabilityTier);
         if (explicit.isPresent()) {
             return applyDeprecated(explicit.get(), options.getDeprecated());
         }
@@ -329,7 +328,7 @@ public record ProtobufSurfaceSnapshot(
         MethodOptions options = methodProto.getOptions();
         Optional<StabilityTier> explicit = readOption(
                 options, StabilityProto.methodStability, MethodOptions.parser())
-                .flatMap(opt -> DescriptorMetadata.toStabilityTier(opt.getLevel()));
+                .flatMap(DescriptorMetadata::toStabilityTier);
         if (explicit.isPresent()) {
             return applyDeprecated(explicit.get(), options.getDeprecated());
         }

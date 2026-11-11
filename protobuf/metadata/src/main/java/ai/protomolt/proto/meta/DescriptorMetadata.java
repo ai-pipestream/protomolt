@@ -249,7 +249,7 @@ public final class DescriptorMetadata {
         Objects.requireNonNull(file, "file");
         Objects.requireNonNull(fallback, "fallback");
         Optional<StabilityTier> explicit = fileStabilityOption(file)
-                .flatMap(opt -> toStabilityTier(opt.getLevel()));
+                .flatMap(DescriptorMetadata::toStabilityTier);
         if (explicit.isPresent()) {
             if (explicit.get() == StabilityTier.STABLE && file.getOptions().getDeprecated()) {
                 return StabilityTier.DEPRECATED;
@@ -286,11 +286,11 @@ public final class DescriptorMetadata {
         Objects.requireNonNull(descriptor, "descriptor");
         Objects.requireNonNull(fallback, "fallback");
         Optional<StabilityTier> explicit = messageStabilityOption(descriptor)
-                .flatMap(opt -> toStabilityTier(opt.getLevel()));
+                .flatMap(DescriptorMetadata::toStabilityTier);
         if (explicit.isEmpty()) {
             explicit = message(descriptor)
                     .map(meta -> meta.getLabelsMap().get(STABILITY_LABEL_KEY))
-                    .flatMap(StabilityTier::parseOptional);
+                    .flatMap(StabilityTier::parseExplicit);
         }
         if (explicit.isPresent()) {
             if (explicit.get() == StabilityTier.STABLE && descriptor.getOptions().getDeprecated()) {
@@ -328,11 +328,11 @@ public final class DescriptorMetadata {
         Objects.requireNonNull(field, "field");
         Objects.requireNonNull(fallback, "fallback");
         Optional<StabilityTier> explicit = fieldStabilityOption(field)
-                .flatMap(opt -> toStabilityTier(opt.getLevel()));
+                .flatMap(DescriptorMetadata::toStabilityTier);
         if (explicit.isEmpty()) {
             explicit = field(field)
                     .map(meta -> meta.getLabelsMap().get(STABILITY_LABEL_KEY))
-                    .flatMap(StabilityTier::parseOptional);
+                    .flatMap(StabilityTier::parseExplicit);
         }
         if (explicit.isPresent()) {
             if (explicit.get() == StabilityTier.STABLE && field.getOptions().getDeprecated()) {
@@ -370,7 +370,7 @@ public final class DescriptorMetadata {
         Objects.requireNonNull(enumDescriptor, "enumDescriptor");
         Objects.requireNonNull(fallback, "fallback");
         Optional<StabilityTier> explicit = enumStabilityOption(enumDescriptor)
-                .flatMap(opt -> toStabilityTier(opt.getLevel()));
+                .flatMap(DescriptorMetadata::toStabilityTier);
         if (explicit.isPresent()) {
             if (explicit.get() == StabilityTier.STABLE && enumDescriptor.getOptions().getDeprecated()) {
                 return StabilityTier.DEPRECATED;
@@ -407,7 +407,7 @@ public final class DescriptorMetadata {
         Objects.requireNonNull(valueDescriptor, "valueDescriptor");
         Objects.requireNonNull(fallback, "fallback");
         Optional<StabilityTier> explicit = enumValueStabilityOption(valueDescriptor)
-                .flatMap(opt -> toStabilityTier(opt.getLevel()));
+                .flatMap(DescriptorMetadata::toStabilityTier);
         if (explicit.isPresent()) {
             if (explicit.get() == StabilityTier.STABLE && valueDescriptor.getOptions().getDeprecated()) {
                 return StabilityTier.DEPRECATED;
@@ -441,7 +441,7 @@ public final class DescriptorMetadata {
         Objects.requireNonNull(serviceDescriptor, "serviceDescriptor");
         Objects.requireNonNull(fallback, "fallback");
         Optional<StabilityTier> explicit = serviceStabilityOption(serviceDescriptor)
-                .flatMap(opt -> toStabilityTier(opt.getLevel()));
+                .flatMap(DescriptorMetadata::toStabilityTier);
         if (explicit.isPresent()) {
             if (explicit.get() == StabilityTier.STABLE && serviceDescriptor.getOptions().getDeprecated()) {
                 return StabilityTier.DEPRECATED;
@@ -475,7 +475,7 @@ public final class DescriptorMetadata {
         Objects.requireNonNull(methodDescriptor, "methodDescriptor");
         Objects.requireNonNull(fallback, "fallback");
         Optional<StabilityTier> explicit = methodStabilityOption(methodDescriptor)
-                .flatMap(opt -> toStabilityTier(opt.getLevel()));
+                .flatMap(DescriptorMetadata::toStabilityTier);
         if (explicit.isPresent()) {
             if (explicit.get() == StabilityTier.STABLE && methodDescriptor.getOptions().getDeprecated()) {
                 return StabilityTier.DEPRECATED;
@@ -489,10 +489,31 @@ public final class DescriptorMetadata {
     }
 
     /**
+     * Converts a protobuf {@link StabilityOption} to a {@link StabilityTier}, failing closed
+     * when the option carries an unrecognized {@link StabilityLevel} wire value.
+     *
+     * @param option the protobuf stability option (may be null)
+     * @return the matching tier, or empty when {@code option} is null or its level is
+     *         {@link StabilityLevel#STABILITY_LEVEL_UNSPECIFIED}
+     * @throws IllegalArgumentException if {@code option} carries {@link StabilityLevel#UNRECOGNIZED}
+     */
+    public static Optional<StabilityTier> toStabilityTier(StabilityOption option) {
+        if (option == null) {
+            return Optional.empty();
+        }
+        if (option.getLevel() == StabilityLevel.UNRECOGNIZED) {
+            throw new IllegalArgumentException(
+                    "Unrecognized protobuf StabilityLevel wire value: " + option.getLevelValue());
+        }
+        return toStabilityTier(option.getLevel());
+    }
+
+    /**
      * Converts a protobuf {@link StabilityLevel} enum value to a {@link StabilityTier}.
      *
      * @param level the protobuf stability level
-     * @return the matching tier, or empty for {@code UNSPECIFIED} or {@code UNRECOGNIZED}
+     * @return the matching tier, or empty for {@link StabilityLevel#STABILITY_LEVEL_UNSPECIFIED}
+     * @throws IllegalArgumentException if {@code level} is {@link StabilityLevel#UNRECOGNIZED}
      */
     public static Optional<StabilityTier> toStabilityTier(StabilityLevel level) {
         if (level == null) {
@@ -504,7 +525,9 @@ public final class DescriptorMetadata {
             case STABILITY_LEVEL_EXPERIMENTAL -> Optional.of(StabilityTier.EXPERIMENTAL);
             case STABILITY_LEVEL_INTERNAL -> Optional.of(StabilityTier.INTERNAL);
             case STABILITY_LEVEL_DEPRECATED -> Optional.of(StabilityTier.DEPRECATED);
-            case STABILITY_LEVEL_UNSPECIFIED, UNRECOGNIZED -> Optional.empty();
+            case STABILITY_LEVEL_UNSPECIFIED -> Optional.empty();
+            case UNRECOGNIZED -> throw new IllegalArgumentException(
+                    "Unrecognized protobuf StabilityLevel enum constant");
         };
     }
 
@@ -548,7 +571,7 @@ public final class DescriptorMetadata {
         try {
             return parser.parseFrom(options, EXTENSIONS);
         } catch (com.google.protobuf.InvalidProtocolBufferException failure) {
-            throw new IllegalStateException("descriptor options are not valid protobuf", failure);
+            throw new IllegalArgumentException("Descriptor options are not valid protobuf", failure);
         }
     }
 

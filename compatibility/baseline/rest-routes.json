@@ -1,6 +1,426 @@
 {
   "routes" : [
     {
+      "routeId" : "grpc-json:ClusterDirectoryService/GetSnapshot",
+      "pathTemplate" : "/grpc-json/ClusterDirectoryService/GetSnapshot",
+      "httpMethods" : [
+        "POST"
+      ],
+      "pathParameters" : [ ],
+      "requiredQueryParameters" : [ ],
+      "requestContentType" : "application/json",
+      "responseContentType" : "application/json",
+      "requestTypeName" : "ai.protomolt.proto.mesh.cluster.v1.GetSnapshotRequest",
+      "responseTypeName" : "ai.protomolt.proto.mesh.cluster.v1.GetSnapshotResponse",
+      "statusCodes" : [
+        200,
+        400,
+        401,
+        403
+      ],
+      "authRequired" : false,
+      "stability" : "STABLE"
+    },
+    {
+      "routeId" : "grpc-json:ClusterDirectoryService/Heartbeat",
+      "pathTemplate" : "/grpc-json/ClusterDirectoryService/Heartbeat",
+      "httpMethods" : [
+        "POST"
+      ],
+      "pathParameters" : [ ],
+      "requiredQueryParameters" : [ ],
+      "requestContentType" : "application/json",
+      "responseContentType" : "application/json",
+      "requestTypeName" : "ai.protomolt.proto.mesh.cluster.v1.HeartbeatRequest",
+      "responseTypeName" : "ai.protomolt.proto.mesh.cluster.v1.HeartbeatResponse",
+      "statusCodes" : [
+        200,
+        400,
+        401,
+        403
+      ],
+      "authRequired" : false,
+      "stability" : "STABLE"
+    },
+    {
+      "routeId" : "grpc-json:ClusterDirectoryService/RegisterNode",
+      "pathTemplate" : "/grpc-json/ClusterDirectoryService/RegisterNode",
+      "httpMethods" : [
+        "POST"
+      ],
+      "pathParameters" : [ ],
+      "requiredQueryParameters" : [ ],
+      "requestContentType" : "application/json",
+      "responseContentType" : "application/json",
+      "requestTypeName" : "ai.protomolt.proto.mesh.cluster.v1.RegisterNodeRequest",
+      "responseTypeName" : "ai.protomolt.proto.mesh.cluster.v1.RegisterNodeResponse",
+      "statusCodes" : [
+        200,
+        400,
+        401,
+        403
+      ],
+      "authRequired" : false,
+      "stability" : "STABLE"
+    },
+    {
+      "routeId" : "grpc-json:ClusterDirectoryService/RegisterProcessor",
+      "pathTemplate" : "/grpc-json/ClusterDirectoryService/RegisterProcessor",
+      "httpMethods" : [
+        "POST"
+      ],
+      "pathParameters" : [ ],
+      "requiredQueryParameters" : [ ],
+      "requestContentType" : "application/json",
+      "responseContentType" : "application/json",
+      "requestTypeName" : "ai.protomolt.proto.mesh.cluster.v1.RegisterProcessorRequest",
+      "responseTypeName" : "ai.protomolt.proto.mesh.cluster.v1.RegisterProcessorResponse",
+      "statusCodes" : [
+        200,
+        400,
+        401,
+        403
+      ],
+      "authRequired" : false,
+      "stability" : "STABLE"
+    },
+    {
+      "routeId" : "grpc-json:ClusterDirectoryService/Sweep",
+      "pathTemplate" : "/grpc-json/ClusterDirectoryService/Sweep",
+      "httpMethods" : [
+        "POST"
+      ],
+      "pathParameters" : [ ],
+      "requiredQueryParameters" : [ ],
+      "requestContentType" : "application/json",
+      "responseContentType" : "application/json",
+      "requestTypeName" : "ai.protomolt.proto.mesh.cluster.v1.SweepRequest",
+      "responseTypeName" : "ai.protomolt.proto.mesh.cluster.v1.SweepResponse",
+      "statusCodes" : [
+        200,
+        400,
+        401,
+        403
+      ],
+      "authRequired" : false,
+      "stability" : "STABLE"
+    },
+    {
+      "routeId" : "grpc-json:ClusterDirectoryService/UpdateCapacity",
+      "pathTemplate" : "/grpc-json/ClusterDirectoryService/UpdateCapacity",
+      "httpMethods" : [
+        "POST"
+      ],
+      "pathParameters" : [ ],
+      "requiredQueryParameters" : [ ],
+      "requestContentType" : "application/json",
+      "responseContentType" : "application/json",
+      "requestTypeName" : "ai.protomolt.proto.mesh.cluster.v1.UpdateCapacityRequest",
+      "responseTypeName" : "ai.protomolt.proto.mesh.cluster.v1.UpdateCapacityResponse",
+      "statusCodes" : [
+        200,
+        400,
+        401,
+        403
+      ],
+      "authRequired" : false,
+      "stability" : "STABLE"
+    },
+    {
+      "routeId" : "grpc-json:DelegationService/AcceptTask",
+      "pathTemplate" : "/grpc-json/DelegationService/AcceptTask",
+      "httpMethods" : [
+        "POST"
+      ],
+      "pathParameters" : [ ],
+      "requiredQueryParameters" : [ ],
+      "requestContentType" : "application/json",
+      "responseContentType" : "application/json",
+      "requestTypeName" : "ai.protomolt.proto.delegation.v1.AcceptTaskRequest",
+      "responseTypeName" : "ai.protomolt.proto.delegation.v1.AcceptTaskResponse",
+      "statusCodes" : [
+        200,
+        400,
+        401,
+        403
+      ],
+      "authRequired" : false,
+      "stability" : "STABLE"
+    },
+    {
+      "routeId" : "grpc-json:DelegationService/CancelTask",
+      "pathTemplate" : "/grpc-json/DelegationService/CancelTask",
+      "httpMethods" : [
+        "POST"
+      ],
+      "pathParameters" : [ ],
+      "requiredQueryParameters" : [ ],
+      "requestContentType" : "application/json",
+      "responseContentType" : "application/json",
+      "requestTypeName" : "ai.protomolt.proto.delegation.v1.CancelTaskRequest",
+      "responseTypeName" : "ai.protomolt.proto.delegation.v1.CancelTaskResponse",
+      "statusCodes" : [
+        200,
+        400,
+        401,
+        403
+      ],
+      "authRequired" : false,
+      "stability" : "STABLE"
+    },
+    {
+      "routeId" : "grpc-json:DelegationService/ListWorkers",
+      "pathTemplate" : "/grpc-json/DelegationService/ListWorkers",
+      "httpMethods" : [
+        "POST"
+      ],
+      "pathParameters" : [ ],
+      "requiredQueryParameters" : [ ],
+      "requestContentType" : "application/json",
+      "responseContentType" : "application/json",
+      "requestTypeName" : "ai.protomolt.proto.delegation.v1.ListWorkersRequest",
+      "responseTypeName" : "ai.protomolt.proto.delegation.v1.ListWorkersResponse",
+      "statusCodes" : [
+        200,
+        400,
+        401,
+        403
+      ],
+      "authRequired" : false,
+      "stability" : "STABLE"
+    },
+    {
+      "routeId" : "grpc-json:DelegationService/OfferTask",
+      "pathTemplate" : "/grpc-json/DelegationService/OfferTask",
+      "httpMethods" : [
+        "POST"
+      ],
+      "pathParameters" : [ ],
+      "requiredQueryParameters" : [ ],
+      "requestContentType" : "application/json",
+      "responseContentType" : "application/json",
+      "requestTypeName" : "ai.protomolt.proto.delegation.v1.OfferTaskRequest",
+      "responseTypeName" : "ai.protomolt.proto.delegation.v1.OfferTaskResponse",
+      "statusCodes" : [
+        200,
+        400,
+        401,
+        403
+      ],
+      "authRequired" : false,
+      "stability" : "STABLE"
+    },
+    {
+      "routeId" : "grpc-json:DelegationService/ReadTranscript",
+      "pathTemplate" : "/grpc-json/DelegationService/ReadTranscript",
+      "httpMethods" : [
+        "POST"
+      ],
+      "pathParameters" : [ ],
+      "requiredQueryParameters" : [ ],
+      "requestContentType" : "application/json",
+      "responseContentType" : "application/json",
+      "requestTypeName" : "ai.protomolt.proto.delegation.v1.ReadTranscriptRequest",
+      "responseTypeName" : "ai.protomolt.proto.delegation.v1.ReadTranscriptResponse",
+      "statusCodes" : [
+        200,
+        400,
+        401,
+        403
+      ],
+      "authRequired" : false,
+      "stability" : "STABLE"
+    },
+    {
+      "routeId" : "grpc-json:DelegationService/RecordCheckpoint",
+      "pathTemplate" : "/grpc-json/DelegationService/RecordCheckpoint",
+      "httpMethods" : [
+        "POST"
+      ],
+      "pathParameters" : [ ],
+      "requiredQueryParameters" : [ ],
+      "requestContentType" : "application/json",
+      "responseContentType" : "application/json",
+      "requestTypeName" : "ai.protomolt.proto.delegation.v1.RecordCheckpointRequest",
+      "responseTypeName" : "ai.protomolt.proto.delegation.v1.RecordCheckpointResponse",
+      "statusCodes" : [
+        200,
+        400,
+        401,
+        403
+      ],
+      "authRequired" : false,
+      "stability" : "STABLE"
+    },
+    {
+      "routeId" : "grpc-json:DelegationService/RegisterWorker",
+      "pathTemplate" : "/grpc-json/DelegationService/RegisterWorker",
+      "httpMethods" : [
+        "POST"
+      ],
+      "pathParameters" : [ ],
+      "requiredQueryParameters" : [ ],
+      "requestContentType" : "application/json",
+      "responseContentType" : "application/json",
+      "requestTypeName" : "ai.protomolt.proto.delegation.v1.RegisterWorkerRequest",
+      "responseTypeName" : "ai.protomolt.proto.delegation.v1.RegisterWorkerResponse",
+      "statusCodes" : [
+        200,
+        400,
+        401,
+        403
+      ],
+      "authRequired" : false,
+      "stability" : "STABLE"
+    },
+    {
+      "routeId" : "grpc-json:DelegationService/RejectTask",
+      "pathTemplate" : "/grpc-json/DelegationService/RejectTask",
+      "httpMethods" : [
+        "POST"
+      ],
+      "pathParameters" : [ ],
+      "requiredQueryParameters" : [ ],
+      "requestContentType" : "application/json",
+      "responseContentType" : "application/json",
+      "requestTypeName" : "ai.protomolt.proto.delegation.v1.RejectTaskRequest",
+      "responseTypeName" : "ai.protomolt.proto.delegation.v1.RejectTaskResponse",
+      "statusCodes" : [
+        200,
+        400,
+        401,
+        403
+      ],
+      "authRequired" : false,
+      "stability" : "STABLE"
+    },
+    {
+      "routeId" : "grpc-json:DelegationService/ReportProgress",
+      "pathTemplate" : "/grpc-json/DelegationService/ReportProgress",
+      "httpMethods" : [
+        "POST"
+      ],
+      "pathParameters" : [ ],
+      "requiredQueryParameters" : [ ],
+      "requestContentType" : "application/json",
+      "responseContentType" : "application/json",
+      "requestTypeName" : "ai.protomolt.proto.delegation.v1.ReportProgressRequest",
+      "responseTypeName" : "ai.protomolt.proto.delegation.v1.ReportProgressResponse",
+      "statusCodes" : [
+        200,
+        400,
+        401,
+        403
+      ],
+      "authRequired" : false,
+      "stability" : "STABLE"
+    },
+    {
+      "routeId" : "grpc-json:DelegationService/RetryCandidateReview",
+      "pathTemplate" : "/grpc-json/DelegationService/RetryCandidateReview",
+      "httpMethods" : [
+        "POST"
+      ],
+      "pathParameters" : [ ],
+      "requiredQueryParameters" : [ ],
+      "requestContentType" : "application/json",
+      "responseContentType" : "application/json",
+      "requestTypeName" : "ai.protomolt.proto.delegation.v1.RetryCandidateReviewRequest",
+      "responseTypeName" : "ai.protomolt.proto.delegation.v1.RetryCandidateReviewResponse",
+      "statusCodes" : [
+        200,
+        400,
+        401,
+        403
+      ],
+      "authRequired" : false,
+      "stability" : "STABLE"
+    },
+    {
+      "routeId" : "grpc-json:DelegationService/ReviewCandidate",
+      "pathTemplate" : "/grpc-json/DelegationService/ReviewCandidate",
+      "httpMethods" : [
+        "POST"
+      ],
+      "pathParameters" : [ ],
+      "requiredQueryParameters" : [ ],
+      "requestContentType" : "application/json",
+      "responseContentType" : "application/json",
+      "requestTypeName" : "ai.protomolt.proto.delegation.v1.ReviewCandidateRequest",
+      "responseTypeName" : "ai.protomolt.proto.delegation.v1.ReviewCandidateResponse",
+      "statusCodes" : [
+        200,
+        400,
+        401,
+        403
+      ],
+      "authRequired" : false,
+      "stability" : "STABLE"
+    },
+    {
+      "routeId" : "grpc-json:DelegationService/SendTaskMessage",
+      "pathTemplate" : "/grpc-json/DelegationService/SendTaskMessage",
+      "httpMethods" : [
+        "POST"
+      ],
+      "pathParameters" : [ ],
+      "requiredQueryParameters" : [ ],
+      "requestContentType" : "application/json",
+      "responseContentType" : "application/json",
+      "requestTypeName" : "ai.protomolt.proto.delegation.v1.SendTaskMessageRequest",
+      "responseTypeName" : "ai.protomolt.proto.delegation.v1.SendTaskMessageResponse",
+      "statusCodes" : [
+        200,
+        400,
+        401,
+        403
+      ],
+      "authRequired" : false,
+      "stability" : "STABLE"
+    },
+    {
+      "routeId" : "grpc-json:DelegationService/SubmitCandidate",
+      "pathTemplate" : "/grpc-json/DelegationService/SubmitCandidate",
+      "httpMethods" : [
+        "POST"
+      ],
+      "pathParameters" : [ ],
+      "requiredQueryParameters" : [ ],
+      "requestContentType" : "application/json",
+      "responseContentType" : "application/json",
+      "requestTypeName" : "ai.protomolt.proto.delegation.v1.SubmitCandidateRequest",
+      "responseTypeName" : "ai.protomolt.proto.delegation.v1.SubmitCandidateResponse",
+      "statusCodes" : [
+        200,
+        400,
+        401,
+        403
+      ],
+      "authRequired" : false,
+      "stability" : "STABLE"
+    },
+    {
+      "routeId" : "grpc-json:DelegationService/WatchEvents",
+      "pathTemplate" : "/grpc-json/DelegationService/WatchEvents",
+      "httpMethods" : [
+        "POST"
+      ],
+      "pathParameters" : [ ],
+      "requiredQueryParameters" : [ ],
+      "requestContentType" : "application/json",
+      "responseContentType" : "application/json",
+      "requestTypeName" : "ai.protomolt.proto.delegation.v1.WatchEventsRequest",
+      "responseTypeName" : "ai.protomolt.proto.delegation.v1.WatchEventsResponse",
+      "statusCodes" : [
+        200,
+        400,
+        401,
+        403
+      ],
+      "authRequired" : false,
+      "stability" : "STABLE"
+    },
+    {
       "routeId" : "grpc-json:ProtoMoltService/CheckCompat",
       "pathTemplate" : "/grpc-json/ProtoMoltService/CheckCompat",
       "httpMethods" : [
@@ -925,6 +1345,402 @@
       "stability" : "STABLE"
     },
     {
+      "routeId" : "grpc-json:WorkflowAuthorTaskService/AcceptWorkflowTask",
+      "pathTemplate" : "/grpc-json/WorkflowAuthorTaskService/AcceptWorkflowTask",
+      "httpMethods" : [
+        "POST"
+      ],
+      "pathParameters" : [ ],
+      "requiredQueryParameters" : [ ],
+      "requestContentType" : "application/json",
+      "responseContentType" : "application/json",
+      "requestTypeName" : "ai.protomolt.proto.delegation.v1.AcceptTaskRequest",
+      "responseTypeName" : "ai.protomolt.proto.delegation.v1.AcceptTaskResponse",
+      "statusCodes" : [
+        200,
+        400,
+        401,
+        403
+      ],
+      "authRequired" : false,
+      "stability" : "STABLE"
+    },
+    {
+      "routeId" : "grpc-json:WorkflowAuthorTaskService/EnsureWorkflowAuthorRegistration",
+      "pathTemplate" : "/grpc-json/WorkflowAuthorTaskService/EnsureWorkflowAuthorRegistration",
+      "httpMethods" : [
+        "POST"
+      ],
+      "pathParameters" : [ ],
+      "requiredQueryParameters" : [ ],
+      "requestContentType" : "application/json",
+      "responseContentType" : "application/json",
+      "requestTypeName" : "ai.protomolt.proto.workflow.authoring.v1.EnsureWorkflowAuthorRegistrationRequest",
+      "responseTypeName" : "ai.protomolt.proto.workflow.authoring.v1.EnsureWorkflowAuthorRegistrationResponse",
+      "statusCodes" : [
+        200,
+        400,
+        401,
+        403
+      ],
+      "authRequired" : false,
+      "stability" : "STABLE"
+    },
+    {
+      "routeId" : "grpc-json:WorkflowAuthorTaskService/GetWorkflowAuthorContext",
+      "pathTemplate" : "/grpc-json/WorkflowAuthorTaskService/GetWorkflowAuthorContext",
+      "httpMethods" : [
+        "POST"
+      ],
+      "pathParameters" : [ ],
+      "requiredQueryParameters" : [ ],
+      "requestContentType" : "application/json",
+      "responseContentType" : "application/json",
+      "requestTypeName" : "ai.protomolt.proto.workflow.authoring.v1.GetWorkflowAuthorContextRequest",
+      "responseTypeName" : "ai.protomolt.proto.workflow.authoring.v1.GetWorkflowAuthorContextResponse",
+      "statusCodes" : [
+        200,
+        400,
+        401,
+        403
+      ],
+      "authRequired" : false,
+      "stability" : "STABLE"
+    },
+    {
+      "routeId" : "grpc-json:WorkflowAuthorTaskService/ReadWorkflowAuthorAssignments",
+      "pathTemplate" : "/grpc-json/WorkflowAuthorTaskService/ReadWorkflowAuthorAssignments",
+      "httpMethods" : [
+        "POST"
+      ],
+      "pathParameters" : [ ],
+      "requiredQueryParameters" : [ ],
+      "requestContentType" : "application/json",
+      "responseContentType" : "application/json",
+      "requestTypeName" : "ai.protomolt.proto.workflow.authoring.v1.ReadWorkflowAuthorAssignmentsRequest",
+      "responseTypeName" : "ai.protomolt.proto.workflow.authoring.v1.ReadWorkflowAuthorAssignmentsResponse",
+      "statusCodes" : [
+        200,
+        400,
+        401,
+        403
+      ],
+      "authRequired" : false,
+      "stability" : "STABLE"
+    },
+    {
+      "routeId" : "grpc-json:WorkflowAuthorTaskService/ReadWorkflowAuthorEvents",
+      "pathTemplate" : "/grpc-json/WorkflowAuthorTaskService/ReadWorkflowAuthorEvents",
+      "httpMethods" : [
+        "POST"
+      ],
+      "pathParameters" : [ ],
+      "requiredQueryParameters" : [ ],
+      "requestContentType" : "application/json",
+      "responseContentType" : "application/json",
+      "requestTypeName" : "ai.protomolt.proto.workflow.authoring.v1.ReadWorkflowAuthorEventsRequest",
+      "responseTypeName" : "ai.protomolt.proto.workflow.authoring.v1.ReadWorkflowAuthorEventsResponse",
+      "statusCodes" : [
+        200,
+        400,
+        401,
+        403
+      ],
+      "authRequired" : false,
+      "stability" : "STABLE"
+    },
+    {
+      "routeId" : "grpc-json:WorkflowAuthorTaskService/RegisterWorkflowAuthor",
+      "pathTemplate" : "/grpc-json/WorkflowAuthorTaskService/RegisterWorkflowAuthor",
+      "httpMethods" : [
+        "POST"
+      ],
+      "pathParameters" : [ ],
+      "requiredQueryParameters" : [ ],
+      "requestContentType" : "application/json",
+      "responseContentType" : "application/json",
+      "requestTypeName" : "ai.protomolt.proto.delegation.v1.RegisterWorkerRequest",
+      "responseTypeName" : "ai.protomolt.proto.delegation.v1.RegisterWorkerResponse",
+      "statusCodes" : [
+        200,
+        400,
+        401,
+        403
+      ],
+      "authRequired" : false,
+      "stability" : "STABLE"
+    },
+    {
+      "routeId" : "grpc-json:WorkflowAuthorTaskService/SubmitWorkflowCandidate",
+      "pathTemplate" : "/grpc-json/WorkflowAuthorTaskService/SubmitWorkflowCandidate",
+      "httpMethods" : [
+        "POST"
+      ],
+      "pathParameters" : [ ],
+      "requiredQueryParameters" : [ ],
+      "requestContentType" : "application/json",
+      "responseContentType" : "application/json",
+      "requestTypeName" : "ai.protomolt.proto.delegation.v1.SubmitCandidateRequest",
+      "responseTypeName" : "ai.protomolt.proto.delegation.v1.SubmitCandidateResponse",
+      "statusCodes" : [
+        200,
+        400,
+        401,
+        403
+      ],
+      "authRequired" : false,
+      "stability" : "STABLE"
+    },
+    {
+      "routeId" : "grpc-json:WorkflowAuthoringEntryService/GetWorkflowAuthoringTemplate",
+      "pathTemplate" : "/grpc-json/WorkflowAuthoringEntryService/GetWorkflowAuthoringTemplate",
+      "httpMethods" : [
+        "POST"
+      ],
+      "pathParameters" : [ ],
+      "requiredQueryParameters" : [ ],
+      "requestContentType" : "application/json",
+      "responseContentType" : "application/json",
+      "requestTypeName" : "ai.protomolt.proto.workflow.authoring.v1.GetWorkflowAuthoringTemplateRequest",
+      "responseTypeName" : "ai.protomolt.proto.workflow.authoring.v1.GetWorkflowAuthoringTemplateResponse",
+      "statusCodes" : [
+        200,
+        400,
+        401,
+        403
+      ],
+      "authRequired" : false,
+      "stability" : "STABLE"
+    },
+    {
+      "routeId" : "grpc-json:WorkflowAuthoringEntryService/StartWorkflowAuthoring",
+      "pathTemplate" : "/grpc-json/WorkflowAuthoringEntryService/StartWorkflowAuthoring",
+      "httpMethods" : [
+        "POST"
+      ],
+      "pathParameters" : [ ],
+      "requiredQueryParameters" : [ ],
+      "requestContentType" : "application/json",
+      "responseContentType" : "application/json",
+      "requestTypeName" : "ai.protomolt.proto.workflow.authoring.v1.StartWorkflowAuthoringRequest",
+      "responseTypeName" : "ai.protomolt.proto.workflow.authoring.v1.StartWorkflowAuthoringResponse",
+      "statusCodes" : [
+        200,
+        400,
+        401,
+        403
+      ],
+      "authRequired" : false,
+      "stability" : "STABLE"
+    },
+    {
+      "routeId" : "grpc-json:WorkflowAuthoringService/GetAcceptedWorkflow",
+      "pathTemplate" : "/grpc-json/WorkflowAuthoringService/GetAcceptedWorkflow",
+      "httpMethods" : [
+        "POST"
+      ],
+      "pathParameters" : [ ],
+      "requiredQueryParameters" : [ ],
+      "requestContentType" : "application/json",
+      "responseContentType" : "application/json",
+      "requestTypeName" : "ai.protomolt.proto.workflow.authoring.v1.GetAcceptedWorkflowRequest",
+      "responseTypeName" : "ai.protomolt.proto.samples.starter.v1.WorkflowAcceptedCandidate",
+      "statusCodes" : [
+        200,
+        400,
+        401,
+        403
+      ],
+      "authRequired" : false,
+      "stability" : "STABLE"
+    },
+    {
+      "routeId" : "grpc-json:WorkflowAuthoringService/LaunchAcceptedWorkflow",
+      "pathTemplate" : "/grpc-json/WorkflowAuthoringService/LaunchAcceptedWorkflow",
+      "httpMethods" : [
+        "POST"
+      ],
+      "pathParameters" : [ ],
+      "requiredQueryParameters" : [ ],
+      "requestContentType" : "application/json",
+      "responseContentType" : "application/json",
+      "requestTypeName" : "ai.protomolt.proto.samples.starter.v1.WorkflowAuthoringLaunchRequest",
+      "responseTypeName" : "ai.protomolt.proto.samples.starter.v1.WorkflowAuthoringLaunchResult",
+      "statusCodes" : [
+        200,
+        400,
+        401,
+        403
+      ],
+      "authRequired" : false,
+      "stability" : "STABLE"
+    },
+    {
+      "routeId" : "grpc-json:WorkflowLaunchInputService/GetWorkflowLaunchInputContract",
+      "pathTemplate" : "/grpc-json/WorkflowLaunchInputService/GetWorkflowLaunchInputContract",
+      "httpMethods" : [
+        "POST"
+      ],
+      "pathParameters" : [ ],
+      "requiredQueryParameters" : [ ],
+      "requestContentType" : "application/json",
+      "responseContentType" : "application/json",
+      "requestTypeName" : "ai.protomolt.proto.workflow.authoring.v1.GetWorkflowLaunchInputContractRequest",
+      "responseTypeName" : "ai.protomolt.proto.workflow.authoring.v1.GetWorkflowLaunchInputContractResponse",
+      "statusCodes" : [
+        200,
+        400,
+        401,
+        403
+      ],
+      "authRequired" : false,
+      "stability" : "STABLE"
+    },
+    {
+      "routeId" : "grpc-json:WorkflowLaunchInputService/PrepareWorkflowLaunchInput",
+      "pathTemplate" : "/grpc-json/WorkflowLaunchInputService/PrepareWorkflowLaunchInput",
+      "httpMethods" : [
+        "POST"
+      ],
+      "pathParameters" : [ ],
+      "requiredQueryParameters" : [ ],
+      "requestContentType" : "application/json",
+      "responseContentType" : "application/json",
+      "requestTypeName" : "ai.protomolt.proto.workflow.authoring.v1.PrepareWorkflowLaunchInputRequest",
+      "responseTypeName" : "ai.protomolt.proto.workflow.authoring.v1.PrepareWorkflowLaunchInputResponse",
+      "statusCodes" : [
+        200,
+        400,
+        401,
+        403
+      ],
+      "authRequired" : false,
+      "stability" : "STABLE"
+    },
+    {
+      "routeId" : "grpc-json:WorkflowLaunchStatusService/GetWorkflowLaunchStatus",
+      "pathTemplate" : "/grpc-json/WorkflowLaunchStatusService/GetWorkflowLaunchStatus",
+      "httpMethods" : [
+        "POST"
+      ],
+      "pathParameters" : [ ],
+      "requiredQueryParameters" : [ ],
+      "requestContentType" : "application/json",
+      "responseContentType" : "application/json",
+      "requestTypeName" : "ai.protomolt.proto.workflow.authoring.v1.GetWorkflowLaunchStatusRequest",
+      "responseTypeName" : "ai.protomolt.proto.workflow.authoring.v1.GetWorkflowLaunchStatusResponse",
+      "statusCodes" : [
+        200,
+        400,
+        401,
+        403
+      ],
+      "authRequired" : false,
+      "stability" : "STABLE"
+    },
+    {
+      "routeId" : "grpc-json:WorkflowPreparationService/PrepareWorkflowCandidate",
+      "pathTemplate" : "/grpc-json/WorkflowPreparationService/PrepareWorkflowCandidate",
+      "httpMethods" : [
+        "POST"
+      ],
+      "pathParameters" : [ ],
+      "requiredQueryParameters" : [ ],
+      "requestContentType" : "application/json",
+      "responseContentType" : "application/json",
+      "requestTypeName" : "ai.protomolt.proto.workflow.authoring.v1.PrepareWorkflowCandidateRequest",
+      "responseTypeName" : "ai.protomolt.proto.workflow.authoring.v1.PrepareWorkflowCandidateResponse",
+      "statusCodes" : [
+        200,
+        400,
+        401,
+        403
+      ],
+      "authRequired" : false,
+      "stability" : "STABLE"
+    },
+    {
+      "routeId" : "intake-http:intake.upload",
+      "pathTemplate" : "/v1/intake:upload",
+      "httpMethods" : [
+        "POST"
+      ],
+      "pathParameters" : [ ],
+      "requiredQueryParameters" : [ ],
+      "requestContentType" : "application/octet-stream",
+      "responseContentType" : "application/json",
+      "requestTypeName" : "bytes",
+      "responseTypeName" : "ai.protomolt.proto.intake.v1.IngestDocumentResponse",
+      "statusCodes" : [
+        200,
+        400,
+        401,
+        403,
+        404,
+        405,
+        409,
+        411,
+        413,
+        500,
+        502
+      ],
+      "authRequired" : true,
+      "stability" : "STABLE"
+    },
+    {
+      "routeId" : "repo-http:archive.upload",
+      "pathTemplate" : "/v1/archive:upload",
+      "httpMethods" : [
+        "POST"
+      ],
+      "pathParameters" : [ ],
+      "requiredQueryParameters" : [ ],
+      "requestContentType" : "application/octet-stream",
+      "responseContentType" : "application/protobuf",
+      "requestTypeName" : "bytes",
+      "responseTypeName" : "ai.protomolt.proto.repo.archive.v1.UploadRenditionResponse",
+      "statusCodes" : [
+        200,
+        400,
+        401,
+        403,
+        404,
+        409,
+        411,
+        429,
+        502,
+        503
+      ],
+      "authRequired" : true,
+      "stability" : "STABLE"
+    },
+    {
+      "routeId" : "repo-http:documents.upload",
+      "pathTemplate" : "/v1/documents:upload",
+      "httpMethods" : [
+        "POST"
+      ],
+      "pathParameters" : [ ],
+      "requiredQueryParameters" : [ ],
+      "requestContentType" : "application/octet-stream",
+      "responseContentType" : "application/json; charset=utf-8",
+      "requestTypeName" : "bytes",
+      "responseTypeName" : "ai.protomolt.proto.repo.v2.UploadDocumentResponse",
+      "statusCodes" : [
+        200,
+        400,
+        401,
+        403,
+        404,
+        409,
+        411,
+        429,
+        503
+      ],
+      "authRequired" : true,
+      "stability" : "STABLE"
+    },
+    {
       "routeId" : "schema-registry:config.global",
       "pathTemplate" : "/config",
       "httpMethods" : [
@@ -986,8 +1802,93 @@
       "stability" : "STABLE"
     },
     {
+      "routeId" : "schema-registry:native.actions.execute",
+      "pathTemplate" : "/protomolt/actions/{name}",
+      "httpMethods" : [
+        "POST"
+      ],
+      "pathParameters" : [
+        "name"
+      ],
+      "requiredQueryParameters" : [ ],
+      "requestContentType" : "application/vnd.schemaregistry.v1+json",
+      "responseContentType" : "application/vnd.schemaregistry.v1+json",
+      "requestTypeName" : "ActionExecuteRequest",
+      "responseTypeName" : "ActionExecuteResponse",
+      "statusCodes" : [
+        200,
+        400,
+        403,
+        404,
+        422,
+        429
+      ],
+      "authRequired" : false,
+      "stability" : "STABLE"
+    },
+    {
+      "routeId" : "schema-registry:native.actions.list",
+      "pathTemplate" : "/protomolt/actions",
+      "httpMethods" : [
+        "GET"
+      ],
+      "pathParameters" : [ ],
+      "requiredQueryParameters" : [ ],
+      "requestContentType" : "",
+      "responseContentType" : "application/vnd.schemaregistry.v1+json",
+      "requestTypeName" : "",
+      "responseTypeName" : "ActionListResponse",
+      "statusCodes" : [
+        200
+      ],
+      "authRequired" : false,
+      "stability" : "STABLE"
+    },
+    {
+      "routeId" : "schema-registry:native.configs.item",
+      "pathTemplate" : "/protomolt/configs/{name}",
+      "httpMethods" : [
+        "GET",
+        "PUT"
+      ],
+      "pathParameters" : [
+        "name"
+      ],
+      "requiredQueryParameters" : [ ],
+      "requestContentType" : "application/vnd.schemaregistry.v1+json",
+      "responseContentType" : "application/vnd.schemaregistry.v1+json",
+      "requestTypeName" : "ConfigEnvelopeRequest",
+      "responseTypeName" : "ConfigEnvelopeResponse",
+      "statusCodes" : [
+        200,
+        404,
+        422
+      ],
+      "authRequired" : false,
+      "stability" : "STABLE"
+    },
+    {
+      "routeId" : "schema-registry:native.configs.list",
+      "pathTemplate" : "/protomolt/configs",
+      "httpMethods" : [
+        "GET"
+      ],
+      "pathParameters" : [ ],
+      "requiredQueryParameters" : [ ],
+      "requestContentType" : "",
+      "responseContentType" : "application/vnd.schemaregistry.v1+json",
+      "requestTypeName" : "",
+      "responseTypeName" : "ConfigNameList",
+      "statusCodes" : [
+        200,
+        404
+      ],
+      "authRequired" : false,
+      "stability" : "STABLE"
+    },
+    {
       "routeId" : "schema-registry:native.descriptor-set",
-      "pathTemplate" : "/v1/subjects/{subject}/descriptor-set",
+      "pathTemplate" : "/protomolt/subjects/{subject}/descriptor-set",
       "httpMethods" : [
         "GET"
       ],
@@ -1008,7 +1909,7 @@
     },
     {
       "routeId" : "schema-registry:native.parquet-schema",
-      "pathTemplate" : "/v1/subjects/{subject}/parquet-schema",
+      "pathTemplate" : "/protomolt/subjects/{subject}/parquet-schema",
       "httpMethods" : [
         "GET"
       ],
@@ -1025,6 +1926,49 @@
       "statusCodes" : [
         200,
         400,
+        404,
+        422
+      ],
+      "authRequired" : false,
+      "stability" : "STABLE"
+    },
+    {
+      "routeId" : "schema-registry:native.workflows.item",
+      "pathTemplate" : "/protomolt/workflows/{name}",
+      "httpMethods" : [
+        "GET",
+        "PUT"
+      ],
+      "pathParameters" : [
+        "name"
+      ],
+      "requiredQueryParameters" : [ ],
+      "requestContentType" : "application/vnd.schemaregistry.v1+json",
+      "responseContentType" : "application/json",
+      "requestTypeName" : "WorkflowDefinitionRequest",
+      "responseTypeName" : "WorkflowDefinitionResponse",
+      "statusCodes" : [
+        200,
+        404,
+        422
+      ],
+      "authRequired" : false,
+      "stability" : "STABLE"
+    },
+    {
+      "routeId" : "schema-registry:native.workflows.list",
+      "pathTemplate" : "/protomolt/workflows",
+      "httpMethods" : [
+        "GET"
+      ],
+      "pathParameters" : [ ],
+      "requiredQueryParameters" : [ ],
+      "requestContentType" : "",
+      "responseContentType" : "application/vnd.schemaregistry.v1+json",
+      "requestTypeName" : "",
+      "responseTypeName" : "WorkflowNameList",
+      "statusCodes" : [
+        200,
         404
       ],
       "authRequired" : false,

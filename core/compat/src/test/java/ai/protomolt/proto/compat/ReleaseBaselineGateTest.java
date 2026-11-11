@@ -9,7 +9,12 @@ import ai.protomolt.proto.compat.JavaApiSnapshot.TypeKind;
 import ai.protomolt.proto.compat.JavaApiSnapshot.Visibility;
 import ai.protomolt.proto.compat.RestRouteSnapshot.RestRouteEntry;
 import ai.protomolt.proto.compat.StoredFormatSnapshot.StoredFormatEntry;
+import ai.protomolt.proto.descriptors.ApiStability;
 import ai.protomolt.proto.descriptors.StabilityTier;
+import ai.protomolt.proto.meta.DescriptorMetadata;
+import ai.protomolt.proto.meta.FieldMeta;
+import ai.protomolt.proto.meta.MessageMeta;
+import ai.protomolt.proto.meta.MetadataProto;
 import ai.protomolt.proto.meta.StabilityLevel;
 import ai.protomolt.proto.meta.StabilityOption;
 import ai.protomolt.proto.meta.StabilityProto;
@@ -20,6 +25,7 @@ import com.google.protobuf.UnknownFieldSet;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
@@ -588,6 +594,93 @@ class ReleaseBaselineGateTest {
         assertThat(waivedReport.isCompatible()).isTrue();
         assertThat(waivedReport.waivedChanges()).hasSize(1);
         assertThat(waivedReport.matchedWaivers()).containsExactly(removalWaiver);
+
+        // Spent waiver is retired from manifest.json on advancement, so re-adding and removing fails closed
+        ReleaseBaselineBundle postAdvanceLoaded = ReleaseBaselineGate.load(tempDir);
+        assertThat(postAdvanceLoaded.manifest().waivers()).isEmpty();
+        assertThat(ReleaseBaselineGate.evaluate(postAdvanceLoaded, unwaivedBreakBundle).isCompatible()).isTrue();
+
+        // Unused waiver fails closed
+        CompatibilityWaiver unusedWaiver = new CompatibilityWaiver(
+                "WAIVER-UNUSED-01",
+                CompatibilitySurface.ACTION_ENVELOPE,
+                ActionEnvelopeCompatibilityChecker.ACTION_REMOVED,
+                "non-existent-action",
+                "PR#827",
+                "Unused waiver must fail closed");
+        ReleaseBaselineBundle bundleWithUnusedWaiver = new ReleaseBaselineBundle(
+                ReleaseBaselineManifest.unreleasedInitial("0.1.0-SNAPSHOT", List.of(unusedWaiver)),
+                new JavaApiSnapshot(List.of()),
+                ProtobufSurfaceSnapshot.of(FileDescriptorSet.getDefaultInstance()),
+                new StoredFormatSnapshot(List.of()),
+                new RestRouteSnapshot(List.of()),
+                new ActionEnvelopeSnapshot(List.of()));
+        ReleaseBaselineReport unusedReport = ReleaseBaselineGate.evaluate(postAdvanceLoaded, bundleWithUnusedWaiver);
+        assertThat(unusedReport.isCompatible()).isFalse();
+        assertThat(unusedReport.unusedWaivers()).containsExactly(unusedWaiver);
+        assertThatThrownBy(unusedReport::throwIfIncompatible)
+                .isInstanceOf(IncompatibleSurfaceException.class)
+                .hasMessageContaining("WAIVER-UNUSED-01")
+                .satisfies(ex -> assertThat(((IncompatibleSurfaceException) ex).unusedWaivers())
+                        .containsExactly(unusedWaiver));
+    }
+
+    @ApiStability(StabilityTier.STABLE)
+    public static final class SampleOuterContract {
+        public static final class Builder {
+            public SampleOuterContract build() {
+                return new SampleOuterContract();
+            }
+        }
+
+        protected record NestedResult(String id) {
+        }
+
+        static final class PackagePrivateHelper {
+        }
+
+        private static final class PrivateHelper {
+        }
+    }
+
+    @Test
+    void javaApiSnapshotCapturesExportedNestedTypesRecursively() {
+        JavaApiSnapshot snapshot = JavaApiSnapshot.capture(SampleOuterContract.class);
+        Map<String, ClassEntry> byName = snapshot.classesByName();
+
+        assertThat(byName).containsKey(SampleOuterContract.class.getName());
+        assertThat(byName).containsKey(SampleOuterContract.Builder.class.getName());
+        assertThat(byName).containsKey(SampleOuterContract.Builder.class.getCanonicalName());
+        assertThat(byName).containsKey(SampleOuterContract.NestedResult.class.getName());
+        assertThat(byName).doesNotContainKey(SampleOuterContract.PackagePrivateHelper.class.getName());
+        assertThat(byName).doesNotContainKey(SampleOuterContract.PrivateHelper.class.getName());
+    }
+
+    @Test
+    void loadRejectsTamperedProtobufStabilityJson(@TempDir Path tempDir) throws Exception {
+        FileDescriptorSet descriptorSet = singleFileSet(
+                "example/v1/order.proto",
+                "example.v1",
+                DescriptorProtos.DescriptorProto.newBuilder()
+                        .setName("Order")
+                        .addField(field("order_id", 1, DescriptorProtos.FieldDescriptorProto.Type.TYPE_STRING))
+                        .build());
+        ReleaseBaselineBundle bundle = new ReleaseBaselineBundle(
+                ReleaseBaselineManifest.unreleasedInitial("0.1.0-SNAPSHOT", List.of()),
+                new JavaApiSnapshot(List.of()),
+                ProtobufSurfaceSnapshot.of(descriptorSet),
+                new StoredFormatSnapshot(List.of()),
+                new RestRouteSnapshot(List.of()),
+                new ActionEnvelopeSnapshot(List.of()));
+        ReleaseBaselineGate.save(tempDir, bundle);
+
+        Path stabilityPath = tempDir.resolve(ReleaseBaselineGate.PROTOBUF_STABILITY_FILE);
+        String original = Files.readString(stabilityPath);
+        Files.writeString(stabilityPath, original.replace("\"STABLE\"", "\"EVOLVING\""));
+
+        assertThatThrownBy(() -> ReleaseBaselineGate.load(tempDir))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining(ReleaseBaselineGate.PROTOBUF_STABILITY_FILE);
     }
 
     @Test
@@ -609,6 +702,96 @@ class ReleaseBaselineGateTest {
                 FileDescriptorSet.newBuilder().addFile(file).build()))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining(StabilityProto.fileStability.getDescriptor().getFullName());
+
+        // Unrecognized StabilityLevel enum wire number (e.g. 99) must also fail closed
+        DescriptorProtos.FileDescriptorProto unrecognizedLevelFile = DescriptorProtos.FileDescriptorProto.newBuilder()
+                .setSyntax("proto3")
+                .setName("broken/unrecognized_level.proto")
+                .setPackage("broken")
+                .setOptions(DescriptorProtos.FileOptions.newBuilder()
+                        .setExtension(
+                                StabilityProto.fileStability,
+                                StabilityOption.newBuilder().setLevelValue(99).build())
+                        .build())
+                .build();
+        assertThatThrownBy(() -> ProtobufSurfaceSnapshot.of(
+                FileDescriptorSet.newBuilder().addFile(unrecognizedLevelFile).build()))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("99");
+
+        // Unknown labels["stability"] value on message or field metadata must fail closed
+        DescriptorProtos.FileDescriptorProto bogusMessageLabelFile = singleFileSet(
+                "broken/bogus_msg_label.proto",
+                "broken",
+                DescriptorProtos.DescriptorProto.newBuilder()
+                        .setName("BrokenMsg")
+                        .setOptions(DescriptorProtos.MessageOptions.newBuilder()
+                                .setExtension(
+                                        MetadataProto.message,
+                                        MessageMeta.newBuilder()
+                                                .putLabels(DescriptorMetadata.STABILITY_LABEL_KEY, "bogus")
+                                                .build())
+                                .build())
+                        .build())
+                .getFile(0);
+        assertThatThrownBy(() -> ProtobufSurfaceSnapshot.of(
+                FileDescriptorSet.newBuilder().addFile(bogusMessageLabelFile).build()))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("bogus");
+
+        DescriptorProtos.FileDescriptorProto bogusFieldLabelFile = singleFileSet(
+                "broken/bogus_field_label.proto",
+                "broken",
+                DescriptorProtos.DescriptorProto.newBuilder()
+                        .setName("BrokenFieldMsg")
+                        .addField(field("id", 1, DescriptorProtos.FieldDescriptorProto.Type.TYPE_STRING)
+                                .toBuilder()
+                                .setOptions(DescriptorProtos.FieldOptions.newBuilder()
+                                        .setExtension(
+                                                MetadataProto.field,
+                                                FieldMeta.newBuilder()
+                                                        .putLabels(DescriptorMetadata.STABILITY_LABEL_KEY, "typo-tier")
+                                                        .build())
+                                        .build())
+                                .build())
+                        .build())
+                .getFile(0);
+        assertThatThrownBy(() -> ProtobufSurfaceSnapshot.of(
+                FileDescriptorSet.newBuilder().addFile(bogusFieldLabelFile).build()))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("typo-tier");
+
+        // Legal forward-compatible unknown fields inside StabilityOption must NOT be rejected
+        StabilityOption forwardOption = StabilityOption.newBuilder()
+                .setLevel(StabilityLevel.STABILITY_LEVEL_EVOLVING)
+                .setUnknownFields(UnknownFieldSet.newBuilder()
+                        .addField(
+                                77,
+                                UnknownFieldSet.Field.newBuilder()
+                                        .addLengthDelimited(ByteString.copyFromUtf8("future"))
+                                        .build())
+                        .build())
+                .build();
+        DescriptorProtos.FileOptions unparsedForwardOptions;
+        try {
+            unparsedForwardOptions = DescriptorProtos.FileOptions.parseFrom(
+                    DescriptorProtos.FileOptions.newBuilder()
+                            .setExtension(StabilityProto.fileStability, forwardOption)
+                            .build()
+                            .toByteString());
+        } catch (Exception e) {
+            throw new AssertionError(e);
+        }
+        DescriptorProtos.FileDescriptorProto forwardFile = DescriptorProtos.FileDescriptorProto.newBuilder()
+                .setSyntax("proto3")
+                .setName("ok/forward.proto")
+                .setPackage("ok.v1")
+                .setOptions(unparsedForwardOptions)
+                .addMessageType(DescriptorProtos.DescriptorProto.newBuilder().setName("Ping").build())
+                .build();
+        ProtobufSurfaceSnapshot forwardSnapshot = ProtobufSurfaceSnapshot.of(
+                FileDescriptorSet.newBuilder().addFile(forwardFile).build());
+        assertThat(forwardSnapshot.stabilityForPath("ok.v1.Ping")).isEqualTo(StabilityTier.EVOLVING);
     }
 
     private static DescriptorProtos.FieldDescriptorProto field(
