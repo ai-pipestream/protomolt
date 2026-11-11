@@ -24,4 +24,8 @@
  * <p>See the <a href="https://github.com/ai-pipestream/protomolt/blob/main/docs/core/helpers.md">Core
  * utilities guide</a>.</p>
  */
+@ApiStability(StabilityTier.STABLE)
 package ai.protomolt.proto.helpers;
+
+import ai.protomolt.proto.descriptors.ApiStability;
+import ai.protomolt.proto.descriptors.StabilityTier;

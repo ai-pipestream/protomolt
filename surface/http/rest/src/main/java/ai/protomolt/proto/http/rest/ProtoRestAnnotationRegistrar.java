@@ -1,5 +1,8 @@
 package ai.protomolt.proto.http.rest;
 
+import ai.protomolt.proto.descriptors.ApiStability;
+import ai.protomolt.proto.descriptors.ApiStabilityResolver;
+import ai.protomolt.proto.descriptors.StabilityTier;
 import com.google.protobuf.Message;
 
 import java.lang.reflect.Method;
@@ -7,6 +10,7 @@ import java.lang.reflect.Modifier;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.function.Function;
 
 /**
@@ -115,6 +119,7 @@ public final class ProtoRestAnnotationRegistrar {
         } else if (typeExposed != null && typeExposed.httpMethods().length > 0) {
             builder.httpMethods(typeExposed.httpMethods());
         }
+        builder.stability(resolveStability(type, method, typeExposed, methodExposed));
 
         ProtoApiToken token = methodToken != null ? methodToken : typeToken;
         if (token != null) {
@@ -122,6 +127,25 @@ public final class ProtoRestAnnotationRegistrar {
         }
 
         return builder.build();
+    }
+
+    private static StabilityTier resolveStability(
+            Class<?> type,
+            Method method,
+            ProtoRestExposed typeExposed,
+            ProtoRestExposed methodExposed) {
+        Optional<StabilityTier> methodExposedStability = ProtoRestMethod.declaredStability(methodExposed);
+        Optional<StabilityTier> typeExposedStability = ProtoRestMethod.declaredStability(typeExposed);
+        if (methodExposedStability.isPresent()) {
+            return methodExposedStability.get();
+        }
+        if (method.isAnnotationPresent(ApiStability.class) || method.isAnnotationPresent(Deprecated.class)) {
+            return ApiStabilityResolver.resolve(method, StabilityTier.STABLE);
+        }
+        if (typeExposedStability.isPresent()) {
+            return typeExposedStability.get();
+        }
+        return ApiStabilityResolver.resolve(type, StabilityTier.STABLE);
     }
 
     private static String resolveServiceName(

@@ -1,5 +1,7 @@
 package ai.protomolt.proto.http.rest;
 
+import ai.protomolt.proto.descriptors.ApiStability;
+import ai.protomolt.proto.descriptors.StabilityTier;
 import com.google.protobuf.Descriptors.MethodDescriptor;
 import com.google.protobuf.Descriptors.ServiceDescriptor;
 import com.google.protobuf.Message;
@@ -26,7 +28,9 @@ import java.util.function.Function;
  * @param description optional OpenAPI description
  * @param httpMethods declared HTTP verbs (uppercase); empty = unset, which means POST only
  *        (see {@link #allowedHttpVerbs()}) — the same default the OpenAPI document declares
+ * @param stability stability tier of the REST route contract
  */
+@ApiStability(StabilityTier.STABLE)
 public record ProtoRestMethod(
         String serviceName,
         String methodName,
@@ -38,10 +42,39 @@ public record ProtoRestMethod(
         Optional<ProtoRestExposed> exposed,
         Optional<String> summary,
         Optional<String> description,
-        String[] httpMethods) {
+        String[] httpMethods,
+        StabilityTier stability) {
 
     /** Verbs allowed when nothing is declared: POST, the verb of an RPC-shaped route. */
     public static final List<String> DEFAULT_HTTP_VERBS = List.of("POST");
+
+    public ProtoRestMethod(
+            String serviceName,
+            String methodName,
+            ServiceDescriptor serviceDescriptor,
+            MethodDescriptor methodDescriptor,
+            Optional<Class<? extends Message>> requestType,
+            Function<Message, Message> invoker,
+            Optional<ApiTokenRequirement> apiToken,
+            Optional<ProtoRestExposed> exposed,
+            Optional<String> summary,
+            Optional<String> description,
+            String[] httpMethods) {
+        this(
+                serviceName,
+                methodName,
+                serviceDescriptor,
+                methodDescriptor,
+                requestType,
+                invoker,
+                apiToken,
+                exposed,
+                summary,
+                description,
+                httpMethods,
+                declaredStability(exposed == null ? null : exposed.orElse(null))
+                        .orElse(StabilityTier.STABLE));
+    }
 
     public ProtoRestMethod {
         Objects.requireNonNull(serviceName, "serviceName");
@@ -59,6 +92,26 @@ public record ProtoRestMethod(
                         .filter(Objects::nonNull)
                         .map(m -> m.toUpperCase(Locale.ROOT))
                         .toArray(String[]::new);
+        Optional<StabilityTier> exposedStability = exposed.flatMap(ProtoRestMethod::declaredStability);
+        stability = stability == null
+                ? exposedStability.orElse(StabilityTier.STABLE)
+                : stability;
+    }
+
+    static Optional<StabilityTier> declaredStability(ProtoRestExposed exposed) {
+        if (exposed == null) {
+            return Optional.empty();
+        }
+        StabilityTier[] tiers = exposed.stability();
+        if (tiers == null || tiers.length == 0) {
+            return Optional.empty();
+        }
+        if (tiers.length > 1) {
+            throw new IllegalArgumentException(
+                    "@ProtoRestExposed.stability accepts at most one StabilityTier, got "
+                            + Arrays.toString(tiers));
+        }
+        return Optional.of(Objects.requireNonNull(tiers[0], "stability[0]"));
     }
 
     /** @return a defensive copy of the declared verbs (empty when unset) */
@@ -106,13 +159,14 @@ public record ProtoRestMethod(
                 && exposed.equals(that.exposed)
                 && summary.equals(that.summary)
                 && description.equals(that.description)
-                && Arrays.equals(httpMethods, that.httpMethods);
+                && Arrays.equals(httpMethods, that.httpMethods)
+                && stability == that.stability;
     }
 
     @Override
     public int hashCode() {
         int result = Objects.hash(serviceName, methodName, serviceDescriptor, methodDescriptor,
-                requestType, invoker, apiToken, exposed, summary, description);
+                requestType, invoker, apiToken, exposed, summary, description, stability);
         return 31 * result + Arrays.hashCode(httpMethods);
     }
 
@@ -137,6 +191,7 @@ public record ProtoRestMethod(
         private String summary;
         private String description;
         private String[] httpMethods = {};
+        private StabilityTier stability;
 
         private Builder(String serviceName, String methodName, Function<Message, Message> invoker) {
             this.serviceName = serviceName;
@@ -189,6 +244,11 @@ public record ProtoRestMethod(
             return this;
         }
 
+        public Builder stability(StabilityTier stability) {
+            this.stability = stability;
+            return this;
+        }
+
         public ProtoRestMethod build() {
             return new ProtoRestMethod(
                     serviceName,
@@ -201,7 +261,8 @@ public record ProtoRestMethod(
                     Optional.ofNullable(exposed),
                     Optional.ofNullable(summary),
                     Optional.ofNullable(description),
-                    httpMethods);
+                    httpMethods,
+                    stability);
         }
     }
 }

@@ -143,6 +143,9 @@ jobs:
       - name: Test protobuf compatibility gate
         run: python3 scripts/test_proto_compatibility.py
 
+      - name: Release-baseline compatibility gate
+        run: ./gradlew :protomolt-system-tests:checkCompatibilityBaseline --max-workers=2 --console=plain -PtestJdk=${{ matrix.test-jdk }}
+
       - name: Buf breaking (PRs)
         if: github.event_name == 'pull_request'
         env:

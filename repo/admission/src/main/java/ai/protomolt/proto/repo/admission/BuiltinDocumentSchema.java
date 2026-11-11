@@ -1,6 +1,8 @@
 package ai.protomolt.proto.repo.admission;
 
+import ai.protomolt.proto.descriptors.ApiStability;
 import ai.protomolt.proto.descriptors.DescriptorFingerprints;
+import ai.protomolt.proto.descriptors.StabilityTier;
 import ai.protomolt.proto.repo.codec.DocumentPartCodec;
 import ai.protomolt.proto.repo.v1.*;
 import com.google.protobuf.RuntimeVersion;
@@ -10,6 +12,7 @@ import java.util.Optional;
 import java.util.Properties;
 
 /** Immutable V1 container definition from the installed contract artifact, never request metadata. */
+@ApiStability(StabilityTier.STABLE)
 public final class BuiltinDocumentSchema {
     private static final String COMPILER_RESOURCE="/META-INF/protomolt/repo-proto/compiler.properties";
     private BuiltinDocumentSchema() {}

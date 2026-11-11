@@ -1,0 +1,8 @@
+{
+  "schemaVersion" : "protomolt-compatibility-baseline/v1",
+  "status" : "UNRELEASED_INITIAL_SNAPSHOT",
+  "releaseVersion" : "0.1.0-SNAPSHOT",
+  "releaseTag" : "",
+  "baselineNote" : "Pre-release initial compatibility snapshot. No external release baseline has been cut yet; automated gates enforce stability rules within the repository without claiming an external released stability guarantee until the first RELEASED_BASELINE tag is published.",
+  "waivers" : [ ]
+}

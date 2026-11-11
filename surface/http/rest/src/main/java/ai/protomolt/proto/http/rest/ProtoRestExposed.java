@@ -1,5 +1,8 @@
 package ai.protomolt.proto.http.rest;
 
+import ai.protomolt.proto.descriptors.ApiStability;
+import ai.protomolt.proto.descriptors.StabilityTier;
+
 import java.lang.annotation.Documented;
 import java.lang.annotation.ElementType;
 import java.lang.annotation.Retention;
@@ -13,6 +16,7 @@ import java.lang.annotation.Target;
 @Documented
 @Retention(RetentionPolicy.RUNTIME)
 @Target({ElementType.TYPE, ElementType.METHOD})
+@ApiStability(StabilityTier.STABLE)
 public @interface ProtoRestExposed {
 
     /**
@@ -34,4 +38,13 @@ public @interface ProtoRestExposed {
 
     /** Longer description for OpenAPI. */
     String description() default "";
+
+    /**
+     * Optional stability tier override for the exposed REST route (or default tier for methods
+     * on an annotated service class). Empty (the default) means unset and inherits from
+     * {@link ApiStability}, enclosing declarations, or {@link StabilityTier#STABLE}. At most
+     * one tier may be specified; single-element syntax such as
+     * {@code @ProtoRestExposed(stability = StabilityTier.STABLE)} is supported.
+     */
+    StabilityTier[] stability() default {};
 }

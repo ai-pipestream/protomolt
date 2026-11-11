@@ -1,5 +1,7 @@
 package ai.protomolt.proto.intake.service;
 
+import ai.protomolt.proto.descriptors.ApiStability;
+import ai.protomolt.proto.descriptors.StabilityTier;
 import ai.protomolt.proto.intake.service.identity.ApiKeyIdentityResolver;
 import ai.protomolt.proto.intake.service.identity.IntakeScope;
 import ai.protomolt.proto.intake.v1.IngestDocumentResponse;
@@ -23,7 +25,10 @@ import java.net.InetSocketAddress;
 import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
+import java.util.List;
+import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -79,10 +84,95 @@ import org.slf4j.LoggerFactory;
  * {@code address}, {@code drive}, {@code size_bytes}, {@code sha256},
  * {@code deduplicated}.
  */
+@ApiStability(StabilityTier.STABLE)
 public final class IntakeHttpServer implements AutoCloseable {
 
     /** The single route this server serves. */
     public static final String UPLOAD_PATH = "/v1/intake:upload";
+
+    /** Canonical route ID for {@link #UPLOAD_PATH}. */
+    public static final String ROUTE_INTAKE_UPLOAD = "intake-http:intake.upload";
+
+    private static final String RESPONSE_JSON_MEDIA_TYPE = "application/json";
+
+    /**
+     * Declarative HTTP route contract served by {@link IntakeHttpServer}, shared between
+     * live context registration/dispatch and release-baseline compatibility snapshots.
+     *
+     * @param routeId                 canonical route identifier
+     * @param pathTemplate            URI path template
+     * @param httpMethods             allowed uppercase HTTP methods
+     * @param pathParameters          ordered path parameter names
+     * @param requiredQueryParameters required query parameter names
+     * @param requestMediaType        expected request media type
+     * @param responseMediaType       default response media type
+     * @param requestType             logical request payload contract name
+     * @param responseType            logical response payload contract name
+     * @param successStatusCodes      documented HTTP status codes for the endpoint
+     * @param authRequired            whether authentication is required
+     * @param stability               declared stability tier
+     */
+    @ApiStability(StabilityTier.STABLE)
+    public record RouteContract(
+            String routeId,
+            String pathTemplate,
+            List<String> httpMethods,
+            List<String> pathParameters,
+            List<String> requiredQueryParameters,
+            String requestMediaType,
+            String responseMediaType,
+            String requestType,
+            String responseType,
+            List<Integer> successStatusCodes,
+            boolean authRequired,
+            StabilityTier stability) {
+
+        public RouteContract {
+            Objects.requireNonNull(routeId, "routeId");
+            Objects.requireNonNull(pathTemplate, "pathTemplate");
+            httpMethods = List.copyOf(Objects.requireNonNull(httpMethods, "httpMethods"));
+            pathParameters = List.copyOf(Objects.requireNonNull(pathParameters, "pathParameters"));
+            requiredQueryParameters = List.copyOf(
+                    Objects.requireNonNull(requiredQueryParameters, "requiredQueryParameters"));
+            requestMediaType = Objects.requireNonNull(requestMediaType, "requestMediaType");
+            responseMediaType = Objects.requireNonNull(responseMediaType, "responseMediaType");
+            requestType = Objects.requireNonNull(requestType, "requestType");
+            responseType = Objects.requireNonNull(responseType, "responseType");
+            successStatusCodes = List.copyOf(
+                    Objects.requireNonNull(successStatusCodes, "successStatusCodes"));
+            Objects.requireNonNull(stability, "stability");
+        }
+
+        boolean allowsMethod(String method) {
+            return method != null && httpMethods.contains(method.toUpperCase(Locale.ROOT));
+        }
+    }
+
+    private static final RouteContract INTAKE_UPLOAD_ROUTE = new RouteContract(
+            ROUTE_INTAKE_UPLOAD,
+            UPLOAD_PATH,
+            List.of("POST"),
+            List.of(),
+            List.of(),
+            "application/octet-stream",
+            RESPONSE_JSON_MEDIA_TYPE,
+            "bytes",
+            IngestDocumentResponse.getDescriptor().getFullName(),
+            List.of(200, 400, 401, 403, 404, 405, 409, 411, 413, 500, 502),
+            true,
+            StabilityTier.STABLE);
+
+    private static final List<RouteContract> ROUTE_CONTRACTS = List.of(INTAKE_UPLOAD_ROUTE);
+
+    /**
+     * Returns the immutable list of HTTP {@link RouteContract}s served by
+     * {@link IntakeHttpServer}.
+     *
+     * @return immutable ordered route contracts
+     */
+    public static List<RouteContract> routeContracts() {
+        return ROUTE_CONTRACTS;
+    }
 
     private static final Logger LOG = LoggerFactory.getLogger(IntakeHttpServer.class);
 
@@ -128,7 +218,7 @@ public final class IntakeHttpServer implements AutoCloseable {
             }
             ExecutorService pool = Executors.newVirtualThreadPerTaskExecutor();
             try {
-                created.createContext(UPLOAD_PATH, this::handle);
+                created.createContext(INTAKE_UPLOAD_ROUTE.pathTemplate(), this::handle);
                 created.setExecutor(pool);
                 created.start();
             } catch (RuntimeException e) {
@@ -139,7 +229,8 @@ public final class IntakeHttpServer implements AutoCloseable {
             this.server = created;
             this.executor = pool;
             int bound = created.getAddress().getPort();
-            LOG.info("HTTP intake route listening on port {} ({})", bound, UPLOAD_PATH);
+            LOG.info("HTTP intake route listening on port {} ({})", bound,
+                    INTAKE_UPLOAD_ROUTE.pathTemplate());
             return bound;
         } finally {
             lock.unlock();
@@ -189,10 +280,10 @@ public final class IntakeHttpServer implements AutoCloseable {
     private void handle(HttpExchange exchange) throws IOException {
         try {
             // createContext prefix-matches; only the exact path is the route.
-            if (!UPLOAD_PATH.equals(exchange.getRequestURI().getPath())) {
+            if (!INTAKE_UPLOAD_ROUTE.pathTemplate().equals(exchange.getRequestURI().getPath())) {
                 throw new HttpError(404, "unknown route " + exchange.getRequestURI().getPath());
             }
-            if (!"POST".equalsIgnoreCase(exchange.getRequestMethod())) {
+            if (!INTAKE_UPLOAD_ROUTE.allowsMethod(exchange.getRequestMethod())) {
                 throw new HttpError(405, "method not allowed: " + exchange.getRequestMethod());
             }
             writeJson(exchange, 200, upload(exchange));
@@ -422,7 +513,7 @@ public final class IntakeHttpServer implements AutoCloseable {
         } catch (InvalidProtocolBufferException e) {
             throw new IOException("failed to render the response body", e);
         }
-        exchange.getResponseHeaders().set("Content-Type", "application/json");
+        exchange.getResponseHeaders().set("Content-Type", INTAKE_UPLOAD_ROUTE.responseMediaType());
         exchange.sendResponseHeaders(status, bytes.length);
         try (OutputStream out = exchange.getResponseBody()) {
             out.write(bytes);

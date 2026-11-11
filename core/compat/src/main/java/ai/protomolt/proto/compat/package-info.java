@@ -23,4 +23,8 @@
  * <p>See the <a href="https://github.com/ai-pipestream/protomolt/blob/main/docs/schema/compatibility.md">compatibility
  * checking guide</a> for usage.</p>
  */
+@ApiStability(StabilityTier.STABLE)
 package ai.protomolt.proto.compat;
+
+import ai.protomolt.proto.descriptors.ApiStability;
+import ai.protomolt.proto.descriptors.StabilityTier;

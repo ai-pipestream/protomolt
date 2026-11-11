@@ -1,5 +1,7 @@
 package ai.protomolt.proto.http.rest;
 
+import ai.protomolt.proto.descriptors.ApiStability;
+import ai.protomolt.proto.descriptors.StabilityTier;
 import com.google.protobuf.Struct;
 import com.google.protobuf.Value;
 import org.junit.jupiter.api.Test;
@@ -7,6 +9,7 @@ import org.junit.jupiter.api.Test;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class ProtoRestAnnotationRegistrarTest {
 
@@ -96,9 +99,49 @@ class ProtoRestAnnotationRegistrarTest {
         // Hosts route only {service}/{method}; a per-method path would be published in
         // the OpenAPI contract but 404 at runtime. Fail loudly instead.
         ProtoRestMethodRegistry registry = new ProtoRestMethodRegistry();
-        org.assertj.core.api.Assertions.assertThatThrownBy(() ->
+        assertThatThrownBy(() ->
                         new ProtoRestAnnotationRegistrar(registry).register(new CustomPathService()))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("not supported");
+    }
+
+    @ApiStability(StabilityTier.EXPERIMENTAL)
+    static final class ExperimentalService {
+        @ProtoRestExposed
+        public Struct inheritedExperimental(Struct request) {
+            return request;
+        }
+
+        @ProtoRestExposed(stability = StabilityTier.STABLE)
+        public Struct promotedStable(Struct request) {
+            return request;
+        }
+    }
+
+    static final class MultiStabilityService {
+        @ProtoRestExposed(stability = {StabilityTier.STABLE, StabilityTier.EXPERIMENTAL})
+        public Struct invalid(Struct request) {
+            return request;
+        }
+    }
+
+    @Test
+    void explicitStableMethodOverridesExperimentalClassWhileUnsetInherits() {
+        ProtoRestMethodRegistry registry = new ProtoRestMethodRegistry();
+        new ProtoRestAnnotationRegistrar(registry).register(new ExperimentalService());
+
+        assertThat(registry.find("Experimental", "inheritedExperimental").orElseThrow().stability())
+                .isEqualTo(StabilityTier.EXPERIMENTAL);
+        assertThat(registry.find("Experimental", "promotedStable").orElseThrow().stability())
+                .isEqualTo(StabilityTier.STABLE);
+    }
+
+    @Test
+    void rejectsMultipleStabilityTiersOnProtoRestExposed() {
+        ProtoRestMethodRegistry registry = new ProtoRestMethodRegistry();
+        assertThatThrownBy(() ->
+                        new ProtoRestAnnotationRegistrar(registry).register(new MultiStabilityService()))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("at most one StabilityTier");
     }
 }

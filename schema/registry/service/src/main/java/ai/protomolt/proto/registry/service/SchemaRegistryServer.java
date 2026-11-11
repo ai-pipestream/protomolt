@@ -5,6 +5,8 @@ import ai.protomolt.proto.actions.Caller;
 import ai.protomolt.proto.actions.ScopeBudgets;
 import ai.protomolt.proto.actions.Scopes;
 import ai.protomolt.proto.authz.CallerResolver;
+import ai.protomolt.proto.descriptors.ApiStability;
+import ai.protomolt.proto.descriptors.StabilityTier;
 import ai.protomolt.proto.registry.ConfigSupport;
 import ai.protomolt.proto.registry.InvalidConfigException;
 import ai.protomolt.proto.registry.ConfigDocumentStore;
@@ -86,18 +88,374 @@ import java.util.concurrent.locks.ReentrantLock;
  * credential — the registry carries writes and action execution, so it sits behind the same
  * boundary as the other operational surfaces.</p>
  */
+@ApiStability(StabilityTier.STABLE)
 public final class SchemaRegistryServer implements AutoCloseable {
+
+    /** Canonical route ID for {@code GET {healthPath}}. */
+    public static final String ROUTE_HEALTH = "schema-registry:health";
+    /** Canonical route ID for {@code GET /subjects}. */
+    public static final String ROUTE_SUBJECTS_LIST = "schema-registry:subjects.list";
+    /** Canonical route ID for {@code POST /subjects/{subject}}. */
+    public static final String ROUTE_SUBJECT_LOOKUP = "schema-registry:subject.lookup";
+    /** Canonical route ID for {@code GET|POST /subjects/{subject}/versions}. */
+    public static final String ROUTE_SUBJECT_VERSIONS = "schema-registry:subject.versions";
+    /** Canonical route ID for {@code GET /subjects/{subject}/versions/{version}}. */
+    public static final String ROUTE_SUBJECT_VERSION_GET = "schema-registry:subject.version.get";
+    /** Canonical route ID for {@code GET /schemas/ids/{id}}. */
+    public static final String ROUTE_SCHEMAS_BY_ID = "schema-registry:schemas.by-id";
+    /** Canonical route ID for {@code GET|PUT /config}. */
+    public static final String ROUTE_CONFIG_GLOBAL = "schema-registry:config.global";
+    /** Canonical route ID for {@code GET|PUT /config/{subject}}. */
+    public static final String ROUTE_CONFIG_SUBJECT = "schema-registry:config.subject";
+    /** Canonical route ID for {@code GET {nativePrefix}/subjects/{subject}/descriptor-set}. */
+    public static final String ROUTE_NATIVE_DESCRIPTOR_SET = "schema-registry:native.descriptor-set";
+    /** Canonical route ID for {@code GET {nativePrefix}/subjects/{subject}/parquet-schema}. */
+    public static final String ROUTE_NATIVE_PARQUET_SCHEMA = "schema-registry:native.parquet-schema";
+    /** Canonical route ID for {@code GET {nativePrefix}/configs}. */
+    public static final String ROUTE_NATIVE_CONFIGS_LIST = "schema-registry:native.configs.list";
+    /** Canonical route ID for {@code GET|PUT {nativePrefix}/configs/{name}}. */
+    public static final String ROUTE_NATIVE_CONFIGS_ITEM = "schema-registry:native.configs.item";
+    /** Canonical route ID for {@code GET {nativePrefix}/workflows}. */
+    public static final String ROUTE_NATIVE_WORKFLOWS_LIST = "schema-registry:native.workflows.list";
+    /** Canonical route ID for {@code GET|PUT {nativePrefix}/workflows/{name}}. */
+    public static final String ROUTE_NATIVE_WORKFLOWS_ITEM = "schema-registry:native.workflows.item";
+    /** Canonical route ID for {@code GET {nativePrefix}/actions}. */
+    public static final String ROUTE_NATIVE_ACTIONS_LIST = "schema-registry:native.actions.list";
+    /** Canonical route ID for {@code POST {nativePrefix}/actions/{name}}. */
+    public static final String ROUTE_NATIVE_ACTIONS_EXECUTE = "schema-registry:native.actions.execute";
 
     private static final Logger LOG = LoggerFactory.getLogger(SchemaRegistryServer.class);
 
     private static final String JSON_CONTENT_TYPE = "application/vnd.schemaregistry.v1+json";
+    private static final String WORKFLOW_JSON_CONTENT_TYPE = "application/json";
     private static final String PROTOBUF_CONTENT_TYPE = "application/x-protobuf";
     private static final String TEXT_CONTENT_TYPE = "text/plain; charset=utf-8";
+
+    /**
+     * Declarative HTTP route contract served by {@link SchemaRegistryServer}, shared between
+     * live request dispatch and release-baseline compatibility snapshots.
+     *
+     * @param routeId                 canonical route identifier
+     * @param pathTemplate            URI path template
+     * @param httpMethods             allowed uppercase HTTP methods
+     * @param pathParameters          ordered path parameter names
+     * @param requiredQueryParameters required query parameter names
+     * @param requestMediaType        expected request media type (or empty when bodyless)
+     * @param responseMediaType       produced response media type
+     * @param requestType             logical request payload contract name
+     * @param responseType            logical response payload contract name
+     * @param successStatusCodes      documented HTTP status codes for the endpoint
+     * @param authRequired            whether authentication is required on this server configuration
+     * @param stability               declared stability tier
+     */
+    @ApiStability(StabilityTier.STABLE)
+    public record RouteContract(
+            String routeId,
+            String pathTemplate,
+            List<String> httpMethods,
+            List<String> pathParameters,
+            List<String> requiredQueryParameters,
+            String requestMediaType,
+            String responseMediaType,
+            String requestType,
+            String responseType,
+            List<Integer> successStatusCodes,
+            boolean authRequired,
+            StabilityTier stability) {
+
+        public RouteContract {
+            Objects.requireNonNull(routeId, "routeId");
+            Objects.requireNonNull(pathTemplate, "pathTemplate");
+            httpMethods = List.copyOf(Objects.requireNonNull(httpMethods, "httpMethods"));
+            pathParameters = List.copyOf(Objects.requireNonNull(pathParameters, "pathParameters"));
+            requiredQueryParameters = List.copyOf(
+                    Objects.requireNonNull(requiredQueryParameters, "requiredQueryParameters"));
+            requestMediaType = Objects.requireNonNull(requestMediaType, "requestMediaType");
+            responseMediaType = Objects.requireNonNull(responseMediaType, "responseMediaType");
+            requestType = Objects.requireNonNull(requestType, "requestType");
+            responseType = Objects.requireNonNull(responseType, "responseType");
+            successStatusCodes = List.copyOf(
+                    Objects.requireNonNull(successStatusCodes, "successStatusCodes"));
+            Objects.requireNonNull(stability, "stability");
+        }
+
+        boolean matchesSegments(List<String> requestSegments) {
+            List<String> templateSegments = templateSegments(pathTemplate);
+            if (templateSegments.size() != requestSegments.size()) {
+                return false;
+            }
+            for (int i = 0; i < templateSegments.size(); i++) {
+                String segment = templateSegments.get(i);
+                if (isTemplateParameter(segment)) {
+                    continue;
+                }
+                if (!segment.equals(requestSegments.get(i))) {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        boolean allowsMethod(String method) {
+            return httpMethods.contains(method);
+        }
+
+        String allowHeader() {
+            return String.join(", ", httpMethods);
+        }
+
+        private static List<String> templateSegments(String template) {
+            List<String> segments = new ArrayList<>();
+            for (String segment : splitOn(template, '/')) {
+                if (!segment.isEmpty()) {
+                    segments.add(segment);
+                }
+            }
+            return segments;
+        }
+
+        private static boolean isTemplateParameter(String segment) {
+            return segment.length() > 2
+                    && segment.charAt(0) == '{'
+                    && segment.charAt(segment.length() - 1) == '}';
+        }
+    }
+
+    /**
+     * Returns the immutable list of {@link RouteContract}s served by a
+     * {@link SchemaRegistryServer} with the given configuration and action-mount setting.
+     *
+     * @param config              server configuration supplying {@code healthPath}, {@code nativePathPrefix}, and {@code apiToken}
+     * @param includeActionRoutes whether an {@link ActionCatalog} is mounted under {@code {nativePathPrefix}/actions}
+     * @return immutable ordered route contracts
+     */
+    public static List<RouteContract> routeContracts(
+            SchemaRegistryServerConfig config,
+            boolean includeActionRoutes) {
+        Objects.requireNonNull(config, "config");
+        boolean authRequired = config.apiToken() != null;
+        String nativePrefix = config.nativePathPrefix();
+
+        List<RouteContract> routes = new ArrayList<>(16);
+        routes.add(new RouteContract(
+                ROUTE_HEALTH,
+                config.healthPath(),
+                List.of("GET"),
+                List.of(),
+                List.of(),
+                "",
+                JSON_CONTENT_TYPE,
+                "",
+                "HealthStatusResponse",
+                List.of(200),
+                false,
+                StabilityTier.STABLE));
+        routes.add(new RouteContract(
+                ROUTE_SUBJECTS_LIST,
+                "/subjects",
+                List.of("GET"),
+                List.of(),
+                List.of(),
+                "",
+                JSON_CONTENT_TYPE,
+                "",
+                "SubjectList",
+                List.of(200),
+                authRequired,
+                StabilityTier.STABLE));
+        routes.add(new RouteContract(
+                ROUTE_SUBJECT_LOOKUP,
+                "/subjects/{subject}",
+                List.of("POST"),
+                List.of("subject"),
+                List.of(),
+                JSON_CONTENT_TYPE,
+                JSON_CONTENT_TYPE,
+                "LookupSchemaRequest",
+                "RegisteredSchemaResponse",
+                List.of(200, 404, 422),
+                authRequired,
+                StabilityTier.STABLE));
+        routes.add(new RouteContract(
+                ROUTE_SUBJECT_VERSIONS,
+                "/subjects/{subject}/versions",
+                List.of("GET", "POST"),
+                List.of("subject"),
+                List.of(),
+                JSON_CONTENT_TYPE,
+                JSON_CONTENT_TYPE,
+                "RegisterSchemaRequest",
+                "SubjectVersionsOrIdResponse",
+                List.of(200, 404, 409, 422),
+                authRequired,
+                StabilityTier.STABLE));
+        routes.add(new RouteContract(
+                ROUTE_SUBJECT_VERSION_GET,
+                "/subjects/{subject}/versions/{version}",
+                List.of("GET"),
+                List.of("subject", "version"),
+                List.of(),
+                "",
+                JSON_CONTENT_TYPE,
+                "",
+                "RegisteredSchemaResponse",
+                List.of(200, 404, 422),
+                authRequired,
+                StabilityTier.STABLE));
+        routes.add(new RouteContract(
+                ROUTE_SCHEMAS_BY_ID,
+                "/schemas/ids/{id}",
+                List.of("GET"),
+                List.of("id"),
+                List.of(),
+                "",
+                JSON_CONTENT_TYPE,
+                "",
+                "SchemaByIdResponse",
+                List.of(200, 404),
+                authRequired,
+                StabilityTier.STABLE));
+        routes.add(new RouteContract(
+                ROUTE_CONFIG_GLOBAL,
+                "/config",
+                List.of("GET", "PUT"),
+                List.of(),
+                List.of(),
+                JSON_CONTENT_TYPE,
+                JSON_CONTENT_TYPE,
+                "CompatibilityConfigRequest",
+                "CompatibilityConfigResponse",
+                List.of(200, 422),
+                authRequired,
+                StabilityTier.STABLE));
+        routes.add(new RouteContract(
+                ROUTE_CONFIG_SUBJECT,
+                "/config/{subject}",
+                List.of("GET", "PUT"),
+                List.of("subject"),
+                List.of(),
+                JSON_CONTENT_TYPE,
+                JSON_CONTENT_TYPE,
+                "CompatibilityConfigRequest",
+                "CompatibilityConfigResponse",
+                List.of(200, 404, 422),
+                authRequired,
+                StabilityTier.STABLE));
+        routes.add(new RouteContract(
+                ROUTE_NATIVE_DESCRIPTOR_SET,
+                nativePrefix + "/subjects/{subject}/descriptor-set",
+                List.of("GET"),
+                List.of("subject"),
+                List.of(),
+                "",
+                PROTOBUF_CONTENT_TYPE,
+                "",
+                "google.protobuf.FileDescriptorSet",
+                List.of(200, 404),
+                authRequired,
+                StabilityTier.STABLE));
+        routes.add(new RouteContract(
+                ROUTE_NATIVE_PARQUET_SCHEMA,
+                nativePrefix + "/subjects/{subject}/parquet-schema",
+                List.of("GET"),
+                List.of("subject"),
+                List.of("message"),
+                "",
+                TEXT_CONTENT_TYPE,
+                "",
+                "ParquetMessageTypeText",
+                List.of(200, 400, 404, 422),
+                authRequired,
+                StabilityTier.STABLE));
+        routes.add(new RouteContract(
+                ROUTE_NATIVE_CONFIGS_LIST,
+                nativePrefix + "/configs",
+                List.of("GET"),
+                List.of(),
+                List.of(),
+                "",
+                JSON_CONTENT_TYPE,
+                "",
+                "ConfigNameList",
+                List.of(200, 404),
+                authRequired,
+                StabilityTier.STABLE));
+        routes.add(new RouteContract(
+                ROUTE_NATIVE_CONFIGS_ITEM,
+                nativePrefix + "/configs/{name}",
+                List.of("GET", "PUT"),
+                List.of("name"),
+                List.of(),
+                JSON_CONTENT_TYPE,
+                JSON_CONTENT_TYPE,
+                "ConfigEnvelopeRequest",
+                "ConfigEnvelopeResponse",
+                List.of(200, 404, 422),
+                authRequired,
+                StabilityTier.STABLE));
+        routes.add(new RouteContract(
+                ROUTE_NATIVE_WORKFLOWS_LIST,
+                nativePrefix + "/workflows",
+                List.of("GET"),
+                List.of(),
+                List.of(),
+                "",
+                JSON_CONTENT_TYPE,
+                "",
+                "WorkflowNameList",
+                List.of(200, 404),
+                authRequired,
+                StabilityTier.STABLE));
+        routes.add(new RouteContract(
+                ROUTE_NATIVE_WORKFLOWS_ITEM,
+                nativePrefix + "/workflows/{name}",
+                List.of("GET", "PUT"),
+                List.of("name"),
+                List.of(),
+                JSON_CONTENT_TYPE,
+                WORKFLOW_JSON_CONTENT_TYPE,
+                "WorkflowDefinitionRequest",
+                "WorkflowDefinitionResponse",
+                List.of(200, 404, 422),
+                authRequired,
+                StabilityTier.STABLE));
+        if (includeActionRoutes) {
+            routes.add(new RouteContract(
+                    ROUTE_NATIVE_ACTIONS_LIST,
+                    nativePrefix + "/actions",
+                    List.of("GET"),
+                    List.of(),
+                    List.of(),
+                    "",
+                    JSON_CONTENT_TYPE,
+                    "",
+                    "ActionListResponse",
+                    List.of(200),
+                    authRequired,
+                    StabilityTier.STABLE));
+            routes.add(new RouteContract(
+                    ROUTE_NATIVE_ACTIONS_EXECUTE,
+                    nativePrefix + "/actions/{name}",
+                    List.of("POST"),
+                    List.of("name"),
+                    List.of(),
+                    JSON_CONTENT_TYPE,
+                    JSON_CONTENT_TYPE,
+                    "ActionExecuteRequest",
+                    "ActionExecuteResponse",
+                    List.of(200, 400, 403, 404, 422, 429),
+                    authRequired,
+                    StabilityTier.STABLE));
+        }
+        return List.copyOf(routes);
+    }
 
     private final SchemaRegistryServerConfig config;
     private final SchemaRegistryStore store;
     private final ActionCatalog actions;
     private final CallerResolver resolver;
+    private final RouteContract healthRoute;
+    private final List<RouteContract> dispatchRoutes;
     private final ObjectMapper json = new ObjectMapper();
     private final ScopeBudgets budgets;
     private final ProtoSourceCompiler compiler = new ProtoSourceCompiler();
@@ -157,6 +515,9 @@ public final class SchemaRegistryServer implements AutoCloseable {
         this.config = Objects.requireNonNull(config, "config");
         this.store = Objects.requireNonNull(store, "store");
         this.actions = actions;
+        List<RouteContract> allRoutes = routeContracts(config, actions != null);
+        this.healthRoute = allRoutes.get(0);
+        this.dispatchRoutes = allRoutes.subList(1, allRoutes.size());
         // The route table and the mounted catalog are one enforcement boundary: they
         // spend on the catalog's ledger so a caller cannot take its per-scope budget
         // once on a schema route and again on an action.
@@ -166,6 +527,18 @@ public final class SchemaRegistryServer implements AutoCloseable {
                     "an access-policy resolver requires the operator api token");
         }
         this.resolver = resolver;
+    }
+
+    /**
+     * Returns the immutable list of {@link RouteContract}s served by this server instance.
+     *
+     * @return immutable ordered route contracts
+     */
+    public List<RouteContract> routeContracts() {
+        List<RouteContract> all = new ArrayList<>(1 + dispatchRoutes.size());
+        all.add(healthRoute);
+        all.addAll(dispatchRoutes);
+        return List.copyOf(all);
     }
 
     /**
@@ -275,9 +648,12 @@ public final class SchemaRegistryServer implements AutoCloseable {
     private void route(HttpExchange exchange) throws Exception {
         String method = exchange.getRequestMethod().toUpperCase(Locale.ROOT);
         String rawPath = exchange.getRequestURI().getRawPath();
-        if (config.healthPath().equals(rawPath)) {
-            requireMethod(exchange, method, "GET", () -> writeJson(exchange, 200,
-                    json.createObjectNode().put("status", "UP")));
+        if (healthRoute.pathTemplate().equals(rawPath)) {
+            if (!healthRoute.allowsMethod(method)) {
+                methodNotAllowed(exchange, healthRoute.allowHeader());
+            } else {
+                writeJson(exchange, 200, json.createObjectNode().put("status", "UP"));
+            }
             return;
         }
         // The registry holds schema, config, and workflow writes plus action execution:
@@ -319,75 +695,73 @@ public final class SchemaRegistryServer implements AutoCloseable {
             }
         }
 
-        if (matches(segments, "subjects")) {
-            requireMethod(exchange, method, "GET", () -> listSubjects(exchange));
-        } else if (segments.size() == 2 && segments.get(0).equals("subjects")) {
-            requireMethod(exchange, method, "POST",
-                    () -> lookupByContent(exchange, segments.get(1)));
-        } else if (segments.size() == 3 && segments.get(0).equals("subjects")
-                && segments.get(2).equals("versions")) {
-            switch (method) {
-                case "GET" -> listVersions(exchange, segments.get(1));
-                case "POST" -> register(exchange, segments.get(1));
-                default -> methodNotAllowed(exchange, "GET, POST");
-            }
-        } else if (segments.size() == 4 && segments.get(0).equals("subjects")
-                && segments.get(2).equals("versions")) {
-            requireMethod(exchange, method, "GET",
-                    () -> getVersion(exchange, segments.get(1), segments.get(3)));
-        } else if (segments.size() == 3 && segments.get(0).equals("schemas")
-                && segments.get(1).equals("ids")) {
-            requireMethod(exchange, method, "GET", () -> getById(exchange, segments.get(2)));
-        } else if (matches(segments, "config")) {
-            switch (method) {
-                case "GET" -> writeJson(exchange, 200, json.createObjectNode()
-                        .put("compatibilityLevel", store.globalCompatibilityMode()));
-                case "PUT" -> putGlobalConfig(exchange);
-                default -> methodNotAllowed(exchange, "GET, PUT");
-            }
-        } else if (segments.size() == 2 && segments.get(0).equals("config")) {
-            switch (method) {
-                case "GET" -> getSubjectConfig(exchange, segments.get(1));
-                case "PUT" -> putSubjectConfig(exchange, segments.get(1));
-                default -> methodNotAllowed(exchange, "GET, PUT");
-            }
-        } else if (segments.size() == 4 && segments.get(0).equals(nativePrefix)
-                && segments.get(1).equals("subjects") && segments.get(3).equals("descriptor-set")) {
-            requireMethod(exchange, method, "GET", () -> descriptorSet(exchange, segments.get(2)));
-        } else if (segments.size() == 4 && segments.get(0).equals(nativePrefix)
-                && segments.get(1).equals("subjects") && segments.get(3).equals("parquet-schema")) {
-            requireMethod(exchange, method, "GET", () -> parquetSchema(exchange, segments.get(2)));
-        } else if (segments.size() == 2 && segments.get(0).equals(nativePrefix)
-                && segments.get(1).equals("configs")) {
-            requireMethod(exchange, method, "GET", () -> listConfigs(exchange));
-        } else if (segments.size() == 3 && segments.get(0).equals(nativePrefix)
-                && segments.get(1).equals("configs")) {
-            switch (method) {
-                case "GET" -> getConfig(exchange, segments.get(2));
-                case "PUT" -> putConfig(exchange, segments.get(2));
-                default -> methodNotAllowed(exchange, "GET, PUT");
-            }
-        } else if (segments.size() == 2 && segments.get(0).equals(nativePrefix)
-                && segments.get(1).equals("workflows")) {
-            requireMethod(exchange, method, "GET", () -> listWorkflows(exchange));
-        } else if (segments.size() == 3 && segments.get(0).equals(nativePrefix)
-                && segments.get(1).equals("workflows")) {
-            switch (method) {
-                case "GET" -> getWorkflow(exchange, segments.get(2));
-                case "PUT" -> putWorkflow(exchange, segments.get(2));
-                default -> methodNotAllowed(exchange, "GET, PUT");
-            }
-        } else if (actions != null && segments.size() == 2 && segments.get(0).equals(nativePrefix)
-                && segments.get(1).equals("actions")) {
-            requireMethod(exchange, method, "GET",
-                    () -> writeJson(exchange, 200, actions.list(caller)));
-        } else if (actions != null && segments.size() == 3 && segments.get(0).equals(nativePrefix)
-                && segments.get(1).equals("actions")) {
-            requireMethod(exchange, method, "POST",
-                    () -> executeAction(exchange, segments.get(2), caller));
-        } else {
+        RouteContract matched = findMatchingRoute(segments);
+        if (matched == null) {
             writeError(exchange, 404, 404, "HTTP 404 Not Found");
+            return;
         }
+        if (!matched.allowsMethod(method)) {
+            methodNotAllowed(exchange, matched.allowHeader());
+            return;
+        }
+        switch (matched.routeId()) {
+            case ROUTE_SUBJECTS_LIST -> listSubjects(exchange);
+            case ROUTE_SUBJECT_LOOKUP -> lookupByContent(exchange, segments.get(1));
+            case ROUTE_SUBJECT_VERSIONS -> {
+                if ("GET".equals(method)) {
+                    listVersions(exchange, segments.get(1));
+                } else {
+                    register(exchange, segments.get(1));
+                }
+            }
+            case ROUTE_SUBJECT_VERSION_GET -> getVersion(exchange, segments.get(1), segments.get(3));
+            case ROUTE_SCHEMAS_BY_ID -> getById(exchange, segments.get(2));
+            case ROUTE_CONFIG_GLOBAL -> {
+                if ("GET".equals(method)) {
+                    writeJson(exchange, 200, json.createObjectNode()
+                            .put("compatibilityLevel", store.globalCompatibilityMode()));
+                } else {
+                    putGlobalConfig(exchange);
+                }
+            }
+            case ROUTE_CONFIG_SUBJECT -> {
+                if ("GET".equals(method)) {
+                    getSubjectConfig(exchange, segments.get(1));
+                } else {
+                    putSubjectConfig(exchange, segments.get(1));
+                }
+            }
+            case ROUTE_NATIVE_DESCRIPTOR_SET -> descriptorSet(exchange, segments.get(2));
+            case ROUTE_NATIVE_PARQUET_SCHEMA -> parquetSchema(exchange, segments.get(2));
+            case ROUTE_NATIVE_CONFIGS_LIST -> listConfigs(exchange);
+            case ROUTE_NATIVE_CONFIGS_ITEM -> {
+                if ("GET".equals(method)) {
+                    getConfig(exchange, segments.get(2));
+                } else {
+                    putConfig(exchange, segments.get(2));
+                }
+            }
+            case ROUTE_NATIVE_WORKFLOWS_LIST -> listWorkflows(exchange);
+            case ROUTE_NATIVE_WORKFLOWS_ITEM -> {
+                if ("GET".equals(method)) {
+                    getWorkflow(exchange, segments.get(2));
+                } else {
+                    putWorkflow(exchange, segments.get(2));
+                }
+            }
+            case ROUTE_NATIVE_ACTIONS_LIST -> writeJson(exchange, 200, actions.list(caller));
+            case ROUTE_NATIVE_ACTIONS_EXECUTE -> executeAction(exchange, segments.get(2), caller);
+            default -> writeError(exchange, 404, 404, "HTTP 404 Not Found");
+        }
+    }
+
+    private RouteContract findMatchingRoute(List<String> segments) {
+        for (RouteContract candidate : dispatchRoutes) {
+            if (candidate.matchesSegments(segments)) {
+                return candidate;
+            }
+        }
+        return null;
     }
 
     /**
@@ -1004,10 +1378,6 @@ public final class SchemaRegistryServer implements AutoCloseable {
         }
     }
 
-    private static boolean matches(List<String> segments, String only) {
-        return segments.size() == 1 && segments.get(0).equals(only);
-    }
-
     private static List<String> decodeSegments(String rawPath) {
         List<String> segments = new ArrayList<>();
         for (String segment : splitOn(rawPath, '/')) {
@@ -1040,20 +1410,6 @@ public final class SchemaRegistryServer implements AutoCloseable {
             end--;
         }
         return tokens.subList(0, end);
-    }
-
-    @FunctionalInterface
-    private interface Handler {
-        void run() throws IOException;
-    }
-
-    private void requireMethod(HttpExchange exchange, String actual, String expected, Handler handler)
-            throws IOException {
-        if (expected.equals(actual)) {
-            handler.run();
-        } else {
-            methodNotAllowed(exchange, expected);
-        }
     }
 
     private void methodNotAllowed(HttpExchange exchange, String allow) throws IOException {

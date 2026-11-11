@@ -25,4 +25,8 @@
  * <p>See the <a href="https://github.com/ai-pipestream/protomolt/blob/main/docs/schema/metadata.md">Schema
  * metadata guide</a> for the annotation form and the masking surfaces.</p>
  */
+@ApiStability(StabilityTier.STABLE)
 package ai.protomolt.proto.meta;
+
+import ai.protomolt.proto.descriptors.ApiStability;
+import ai.protomolt.proto.descriptors.StabilityTier;
