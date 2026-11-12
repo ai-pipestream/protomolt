@@ -127,7 +127,8 @@ class CompatibilityBaselineSystemTest {
         ReleaseBaselineReport report = ReleaseBaselineGate.evaluate(recorded, live);
         report.throwIfIncompatible();
         assertThat(report.isCompatible()).isTrue();
-        assertThat(report.changes()).isEmpty();
+        assertThat(report.unwaivedViolations()).isEmpty();
+        assertThat(report.unusedWaivers()).isEmpty();
     }
 
     @Test
@@ -135,6 +136,7 @@ class CompatibilityBaselineSystemTest {
         Path baselineDir = repositoryRoot().resolve("compatibility/baseline");
         ReleaseBaselineBundle recorded = ReleaseBaselineGate.load(baselineDir);
         ReleaseBaselineBundle live = CompatibilityBaselineGenerator.captureLiveBundle(recorded.manifest());
+        ReleaseBaselineReport baselineReport = ReleaseBaselineGate.evaluate(recorded, live);
 
         // 1. Additive change: add a new REST route and a new action verb without touching baseline files
         List<RestRouteEntry> augmentedRoutes = new ArrayList<>(live.restRoutes().routes());
@@ -175,9 +177,50 @@ class CompatibilityBaselineSystemTest {
         ReleaseBaselineReport additiveReport = ReleaseBaselineGate.evaluate(recorded, additiveCandidate);
         assertThat(additiveReport.isCompatible()).isTrue();
         assertThat(additiveReport.unwaivedViolations()).isEmpty();
-        assertThat(additiveReport.changes()).hasSize(2);
+        assertThat(additiveReport.unusedWaivers()).isEmpty();
+        assertThat(additiveReport.changes()).hasSize(baselineReport.changes().size() + 2);
+        assertThat(additiveReport.changes())
+                .extracting(SurfaceChange::path)
+                .contains("schema-registry:v2.preview", "preview-compatibility");
 
-        // 2. Breaking change: drop an existing STABLE action from the live catalog
+        // 2. Concurrent additive PR skew: live Java API contains concrete methods not yet in recorded
+        ClassEntry sampleClass = live.javaApi().classesByName().get("ai.protomolt.proto.compat.CompatibilityChecker");
+        assertThat(sampleClass).isNotNull();
+        assertThat(sampleClass.methods()).isNotEmpty();
+        ClassEntry classWithoutLatestMethod = new ClassEntry(
+                sampleClass.className(),
+                sampleClass.kind(),
+                sampleClass.visibility(),
+                sampleClass.finalType(),
+                sampleClass.abstractType(),
+                sampleClass.superclass(),
+                sampleClass.interfaces(),
+                sampleClass.stability(),
+                sampleClass.constructors(),
+                sampleClass.methods().subList(0, sampleClass.methods().size() - 1),
+                sampleClass.fields());
+        List<ClassEntry> laggingJavaClasses = live.javaApi().classes().stream()
+                .map(entry -> entry.className().equals(sampleClass.className()) ? classWithoutLatestMethod : entry)
+                .toList();
+        ReleaseBaselineBundle laggingRecorded = new ReleaseBaselineBundle(
+                recorded.manifest(),
+                new JavaApiSnapshot(laggingJavaClasses),
+                live.protobuf(),
+                live.storedFormats(),
+                live.restRoutes(),
+                live.actionEnvelopes());
+        ReleaseBaselineReport skewedJavaReport = ReleaseBaselineGate.evaluate(laggingRecorded, live);
+        skewedJavaReport.throwIfIncompatible();
+        assertThat(skewedJavaReport.isCompatible()).isTrue();
+        assertThat(skewedJavaReport.unwaivedViolations()).isEmpty();
+        assertThat(skewedJavaReport.changes())
+                .singleElement()
+                .satisfies(change -> {
+                    assertThat(change.ruleId()).isEqualTo(JavaApiCompatibilityChecker.JAVA_METHOD_ADDED);
+                    assertThat(change.breaking()).isFalse();
+                });
+
+        // 3. Breaking change: drop an existing STABLE action from the live catalog
         List<ActionEnvelopeEntry> reducedActions = live.actionEnvelopes().actions().subList(
                 1, live.actionEnvelopes().actions().size());
         ReleaseBaselineBundle breakingCandidate = new ReleaseBaselineBundle(
