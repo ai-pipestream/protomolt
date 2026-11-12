@@ -62,11 +62,16 @@ public final class S3BlobStore implements BlobStore {
         return new PutResult(r.eTag(), r.versionId());
     }
 
+    private static long requireObjectLength(Long length) {
+        if (length == null || length < 0) throw new IllegalStateException("S3 reported no object length");
+        return length;
+    }
+
     @Override
     public ObjectMetadata statObject(String bucket, String key) {
         try {
             var response = client.headObject(b -> b.bucket(bucket).key(key));
-            return new ObjectMetadata(response.contentLength(), response.contentType(), response.eTag(),
+            return new ObjectMetadata(requireObjectLength(response.contentLength()), response.contentType(), response.eTag(),
                     response.versionId(), response.metadata());
         } catch (NoSuchKeyException missing) {
             throw new BlobNotFoundException("blob not found: s3://" + bucket + "/" + key, missing);
@@ -83,7 +88,7 @@ public final class S3BlobStore implements BlobStore {
         }
         try {
             var response = stream.response();
-            return new ObjectRead(new ObjectMetadata(response.contentLength(), response.contentType(),
+            return new ObjectRead(new ObjectMetadata(requireObjectLength(response.contentLength()), response.contentType(),
                     response.eTag(), response.versionId(), response.metadata()), abortable(stream));
         } catch (RuntimeException | Error failure) {
             try { stream.abort(); } catch (RuntimeException close) { failure.addSuppressed(close); }
@@ -328,9 +333,7 @@ public final class S3BlobStore implements BlobStore {
         try {
             var response = client.headObject(software.amazon.awssdk.services.s3.model.HeadObjectRequest.builder()
                     .bucket(bucket).key(key).build());
-            var length = response.contentLength();
-            if (length == null || length < 0) throw new IllegalStateException("S3 reported no object length");
-            return length;
+            return requireObjectLength(response.contentLength());
         } catch (NoSuchKeyException nsk) {
             throw new BlobNotFoundException("blob not found: s3://" + bucket + "/" + key, nsk);
         }

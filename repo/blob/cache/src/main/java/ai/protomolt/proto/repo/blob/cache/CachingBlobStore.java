@@ -96,6 +96,7 @@ public final class CachingBlobStore implements BlobStore, AutoCloseable {
 
     @Override public PutResult put(PutSpec spec, byte[] body) {
         PutResult result = backing.put(spec, body);
+        evict(spec.bucket(), spec.key());
         populate(spec.bucket(), spec.key(), new ObjectMetadata(body.length, spec.contentType(),
                 result.eTag(), result.versionId(), Map.of()), new ByteArrayInputStream(body));
         return result;
@@ -150,6 +151,8 @@ public final class CachingBlobStore implements BlobStore, AutoCloseable {
     }
 
     @Override public InputStream openVerifiedStream(String bucket, String key, long expectedLength, String expectedSha256Hex) {
+        if (expectedLength >= 0 && !fits(expectedLength))
+            return backing.openVerifiedStream(bucket, key, expectedLength, expectedSha256Hex);
         ObjectMetadata metadata = currentMetadata(bucket, key);
         if (metadata != null) {
             InputStream hit = cachedStream(bucket, key, metadata, expectedLength, expectedSha256Hex);
@@ -241,6 +244,8 @@ public final class CachingBlobStore implements BlobStore, AutoCloseable {
             spool = null;
             return result;
         } catch (IOException failure) {
+            if (Thread.currentThread().isInterrupted())
+                throw new BlobStoreException(BlobStoreException.Code.CANCELLED, "Cache read cancelled", failure);
             LOG.warn("Cache spool unavailable for {}/{}; reading backing", bucket, key, failure);
             return null;
         } finally { if (spool != null) discard(spool); }
@@ -250,7 +255,8 @@ public final class CachingBlobStore implements BlobStore, AutoCloseable {
         ObjectRead read;
         try { read = backing.openSnapshot(bucket, key); }
         catch (UnsupportedOperationException unsupported) { return backing.openStream(bucket, key, 0, -1); }
-        if (!cacheable(read.metadata())) return read.stream();
+        if (!cacheable(read.metadata())
+                || (expectedLength >= 0 && read.metadata().length() != expectedLength)) return read.stream();
         CacheSpool spool;
         try { spool = new CacheSpool(read.metadata().length()); }
         catch (IOException | RuntimeException failure) {

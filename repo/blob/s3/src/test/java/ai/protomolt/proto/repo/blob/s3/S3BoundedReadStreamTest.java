@@ -57,6 +57,26 @@ class S3BoundedReadStreamTest {
                 .isInstanceOf(BlobStore.BlobReadLimitException.class);
     }
 
+    @Test void missingSnapshotOrStatLengthIsExplicitAndSnapshotIsAborted() {
+        var aborted = new AtomicInteger();
+        var sdk = (S3Client) Proxy.newProxyInstance(S3Client.class.getClassLoader(), new Class<?>[]{S3Client.class},
+                (proxy, method, args) -> {
+                    if (method.getName().equals("headObject"))
+                        return software.amazon.awssdk.services.s3.model.HeadObjectResponse.builder().build();
+                    if (method.getName().equals("getObject"))
+                        return new ResponseInputStream<>(GetObjectResponse.builder().build(),
+                                software.amazon.awssdk.http.AbortableInputStream.create(
+                                        new ByteArrayInputStream(new byte[0]), aborted::incrementAndGet));
+                    throw new AssertionError("Unexpected SDK method: " + method.getName());
+                });
+        var store = new S3BlobStore(sdk);
+        assertThatThrownBy(() -> store.statObject("bucket", "key"))
+                .isInstanceOf(IllegalStateException.class).hasMessage("S3 reported no object length");
+        assertThatThrownBy(() -> store.openSnapshot("bucket", "key"))
+                .isInstanceOf(IllegalStateException.class).hasMessage("S3 reported no object length");
+        assertThat(aborted.get()).isEqualTo(1);
+    }
+
     private static BlobStore.GetResult read(Long length, InputStream body, int limit) {
         return read(length, body, limit, new AtomicInteger());
     }

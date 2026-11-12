@@ -97,12 +97,39 @@ final class RedisTransfer implements AutoCloseable {
         return status;
     }
 
-    /** Lua bounds this metadata tuple before returning it; the following body is not decoded here. */
+    /** Decode the fixed metadata tuple with client-side bounds before reading the body. */
     List<?> metadataReply() throws IOException {
-        Object reply = Protocol.read(input);
-        if (!(reply instanceof List<?> fields) || fields.size() != 4)
-            throw new IOException("Invalid Redis snapshot metadata");
-        return fields;
+        if (number('*') != 4) throw new IOException("Invalid Redis snapshot metadata");
+        long length = number(':');
+        if (length < 0 || length > 536870912L) throw new IOException("Invalid Redis snapshot length");
+        byte[] contentType = boundedBulk(65536);
+        byte[] etag = boundedBulk(1024);
+        long fields = number('*');
+        if (fields < 0 || fields > 512 || fields % 2 != 0)
+            throw new IOException("Invalid Redis snapshot attributes");
+        var attributes = new java.util.ArrayList<byte[]>((int) fields);
+        int remaining = 98304;
+        for (int i = 0; i < fields; i++) {
+            byte[] value = boundedBulk(remaining);
+            remaining -= value.length;
+            attributes.add(value);
+        }
+        return List.of(length, contentType, etag, attributes);
+    }
+
+    private byte[] boundedBulk(int limit) throws IOException {
+        long length = number('$');
+        if (length < 0 || length > limit) throw new IOException("Redis metadata exceeds its bound");
+        byte[] value = new byte[(int) length];
+        int offset = 0;
+        while (offset < value.length) {
+            int count = input.read(value, offset, value.length - offset);
+            if (count <= 0) throw new IOException("Truncated Redis metadata");
+            offset += count;
+        }
+        if (input.readByte() != '\r' || input.readByte() != '\n')
+            throw new IOException("Invalid Redis metadata terminator");
+        return value;
     }
 
     InputStream payload(long maxLength) throws IOException {
