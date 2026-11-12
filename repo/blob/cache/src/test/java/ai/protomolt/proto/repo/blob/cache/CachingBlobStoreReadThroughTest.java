@@ -267,6 +267,29 @@ class CachingBlobStoreReadThroughTest {
         }
     }
 
+    @Test
+    void interruptionDuringCacheFillDoesNotBecomeSuccessfulEof() throws Exception {
+        var backing = new InMemoryBlobStore();
+        var cache = new InMemoryBlobStore();
+        var store = new CachingBlobStore(backing, cache, 60, 1024);
+        byte[] payload = {1, 2, 3};
+        backing.put(spec(BUCKET, "cancelled"), payload);
+        cache.interruptStreamPut = true;
+        try (InputStream input = store.openVerifiedStream(BUCKET, "cancelled", payload.length, sha256Hex(payload))) {
+            byte[] received = new byte[payload.length];
+            assertThat(input.read(received)).isEqualTo(payload.length);
+            assertThat(received).isEqualTo(payload);
+            assertThatThrownBy(input::read).isInstanceOf(IOException.class)
+                    .hasMessage("Cache read cancelled")
+                    .hasRootCauseMessage("Interrupted cache transfer");
+            assertThat(Thread.currentThread().isInterrupted()).isTrue();
+        } finally {
+            Thread.interrupted();
+        }
+        assertThatThrownBy(() -> cache.get(BUCKET, "cancelled"))
+                .isInstanceOf(BlobStore.BlobNotFoundException.class);
+    }
+
     private static BlobStore.PutSpec spec(String bucket, String key) {
         return new BlobStore.PutSpec(bucket, key, "application/octet-stream", Map.of(), null);
     }
@@ -280,6 +303,7 @@ class CachingBlobStoreReadThroughTest {
         private final Map<String, String> etags = new HashMap<>();
         private final Map<String, Map<String, String>> attributes = new HashMap<>();
         boolean failAll;
+        boolean interruptStreamPut;
         int streamReads;
         int boundedReads;
         int lastTtlSeconds;
@@ -328,6 +352,10 @@ class CachingBlobStoreReadThroughTest {
 
         @Override
         public PutResult put(PutSpec spec, InputStream body, long length, int ttl) {
+            if (interruptStreamPut) {
+                Thread.currentThread().interrupt();
+                throw new IllegalStateException("Interrupted cache transfer");
+            }
             try { return put(spec, body.readAllBytes(), ttl); }
             catch (IOException failure) { throw new UncheckedIOException(failure); }
         }

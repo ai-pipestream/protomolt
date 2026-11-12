@@ -272,7 +272,11 @@ public final class CachingBlobStore implements BlobStore, AutoCloseable {
         try {
             if (cache instanceof ExpiringBlobStore expiring) expiring.put(spec, body, source.length(), ttlSeconds);
             else cache.put(spec, body, source.length());
-        } catch (RuntimeException failure) { LOG.warn("Cache fill failed for {}/{}; backing is authoritative", bucket, key, failure); }
+        } catch (RuntimeException failure) {
+            if (Thread.currentThread().isInterrupted())
+                throw new BlobStoreException(BlobStoreException.Code.CANCELLED, "Cache fill cancelled", failure);
+            LOG.warn("Cache fill failed for {}/{}; backing is authoritative", bucket, key, failure);
+        }
     }
 
     private boolean fits(long size) { return maxCacheableBytes > 0 && size >= 0 && size <= maxCacheableBytes; }
