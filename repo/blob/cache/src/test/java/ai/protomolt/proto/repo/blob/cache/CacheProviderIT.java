@@ -139,10 +139,10 @@ class CacheProviderIT {
         assertThat(s3Admin.getObject(b -> b.bucket(BUCKET).key("entry")).readAllBytes())
                 .isEqualTo(bytes("authoritative"));
 
-        // A poisoned cache entry proves plain reads are genuinely served from
-        // the cache; the backing store still holds the authoritative bytes.
+        // A cache entry without the current authoritative identity must not be
+        // served, even when its own checksum matches its poisoned bytes.
         cache.put(spec(BUCKET, "entry"), bytes("poisoned"));
-        assertThat(decorator.get(BUCKET, "entry").data()).isEqualTo(bytes("poisoned"));
+        assertThat(decorator.get(BUCKET, "entry").data()).isEqualTo(bytes("authoritative"));
         assertThat(backing.get(BUCKET, "entry").data()).isEqualTo(bytes("authoritative"));
 
         // Delete evicts the poisoned entry and removes the backing object.
@@ -163,6 +163,69 @@ class CacheProviderIT {
     }
 
     @Test
+    void verifiedCacheMissHitAndCancellationFitSmallerHeapThanObject() throws Exception {
+        var directory = java.nio.file.Files.createTempDirectory("cache-heap-probe-");
+        var log = java.nio.file.Files.createTempFile("cache-heap-probe-", ".log");
+        var process = new ProcessBuilder(java.nio.file.Path.of(System.getProperty("java.home"), "bin", "java").toString(),
+                "-Xmx96m", "-Djava.io.tmpdir=" + directory, "-cp", System.getProperty("protomolt.cache.heap.classpath"),
+                CacheHeapProbe.class.getName(), LOCALSTACK.getEndpoint().toString(), LOCALSTACK.getRegion(),
+                LOCALSTACK.getAccessKey(), LOCALSTACK.getSecretKey(), redisUri(), UUID.randomUUID().toString(), BUCKET)
+                .redirectErrorStream(true).redirectOutput(log.toFile()).start();
+        try {
+            assertThat(process.waitFor(120, TimeUnit.SECONDS)).as("cache heap probe deadline").isTrue();
+            assertThat(process.exitValue()).as(java.nio.file.Files.readString(log)).isZero();
+            assertThat(java.nio.file.Files.readString(log)).contains("CACHE_BOUNDED_HEAP_OK");
+        } finally {
+            if (process.isAlive()) { process.destroyForcibly(); process.waitFor(10, TimeUnit.SECONDS); }
+            try (var files = java.nio.file.Files.list(directory)) {
+                for (var file : files.toList()) java.nio.file.Files.deleteIfExists(file);
+            }
+            java.nio.file.Files.deleteIfExists(directory);
+            java.nio.file.Files.deleteIfExists(log);
+        }
+    }
+
+    @Test
+    void streamedRewriteIsVisibleAcrossCacheInstances() throws Exception {
+        var providers = BlobStores.discover();
+        s3Handle = providers.open("s3", s3Options());
+        redisHandle = providers.open("valkey", redisOptions("rewrite-" + UUID.randomUUID()));
+        var first = new CachingBlobStore(s3Handle.store(), redisHandle.store(), 60, 1024 * 1024);
+        var second = new CachingBlobStore(s3Handle.store(), redisHandle.store(), 60, 1024 * 1024);
+        String key = "rewrite-" + UUID.randomUUID();
+        first.put(spec(BUCKET, key), bytes("old"));
+        assertThat(second.get(BUCKET, key).data()).isEqualTo(bytes("old"));
+        first.put(spec(BUCKET, key), new ByteArrayInputStream(bytes("new")), 3);
+        assertThat(second.get(BUCKET, key).data()).isEqualTo(bytes("new"));
+        try (var stream = second.openStream(BUCKET, key, 0, -1)) {
+            assertThat(stream.readAllBytes()).isEqualTo(bytes("new"));
+        }
+        // A writer outside both decorators cannot evict their cache. Equal size
+        // must not hide a changed authoritative ETag.
+        s3Handle.store().put(spec(BUCKET, key), bytes("alt"));
+        assertThat(second.get(BUCKET, key).data()).isEqualTo(bytes("alt"));
+    }
+
+    @Test
+    void delayedOldReadCannotPoisonRewrittenKey() throws Exception {
+        var providers = BlobStores.discover();
+        s3Handle = providers.open("s3", s3Options());
+        redisHandle = providers.open("valkey", redisOptions("late-fill-" + UUID.randomUUID()));
+        var first = new CachingBlobStore(s3Handle.store(), redisHandle.store(), 60, 1024 * 1024);
+        var second = new CachingBlobStore(s3Handle.store(), redisHandle.store(), 60, 1024 * 1024);
+        String key = "late-fill-" + UUID.randomUUID();
+        s3Handle.store().put(spec(BUCKET, key), bytes("old"));
+        try (var oldSnapshot = first.openStream(BUCKET, key, 0, -1)) {
+            // Opening the S3 response pins the old bytes; delay its cache fill
+            // until after a successful write through another decorator.
+            second.put(spec(BUCKET, key), new ByteArrayInputStream(bytes("new")), 3);
+            assertThat(oldSnapshot.readAllBytes()).isEqualTo(bytes("old"));
+        }
+        assertThat(s3Handle.store().get(BUCKET, key).data()).isEqualTo(bytes("new"));
+        assertThat(second.get(BUCKET, key).data()).isEqualTo(bytes("new"));
+    }
+
+    @Test
     void conditionalOperationsBypassAndEvictTheCache() throws Exception {
         var providers = BlobStores.discover();
         redisHandle = providers.open("valkey", redisOptions("backing-it-" + UUID.randomUUID()));
@@ -178,7 +241,7 @@ class CacheProviderIT {
             // The authoritative conditional read always bypasses the cache.
             var snapshot = decorator.getForUpdate("namespace", "key");
             assertThat(snapshot.data()).isEqualTo(bytes("v1"));
-            assertThat(decorator.get("namespace", "key").data()).isEqualTo(bytes("poisoned"));
+            assertThat(decorator.get("namespace", "key").data()).isEqualTo(bytes("v1"));
 
             // A conditional write lands on the backing store and evicts the
             // poisoned entry; the next plain read re-populates from backing.

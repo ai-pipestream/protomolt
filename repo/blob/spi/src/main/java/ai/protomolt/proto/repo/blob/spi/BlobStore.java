@@ -24,6 +24,47 @@ import java.util.Objects;
  */
 public interface BlobStore {
 
+    /** Metadata from one provider response, without materializing the object body. */
+    record ObjectMetadata(long length, String contentType, String eTag, String versionId,
+                          Map<String, String> attributes) {
+        public ObjectMetadata {
+            if (length < 0) throw new IllegalArgumentException("Object length must not be negative");
+            attributes = attributes == null ? Map.of() : Map.copyOf(attributes);
+        }
+    }
+
+    /** A stream and metadata from the same object snapshot; the caller owns and closes it. */
+    record ObjectRead(ObjectMetadata metadata, InputStream stream) implements AutoCloseable {
+        public ObjectRead {
+            Objects.requireNonNull(metadata, "metadata");
+            Objects.requireNonNull(stream, "stream");
+        }
+        @Override public void close() throws java.io.IOException { stream.close(); }
+    }
+
+    /**
+     * Reads current metadata without fetching object bytes. A provider without this
+     * capability refuses rather than emulating HEAD by buffering a GET.
+     * @param bucket object namespace
+     * @param key object key
+     * @return metadata from one authoritative response
+     */
+    default ObjectMetadata statObject(String bucket, String key) {
+        throw new UnsupportedOperationException("Object metadata lookup is unsupported");
+    }
+
+    /**
+     * Opens a current-object stream with metadata from that same read response.
+     * Implementations must not combine a separate HEAD with an unconditioned GET:
+     * a concurrent rewrite could otherwise associate old identity with new bytes.
+     * @param bucket object namespace
+     * @param key object key
+     * @return the pinned read and its metadata
+     */
+    default ObjectRead openSnapshot(String bucket, String key) {
+        throw new UnsupportedOperationException("Streamed object snapshot is unsupported");
+    }
+
     /** Maximum byte count of the bounded authoritative snapshot operation. */
     int MAX_CONDITIONAL_BYTES = 9 * 1024 * 1024;
 

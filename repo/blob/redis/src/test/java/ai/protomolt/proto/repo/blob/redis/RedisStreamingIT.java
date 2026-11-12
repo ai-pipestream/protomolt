@@ -191,6 +191,40 @@ class RedisStreamingIT {
         }
     }
 
+    @Test void metadataAndStreamedExpiryUseTheExistingHashFields() {
+        String prefix = UUID.randomUUID().toString();
+        try (var store = new RedisBlobStore(new RedisBlobStoreConfig(uri(), 0, 0, prefix));
+             var admin = new Jedis(URI.create(uri()))) {
+            var attributes = Map.of("source-etag", "\"exact\"", "unicode", "café", "empty", "");
+            var spec = new BlobStore.PutSpec("streaming", "metadata", "application/x-protobuf", attributes, null);
+            var result = store.put(spec, new ByteArrayInputStream(new byte[]{0, (byte) 255, 1}), 3, 45);
+            var metadata = store.statObject("streaming", "metadata");
+            assertThat(metadata.length()).isEqualTo(3);
+            assertThat(metadata.contentType()).isEqualTo("application/x-protobuf");
+            assertThat(metadata.eTag()).isEqualTo(result.eTag());
+            assertThat(metadata.attributes()).isEqualTo(attributes);
+            assertThat(metadata.versionId()).isNull();
+            String physical = new RedisObjectKeys(prefix, RedisWritePolicy.REPLACE).object("streaming", "metadata");
+            assertThat(admin.ttl(physical)).isBetween(1L, 45L);
+            admin.hset(physical, "attributes", "not msgpack");
+            assertThatThrownBy(() -> store.statObject("streaming", "metadata"))
+                    .isInstanceOf(BlobStoreException.class).hasMessageContaining("metadata");
+        }
+    }
+
+    @Test void snapshotMetadataAndBytesComeFromTheSameAtomicRead() throws Exception {
+        try (var store = store(0, RedisWritePolicy.REPLACE)) {
+            var written = store.put(spec("snapshot-metadata", null), new byte[]{1, 2, 3});
+            try (var read = store.openSnapshot("streaming", "snapshot-metadata")) {
+                store.put(spec("snapshot-metadata", null), new byte[]{4, 5, 6, 7});
+                assertThat(read.metadata().eTag()).isEqualTo(written.eTag());
+                assertThat(read.metadata().length()).isEqualTo(3);
+                assertThat(read.stream().readAllBytes()).containsExactly(1, 2, 3);
+            }
+            assertThat(store.statObject("streaming", "snapshot-metadata").length()).isEqualTo(4);
+        }
+    }
+
     private static String uri() { return "redis://" + REDIS.getHost() + ":" + REDIS.getMappedPort(6379); }
     private static RedisBlobStore store(int ttl, RedisWritePolicy policy) {
         return new RedisBlobStore(new RedisBlobStoreConfig(uri(), ttl, 0, UUID.randomUUID().toString(), policy));

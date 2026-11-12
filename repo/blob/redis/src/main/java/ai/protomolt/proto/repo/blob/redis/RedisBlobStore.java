@@ -56,9 +56,13 @@ public final class RedisBlobStore implements ExpiringBlobStore, AutoCloseable {
 
     /** Caller owns the stream. An incomplete or invalid body never completes the atomic command. */
     @Override public PutResult put(PutSpec spec, InputStream body, long contentLength) {
+        return put(spec, body, contentLength, ttlSeconds);
+    }
+
+    @Override public PutResult put(PutSpec spec, InputStream body, long contentLength, int ttl) {
         Objects.requireNonNull(body);
         requireSize(contentLength);
-        var target = prepare(spec, ttlSeconds);
+        var target = prepare(spec, ttl);
         var digest = digest();
         try (var transfer = openTransfer()) {
             // EVAL, script, key count, key, body, type, etag, timestamp, TTL,
@@ -103,6 +107,44 @@ public final class RedisBlobStore implements ExpiringBlobStore, AutoCloseable {
             if (status != 1) throw new BlobStoreException(BlobStoreException.Code.DATA_LOSS, "Invalid Redis object metadata", null);
             return new PutResult(etag, null);
         } catch (IOException failure) { throw new UncheckedIOException(failure); }
+    }
+
+    @Override public ObjectMetadata statObject(String namespace, String key) {
+        try (var jedis = pool.getResource()) {
+            var result = (List<?>) jedis.eval(RedisObjectScripts.METADATA,
+                    List.of(bytes(keys.object(namespace, key))), List.of());
+            requireResult(result, MAX_VALUE_BYTES, key);
+            return metadata(result.subList(1, result.size()));
+        }
+    }
+
+    private static ObjectMetadata metadata(List<?> fields) {
+        var attributes = new LinkedHashMap<String, String>();
+        var pairs = (List<?>) fields.get(3);
+        for (int i = 0; i < pairs.size(); i += 2)
+            attributes.put(text(pairs.get(i)), text(pairs.get(i + 1)));
+        String type = text(fields.get(1));
+        return new ObjectMetadata(((Number) fields.get(0)).longValue(), type.isEmpty() ? null : type,
+                text(fields.get(2)), null, attributes);
+    }
+
+    @Override public ObjectRead openSnapshot(String namespace, String key) {
+        String physical = keys.object(namespace, key);
+        RedisTransfer transfer = null;
+        try {
+            transfer = openTransfer();
+            transfer.command(List.of(bytes("EVAL"), RedisObjectScripts.SNAPSHOT, bytes("1"), bytes(physical)));
+            requireResult(List.of(transfer.readStatus(3)), MAX_VALUE_BYTES, key);
+            ObjectMetadata metadata = metadata(transfer.metadataReply());
+            return new ObjectRead(metadata, transfer.payload(metadata.length()));
+        } catch (IOException | RuntimeException | Error failure) {
+            if (transfer != null) {
+                try { transfer.close(); } catch (IOException close) { failure.addSuppressed(close); }
+            }
+            if (failure instanceof IOException io) throw new UncheckedIOException(io);
+            if (failure instanceof RuntimeException runtime) throw runtime;
+            throw (Error) failure;
+        }
     }
 
     @Override public long objectLength(String namespace, String key) {

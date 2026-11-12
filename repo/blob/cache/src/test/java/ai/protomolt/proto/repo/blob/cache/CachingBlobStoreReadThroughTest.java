@@ -124,12 +124,12 @@ class CachingBlobStoreReadThroughTest {
 
         byte[] authoritative = "verified-authoritative-bytes".getBytes(StandardCharsets.UTF_8);
         String sha = sha256Hex(authoritative);
-        backing.put(spec(BUCKET, "obj"), authoritative);
+        store.put(spec(BUCKET, "obj"), authoritative);
 
         // Poison the cache with wrong-digest bytes of the same length
         byte[] corruptedSameLength = authoritative.clone();
         corruptedSameLength[0] ^= 0x01;
-        cache.put(spec(store.cacheBucket(BUCKET), "obj"), corruptedSameLength);
+        cache.data.put(InMemoryBlobStore.coord(store.cacheBucket(BUCKET), "obj"), corruptedSameLength);
 
         try (InputStream stream = store.openVerifiedStream(BUCKET, "obj", authoritative.length, sha)) {
             assertThat(stream.readAllBytes()).isEqualTo(authoritative);
@@ -138,8 +138,7 @@ class CachingBlobStoreReadThroughTest {
         assertThat(cache.get(store.cacheBucket(BUCKET), "obj").data()).isEqualTo(authoritative);
 
         // Poison the cache with truncated bytes
-        cache.put(
-                spec(store.cacheBucket(BUCKET), "obj"),
+        cache.data.put(InMemoryBlobStore.coord(store.cacheBucket(BUCKET), "obj"),
                 Arrays.copyOf(authoritative, authoritative.length - 3));
         try (InputStream stream = store.openVerifiedStream(BUCKET, "obj", authoritative.length, sha)) {
             assertThat(stream.readAllBytes()).isEqualTo(authoritative);
@@ -247,6 +246,19 @@ class CachingBlobStoreReadThroughTest {
                 .isInstanceOf(BlobStore.BlobReadLimitException.class);
     }
 
+    @Test
+    void unavailableAuthorityIsNeverHiddenByAValidCachedBody() {
+        var backing = new InMemoryBlobStore();
+        var cache = new InMemoryBlobStore();
+        var store = new CachingBlobStore(backing, cache, 60, 1024);
+        store.put(spec(BUCKET, "present"), new byte[]{1, 2, 3});
+        backing.failAll = true;
+        assertThatThrownBy(() -> store.get(BUCKET, "present"))
+                .isInstanceOf(IllegalStateException.class).hasMessage("Simulated cache outage");
+        assertThatThrownBy(() -> store.openVerifiedStream(BUCKET, "present", 3, null))
+                .isInstanceOf(IllegalStateException.class).hasMessage("Simulated cache outage");
+    }
+
     private static void readAll(InputStream in) {
         try (in) {
             in.readAllBytes();
@@ -266,6 +278,7 @@ class CachingBlobStoreReadThroughTest {
     private static final class InMemoryBlobStore implements ExpiringBlobStore {
         private final Map<String, byte[]> data = new HashMap<>();
         private final Map<String, String> etags = new HashMap<>();
+        private final Map<String, Map<String, String>> attributes = new HashMap<>();
         boolean failAll;
         int streamReads;
         int boundedReads;
@@ -293,6 +306,7 @@ class CachingBlobStoreReadThroughTest {
             byte[] copy = body.clone();
             String k = coord(spec.bucket(), spec.key());
             data.put(k, copy);
+            attributes.put(k, spec.metadata() == null ? Map.of() : Map.copyOf(spec.metadata()));
             try {
                 String etag = "\"" + sha256Hex(copy) + "\"";
                 etags.put(k, etag);
@@ -310,6 +324,25 @@ class CachingBlobStoreReadThroughTest {
             } catch (IOException e) {
                 throw new UncheckedIOException(e);
             }
+        }
+
+        @Override
+        public PutResult put(PutSpec spec, InputStream body, long length, int ttl) {
+            try { return put(spec, body.readAllBytes(), ttl); }
+            catch (IOException failure) { throw new UncheckedIOException(failure); }
+        }
+
+        @Override
+        public ObjectMetadata statObject(String bucket, String key) {
+            headObject(bucket, key);
+            String k = coord(bucket, key);
+            return new ObjectMetadata(data.get(k).length, "application/octet-stream", etags.get(k), null,
+                    attributes.getOrDefault(k, Map.of()));
+        }
+
+        @Override
+        public ObjectRead openSnapshot(String bucket, String key) {
+            return new ObjectRead(statObject(bucket, key), openStream(bucket, key, 0, -1));
         }
 
         @Override

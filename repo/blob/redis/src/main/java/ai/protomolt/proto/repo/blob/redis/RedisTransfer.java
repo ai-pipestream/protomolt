@@ -86,12 +86,22 @@ final class RedisTransfer implements AutoCloseable {
     }
 
     /** Reads only the array header and status; the payload remains on the socket. */
-    long readStatus() throws IOException {
+    long readStatus() throws IOException { return readStatus(2); }
+
+    long readStatus(int successFields) throws IOException {
         long count = number('*');
-        if (count != 1 && count != 2) throw new IOException("Invalid Redis stream response shape");
+        if (count != 1 && count != successFields) throw new IOException("Invalid Redis stream response shape");
         long status = number(':');
-        if ((status == 1) != (count == 2)) throw new IOException("Invalid Redis stream response status");
+        if ((status == 1) != (count == successFields)) throw new IOException("Invalid Redis stream response status");
         return status;
+    }
+
+    /** Lua bounds this metadata tuple before returning it; the following body is not decoded here. */
+    List<?> metadataReply() throws IOException {
+        Object reply = Protocol.read(input);
+        if (!(reply instanceof List<?> fields) || fields.size() != 4)
+            throw new IOException("Invalid Redis snapshot metadata");
+        return fields;
     }
 
     InputStream payload(long maxLength) throws IOException {
