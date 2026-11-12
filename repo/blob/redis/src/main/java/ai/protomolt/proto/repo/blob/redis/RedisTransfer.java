@@ -11,6 +11,7 @@ import redis.clients.jedis.DefaultJedisClientConfig;
 import redis.clients.jedis.DefaultJedisSocketFactory;
 import redis.clients.jedis.HostAndPort;
 import redis.clients.jedis.Protocol;
+import redis.clients.jedis.SslOptions;
 import redis.clients.jedis.util.JedisURIHelper;
 import redis.clients.jedis.util.RedisInputStream;
 import redis.clients.jedis.util.RedisOutputStream;
@@ -18,7 +19,7 @@ import redis.clients.jedis.util.RedisOutputStream;
 /**
  * One RESP2 transfer on a dedicated Jedis-configured socket. Jedis's ordinary command
  * API requires a byte array for every bulk argument and reply; this boundary streams
- * only the object bulk value. Small replies still use Jedis's protocol decoder.
+ * only the object bulk value. Control replies use bounded RESP2 parsing.
  * Closing an incomplete transfer abandons the socket, never drains or pools it.
  */
 final class RedisTransfer implements AutoCloseable {
@@ -29,7 +30,9 @@ final class RedisTransfer implements AutoCloseable {
 
     RedisTransfer(URI uri, java.util.function.Consumer<RedisTransfer> onClose) throws IOException {
         this.onClose = onClose;
-        var config = DefaultJedisClientConfig.builder().ssl(JedisURIHelper.isRedisSSLScheme(uri)).build();
+        var builder = DefaultJedisClientConfig.builder();
+        if (JedisURIHelper.isRedisSSLScheme(uri)) builder.sslOptions(SslOptions.defaults());
+        var config = builder.build();
         socket = new DefaultJedisSocketFactory(new HostAndPort(uri.getHost(),
                 uri.getPort() < 0 ? Protocol.DEFAULT_PORT : uri.getPort()), config).createSocket();
         try {
@@ -80,9 +83,7 @@ final class RedisTransfer implements AutoCloseable {
 
     long integerReply() throws IOException {
         output.flush();
-        Object reply = Protocol.read(input);
-        if (!(reply instanceof Long value)) throw new IOException("Expected Redis integer response");
-        return value;
+        return number(':');
     }
 
     /** Reads only the array header and status; the payload remains on the socket. */
@@ -176,8 +177,9 @@ final class RedisTransfer implements AutoCloseable {
     }
 
     private void requireOk() throws IOException {
-        Object result = Protocol.read(input);
-        if (!(result instanceof byte[] value) || !java.util.Arrays.equals(value, bytes("OK")))
+        byte marker = input.readByte();
+        if (marker == '-') throw new IOException("Redis transfer setup refused: " + line(1024));
+        if (marker != '+' || !line(2).equals("OK"))
             throw new IOException("Redis transfer setup failed");
     }
 
