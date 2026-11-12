@@ -74,8 +74,8 @@ class RedisCreateOnlyIT {
                 .isNotEqualTo(RedisBackendIdentity.of(uri(), options.get("key-prefix")));
         try (var opened = ai.protomolt.proto.repo.blob.spi.BlobStores.discover().open("redis", options)) {
             assertThat(opened.capabilities()).contains(ai.protomolt.proto.repo.blob.spi.BlobCapability.AUTHORITATIVE_CONDITIONAL_READ)
-                    .doesNotContain(ai.protomolt.proto.repo.blob.spi.BlobCapability.ATOMIC_CONDITIONAL_WRITE,
-                            ai.protomolt.proto.repo.blob.spi.BlobCapability.STREAMING_WRITE);
+                    .doesNotContain(ai.protomolt.proto.repo.blob.spi.BlobCapability.ATOMIC_CONDITIONAL_WRITE)
+                    .contains(ai.protomolt.proto.repo.blob.spi.BlobCapability.STREAMING_WRITE);
             opened.store().put(spec("key"), new byte[]{1});
             assertThatThrownBy(() -> opened.store().put(spec("key"), new byte[]{2})).isInstanceOf(BlobStore.BlobConflictException.class);
         }

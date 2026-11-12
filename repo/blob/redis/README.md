@@ -9,8 +9,12 @@ detection occurs. Use `redis://` or `rediss://` URIs for either server.
 Configuration requires `uri`, `ttl-seconds`, `max-object-bytes`, `key-prefix`
 and `write-policy`.
 Zero TTL disables expiry; zero size configuration still has a 512 MiB per-value
-adapter ceiling. Stream writes buffer the declared payload and reject short or
-extra bytes before writing. They are not an unbounded streaming upload path.
+adapter ceiling. InputStream writes transfer through a fixed 64 KiB window and
+reject short, extra or checksum-mismatched bytes before the Lua command can execute.
+Whole-object and range streams consume one atomic Redis response incrementally;
+closing early abandons the socket rather than draining the object. `objectLength`
+uses HSTRLEN without fetching the payload. The explicit byte-array GET/PUT APIs
+remain buffered; use the stream APIs for transfers.
 Custom metadata is limited to 256 entries and 64 KiB of total UTF-8 bytes,
 including names, values and content type. Malformed text is rejected before any
 write. These limits are independent of the body limit.
@@ -33,18 +37,18 @@ migration or cross-layout fallback.
 
 Create-only requires zero TTL and caps writes/copies at 9 MiB, or a smaller
 configured limit. PUT and COPY atomically refuse existing targets, including an
-identical retry; self-copy conflicts. Buffered InputStream writes use the same
+identical retry; self-copy conflicts. Streamed InputStream writes use the same
 policy. Matching conditional replacement is unsupported, so this mode does not
 advertise `ATOMIC_CONDITIONAL_WRITE`; authoritative reads remain available.
-It also does not advertise streaming writes. The capability description below
-applies to the default replacement mode.
+Both policies advertise streaming writes within their existing provider limits.
 
 This protects against replacement through the selected adapter, not direct Redis
 administration. Reclamation deletes the key; a delayed write can recreate it.
 The repository must qualify writer drain/fencing and repeat cleanup before managed
 archival activation. Create-only is not a retention, tombstone or durability claim.
 
-The provider exposes listing, expiry, bounded reads, atomic conditional writes and physical reclamation.
+The provider exposes listing, expiry, bounded reads, streaming writes and physical reclamation.
+Replacement mode additionally exposes atomic conditional writes.
 It exposes non-expiring writes only when the configured TTL is zero. Explicit
 version requests are unsupported; they never fall back to the current object.
 `getForUpdate` returns bytes and their ETag from one bounded Redis operation.
@@ -108,10 +112,10 @@ legacy `redis` and `s3-redis-cache` modes. Prefer the `DOCUMENT_PLATFORM_VALKEY_
 environment variables; the corresponding `REDIS` variables remain accepted.
 Supplying both spellings with different values fails without echoing credentials.
 
-S3 remains the default authoritative store. The shared Valkey/Redis adapter has
-bounded, buffered payloads and does not acquire native streaming capabilities by
-renaming the server. Direct `BlobStoreStack` construction rejects its missing
-streamed reads. General managed storage still requires S3 and lifecycle recovery;
+S3 remains the default authoritative store. The shared Valkey/Redis adapter streams
+through bounded client buffers for both aliases. This does not remove Redis's
+per-value limit or qualify server-side memory use: the existing hash/Lua operations
+still hold the value on the server. General managed storage still requires S3 and lifecycle recovery;
 the existing bounded archive profile remains separately limited. S3 with a Valkey
 cache keeps S3 authoritative and forwards streamed reads to S3. An empty cache can
 be rebuilt; an authoritative store must not be discarded or silently redirected.
@@ -146,3 +150,14 @@ Before migrating existing authoritative data, check the source server version.
 The [Valkey migration guide](https://valkey.io/topics/migration/) covers Redis OSS
 through 7.2; Redis 7.4+ persistence files are incompatible. This change provides no
 file conversion, cutover, rollback or administrative data migration.
+
+## Bounded transfer qualification
+
+`RedisStreamingIT` forks a JVM with a 48 MiB maximum heap and transfers a 128 MiB
+object through InputStream PUT, whole-object GET, a small range and stream-to-PUT
+promotion. It verifies exact bytes and SHA-256, plus early close. Separate cases
+pin pre-commit input failures, create-only conflicts, empty ranges, snapshot reads,
+URI authentication/database selection, TTL and malformed-object refusals.
+The transport reuses Jedis socket configuration, including rediss hostname
+verification; the bounded-heap test exercises the plaintext local server.
+This is client-memory qualification, not a Redis server-memory or durability claim.
