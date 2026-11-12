@@ -80,14 +80,14 @@ final class LuceneMetricQueries {
     private static Query dateRangeQuery(
             DateRangeFilter range, Map<String, ResolvedFieldHint> hints) {
         // The bounds arrive as inclusive UTC epoch millis; a field that
-        // stores seconds compares in seconds (day bounds divide evenly
-        // downward, so inclusiveness survives the floor).
+        // stores seconds needs ceil for the lower bound and floor for the upper.
+        // Flooring both includes the second just before a fractional lower bound.
         ResolvedFieldHint hint = hints.get(range.fieldName());
         boolean seconds = hint != null && hint.dateResolution() != null
                 && "SECONDS".equals(hint.dateResolution().name());
         long lower = range.gteEpochMillis() == null
                 ? Long.MIN_VALUE
-                : seconds ? Math.floorDiv(range.gteEpochMillis(), 1000)
+                : seconds ? Math.ceilDiv(range.gteEpochMillis(), 1000)
                         : range.gteEpochMillis();
         long upper = range.lteEpochMillis() == null
                 ? Long.MAX_VALUE
