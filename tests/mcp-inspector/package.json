@@ -10,6 +10,6 @@
     "self-test": "node run.mjs --self-test"
   },
   "devDependencies": {
-    "@modelcontextprotocol/inspector": "2.14.0"
+    "@modelcontextprotocol/inspector": "2.15.0"
   }
 }

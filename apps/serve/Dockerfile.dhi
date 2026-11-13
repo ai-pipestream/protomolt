@@ -30,13 +30,13 @@
 # GHCR / NAS keeps apps/serve/Dockerfile (uid 10001, bash HEALTHCHECK). Do
 # not fold this file into that path: Portainer chowns /data to 10001.
 
-FROM dhi.io/eclipse-temurin:25-jdk-debian13-dev@sha256:24baba80db715fa06993087017d8cf5ad9e77418bb4f3716303f6d2cf37fcad3 AS staged
+FROM dhi.io/eclipse-temurin:25-jdk-debian13-dev@sha256:ec05f4802b9414396fa9e0c01a7b9ba8814ea81227606266deb82793dad6ed38 AS staged
 COPY build/install/protomolt-serve /opt/protomolt-serve
 # Jars inherit the build host's cache permissions (some are 0600). The -dev
 # variant has a shell so we can normalize read bits before the runtime COPY.
 RUN chmod -R a+rX /opt/protomolt-serve
 
-FROM dhi.io/eclipse-temurin:25-debian13@sha256:be93b0fc8ea887dd1880f86df20005bacc56a563f12a7ce27c44394082f420be
+FROM dhi.io/eclipse-temurin:25-debian13@sha256:6b94a5a9118f661590c69eb49ae7f8dd49486a335203c05df8e5ab9132622aad
 COPY --from=staged /opt/protomolt-serve /opt/protomolt-serve
 USER nonroot
 ENV HOME=/tmp

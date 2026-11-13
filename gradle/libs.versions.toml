@@ -46,7 +46,7 @@ spring-boot = "4.1.2"
 vertx = "5.2.3"
 netty = "4.2.20.Final"
 # Micronaut 5.x needs a JVM 25 runtime, which the JDK 25 baseline now supplies.
-micronaut = "5.2.22"
+micronaut = "5.2.23"
 protobuf-gradle = "0.10.1"
 wire = "6.4.7"
 jgit = "7.8.1.202611041320-r"
@@ -55,7 +55,7 @@ hadoop = "3.5.0"
 iceberg = "1.12.0"
 duckdb = "1.5.6.0"
 sqlite-jdbc = "3.54.1.0"
-awssdk = "2.57.13"
+awssdk = "2.59.0"
 maven-resolver = "1.9.27"
 # Pairs with the maven-resolver 1.9.x line above; 3.10.x pulls in maven-resolver 2.x,
 # which drops DefaultTrackingFileManager and breaks maven-resolver-supplier 1.9.x.
@@ -64,7 +64,7 @@ graalvm-buildtools = "1.1.18"
 # Persistence stack (framework-free): Hibernate ORM + HikariCP + Flyway.
 hibernate = "7.4.15.Final"
 hikari = "7.1.0"
-flyway = "13.12.1"
+flyway = "13.12.2"
 postgresql = "42.7.14"
 jedis = "8.0.2"
 
