@@ -46,7 +46,7 @@ class RustFsConditionalBlobStoreIT {
     static ai.protomolt.proto.repo.blob.spi.OpenedBlobStore handle;
 
     @BeforeAll
-    static void setup() {
+    static void setup() throws InterruptedException {
         client = S3Client.builder()
                 .endpointOverride(java.net.URI.create("http://" + RUSTFS.getHost() + ":"
                         + RUSTFS.getMappedPort(9000)))
@@ -55,6 +55,7 @@ class RustFsConditionalBlobStoreIT {
                 .region(Region.US_EAST_1)
                 .httpClient(UrlConnectionHttpClient.create())
                 .forcePathStyle(true).build();
+        RustFsReadiness.awaitServing(client);
         client.createBucket(builder -> builder.bucket(BUCKET));
         handle = ai.protomolt.proto.repo.blob.spi.BlobStores.discover().open("s3", java.util.Map.ofEntries(
                 java.util.Map.entry("endpoint", "http://" + RUSTFS.getHost() + ":" + RUSTFS.getMappedPort(9000)),
