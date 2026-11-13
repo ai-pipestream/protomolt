@@ -283,6 +283,7 @@ naming the variable on a malformed value.
 | `PROTOMOLT_JOBS_WORKERS` | the jobs default worker count | integer |
 | `PROTOMOLT_JOBS_TARGET_CONCURRENCY` | the jobs default | integer |
 | `PROTOMOLT_SERVICE_WORKSPACE` | unset = in-memory profiles | profile store directory |
+| `PROTOMOLT_PROFILE_TLS_CONFIG` | unset = custom TLS refs refused | `ProfileTlsConfig` path (`.json`, `.binpb`, or `.pb`) for `protomolt-serve` and `protomolt-mcp` |
 | `PROTOMOLT_WORKFLOW_WORKSPACE` | unset | workflow workspace directory |
 | `PROTOMOLT_WORKFLOW_AUTHORING_POLICY_SHA256` | unset | hex digest pinning the authoring policy |
 | `PROTOMOLT_WORKFLOW_AUTHORING_AUTHORIZATION_DIR` | unset | directory |
