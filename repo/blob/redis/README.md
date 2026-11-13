@@ -7,7 +7,13 @@ The existing `redis` selection remains supported. Both factories reuse the same
 detection occurs. Use `redis://` or `rediss://` URIs for either server.
 
 Configuration requires `uri`, `ttl-seconds`, `max-object-bytes`, `key-prefix`
-and `write-policy`.
+and `write-policy`. Dedicated streaming sockets bypass the Jedis pool. Each store
+accepts `RedisBlobStoreConfig.MAX_CONCURRENT_TRANSFERS` (32) of them. That constant
+is the configured bound: construction rejects a value below 1, and there is no
+unlimited default. The provider applies the constant. A caller that needs another
+bound passes it to the full `RedisBlobStoreConfig` constructor. Exceeding the bound
+fails with `BlobStoreException.Code.RESOURCE_EXHAUSTED`. Closing or aborting a
+transfer releases its slot.
 Zero TTL disables expiry; zero size configuration still has a 512 MiB per-value
 adapter ceiling. InputStream writes transfer through a fixed 64 KiB window and
 reject short, extra or checksum-mismatched bytes before the Lua command can execute.
@@ -158,6 +164,9 @@ object through InputStream PUT, whole-object GET, a small range and stream-to-PU
 promotion. It verifies exact bytes and SHA-256, plus early close. Separate cases
 pin pre-commit input failures, create-only conflicts, empty ranges, snapshot reads,
 URI authentication/database selection, TTL and malformed-object refusals.
-The transport reuses Jedis socket configuration, including rediss hostname
-verification; the bounded-heap test exercises the plaintext local server.
+`RedisTlsStreamingIT` streams a put, `openStream`, and `openSnapshot` over
+`rediss://` to the selected server with a self-signed certificate. Hostname
+verification is on: a certificate that does not match the URI host fails.
+Each store builds one SSLContext and reuses its socket factory for those
+transfer sockets. `RedisTransferHeapProbe` remains a plaintext bounded-heap transfer.
 This is client-memory qualification, not a Redis server-memory or durability claim.

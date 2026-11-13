@@ -7,11 +7,13 @@ import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Objects;
+import java.util.concurrent.atomic.AtomicBoolean;
+import javax.net.ssl.SSLParameters;
 import redis.clients.jedis.DefaultJedisClientConfig;
 import redis.clients.jedis.DefaultJedisSocketFactory;
 import redis.clients.jedis.HostAndPort;
+import redis.clients.jedis.JedisClientConfig;
 import redis.clients.jedis.Protocol;
-import redis.clients.jedis.SslOptions;
 import redis.clients.jedis.util.JedisURIHelper;
 import redis.clients.jedis.util.RedisInputStream;
 import redis.clients.jedis.util.RedisOutputStream;
@@ -25,14 +27,32 @@ import redis.clients.jedis.util.RedisOutputStream;
 final class RedisTransfer implements AutoCloseable {
     private final Socket socket;
     private final java.util.function.Consumer<RedisTransfer> onClose;
+    private final AtomicBoolean finished = new AtomicBoolean();
     private final RedisInputStream input;
     private final RedisOutputStream output;
 
-    RedisTransfer(URI uri, java.util.function.Consumer<RedisTransfer> onClose) throws IOException {
-        this.onClose = onClose;
+    /**
+     * Jedis builds a new {@code SSLContext} whenever {@code sslOptions} is present.
+     * A rediss transfer therefore reuses the store factory and sets HTTPS endpoint
+     * identification itself, which is the hostname check of {@code SslOptions.defaults()}.
+     * The socket-factory setters are deprecated; they are the path that skips a per-socket context.
+     */
+    @SuppressWarnings("deprecation")
+    static JedisClientConfig clientConfig(URI uri, RedisTls tls) throws IOException {
+        if (tls == null && JedisURIHelper.isRedisSSLScheme(uri))
+            throw new IOException("rediss transfer requires the store TLS context");
         var builder = DefaultJedisClientConfig.builder();
-        if (JedisURIHelper.isRedisSSLScheme(uri)) builder.sslOptions(SslOptions.defaults());
-        var config = builder.build();
+        if (tls != null) {
+            var parameters = new SSLParameters();
+            parameters.setEndpointIdentificationAlgorithm("HTTPS");
+            builder.ssl(true).sslSocketFactory(tls.socketFactory()).sslParameters(parameters);
+        }
+        return builder.build();
+    }
+
+    RedisTransfer(URI uri, RedisTls tls, java.util.function.Consumer<RedisTransfer> onClose) throws IOException {
+        this.onClose = onClose;
+        var config = clientConfig(uri, tls);
         socket = new DefaultJedisSocketFactory(new HostAndPort(uri.getHost(),
                 uri.getPort() < 0 ? Protocol.DEFAULT_PORT : uri.getPort()), config).createSocket();
         try {
@@ -221,6 +241,7 @@ final class RedisTransfer implements AutoCloseable {
     }
 
     @Override public void close() throws IOException {
+        if (!finished.compareAndSet(false, true)) return;
         try { socket.close(); } finally { onClose.accept(this); }
     }
     private static byte[] bytes(String value) { return value.getBytes(StandardCharsets.UTF_8); }

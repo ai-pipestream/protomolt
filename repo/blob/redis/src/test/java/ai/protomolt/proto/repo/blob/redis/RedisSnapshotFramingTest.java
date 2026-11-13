@@ -25,7 +25,7 @@ class RedisSnapshotFramingTest {
 
     private static void refused(String reply, String message) throws Exception {
         try (var server = new ServerSocket(0, 1, InetAddress.getLoopbackAddress());
-                var transfer = new RedisTransfer(new URI("redis://localhost:" + server.getLocalPort()), ignored -> {});
+                var transfer = new RedisTransfer(new URI("redis://localhost:" + server.getLocalPort()), null, ignored -> {});
                 var peer = server.accept()) {
             peer.getOutputStream().write(reply.getBytes(StandardCharsets.US_ASCII));
             peer.getOutputStream().flush();

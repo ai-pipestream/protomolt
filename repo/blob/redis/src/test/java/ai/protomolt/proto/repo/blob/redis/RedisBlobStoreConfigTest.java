@@ -62,4 +62,23 @@ class RedisBlobStoreConfigTest {
         assertThat(bounded.ttlSeconds()).isEqualTo(3600);
         assertThat(bounded.maxObjectBytes()).isEqualTo(64L * 1024 * 1024);
     }
+
+    @Test
+    void streamingTransferLimitIsTheDocumentedConstantAndRejectsZero() {
+        assertThat(RedisBlobStoreConfig.MAX_CONCURRENT_TRANSFERS).isGreaterThan(0);
+        assertThat(RedisBlobStoreConfig.LOCAL.maxConcurrentTransfers())
+                .isEqualTo(RedisBlobStoreConfig.MAX_CONCURRENT_TRANSFERS);
+        assertThat(new RedisBlobStoreConfig("redis://h:6379", 0, 0, "p").maxConcurrentTransfers())
+                .isEqualTo(RedisBlobStoreConfig.MAX_CONCURRENT_TRANSFERS);
+        assertThat(new RedisBlobStoreConfig("redis://h:6379", 0, 0, "p", RedisWritePolicy.CREATE_ONLY)
+                .maxConcurrentTransfers()).isEqualTo(RedisBlobStoreConfig.MAX_CONCURRENT_TRANSFERS);
+        assertThat(new RedisBlobStoreConfig("redis://h:6379", 0, 0, "p", 2, RedisWritePolicy.REPLACE)
+                .maxConcurrentTransfers()).isEqualTo(2);
+        assertThatThrownBy(() -> new RedisBlobStoreConfig("redis://h:6379", 0, 0, "p", 0, RedisWritePolicy.REPLACE))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("maxConcurrentTransfers");
+        assertThatThrownBy(() -> new RedisBlobStoreConfig("redis://h:6379", 0, 0, "p", -1, RedisWritePolicy.REPLACE))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("maxConcurrentTransfers");
+    }
 }
