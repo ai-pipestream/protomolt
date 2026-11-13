@@ -81,20 +81,44 @@ before a channel opens.
 
 Custom trust and client-certificate references need a TLS endpoint and a host
 TLS resolver; otherwise every path refuses them with `unsupported-transport`
-before a channel opens. `FileProfileTlsResolver` is the bundled one. Each
-binding pins the profile name, endpoint name, host, port, `trust_ref` and
+before a channel opens. `FileProfileTlsResolver` is the bundled one, and both
+runnable servers mount it from a `ProfileTlsConfig` file (`.json`, `.binpb`, or
+`.pb`) when `--profile-tls-config <path>` or `PROTOMOLT_PROFILE_TLS_CONFIG` is
+set:
+
+```shell
+protomolt-serve --service-workspace /srv/protomolt-services \
+  --profile-tls-config /etc/protomolt/profile-tls.json
+protomolt-mcp --service-workspace /srv/protomolt-services \
+  --profile-tls-config /etc/protomolt/profile-tls.json
+```
+
+Relative PEM paths in `trust_bundles` and `client_certificates` resolve against
+`root_directory` when declared, or against the configuration file's parent
+directory otherwise. In `protomolt-serve`, the mounted TLS resolver composes
+through `ProfileCredentialResolver.withTls` alongside bearer bindings such as
+the correction starter, so bearer-authenticated profiles and mTLS profiles run
+together on the same server.
+
+Each binding pins the profile name, endpoint name, host, port, `trust_ref`, and
 `client_certificate_ref`. The host maps each trust reference to a PEM bundle of
 CA certificates, which replaces the JDK roots for that endpoint, and each
 client-certificate reference to a PEM certificate chain (leaf first) and an
-unencrypted PKCS#8 PEM key. Combine it with a bearer resolver through
-`ProfileCredentialResolver.withTls`. The files are read each time a channel
-opens, so replacing them rotates the material for the next call. An unapproved
-endpoint, an unknown reference, or a file that is missing or does not parse
-fails with `credential-unavailable` before a channel opens; the refusal names
-neither the files nor their contents. Registration, refresh, inspection,
-`service-invoke` and the reflected verbs all present the same material. A
-channel factory that cannot carry TLS channel credentials refuses instead of
-opening a default channel.
+unencrypted PKCS#8 PEM key. Every PEM file is bounded at 1 MiB
+(`FileProfileTlsResolver.DEFAULT_MAX_PEM_BYTES`) before parsing; oversized
+files fail closed with `credential-unavailable`. Resolved trust/key managers
+and `ChannelCredentials` are cached by `(realPath, fileKey, mtime, size)`, and
+`ChannelFactory.pooled` reuses healthy TLS channels across calls while still
+enforcing `OutboundChannelPolicy` active-channel leases per invocation. When a
+mounted PEM file changes on disk, the next resolution rebuilds the TLS
+credentials and evicts the pooled channel for the rotated credentials so the
+next call dials with the new material; server shutdown closes all pooled
+channels. An unapproved endpoint, an unknown reference, or a file that is
+missing, oversized, or does not parse fails with `credential-unavailable`
+before a channel opens; the refusal names neither the files nor their contents.
+Registration, refresh, inspection, `service-invoke`, and the reflected verbs
+all present the same material. A channel factory that cannot carry TLS channel
+credentials refuses instead of opening a default channel.
 
 Registration, refresh, unary and server-streaming `service-invoke`, and the
 reflected verbs attach the bearer token through gRPC `CallCredentials`, which

@@ -8,6 +8,7 @@ import ai.protomolt.proto.authz.OidcCallerResolver;
 import ai.protomolt.proto.authz.jdbc.CallerStoreConfig;
 import ai.protomolt.proto.authz.jdbc.JdbcCallerResolver;
 import ai.protomolt.proto.delegation.DelegationBridge;
+import ai.protomolt.proto.grpc.invoke.ChannelFactory;
 import ai.protomolt.proto.grpc.policy.OutboundChannelPolicy;
 import ai.protomolt.proto.grpc.profile.ServiceProfileRepository;
 import ai.protomolt.proto.grpc.service.ProtoMoltCatalog;
@@ -15,6 +16,7 @@ import ai.protomolt.proto.grpc.service.ProtoMoltGrpcServer;
 import ai.protomolt.proto.grpc.workflow.ArtifactRepository;
 import ai.protomolt.proto.grpc.workflow.RunEvidenceRepository;
 import ai.protomolt.proto.grpc.workflow.WorkflowVersionRepository;
+import ai.protomolt.proto.grpc.workspace.ProfileCredentialResolver;
 import ai.protomolt.proto.http.openapi.ProtoOpenApiGenerator;
 import ai.protomolt.proto.http.rest.ProtoRestGateway;
 import ai.protomolt.proto.inference.spi.InferenceEngines;
@@ -51,6 +53,7 @@ import org.slf4j.LoggerFactory;
  * protomolt-serve [--host 0.0.0.0] [--grpc-port 9090] [--http-port 8080]
  *                 [--registry-git /srv/schemas.git [--registry-port 8081]]
  *                 [--service-workspace /srv/protomolt-services]
+ *                 [--profile-tls-config /etc/protomolt/profile-tls.json]
  *                 [--workflow-workspace /srv/protomolt-workflows]
  * </pre>
  */
@@ -67,6 +70,8 @@ public final class ProtoMoltServe implements AutoCloseable {
      *        verbs stay in the catalog and answer {@code unavailable})
      * @param outboundPolicy one process-wide policy shared by catalog actions and the jobs worker;
      *        null selects the permissive defaults
+     * @param profileTlsConfig optional host TLS configuration mapping service-profile
+     *        {@code trust_ref} and {@code client_certificate_ref} names to mounted PEM files
      */
     public record Options(String host, int grpcPort, int httpPort,
                           Path registryGit, int registryPort, String apiToken, boolean demo,
@@ -78,7 +83,8 @@ public final class ProtoMoltServe implements AutoCloseable {
                           IdentityStoreOptions identityStores,
                           ConfigLaneOptions configLane,
                           WorkflowAuthoringOptions workflowAuthoring,
-                          WorkflowPreparationOptions workflowPreparation) {
+                          WorkflowPreparationOptions workflowPreparation,
+                          Path profileTlsConfig) {
 
         public Options {
             if (apiToken != null && apiToken.isBlank()) {
@@ -109,6 +115,23 @@ public final class ProtoMoltServe implements AutoCloseable {
                 throw new IllegalArgumentException("workflow preparation requires workflow authoring "
                         + "and a durable delegation repository");
             }
+        }
+
+        /** Binary/source-compatible constructor retaining the pre-profile-tls options surface. */
+        public Options(String host, int grpcPort, int httpPort,
+                       Path registryGit, int registryPort, String apiToken, boolean demo,
+                       Path gatherCache, JobsOptions jobs,
+                       java.util.List<String> inferenceModels, Path serviceWorkspace,
+                       OutboundChannelPolicy outboundPolicy, Path workflowWorkspace,
+                       DelegationOptions delegation, TaskConsoleOptions taskConsole,
+                       MeshClusterOptions meshCluster, Path accessPolicy,
+                       IdentityStoreOptions identityStores, ConfigLaneOptions configLane,
+                       WorkflowAuthoringOptions workflowAuthoring,
+                       WorkflowPreparationOptions workflowPreparation) {
+            this(host, grpcPort, httpPort, registryGit, registryPort, apiToken, demo,
+                    gatherCache, jobs, inferenceModels, serviceWorkspace, outboundPolicy,
+                    workflowWorkspace, delegation, taskConsole, meshCluster, accessPolicy,
+                    identityStores, configLane, workflowAuthoring, workflowPreparation, null);
         }
 
         /** Binary/source-compatible constructor retaining the pre-preparation options surface. */
@@ -269,6 +292,9 @@ public final class ProtoMoltServe implements AutoCloseable {
                     workflowWorkspace, delegation, taskConsole, null);
         }
 
+        static final String ENV_PROFILE_TLS_CONFIG = "PROTOMOLT_PROFILE_TLS_CONFIG";
+        static final String FLAG_PROFILE_TLS_CONFIG = "--profile-tls-config";
+
         public static Options defaults() {
             return new Options("0.0.0.0", 9090, 8080, null, 8081, null, false, null);
         }
@@ -300,6 +326,9 @@ public final class ProtoMoltServe implements AutoCloseable {
             String serviceWorkspaceEnv = System.getenv("PROTOMOLT_SERVICE_WORKSPACE");
             Path serviceWorkspace = serviceWorkspaceEnv == null || serviceWorkspaceEnv.isBlank()
                     ? null : Path.of(serviceWorkspaceEnv);
+            String profileTlsConfigEnv = System.getenv(ENV_PROFILE_TLS_CONFIG);
+            Path profileTlsConfig = profileTlsConfigEnv == null || profileTlsConfigEnv.isBlank()
+                    ? null : Path.of(profileTlsConfigEnv.trim());
             String workflowWorkspaceEnv = System.getenv("PROTOMOLT_WORKFLOW_WORKSPACE");
             Path workflowWorkspace = workflowWorkspaceEnv == null || workflowWorkspaceEnv.isBlank()
                     ? null : Path.of(workflowWorkspaceEnv);
@@ -396,6 +425,8 @@ public final class ProtoMoltServe implements AutoCloseable {
                     case "--mesh-created-at" -> meshCreatedAt = requireValue(args, ++i);
                     case "--service-workspace" ->
                             serviceWorkspace = Path.of(requireValue(args, ++i));
+                    case FLAG_PROFILE_TLS_CONFIG ->
+                            profileTlsConfig = Path.of(requireValue(args, ++i).trim());
                     case "--workflow-workspace" ->
                             workflowWorkspace = Path.of(requireValue(args, ++i));
                     case "--workflow-authoring-policy-sha256" ->
@@ -442,6 +473,7 @@ public final class ProtoMoltServe implements AutoCloseable {
                                 + "[|backend[|k:v,...[|capability,...[|credential-ref]]]]> ...] "
                                 + "(or PROTOMOLT_INFERENCE_MODELS, ';'-separated) "
                                 + "[--service-workspace <dir>] (or PROTOMOLT_SERVICE_WORKSPACE) "
+                                + "[--profile-tls-config <path>] (or PROTOMOLT_PROFILE_TLS_CONFIG) "
                                 + "[--workflow-workspace <dir>] (or PROTOMOLT_WORKFLOW_WORKSPACE) "
                                 + "[--workflow-authoring-policy-sha256 <sha256> "
                                 + "--workflow-authoring-authorization-dir <persistent-dir>] "
@@ -576,7 +608,7 @@ public final class ProtoMoltServe implements AutoCloseable {
                     demo, gatherCache, jobs, java.util.List.copyOf(inferenceModels),
                     serviceWorkspace, outboundPolicy, workflowWorkspace, delegation, taskConsole,
                     meshCluster, accessPolicy, identityStores, configLane, workflowAuthoring,
-                    workflowPreparation);
+                    workflowPreparation, profileTlsConfig);
         }
 
         private static int envInt(String name, int fallback) {
@@ -910,6 +942,7 @@ public final class ProtoMoltServe implements AutoCloseable {
     private final MeshClusterRuntime meshCluster;
     private final JdbcCallerResolver jdbcCallers;
     private final ConfigLaneMount.TrustSource trustSource;
+    private final ChannelFactory.Closeable outboundChannels;
 
     private ProtoMoltServe(ProtoMoltGrpcServer grpc, JdkProtoRestServer http,
                            McpHttpHandler mcp, int httpPort,
@@ -918,7 +951,8 @@ public final class ProtoMoltServe implements AutoCloseable {
                            WorkflowRunWorker jobsWorker, WorkflowRunEventRelay jobsRelay,
                            DelegationRuntime delegation, MeshClusterRuntime meshCluster,
                            JdbcCallerResolver jdbcCallers,
-                           ConfigLaneMount.TrustSource trustSource) {
+                           ConfigLaneMount.TrustSource trustSource,
+                           ChannelFactory.Closeable outboundChannels) {
         this.grpc = grpc;
         this.http = http;
         this.mcp = mcp;
@@ -933,6 +967,7 @@ public final class ProtoMoltServe implements AutoCloseable {
         this.meshCluster = meshCluster;
         this.jdbcCallers = jdbcCallers;
         this.trustSource = trustSource;
+        this.outboundChannels = outboundChannels;
     }
 
     /** Starts every configured surface; closing stops them all. */
@@ -959,7 +994,11 @@ public final class ProtoMoltServe implements AutoCloseable {
         ArtifactRepository artifacts = null;
         RunEvidenceRepository runEvidence = null;
         OutboundChannelPolicy outboundPolicy = options.outboundPolicy();
+        ChannelFactory.Closeable outboundChannels = null;
         try {
+            ProfileCredentialResolver credentials =
+                    ProfileTlsMount.resolve(options.profileTlsConfig(), starter);
+            outboundChannels = ChannelFactory.pooled(outboundPolicy);
             InferenceEngines inference = InferenceMount.engines(options.inferenceModels());
             StructuredGenerator structured = inference == null
                     ? null : new StructuredGenerator(inference, context.registry());
@@ -997,18 +1036,19 @@ public final class ProtoMoltServe implements AutoCloseable {
                 ActionCatalog catalog = ProtoMoltCatalog.full(context, options.gatherCache(),
                         workflows, jobs.store(), jobs.config().maxAttemptsDefault(),
                         inference, serviceProfiles,
-                        outboundPolicy, artifacts, runEvidence, workflowVersions, store,
-                        trust, starter == null ? null : starter.credentials());
+                        outboundPolicy, outboundChannels, artifacts, runEvidence, workflowVersions,
+                        store, trust, credentials);
                 return startWithJobsCatalog(options, context, catalog, store,
-                        serviceProfiles, jobs, starter, authoring, preparation, trust);
+                        serviceProfiles, jobs, starter, authoring, preparation, trust,
+                        outboundChannels);
             }
             // The catalog sees the store so run-workflow resolves stored workflow names.
             ActionCatalog catalog = ProtoMoltCatalog.full(context, options.gatherCache(),
                     workflows, null, 0, inference, serviceProfiles,
-                    outboundPolicy, artifacts, runEvidence, workflowVersions, store,
-                    trust, starter == null ? null : starter.credentials());
+                    outboundPolicy, outboundChannels, artifacts, runEvidence, workflowVersions,
+                    store, trust, credentials);
             return startWithJobsCatalog(options, context, catalog, store,
-                    serviceProfiles, null, starter, null, null, trust);
+                    serviceProfiles, null, starter, null, null, trust, outboundChannels);
         } catch (RuntimeException e) {
             if (registry != null) {
                 registry.close();
@@ -1019,6 +1059,7 @@ public final class ProtoMoltServe implements AutoCloseable {
             if (grpc != null) {
                 grpc.close();
             }
+            closeQuietly(outboundChannels);
             closeQuietly(trust);
             closeQuietly(store);
             closeQuietly(jobsWorker);
@@ -1037,7 +1078,8 @@ public final class ProtoMoltServe implements AutoCloseable {
                                                        CorrectionStarter starter,
                                                        WorkflowAuthoringMount.Prepared authoring,
                                                        WorkflowPreparationMount.Prepared preparation,
-                                                       ConfigLaneMount.TrustSource trust) {
+                                                       ConfigLaneMount.TrustSource trust,
+                                                       ChannelFactory.Closeable outboundChannels) {
         ProtoMoltGrpcServer grpc = null;
         JdkProtoRestServer http = null;
         McpHttpHandler mcpHandler = null;
@@ -1122,7 +1164,7 @@ public final class ProtoMoltServe implements AutoCloseable {
                     jobs == null ? null : jobs.database(),
                     jobs == null ? null : jobs.worker(),
                     jobs == null ? null : jobs.relay(),
-                    delegation, meshCluster, jdbcCallers, trust);
+                    delegation, meshCluster, jdbcCallers, trust, outboundChannels);
         } catch (RuntimeException e) {
             closeQuietly(jdbcCallers);
             closeQuietly(meshCluster);
@@ -1197,6 +1239,7 @@ public final class ProtoMoltServe implements AutoCloseable {
         closeQuietly(registryStore);
         http.close();
         grpc.close();
+        closeQuietly(outboundChannels);
         closeQuietly(jdbcCallers);
         closeQuietly(trustSource);
     }

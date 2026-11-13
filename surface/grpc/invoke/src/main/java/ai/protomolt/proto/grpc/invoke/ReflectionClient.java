@@ -109,6 +109,7 @@ public final class ReflectionClient {
                 throw new ReflectionException("Reflected descriptor set exceeds "
                         + MAX_DESCRIPTOR_SET_BYTES + " bytes");
             }
+            stream.markCompleted();
             return new Result(services, descriptorSet);
         }
     }
@@ -158,6 +159,8 @@ public final class ReflectionClient {
         List<FileDescriptorProto> fileContainingSymbol(String symbol) throws ReflectionException;
 
         List<FileDescriptorProto> fileByFilename(String filename) throws ReflectionException;
+
+        void markCompleted();
 
         @Override
         void close();
@@ -265,12 +268,23 @@ public final class ReflectionClient {
             return response;
         }
 
+        private boolean completed;
+
+        @Override
+        public void markCompleted() {
+            this.completed = true;
+        }
+
         @Override
         public void close() {
             try {
-                requests.onCompleted();
+                if (completed) {
+                    requests.onCompleted();
+                } else {
+                    requests.onError(Status.CANCELLED.asException());
+                }
             } catch (RuntimeException ignored) {
-                // Best-effort half-close; the channel is the caller's to shut down.
+                // Best-effort stream termination when the channel remains open in a pool.
             }
         }
     }
@@ -380,12 +394,23 @@ public final class ReflectionClient {
             return response;
         }
 
+        private boolean completed;
+
+        @Override
+        public void markCompleted() {
+            this.completed = true;
+        }
+
         @Override
         public void close() {
             try {
-                requests.onCompleted();
+                if (completed) {
+                    requests.onCompleted();
+                } else {
+                    requests.onError(Status.CANCELLED.asException());
+                }
             } catch (RuntimeException ignored) {
-                // Best-effort half-close; the channel is the caller's to shut down.
+                // Best-effort stream termination when the channel remains open in a pool.
             }
         }
     }

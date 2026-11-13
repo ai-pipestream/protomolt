@@ -1,8 +1,14 @@
+plugins {
+    alias(libs.plugins.protobuf)
+}
+
 description = 'Agent-facing service registration, reflection refresh, and descriptor inspection actions'
 
 dependencies {
     api project(':protomolt-actions')
     api project(':protomolt-grpc-service-profile')
+    api project(':protomolt-protobuf-validation')
+    api project(':protomolt-protobuf-validation-protovalidate')
     // The request messages these verbs are declared in, so an input schema is derived
     // from the contract rather than hand-written beside it.
     implementation project(':protomolt-grpc-service-contract')
@@ -22,4 +28,10 @@ dependencies {
     testImplementation libs.jgit
     testImplementation project(':protomolt-schema-registry-git')
     testImplementation project(':protomolt-sources')
+}
+
+protobuf {
+    protoc {
+        artifact = "com.google.protobuf:protoc:${libs.versions.protobuf.asProvider().get()}"
+    }
 }

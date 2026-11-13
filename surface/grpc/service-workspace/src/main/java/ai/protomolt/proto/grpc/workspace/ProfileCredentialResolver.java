@@ -1,6 +1,7 @@
 package ai.protomolt.proto.grpc.workspace;
 
 import ai.protomolt.proto.actions.ActionException;
+import ai.protomolt.proto.grpc.invoke.ChannelFactory;
 import ai.protomolt.proto.grpc.profile.v1.ServiceEndpoint;
 import ai.protomolt.proto.grpc.profile.v1.ServiceProfile;
 import io.grpc.ChannelCredentials;
@@ -31,23 +32,41 @@ public interface ProfileCredentialResolver {
     static ProfileCredentialResolver withTls(ProfileCredentialResolver bearer,
                                              ProfileTlsResolver tls) {
         Objects.requireNonNull(tls, "tls");
-        return new ProfileCredentialResolver() {
-            @Override
-            public Metadata headers(ServiceProfile profile, ServiceEndpoint endpoint)
-                    throws ActionException {
-                if (bearer == null) {
-                    throw new ActionException("credential-unavailable",
-                            "outbound profile credentials are not configured");
-                }
-                return bearer.headers(profile, endpoint);
-            }
+        return new ComposedCredentialResolver(bearer, tls);
+    }
+}
 
-            @Override
-            public ChannelCredentials channelCredentials(ServiceProfile profile,
-                                                         ServiceEndpoint endpoint)
-                    throws ActionException {
-                return tls.channelCredentials(profile, endpoint);
-            }
-        };
+final class ComposedCredentialResolver implements ProfileCredentialResolver, EvictableTlsResolver {
+
+    private final ProfileCredentialResolver bearer;
+    private final ProfileTlsResolver tls;
+
+    ComposedCredentialResolver(ProfileCredentialResolver bearer, ProfileTlsResolver tls) {
+        this.bearer = bearer;
+        this.tls = tls;
+    }
+
+    @Override
+    public Metadata headers(ServiceProfile profile, ServiceEndpoint endpoint)
+            throws ActionException {
+        if (bearer == null) {
+            throw new ActionException("credential-unavailable",
+                    "outbound profile credentials are not configured");
+        }
+        return bearer.headers(profile, endpoint);
+    }
+
+    @Override
+    public ChannelCredentials channelCredentials(ServiceProfile profile,
+                                                 ServiceEndpoint endpoint)
+            throws ActionException {
+        return tls.channelCredentials(profile, endpoint);
+    }
+
+    @Override
+    public void registerEvictionTarget(ChannelFactory channels) {
+        if (tls instanceof EvictableTlsResolver evictable) {
+            evictable.registerEvictionTarget(channels);
+        }
     }
 }
