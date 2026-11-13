@@ -9,12 +9,16 @@ import java.util.NavigableMap;
 import java.util.Optional;
 import java.util.TreeMap;
 
+import org.eclipse.jgit.dircache.DirCache;
+import org.eclipse.jgit.dircache.DirCacheBuilder;
+import org.eclipse.jgit.dircache.DirCacheEntry;
 import org.eclipse.jgit.lib.CommitBuilder;
 import org.eclipse.jgit.lib.Constants;
 import org.eclipse.jgit.lib.FileMode;
 import org.eclipse.jgit.lib.ObjectId;
 import org.eclipse.jgit.lib.ObjectInserter;
 import org.eclipse.jgit.lib.ObjectLoader;
+import org.eclipse.jgit.lib.ObjectReader;
 import org.eclipse.jgit.lib.PersonIdent;
 import org.eclipse.jgit.lib.Ref;
 import org.eclipse.jgit.lib.RefUpdate;
@@ -27,12 +31,16 @@ import org.eclipse.jgit.treewalk.TreeWalk;
 /**
  * Package-private object-database access for {@link GitSchemaRegistryStore}.
  *
- * <p>Every read descends from the committed HEAD tree, and every write inserts blobs, trees
- * and one commit with {@link ObjectInserter}, then advances HEAD only through a
- * {@link RefUpdate} compare-and-swap against the exact commit HEAD named when the write
- * started. A checked-out working tree is never read or rewritten, so bare and non-bare
- * repositories behave identically and the working tree of a non-bare repository is simply
- * left stale (see the store's class documentation for the recovery semantics).
+ * <p>Every read descends from a committed tree ({@code HEAD} or a caller-pinned commit), and
+ * every write inserts blobs, trees and one commit with {@link ObjectInserter}, then advances
+ * {@code HEAD} only through a {@link RefUpdate} compare-and-swap against the exact commit
+ * {@code HEAD} named when the write started. On non-bare repositories, {@code .git/index}
+ * ({@link DirCache}) is aligned with the newly committed root tree alongside the ref update so
+ * subsequent porcelain commits preserve all registered files; bare repositories have no index
+ * and skip {@link DirCache}. A checked-out working tree itself is never read or rewritten, so
+ * bare and non-bare repositories behave identically on registry reads and writes and the
+ * working tree of a non-bare repository stays untouched (see the store's class documentation
+ * for the recovery semantics).
  *
  * <p>Unreachable objects left behind by a failed write are harmless and are reclaimed by
  * ordinary Git GC.
@@ -123,14 +131,30 @@ final class RegistryGitObjects {
         return headBlob(repo, path, Long.MAX_VALUE);
     }
 
-    /** Reads a committed blob only after checking its size against the caller's limit. */
+    /** Reads a committed blob from HEAD only after checking its size against the caller's limit. */
     static byte[] headBlob(Repository repo, String path, long maxBytes) throws IOException {
-        ObjectId head = headCommit(repo);
-        if (head == null) {
+        return blob(repo, headCommit(repo), path, maxBytes);
+    }
+
+    /**
+     * The bytes of the blob at one repo-relative path of {@code commit}'s tree, or {@code null}
+     * when {@code commit} is {@code null} or the path is absent.
+     */
+    static byte[] blob(Repository repo, ObjectId commit, String path) throws IOException {
+        return blob(repo, commit, path, Long.MAX_VALUE);
+    }
+
+    /**
+     * Reads a blob from a pinned {@code commit}'s tree only after checking its size against the
+     * caller's limit, or returns {@code null} when {@code commit} is {@code null} or absent.
+     */
+    static byte[] blob(Repository repo, ObjectId commit, String path, long maxBytes)
+            throws IOException {
+        if (commit == null) {
             return null;
         }
         try (RevWalk walk = new RevWalk(repo)) {
-            ObjectId id = descend(repo, walk.parseCommit(head).getTree(), path);
+            ObjectId id = descend(repo, walk.parseCommit(commit).getTree(), path);
             if (id == null) {
                 return null;
             }
@@ -153,12 +177,20 @@ final class RegistryGitObjects {
      * @throws IOException when the repository cannot be read at all
      */
     static List<TreeChild> headChildren(Repository repo, String dir) throws IOException {
-        ObjectId head = headCommit(repo);
-        if (head == null) {
+        return children(repo, headCommit(repo), dir);
+    }
+
+    /**
+     * The entries of the tree at one repo-relative directory of {@code commit}'s tree, in git
+     * tree order, or an empty list when {@code commit} is {@code null} or the directory is absent.
+     */
+    static List<TreeChild> children(Repository repo, ObjectId commit, String dir)
+            throws IOException {
+        if (commit == null) {
             return List.of();
         }
         try (RevWalk walk = new RevWalk(repo)) {
-            ObjectId tree = descend(repo, walk.parseCommit(head).getTree(), dir);
+            ObjectId tree = descend(repo, walk.parseCommit(commit).getTree(), dir);
             if (tree == null) {
                 return List.of();
             }
@@ -181,14 +213,23 @@ final class RegistryGitObjects {
      * @throws IOException when the repository cannot be read at all
      */
     static Map<String, byte[]> headBlobsUnder(Repository repo, String dir) throws IOException {
-        ObjectId head = headCommit(repo);
-        if (head == null) {
+        return blobsUnder(repo, headCommit(repo), dir);
+    }
+
+    /**
+     * Every blob under one repo-relative directory of {@code commit}'s tree, keyed by
+     * repo-relative path and sorted; empty when {@code commit} is {@code null} or nothing lives
+     * under the directory.
+     */
+    static Map<String, byte[]> blobsUnder(Repository repo, ObjectId commit, String dir)
+            throws IOException {
+        if (commit == null) {
             return Map.of();
         }
         Map<String, byte[]> blobs = new TreeMap<>();
         try (RevWalk revWalk = new RevWalk(repo);
                 TreeWalk walk = new TreeWalk(repo)) {
-            walk.addTree(revWalk.parseCommit(head).getTree());
+            walk.addTree(revWalk.parseCommit(commit).getTree());
             walk.setRecursive(true);
             String prefix = dir + "/";
             while (walk.next()) {
@@ -240,42 +281,43 @@ final class RegistryGitObjects {
     // ---------------------------------------------------------------- writes
 
     /**
-     * Applies repo-relative byte changes to HEAD's tree as one new commit and advances HEAD
-     * by compare-and-swap. {@code changes} maps a repo-relative path to its new content, or
-     * to {@link Optional#empty()} to delete the path.
-     *
-     * <p>Stages run in {@link WriteStage} order; objects are flushed before the ref update,
-     * so a failure before the compare-and-swap leaves HEAD untouched and only leaks
-     * unreachable objects. A failure after the ref update means the commit may or may not
-     * have landed; the caller must re-read HEAD before retrying.
-     *
-     * @return the new commit id
-     * @throws HeadChangedException when HEAD advanced after this write read it: nothing was
-     *         overwritten
-     * @throws CorruptTreeException when a change descends below a committed non-tree entry
-     * @throws IOException when the repository cannot be read or written
+     * Applies repo-relative byte changes to HEAD's current tree as one new commit and advances
+     * HEAD by compare-and-swap. Delegates to {@link #commit(Repository, ObjectId, PersonIdent,
+     * String, Map, WriteHook)} after resolving {@link #headCommit(Repository)}.
      */
     static String commit(Repository repo, PersonIdent author, String message,
             Map<String, Optional<byte[]>> changes, WriteHook hook) throws IOException {
-        if (changes.isEmpty()) {
-            throw new IllegalArgumentException("a registry commit needs at least one change");
-        }
-        for (String path : changes.keySet()) {
-            requireSafeChangePath(path);
-            for (String other : changes.keySet()) {
-                if (path.length() < other.length() && other.startsWith(path + "/")) {
-                    throw new IllegalArgumentException(
-                            "registry changes cannot contain both a file and its descendant: " + path);
-                }
-            }
-        }
+        validateChanges(changes);
+        return commit(repo, headCommit(repo), author, message, changes, hook);
+    }
+
+    /**
+     * Applies repo-relative byte changes to {@code expectedHead}'s tree as one new commit and
+     * advances HEAD by compare-and-swap against {@code expectedHead}. {@code changes} maps a
+     * repo-relative path to its new content, or to {@link Optional#empty()} to delete the path.
+     *
+     * <p>Stages run in {@link WriteStage} order; objects are flushed before the ref update,
+     * so a failure before the compare-and-swap leaves HEAD untouched and only leaks
+     * unreachable objects. On non-bare repositories, {@code .git/index} ({@link DirCache}) is
+     * updated alongside HEAD to match the newly committed root tree. A failure after the ref
+     * update means the commit may or may not have landed; the caller must re-read HEAD before
+     * retrying.
+     *
+     * @return the new commit id
+     * @throws HeadChangedException when HEAD advanced after {@code expectedHead} was read:
+     *         nothing was overwritten
+     * @throws CorruptTreeException when a change descends below a committed non-tree entry
+     * @throws IOException when the repository cannot be read or written
+     */
+    static String commit(Repository repo, ObjectId expectedHead, PersonIdent author, String message,
+            Map<String, Optional<byte[]>> changes, WriteHook hook) throws IOException {
+        validateChanges(changes);
         TreeMap<String, Optional<ObjectId>> objectChanges = new TreeMap<>();
         try (ObjectInserter inserter = repo.newObjectInserter()) {
-            ObjectId oldHead = headCommit(repo);
             RevTree baseTree = null;
-            if (oldHead != null) {
+            if (expectedHead != null) {
                 try (RevWalk walk = new RevWalk(repo)) {
-                    baseTree = walk.parseCommit(oldHead).getTree();
+                    baseTree = walk.parseCommit(expectedHead).getTree();
                 }
             }
             for (Map.Entry<String, Optional<byte[]>> change : changes.entrySet()) {
@@ -289,8 +331,8 @@ final class RegistryGitObjects {
             hook.at(WriteStage.AFTER_TREES);
             CommitBuilder builder = new CommitBuilder();
             builder.setTreeId(newTree);
-            if (oldHead != null) {
-                builder.setParentIds(oldHead);
+            if (expectedHead != null) {
+                builder.setParentIds(expectedHead);
             }
             builder.setAuthor(author);
             builder.setCommitter(author);
@@ -298,9 +340,42 @@ final class RegistryGitObjects {
             ObjectId newCommit = inserter.insert(builder);
             inserter.flush();
             hook.at(WriteStage.AFTER_COMMIT);
-            advanceHead(repo, author, message, oldHead, newCommit);
+            DirCache dirCache = repo.isBare() ? null : repo.lockDirCache();
+            try {
+                if (dirCache != null) {
+                    DirCacheBuilder cacheBuilder = dirCache.builder();
+                    try (ObjectReader reader = repo.newObjectReader()) {
+                        cacheBuilder.addTree(new byte[0], DirCacheEntry.STAGE_0, reader, newTree);
+                    }
+                    cacheBuilder.finish();
+                    dirCache.write();
+                }
+                advanceHead(repo, author, message, expectedHead, newCommit);
+                if (dirCache != null && !dirCache.commit()) {
+                    throw new IOException("failed to commit git index for " + newCommit.getName());
+                }
+            } finally {
+                if (dirCache != null) {
+                    dirCache.unlock();
+                }
+            }
             hook.at(WriteStage.AFTER_REF_UPDATE);
             return newCommit.getName();
+        }
+    }
+
+    private static void validateChanges(Map<String, Optional<byte[]>> changes) {
+        if (changes.isEmpty()) {
+            throw new IllegalArgumentException("a registry commit needs at least one change");
+        }
+        for (String path : changes.keySet()) {
+            requireSafeChangePath(path);
+            for (String other : changes.keySet()) {
+                if (path.length() < other.length() && other.startsWith(path + "/")) {
+                    throw new IllegalArgumentException(
+                            "registry changes cannot contain both a file and its descendant: " + path);
+                }
+            }
         }
     }
 
