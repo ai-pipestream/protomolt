@@ -9,6 +9,7 @@ import ai.protomolt.proto.registry.RegistrationSupport;
 import ai.protomolt.proto.registry.RegistryStoreException;
 import ai.protomolt.proto.registry.SchemaContents;
 import ai.protomolt.proto.registry.SchemaReference;
+import ai.protomolt.proto.registry.SchemaRegistryStore;
 import ai.protomolt.proto.registry.StoredSchema;
 
 import ai.protomolt.proto.grpc.workflow.WorkflowValidation;
@@ -17,6 +18,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.protobuf.ByteString;
 import org.eclipse.jgit.api.Git;
+import org.eclipse.jgit.lib.ObjectId;
 import org.eclipse.jgit.lib.PersonIdent;
 import org.eclipse.jgit.lib.Repository;
 
@@ -48,10 +50,13 @@ import java.util.concurrent.locks.ReentrantLock;
  * {@link RegistryGitObjects}; the working tree is never consulted, so stale, edited or
  * absent working-tree files change nothing. All writes insert blobs, trees and one commit
  * with {@code ObjectInserter} and advance HEAD only through a {@code RefUpdate}
- * compare-and-swap against the exact commit HEAD named when the write started. The working
- * tree is never written: a non-bare repository stays usable for {@code git log} and review,
- * and its working tree simply does not reflect registry state (a manual
- * {@code git reset --hard} restores it without affecting the store).</p>
+ * compare-and-swap against the exact commit HEAD named when the write started. On non-bare
+ * repositories, {@code .git/index} ({@code DirCache}) is aligned with the newly committed root
+ * tree alongside HEAD so subsequent porcelain commits preserve registered files; bare
+ * repositories have no index and skip {@code DirCache}. The working tree itself is never
+ * written: a non-bare repository stays usable for {@code git log}, review and porcelain commits,
+ * and its working tree simply does not reflect registry state (a manual {@code git reset --hard}
+ * materializes HEAD into the working tree without affecting the store).</p>
  *
  * <h2>Layout</h2>
  * <pre>
@@ -71,21 +76,25 @@ import java.util.concurrent.locks.ReentrantLock;
  * and the {@code git} provider configuration is unchanged.</p>
  *
  * <h2>Concurrency and failures</h2>
- * <p>Writes are serialized with a JVM lock (shared per lock-file path, so two stores in one
- * JVM never race or hit {@code OverlappingFileLockException}) plus a file lock on
- * {@code registry.lock} — the same idiom as the gather module's {@code GitCloneCache} — so two
- * stores on one repository, in the same JVM or different processes, cannot corrupt it. Reads
- * are lock-free off the in-memory index rebuilt from HEAD on demand; the index is
- * invalidated after every write, and {@link #refresh()} exposes the invalidation for commits
- * made externally (e.g. an out-of-band {@code git pull}).</p>
+ * <p>Writes and initial index loads are serialized with a JVM lock (shared per lock-file path,
+ * so two stores in one JVM never race or hit {@code OverlappingFileLockException}) plus a file
+ * lock on {@code registry.lock} — the same idiom as the gather module's {@code GitCloneCache} —
+ * so two stores on one repository, in the same JVM or different processes, cannot corrupt it.
+ * Cached reads are lock-free off an immutable in-memory index built from one pinned commit.
+ * Validation and compilation during {@link #register} run against a private read-only view of
+ * the pre-write HEAD snapshot without publishing it to concurrent readers; once a schema or
+ * compatibility-mode commit lands, the store atomically publishes the committed post-write
+ * index before releasing the lock. {@link #refresh()} acquires the JVM lock to drop the cached
+ * index for commits made externally (e.g. an out-of-band {@code git pull}).</p>
  *
  * <p>The compare-and-swap rejects a write when anything advanced HEAD after the write read
  * it (an external commit, another registry not honoring the lock file): the write is refused,
- * the external commit is never overwritten, and the store drops its cached index so the next
- * read reloads HEAD. A failure before the ref update leaves HEAD untouched; the unreachable
- * objects a failed write inserted are harmless and left for normal Git GC. A failure after
- * the ref update is an ambiguous outcome — the commit may or may not have landed — so the
- * recovery is to {@link #refresh()} (re-read HEAD) before retrying, never to force or reset.</p>
+ * the external commit is never overwritten, and the store drops its cached index under the lock
+ * so the next read reloads HEAD. A failure before the ref update leaves HEAD untouched; the
+ * unreachable objects a failed write inserted are harmless and left for normal Git GC. A failure
+ * after the ref update is an ambiguous outcome — the commit may or may not have landed — so the
+ * store drops its cached index and recovery is to {@link #refresh()} (re-read HEAD) before
+ * retrying, never to force or reset.</p>
  */
 public final class GitSchemaRegistryStore implements ConfigDocumentStore, WorkflowDocumentStore {
 
@@ -108,9 +117,102 @@ public final class GitSchemaRegistryStore implements ConfigDocumentStore, Workfl
                          Map<Integer, StoredSchema> byGlobalId,
                          String globalMode,
                          int nextGlobalId) {
+        private Index {
+            subjects = Map.copyOf(subjects);
+            byGlobalId = Map.copyOf(byGlobalId);
+        }
     }
 
     private record SubjectEntry(Map<Integer, StoredSchema> versions, String mode) {
+        private SubjectEntry {
+            versions = Map.copyOf(versions);
+        }
+    }
+
+    /**
+     * Private read-only {@link SchemaRegistryStore} view over a single pinned {@link Index}
+     * snapshot so {@link #register} can run reference checks, write-gate enforcement and
+     * candidate compilation without publishing pre-commit state to {@link #index}.
+     */
+    private final class IndexView implements SchemaRegistryStore {
+
+        private final Index snapshot;
+
+        private IndexView(Index snapshot) {
+            this.snapshot = Objects.requireNonNull(snapshot, "snapshot");
+        }
+
+        @Override
+        public List<String> subjects() {
+            return subjectsOf(snapshot);
+        }
+
+        @Override
+        public List<Integer> versions(String subject) {
+            return versionsOf(snapshot, subject);
+        }
+
+        @Override
+        public Optional<StoredSchema> version(String subject, int version) {
+            return versionOf(snapshot, subject, version);
+        }
+
+        @Override
+        public Optional<StoredSchema> latest(String subject) {
+            return latestOf(snapshot, subject);
+        }
+
+        @Override
+        public Optional<StoredSchema> byGlobalId(int globalId) {
+            return byGlobalIdOf(snapshot, globalId);
+        }
+
+        @Override
+        public boolean supportsDescriptorSets() {
+            return GitSchemaRegistryStore.this.supportsDescriptorSets();
+        }
+
+        @Override
+        public Optional<ByteString> descriptorSet(String fingerprint) {
+            return GitSchemaRegistryStore.this.descriptorSet(fingerprint);
+        }
+
+        @Override
+        public Optional<StoredSchema> findByContent(
+                String subject, String schemaText, List<SchemaReference> references) {
+            return findByContentOf(snapshot, subject, schemaText, references);
+        }
+
+        @Override
+        public Optional<String> compatibilityMode(String subject) {
+            return compatibilityModeOf(snapshot, subject);
+        }
+
+        @Override
+        public String globalCompatibilityMode() {
+            return snapshot.globalMode();
+        }
+
+        @Override
+        public StoredSchema register(
+                String subject, String schemaText, List<SchemaReference> references) {
+            throw new UnsupportedOperationException("IndexView is read-only");
+        }
+
+        @Override
+        public void setCompatibilityMode(String subject, String mode) {
+            throw new UnsupportedOperationException("IndexView is read-only");
+        }
+
+        @Override
+        public void setGlobalCompatibilityMode(String mode) {
+            throw new UnsupportedOperationException("IndexView is read-only");
+        }
+
+        @Override
+        public void close() {
+            // Read-only view over an in-memory snapshot.
+        }
     }
 
     private GitSchemaRegistryStore(Builder builder) {
@@ -153,29 +255,50 @@ public final class GitSchemaRegistryStore implements ConfigDocumentStore, Workfl
 
     @Override
     public List<String> subjects() {
+        return subjectsOf(index());
+    }
+
+    @Override
+    public List<Integer> versions(String subject) {
+        return versionsOf(index(), subject);
+    }
+
+    @Override
+    public Optional<StoredSchema> version(String subject, int version) {
+        return versionOf(index(), subject, version);
+    }
+
+    @Override
+    public Optional<StoredSchema> latest(String subject) {
+        return latestOf(index(), subject);
+    }
+
+    @Override
+    public Optional<StoredSchema> byGlobalId(int globalId) {
+        return byGlobalIdOf(index(), globalId);
+    }
+
+    private static List<String> subjectsOf(Index snapshot) {
         // Map.copyOf drops iteration order; sort on the way out.
-        return index().subjects().entrySet().stream()
+        return snapshot.subjects().entrySet().stream()
                 .filter(entry -> !entry.getValue().versions().isEmpty())
                 .map(Map.Entry::getKey)
                 .sorted()
                 .toList();
     }
 
-    @Override
-    public List<Integer> versions(String subject) {
-        SubjectEntry entry = index().subjects().get(subject);
+    private static List<Integer> versionsOf(Index snapshot, String subject) {
+        SubjectEntry entry = snapshot.subjects().get(subject);
         return entry == null ? List.of() : entry.versions().keySet().stream().sorted().toList();
     }
 
-    @Override
-    public Optional<StoredSchema> version(String subject, int version) {
-        SubjectEntry entry = index().subjects().get(subject);
+    private static Optional<StoredSchema> versionOf(Index snapshot, String subject, int version) {
+        SubjectEntry entry = snapshot.subjects().get(subject);
         return entry == null ? Optional.empty() : Optional.ofNullable(entry.versions().get(version));
     }
 
-    @Override
-    public Optional<StoredSchema> latest(String subject) {
-        SubjectEntry entry = index().subjects().get(subject);
+    private static Optional<StoredSchema> latestOf(Index snapshot, String subject) {
+        SubjectEntry entry = snapshot.subjects().get(subject);
         if (entry == null || entry.versions().isEmpty()) {
             return Optional.empty();
         }
@@ -183,9 +306,26 @@ public final class GitSchemaRegistryStore implements ConfigDocumentStore, Workfl
         return Optional.of(entry.versions().get(highest));
     }
 
-    @Override
-    public Optional<StoredSchema> byGlobalId(int globalId) {
-        return Optional.ofNullable(index().byGlobalId().get(globalId));
+    private static Optional<StoredSchema> byGlobalIdOf(Index snapshot, int globalId) {
+        return Optional.ofNullable(snapshot.byGlobalId().get(globalId));
+    }
+
+    private static Optional<StoredSchema> findByContentOf(
+            Index snapshot, String subject, String schemaText, List<SchemaReference> references) {
+        List<SchemaReference> refs = references == null ? List.of() : List.copyOf(references);
+        SubjectEntry entry = snapshot.subjects().get(subject);
+        if (entry == null) {
+            return Optional.empty();
+        }
+        return entry.versions().keySet().stream().sorted()
+                .map(entry.versions()::get)
+                .filter(stored -> SchemaContents.sameContent(stored, schemaText, refs))
+                .findFirst();
+    }
+
+    private static Optional<String> compatibilityModeOf(Index snapshot, String subject) {
+        SubjectEntry entry = snapshot.subjects().get(subject);
+        return entry == null ? Optional.empty() : Optional.ofNullable(entry.mode());
     }
 
     @Override
@@ -224,10 +364,12 @@ public final class GitSchemaRegistryStore implements ConfigDocumentStore, Workfl
     public void putDescriptorSet(String fingerprint, ByteString descriptorSet) {
         DescriptorSetArtifacts.validate(fingerprint, descriptorSet);
         locked(() -> {
+            ObjectId expectedHead = RegistryGitObjects.headCommit(repository);
             String relative = layout.descriptorRelPath(fingerprint);
             byte[] committed;
             try {
-                committed = RegistryGitObjects.headBlob(repository, relative, DescriptorSetArtifacts.MAX_BYTES);
+                committed = RegistryGitObjects.blob(
+                        repository, expectedHead, relative, DescriptorSetArtifacts.MAX_BYTES);
             } catch (RegistryGitObjects.ObjectTooLargeException invalid) {
                 throw new IllegalArgumentException("descriptor set exceeds the 16 MiB limit", invalid);
             } catch (IOException e) {
@@ -237,7 +379,7 @@ public final class GitSchemaRegistryStore implements ConfigDocumentStore, Workfl
                 DescriptorSetArtifacts.validate(fingerprint, ByteString.copyFrom(committed));
                 return null;
             }
-            commitChanges("Store descriptor " + fingerprint,
+            commitChanges(expectedHead, "Store descriptor " + fingerprint,
                     Map.of(relative, Optional.of(descriptorSet.toByteArray())));
             return null;
         });
@@ -246,21 +388,12 @@ public final class GitSchemaRegistryStore implements ConfigDocumentStore, Workfl
     @Override
     public Optional<StoredSchema> findByContent(String subject, String schemaText,
                                                 List<SchemaReference> references) {
-        List<SchemaReference> refs = references == null ? List.of() : List.copyOf(references);
-        SubjectEntry entry = index().subjects().get(subject);
-        if (entry == null) {
-            return Optional.empty();
-        }
-        return entry.versions().keySet().stream().sorted()
-                .map(entry.versions()::get)
-                .filter(stored -> SchemaContents.sameContent(stored, schemaText, refs))
-                .findFirst();
+        return findByContentOf(index(), subject, schemaText, references);
     }
 
     @Override
     public Optional<String> compatibilityMode(String subject) {
-        SubjectEntry entry = index().subjects().get(subject);
-        return entry == null ? Optional.empty() : Optional.ofNullable(entry.mode());
+        return compatibilityModeOf(index(), subject);
     }
 
     @Override
@@ -268,10 +401,15 @@ public final class GitSchemaRegistryStore implements ConfigDocumentStore, Workfl
         return index().globalMode();
     }
 
-    /** Drops the in-memory index; the next read re-scans the committed HEAD tree. */
+    /** Drops the in-memory index under the JVM lock; the next read re-scans the committed HEAD tree. */
     @Override
     public void refresh() {
-        index = null;
+        jvmLock.lock();
+        try {
+            index = null;
+        } finally {
+            jvmLock.unlock();
+        }
     }
 
     // ---------------------------------------------------------------- writes (locked commits)
@@ -282,40 +420,39 @@ public final class GitSchemaRegistryStore implements ConfigDocumentStore, Workfl
         RegistrationSupport.requireSubject(subject);
         Objects.requireNonNull(schemaText, "schemaText");
         List<SchemaReference> refs = references == null ? List.of() : List.copyOf(references);
-        try {
-            return locked(() -> {
-                Index fresh = loadIndex(); // see commits other stores made since our last read
+        return locked(() -> {
+            ObjectId expectedHead = RegistryGitObjects.headCommit(repository);
+            Index fresh = loadIndex(expectedHead); // see commits other stores made since our last read
+            SchemaRegistryStore view = new IndexView(fresh);
+            RegistrationSupport.verifyReferences(view, refs);
+            Optional<StoredSchema> existing = view.findByContent(subject, schemaText, refs);
+            if (existing.isPresent()) {
                 index = fresh;
-                RegistrationSupport.verifyReferences(this, refs);
-                Optional<StoredSchema> existing = findByContent(subject, schemaText, refs);
-                if (existing.isPresent()) {
-                    return existing.get();
-                }
-                List<StoredSchema> history = RegistrationSupport.history(this, subject);
-                RegistrationSupport.enforceWriteGate(writeGate, this, subject, history, schemaText, refs);
-                RegistrationSupport.compileCandidate(this, subject, schemaText, refs);
+                return existing.get();
+            }
+            List<StoredSchema> history = RegistrationSupport.history(view, subject);
+            RegistrationSupport.enforceWriteGate(writeGate, view, subject, history, schemaText, refs);
+            RegistrationSupport.compileCandidate(view, subject, schemaText, refs);
 
-                int version = history.isEmpty() ? 1 : history.getLast().version() + 1;
-                StoredSchema stored = new StoredSchema(subject, version, fresh.nextGlobalId(),
-                        schemaText, refs, SchemaContents.contentHash(schemaText, refs));
+            int version = history.isEmpty() ? 1 : history.getLast().version() + 1;
+            StoredSchema stored = new StoredSchema(subject, version, fresh.nextGlobalId(),
+                    schemaText, refs, SchemaContents.contentHash(schemaText, refs));
 
-                String subjectDir = layout.subjectDir(subject);
-                String protoPath = subjectDir + "/v" + version + ".proto";
-                String metaPath = subjectDir + "/v" + version + ".json";
-                Map<String, Optional<byte[]>> changes = new TreeMap<>();
-                changes.put(protoPath, Optional.of(schemaText.getBytes(StandardCharsets.UTF_8)));
-                changes.put(metaPath, Optional.of(
-                        RegistryMetadata.metadataJson(json, stored).getBytes(StandardCharsets.UTF_8)));
-                changes.put(RegistryLayout.REGISTRY_FILE, Optional.of(RegistryMetadata.registryJson(
-                        json, fresh.globalMode(), fresh.nextGlobalId() + 1)
-                        .getBytes(StandardCharsets.UTF_8)));
+            String subjectDir = layout.subjectDir(subject);
+            String protoPath = subjectDir + "/v" + version + ".proto";
+            String metaPath = subjectDir + "/v" + version + ".json";
+            Map<String, Optional<byte[]>> changes = new TreeMap<>();
+            changes.put(protoPath, Optional.of(schemaText.getBytes(StandardCharsets.UTF_8)));
+            changes.put(metaPath, Optional.of(
+                    RegistryMetadata.metadataJson(json, stored).getBytes(StandardCharsets.UTF_8)));
+            changes.put(RegistryLayout.REGISTRY_FILE, Optional.of(RegistryMetadata.registryJson(
+                    json, fresh.globalMode(), fresh.nextGlobalId() + 1)
+                    .getBytes(StandardCharsets.UTF_8)));
 
-                commitChanges("Register " + subject + " v" + version, changes);
-                return stored;
-            });
-        } finally {
-            index = null;
-        }
+            String commitId = commitChanges(expectedHead, "Register " + subject + " v" + version, changes);
+            index = loadIndex(ObjectId.fromString(commitId));
+            return stored;
+        });
     }
 
     /**
@@ -327,8 +464,9 @@ public final class GitSchemaRegistryStore implements ConfigDocumentStore, Workfl
         RegistryLayout.requireWorkflowName(name);
         Objects.requireNonNull(workflowJson, "workflowJson");
         locked(() -> {
+            ObjectId expectedHead = RegistryGitObjects.headCommit(repository);
             String path = RegistryLayout.WORKFLOWS_DIR + "/" + RegistryLayout.encode(name) + ".json";
-            commitChanges("Put workflow " + name,
+            commitChanges(expectedHead, "Put workflow " + name,
                     Map.of(path, Optional.of(workflowJson.getBytes(StandardCharsets.UTF_8))));
             return null;
         });
@@ -370,9 +508,10 @@ public final class GitSchemaRegistryStore implements ConfigDocumentStore, Workfl
         Objects.requireNonNull(workflow, "workflow");
         WorkflowValidation.validate(workflow);
         locked(() -> {
+            ObjectId expectedHead = RegistryGitObjects.headCommit(repository);
             String path = layout.workflowPath(workflow.getWorkflow().getName(), workflow.getVersion());
             byte[] bytes = workflow.toByteArray();
-            byte[] committed = committedWorkflowBytes(path);
+            byte[] committed = committedWorkflowBytes(expectedHead, path);
             if (committed != null) {
                 if (Arrays.equals(committed, bytes)) {
                     return null; // idempotent re-promotion of identical content
@@ -381,7 +520,7 @@ public final class GitSchemaRegistryStore implements ConfigDocumentStore, Workfl
                         + " version " + workflow.getVersion()
                         + " is immutable: the stored content differs");
             }
-            commitChanges("Promote workflow " + workflow.getWorkflow().getName()
+            commitChanges(expectedHead, "Promote workflow " + workflow.getWorkflow().getName()
                     + " " + workflow.getVersion(), Map.of(path, Optional.of(bytes)));
             return null;
         });
@@ -407,38 +546,43 @@ public final class GitSchemaRegistryStore implements ConfigDocumentStore, Workfl
     /** All promoted versions of one workflow, ascending by version name. */
     public List<VersionedWorkflow> workflowVersions(String name) throws RegistryStoreException {
         WorkflowValidation.validateName(name, "workflow.name");
-        String dir = RegistryLayout.WORKFLOW_VERSIONS_DIR + "/" + RegistryLayout.encode(name);
         try {
-            List<VersionedWorkflow> versions = new ArrayList<>();
-            for (RegistryGitObjects.TreeChild child
-                    : RegistryGitObjects.headChildren(repository, dir)) {
-                if (!child.name().endsWith(".pb") || !child.isBlob()) {
-                    continue;
-                }
-                String relative = dir + "/" + child.name();
-                byte[] committed = committedWorkflowBytes(relative);
-                if (committed == null) {
-                    continue;
-                }
-                versions.add(readWorkflow(committed));
-            }
-            return List.copyOf(versions);
+            return workflowVersions(RegistryGitObjects.headCommit(repository), name);
         } catch (IOException e) {
             throw new RegistryStoreException("Failed to list workflow versions for " + name, e);
         }
     }
 
+    private List<VersionedWorkflow> workflowVersions(ObjectId head, String name) throws IOException {
+        String dir = RegistryLayout.WORKFLOW_VERSIONS_DIR + "/" + RegistryLayout.encode(name);
+        List<VersionedWorkflow> versions = new ArrayList<>();
+        for (RegistryGitObjects.TreeChild child
+                : RegistryGitObjects.children(repository, head, dir)) {
+            if (!child.name().endsWith(".pb") || !child.isBlob()) {
+                continue;
+            }
+            String relative = dir + "/" + child.name();
+            byte[] committed = committedWorkflowBytes(head, relative);
+            if (committed == null) {
+                continue;
+            }
+            versions.add(readWorkflow(committed));
+        }
+        return List.copyOf(versions);
+    }
+
     /** Every workflow holding at least one promoted version, sorted. */
     public List<String> workflowNames() throws RegistryStoreException {
         try {
+            ObjectId head = RegistryGitObjects.headCommit(repository);
             List<String> names = new ArrayList<>();
             for (RegistryGitObjects.TreeChild child
-                    : RegistryGitObjects.headChildren(repository, RegistryLayout.WORKFLOW_VERSIONS_DIR)) {
+                    : RegistryGitObjects.children(repository, head, RegistryLayout.WORKFLOW_VERSIONS_DIR)) {
                 if (!child.isTree()) {
                     continue;
                 }
                 String name = RegistryLayout.decode(child.name());
-                if (!workflowVersions(name).isEmpty()) {
+                if (!workflowVersions(head, name).isEmpty()) {
                     names.add(name);
                 }
             }
@@ -459,7 +603,16 @@ public final class GitSchemaRegistryStore implements ConfigDocumentStore, Workfl
     /** HEAD, rather than a working-tree file, is the durable promotion boundary. */
     private byte[] committedWorkflowBytes(String relative) {
         try {
-            return RegistryGitObjects.headBlob(repository, relative, WorkflowValidation.MAX_WORKFLOW_BYTES);
+            return committedWorkflowBytes(RegistryGitObjects.headCommit(repository), relative);
+        } catch (IOException e) {
+            throw new RegistryStoreException("Failed to verify committed workflow " + relative, e);
+        }
+    }
+
+    private byte[] committedWorkflowBytes(ObjectId commit, String relative) {
+        try {
+            return RegistryGitObjects.blob(
+                    repository, commit, relative, WorkflowValidation.MAX_WORKFLOW_BYTES);
         } catch (IOException e) {
             throw new RegistryStoreException("Failed to verify committed workflow " + relative, e);
         }
@@ -480,8 +633,9 @@ public final class GitSchemaRegistryStore implements ConfigDocumentStore, Workfl
         RegistryLayout.requireDocumentName(name, "Config");
         Objects.requireNonNull(envelopeJson, "envelopeJson");
         return locked(() -> {
+            ObjectId expectedHead = RegistryGitObjects.headCommit(repository);
             String path = RegistryLayout.CONFIGS_DIR + "/" + RegistryLayout.encode(name) + ".json";
-            return commitChanges("Put config " + name,
+            return commitChanges(expectedHead, "Put config " + name,
                     Map.of(path, Optional.of(envelopeJson.getBytes(StandardCharsets.UTF_8))));
         });
     }
@@ -525,35 +679,32 @@ public final class GitSchemaRegistryStore implements ConfigDocumentStore, Workfl
     public void setCompatibilityMode(String subject, String mode) {
         RegistrationSupport.requireSubject(subject);
         CompatibilityModes.requireValid(mode);
-        try {
-            locked(() -> {
-                index = loadIndex();
-                String subjectDir = layout.subjectDir(subject);
-                String configPath = subjectDir + "/" + RegistryLayout.CONFIG_FILE;
-                commitChanges("Set compatibility " + subject + " " + mode, Map.of(configPath,
-                        Optional.of(json.createObjectNode().put("compatibility", mode)
-                                .toPrettyString().getBytes(StandardCharsets.UTF_8))));
-                return null;
-            });
-        } finally {
-            index = null;
-        }
+        locked(() -> {
+            ObjectId expectedHead = RegistryGitObjects.headCommit(repository);
+            loadIndex(expectedHead);
+            String subjectDir = layout.subjectDir(subject);
+            String configPath = subjectDir + "/" + RegistryLayout.CONFIG_FILE;
+            String commitId = commitChanges(expectedHead,
+                    "Set compatibility " + subject + " " + mode, Map.of(configPath,
+                            Optional.of(json.createObjectNode().put("compatibility", mode)
+                                    .toPrettyString().getBytes(StandardCharsets.UTF_8))));
+            index = loadIndex(ObjectId.fromString(commitId));
+            return null;
+        });
     }
 
     @Override
     public void setGlobalCompatibilityMode(String mode) {
         CompatibilityModes.requireValid(mode);
-        try {
-            locked(() -> {
-                Index fresh = loadIndex();
-                commitChanges("Set global compatibility " + mode,
-                        Map.of(RegistryLayout.REGISTRY_FILE, Optional.of(RegistryMetadata.registryJson(
-                                json, mode, fresh.nextGlobalId()).getBytes(StandardCharsets.UTF_8))));
-                return null;
-            });
-        } finally {
-            index = null;
-        }
+        locked(() -> {
+            ObjectId expectedHead = RegistryGitObjects.headCommit(repository);
+            Index fresh = loadIndex(expectedHead);
+            String commitId = commitChanges(expectedHead, "Set global compatibility " + mode,
+                    Map.of(RegistryLayout.REGISTRY_FILE, Optional.of(RegistryMetadata.registryJson(
+                            json, mode, fresh.nextGlobalId()).getBytes(StandardCharsets.UTF_8))));
+            index = loadIndex(ObjectId.fromString(commitId));
+            return null;
+        });
     }
 
     @Override
@@ -596,19 +747,24 @@ public final class GitSchemaRegistryStore implements ConfigDocumentStore, Workfl
     // ---------------------------------------------------------------- git plumbing
 
     /**
-     * One atomic write: insert the changed blobs, rebuild the touched trees from HEAD,
-     * insert one commit, and advance HEAD by compare-and-swap. Pre-ref failures leave HEAD
-     * untouched; the store's cached index is dropped by the caller in a {@code finally}.
+     * One atomic write: insert the changed blobs, rebuild the touched trees from
+     * {@code expectedHead}, insert one commit, and advance HEAD by compare-and-swap against
+     * {@code expectedHead}. Pre-ref failures leave HEAD untouched; any failure clears the
+     * cached index under the lock so the next read reloads HEAD.
      */
-    private String commitChanges(String message, Map<String, Optional<byte[]>> changes) {
+    private String commitChanges(
+            ObjectId expectedHead, String message, Map<String, Optional<byte[]>> changes) {
         try {
-            return RegistryGitObjects.commit(repository, author, message, changes, writeHook);
+            return RegistryGitObjects.commit(
+                    repository, expectedHead, author, message, changes, writeHook);
         } catch (RegistryGitObjects.CorruptTreeException e) {
+            index = null;
             throw new RegistryStoreException("Registry tree is corrupt at " + repoDir, e);
         } catch (RegistryGitObjects.HeadChangedException e) {
             index = null; // HEAD moved externally: the next read must reload it
             throw new RegistryStoreException("Registry write refused at " + repoDir, e);
         } catch (IOException e) {
+            index = null;
             throw new RegistryStoreException("Registry write failed at " + repoDir, e);
         }
     }
@@ -642,18 +798,25 @@ public final class GitSchemaRegistryStore implements ConfigDocumentStore, Workfl
 
     private Index index() {
         Index current = index;
-        if (current == null) {
-            current = locked(this::loadIndex);
-            index = current;
+        if (current != null) {
+            return current;
         }
-        return current;
+        return locked(() -> {
+            Index cached = index;
+            if (cached != null) {
+                return cached;
+            }
+            Index loaded = loadIndex(RegistryGitObjects.headCommit(repository));
+            index = loaded;
+            return loaded;
+        });
     }
 
-    /** Rebuilds the whole in-memory view from the committed HEAD tree. */
-    private Index loadIndex() throws IOException {
+    /** Rebuilds the whole in-memory view from one pinned commit (or empty defaults when unborn). */
+    private Index loadIndex(ObjectId head) throws IOException {
         String globalMode = CompatibilityModes.DEFAULT_GLOBAL;
         int nextGlobalId = 1;
-        byte[] registryBytes = RegistryGitObjects.headBlob(repository, RegistryLayout.REGISTRY_FILE);
+        byte[] registryBytes = RegistryGitObjects.blob(repository, head, RegistryLayout.REGISTRY_FILE);
         if (registryBytes != null) {
             JsonNode node = RegistryMetadata.readMetadata(json, RegistryLayout.REGISTRY_FILE,
                     registryBytes);
@@ -668,7 +831,7 @@ public final class GitSchemaRegistryStore implements ConfigDocumentStore, Workfl
 
         // Subject files of the whole tree in one walk: subjects/<encoded>/<file> -> bytes.
         Map<String, byte[]> files =
-                RegistryGitObjects.headBlobsUnder(repository, RegistryLayout.SUBJECTS_DIR);
+                RegistryGitObjects.blobsUnder(repository, head, RegistryLayout.SUBJECTS_DIR);
         Map<String, Map<String, byte[]>> bySubjectDir = new TreeMap<>();
         for (Map.Entry<String, byte[]> file : files.entrySet()) {
             List<String> parts = splitOnSlash(file.getKey());
@@ -691,7 +854,7 @@ public final class GitSchemaRegistryStore implements ConfigDocumentStore, Workfl
         for (int globalId : byGlobalId.keySet()) {
             nextGlobalId = Math.max(nextGlobalId, globalId + 1);
         }
-        return new Index(Map.copyOf(subjects), Map.copyOf(byGlobalId), globalMode, nextGlobalId);
+        return new Index(subjects, byGlobalId, globalMode, nextGlobalId);
     }
 
     private SubjectEntry loadSubject(String subject, String encodedDir, Map<String, byte[]> files)
