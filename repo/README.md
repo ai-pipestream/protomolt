@@ -505,8 +505,8 @@ Both names reuse `RedisBlobStore` in `repo/blob/redis`, with a single atomic has
 per encoded object. They preserve the existing physical keys, `redis/v2` and
 `redis/v3` backend identities, and persisted drive provider `redis`. Selecting
 Valkey does not change an endpoint or migrate data. Use `redis://` or `rediss://`.
-The adapter still buffers payloads and has no native streamed reads; it does not
-qualify as an unrestricted v2 stack. See the [provider documentation](blob/redis/README.md)
+The adapter streams reads, ranges and InputStream writes with bounded client
+buffers. Redis value limits and managed-storage durability restrictions still apply. See the [provider documentation](blob/redis/README.md)
 for limits, identity rules, real-server qualification and migration boundaries.
 
 Prefer `DOCUMENT_PLATFORM_VALKEY_*` environment variables. Their `REDIS_*` aliases

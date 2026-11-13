@@ -46,6 +46,17 @@ final class RedisObjectScripts {
             if size>tonumber(ARGV[1]) then return {2} end
             return {1,redis.call('HGET',KEYS[1],'data'),redis.call('HGET',KEYS[1],'content_type'),redis.call('HGET',KEYS[1],'etag')}
             """);
+    // One atomic snapshot per stream, not a repeated HGET/full-copy per chunk.
+    static final byte[] STREAM = script(CHECK + """
+            local size=redis.call('HSTRLEN',KEYS[1],'data')
+            if size>536870912 then return {2} end
+            local start=tonumber(ARGV[1])
+            local count=tonumber(ARGV[2])
+            if count==0 or start>=size then return {1,''} end
+            local data=redis.call('HGET',KEYS[1],'data')
+            if start==0 and count>=size then return {1,data} end
+            return {1,string.sub(data,start+1,math.min(size,start+count))}
+            """);
     static final byte[] STAT = script(CHECK + """
             return {1,redis.call('HSTRLEN',KEYS[1],'data'),redis.call('HGET',KEYS[1],'last_modified_ms')}
             """);

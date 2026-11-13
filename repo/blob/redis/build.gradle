@@ -14,3 +14,11 @@ dependencies {
 }
 ext.forbiddenRuntimeModules = ['protomolt-repo-container', 's3', 'hibernate-core', 'HikariCP', 'postgresql', 'kafka-clients']
 apply from: rootProject.file('gradle/runtime-boundaries.gradle')
+
+// The bounded-heap transfer qualification forks a JVM smaller than its object.
+// Supply the actual test runtime rather than relying on Gradle's worker bootstrap classpath.
+tasks.named('integrationTest', Test) {
+    doFirst {
+        systemProperty 'protomolt.redis.transfer.classpath', sourceSets.test.runtimeClasspath.asPath
+    }
+}
