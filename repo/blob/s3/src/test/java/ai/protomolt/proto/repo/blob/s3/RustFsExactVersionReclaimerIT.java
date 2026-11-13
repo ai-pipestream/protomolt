@@ -58,7 +58,7 @@ class RustFsExactVersionReclaimerIT {
     static S3BlobStore store;
     static ai.protomolt.proto.repo.blob.spi.ExactVersionReclaimer reclaimer;
 
-    @BeforeAll static void boot() {
+    @BeforeAll static void boot() throws InterruptedException {
         client = S3Client.builder()
                 .endpointOverride(java.net.URI.create("http://" + RUSTFS.getHost() + ":" + RUSTFS.getMappedPort(9000)))
                 .credentialsProvider(StaticCredentialsProvider.create(AwsBasicCredentials
@@ -66,6 +66,7 @@ class RustFsExactVersionReclaimerIT {
                 .region(Region.US_EAST_1)
                 .httpClient(UrlConnectionHttpClient.create())
                 .forcePathStyle(true).build();
+        RustFsReadiness.awaitServing(client);
         store = new S3BlobStore(client);
         reclaimer = new S3ExactVersionReclaimer(client);
     }
