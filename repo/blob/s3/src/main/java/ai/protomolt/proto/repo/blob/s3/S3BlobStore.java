@@ -62,6 +62,40 @@ public final class S3BlobStore implements BlobStore {
         return new PutResult(r.eTag(), r.versionId());
     }
 
+    private static long requireObjectLength(Long length) {
+        if (length == null || length < 0) throw new IllegalStateException("S3 reported no object length");
+        return length;
+    }
+
+    @Override
+    public ObjectMetadata statObject(String bucket, String key) {
+        try {
+            var response = client.headObject(b -> b.bucket(bucket).key(key));
+            return new ObjectMetadata(requireObjectLength(response.contentLength()), response.contentType(), response.eTag(),
+                    response.versionId(), response.metadata());
+        } catch (NoSuchKeyException missing) {
+            throw new BlobNotFoundException("blob not found: s3://" + bucket + "/" + key, missing);
+        }
+    }
+
+    @Override
+    public ObjectRead openSnapshot(String bucket, String key) {
+        final ResponseInputStream<GetObjectResponse> stream;
+        try {
+            stream = client.getObject(b -> b.bucket(bucket).key(key));
+        } catch (NoSuchKeyException missing) {
+            throw new BlobNotFoundException("blob not found: s3://" + bucket + "/" + key, missing);
+        }
+        try {
+            var response = stream.response();
+            return new ObjectRead(new ObjectMetadata(requireObjectLength(response.contentLength()), response.contentType(),
+                    response.eTag(), response.versionId(), response.metadata()), abortable(stream));
+        } catch (RuntimeException | Error failure) {
+            try { stream.abort(); } catch (RuntimeException close) { failure.addSuppressed(close); }
+            throw failure;
+        }
+    }
+
     @Override
     public InputStream openStream(String bucket, String key, long offset, long length) {
         return openStream(bucket, key, null, offset, length);
@@ -80,6 +114,10 @@ public final class S3BlobStore implements BlobStore {
         } catch (NoSuchKeyException nsk) {
             throw new BlobNotFoundException("blob not found: s3://" + bucket + "/" + key, nsk);
         }
+        return abortable(stream);
+    }
+
+    private static InputStream abortable(ResponseInputStream<GetObjectResponse> stream) {
         return new java.io.FilterInputStream(stream) {
             private boolean ended;
             @Override public int read() throws IOException {
@@ -295,9 +333,7 @@ public final class S3BlobStore implements BlobStore {
         try {
             var response = client.headObject(software.amazon.awssdk.services.s3.model.HeadObjectRequest.builder()
                     .bucket(bucket).key(key).build());
-            var length = response.contentLength();
-            if (length == null || length < 0) throw new IllegalStateException("S3 reported no object length");
-            return length;
+            return requireObjectLength(response.contentLength());
         } catch (NoSuchKeyException nsk) {
             throw new BlobNotFoundException("blob not found: s3://" + bucket + "/" + key, nsk);
         }

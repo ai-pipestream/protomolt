@@ -18,4 +18,8 @@
  * <p>See the <a href="https://github.com/ai-pipestream/protomolt/blob/main/docs/surface/rest-gateway.md">REST
  * gateway guide</a>.
  */
+@ApiStability(StabilityTier.STABLE)
 package ai.protomolt.proto.http.openapi;
+
+import ai.protomolt.proto.descriptors.ApiStability;
+import ai.protomolt.proto.descriptors.StabilityTier;

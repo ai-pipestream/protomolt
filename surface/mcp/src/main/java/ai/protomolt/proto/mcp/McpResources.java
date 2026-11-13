@@ -82,6 +82,13 @@ public interface McpResources {
         return new Page(page.resources(), page.nextCursor());
     }
 
+    /** Returns one bounded page of URI templates. */
+    default Page pageTemplates(ObjectMapper mapper, String cursor, int pageSize) {
+        var page = ai.protomolt.proto.mcp.transport.McpResources.page(
+                mapper, () -> templates(mapper), cursor, pageSize);
+        return new Page(page.resources(), page.nextCursor());
+    }
+
     /** Reads one URI, or empty when this collection does not own it. */
     Optional<ObjectNode> read(ObjectMapper mapper, String uri);
 
@@ -107,6 +114,19 @@ public interface McpResources {
         }
         return visibleTo(caller)
                 ? page(mapper, cursor, pageSize)
+                : new Page(mapper.createArrayNode(), null);
+    }
+
+    /**
+     * {@link #pageTemplates(ObjectMapper, String, int)} as {@code caller} sees it: an
+     * empty final page when not visible, so neither templates nor a continuation leak.
+     */
+    default Page pageTemplates(ObjectMapper mapper, String cursor, int pageSize, Caller caller) {
+        if (pageSize <= 0) {
+            throw new IllegalArgumentException("page size must be positive");
+        }
+        return visibleTo(caller)
+                ? pageTemplates(mapper, cursor, pageSize)
                 : new Page(mapper.createArrayNode(), null);
     }
 

@@ -12,3 +12,9 @@ dependencies {
 }
 ext.forbiddenRuntimeModules = ['protomolt-repo-container', 's3', 'jedis', 'hibernate-core', 'HikariCP', 'postgresql', 'kafka-clients']
 apply from: rootProject.file('gradle/runtime-boundaries.gradle')
+
+tasks.named('integrationTest', Test) {
+    doFirst {
+        systemProperty 'protomolt.cache.heap.classpath', sourceSets.test.runtimeClasspath.asPath
+    }
+}

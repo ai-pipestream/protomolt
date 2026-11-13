@@ -26,4 +26,8 @@
  * <p>See the <a href="https://github.com/ai-pipestream/protomolt/blob/main/docs/schema/registry.md">registry
  * guide</a> for usage.</p>
  */
+@ApiStability(StabilityTier.STABLE)
 package ai.protomolt.proto.registry;
+
+import ai.protomolt.proto.descriptors.ApiStability;
+import ai.protomolt.proto.descriptors.StabilityTier;

@@ -124,12 +124,12 @@ class CachingBlobStoreReadThroughTest {
 
         byte[] authoritative = "verified-authoritative-bytes".getBytes(StandardCharsets.UTF_8);
         String sha = sha256Hex(authoritative);
-        backing.put(spec(BUCKET, "obj"), authoritative);
+        store.put(spec(BUCKET, "obj"), authoritative);
 
         // Poison the cache with wrong-digest bytes of the same length
         byte[] corruptedSameLength = authoritative.clone();
         corruptedSameLength[0] ^= 0x01;
-        cache.put(spec(store.cacheBucket(BUCKET), "obj"), corruptedSameLength);
+        cache.data.put(InMemoryBlobStore.coord(store.cacheBucket(BUCKET), "obj"), corruptedSameLength);
 
         try (InputStream stream = store.openVerifiedStream(BUCKET, "obj", authoritative.length, sha)) {
             assertThat(stream.readAllBytes()).isEqualTo(authoritative);
@@ -138,8 +138,7 @@ class CachingBlobStoreReadThroughTest {
         assertThat(cache.get(store.cacheBucket(BUCKET), "obj").data()).isEqualTo(authoritative);
 
         // Poison the cache with truncated bytes
-        cache.put(
-                spec(store.cacheBucket(BUCKET), "obj"),
+        cache.data.put(InMemoryBlobStore.coord(store.cacheBucket(BUCKET), "obj"),
                 Arrays.copyOf(authoritative, authoritative.length - 3));
         try (InputStream stream = store.openVerifiedStream(BUCKET, "obj", authoritative.length, sha)) {
             assertThat(stream.readAllBytes()).isEqualTo(authoritative);
@@ -247,12 +246,81 @@ class CachingBlobStoreReadThroughTest {
                 .isInstanceOf(BlobStore.BlobReadLimitException.class);
     }
 
+    @Test
+    void unavailableAuthorityIsNeverHiddenByAValidCachedBody() {
+        var backing = new InMemoryBlobStore();
+        var cache = new InMemoryBlobStore();
+        var store = new CachingBlobStore(backing, cache, 60, 1024);
+        store.put(spec(BUCKET, "present"), new byte[]{1, 2, 3});
+        backing.failAll = true;
+        assertThatThrownBy(() -> store.get(BUCKET, "present"))
+                .isInstanceOf(IllegalStateException.class).hasMessage("Simulated cache outage");
+        assertThatThrownBy(() -> store.openVerifiedStream(BUCKET, "present", 3, null))
+                .isInstanceOf(IllegalStateException.class).hasMessage("Simulated cache outage");
+    }
+
     private static void readAll(InputStream in) {
         try (in) {
             in.readAllBytes();
         } catch (IOException e) {
             throw new UncheckedIOException(e);
         }
+    }
+
+    @Test
+    void interruptionDuringCacheFillDoesNotBecomeSuccessfulEof() throws Exception {
+        var backing = new InMemoryBlobStore();
+        var cache = new InMemoryBlobStore();
+        var store = new CachingBlobStore(backing, cache, 60, 1024);
+        byte[] payload = {1, 2, 3};
+        backing.put(spec(BUCKET, "cancelled"), payload);
+        cache.interruptStreamPut = true;
+        try (InputStream input = store.openVerifiedStream(BUCKET, "cancelled", payload.length, sha256Hex(payload))) {
+            byte[] received = new byte[payload.length];
+            assertThat(input.read(received)).isEqualTo(payload.length);
+            assertThat(received).isEqualTo(payload);
+            assertThatThrownBy(input::read).isInstanceOf(IOException.class)
+                    .hasMessage("Cache read cancelled")
+                    .hasRootCauseMessage("Interrupted cache transfer");
+            assertThat(Thread.currentThread().isInterrupted()).isTrue();
+        } finally {
+            Thread.interrupted();
+        }
+        assertThatThrownBy(() -> cache.get(BUCKET, "cancelled"))
+                .isInstanceOf(BlobStore.BlobNotFoundException.class);
+    }
+
+    @Test
+    void byteArrayRewriteEvictsOldBytesWhenOversizedOrCacheFillFails() {
+        var backing = new InMemoryBlobStore();
+        var cache = new InMemoryBlobStore();
+        var store = new CachingBlobStore(backing, cache, 0, 4);
+        store.put(spec(BUCKET, "key"), new byte[]{1});
+        assertThat(cache.get(BUCKET, "key").data()).containsExactly((byte) 1);
+        store.put(spec(BUCKET, "key"), new byte[5]);
+        assertThatThrownBy(() -> cache.get(BUCKET, "key"))
+                .isInstanceOf(BlobStore.BlobNotFoundException.class);
+        store.put(spec(BUCKET, "key"), new byte[]{2});
+        cache.failStreamPut = true;
+        store.put(spec(BUCKET, "key"), new byte[]{3});
+        assertThatThrownBy(() -> cache.get(BUCKET, "key"))
+                .isInstanceOf(BlobStore.BlobNotFoundException.class);
+        assertThat(backing.get(BUCKET, "key").data()).containsExactly((byte) 3);
+    }
+
+    @Test
+    void oversizedVerifiedReadBypassesMetadataAndCache() throws Exception {
+        var backing = new InMemoryBlobStore();
+        var cache = new InMemoryBlobStore();
+        var store = new CachingBlobStore(backing, cache, 60, 1);
+        byte[] bytes = {1, 2};
+        backing.put(spec(BUCKET, "large"), bytes);
+        try (InputStream input = store.openVerifiedStream(BUCKET, "large", 2, sha256Hex(bytes))) {
+            assertThat(input.readAllBytes()).isEqualTo(bytes);
+        }
+        assertThat(backing.metadataReads).isZero();
+        assertThat(cache.metadataReads).isZero();
+        assertThat(backing.streamReads).isEqualTo(1);
     }
 
     private static BlobStore.PutSpec spec(String bucket, String key) {
@@ -266,7 +334,11 @@ class CachingBlobStoreReadThroughTest {
     private static final class InMemoryBlobStore implements ExpiringBlobStore {
         private final Map<String, byte[]> data = new HashMap<>();
         private final Map<String, String> etags = new HashMap<>();
+        private final Map<String, Map<String, String>> attributes = new HashMap<>();
         boolean failAll;
+        boolean interruptStreamPut;
+        boolean failStreamPut;
+        int metadataReads;
         int streamReads;
         int boundedReads;
         int lastTtlSeconds;
@@ -293,6 +365,7 @@ class CachingBlobStoreReadThroughTest {
             byte[] copy = body.clone();
             String k = coord(spec.bucket(), spec.key());
             data.put(k, copy);
+            attributes.put(k, spec.metadata() == null ? Map.of() : Map.copyOf(spec.metadata()));
             try {
                 String etag = "\"" + sha256Hex(copy) + "\"";
                 etags.put(k, etag);
@@ -310,6 +383,31 @@ class CachingBlobStoreReadThroughTest {
             } catch (IOException e) {
                 throw new UncheckedIOException(e);
             }
+        }
+
+        @Override
+        public PutResult put(PutSpec spec, InputStream body, long length, int ttl) {
+            if (failStreamPut) throw new IllegalStateException("Cache fill unavailable");
+            if (interruptStreamPut) {
+                Thread.currentThread().interrupt();
+                throw new IllegalStateException("Interrupted cache transfer");
+            }
+            try { return put(spec, body.readAllBytes(), ttl); }
+            catch (IOException failure) { throw new UncheckedIOException(failure); }
+        }
+
+        @Override
+        public ObjectMetadata statObject(String bucket, String key) {
+            metadataReads++;
+            headObject(bucket, key);
+            String k = coord(bucket, key);
+            return new ObjectMetadata(data.get(k).length, "application/octet-stream", etags.get(k), null,
+                    attributes.getOrDefault(k, Map.of()));
+        }
+
+        @Override
+        public ObjectRead openSnapshot(String bucket, String key) {
+            return new ObjectRead(statObject(bucket, key), openStream(bucket, key, 0, -1));
         }
 
         @Override

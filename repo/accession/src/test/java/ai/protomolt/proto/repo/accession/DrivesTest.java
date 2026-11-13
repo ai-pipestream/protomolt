@@ -11,34 +11,42 @@ import java.util.Map;
 import java.util.Optional;
 import org.junit.jupiter.api.Test;
 
-/** Backward-compatible temporary-stack classification on the drives resolver. */
+/** Only explicitly known stacks can be classified as durable. */
 class DrivesTest {
     private static final Stack DURABLE = new MemoryStack("stack-durable");
     private static final Stack TEMPORARY = new MemoryStack("stack-temporary");
 
     @Test
-    void staticTablesClassifyEveryStackAsDurable() {
+    void staticTablesClassifyOnlyRegisteredStacksAsDurable() {
         var drives = new DocumentSaves.Drives("durable", Map.of("durable", DURABLE));
         assertThat(drives.temporary(DURABLE)).isFalse();
-        assertThat(drives.temporary(TEMPORARY)).isFalse();
-        assertThat(drives.temporary(new MemoryStack("stack-unknown"))).isFalse();
+        assertUnknown(drives, TEMPORARY);
+        assertUnknown(drives, new MemoryStack("stack-unknown"));
     }
 
     @Test
-    void dynamicResolverWithoutClassifierClassifiesEveryStackAsDurable() {
+    void dynamicDurableResolverRequiresAKnownStack() {
         var drives = DocumentSaves.Drives.dynamic("durable", (account, drive) -> Optional.of(DURABLE),
-                stackId -> Optional.of(DURABLE));
+                stackId -> stackId.equals(DURABLE.stackId()) ? Optional.of(DURABLE) : Optional.empty());
         assertThat(drives.temporary(DURABLE)).isFalse();
+        assertUnknown(drives, TEMPORARY);
     }
 
     @Test
-    void dynamicResolverClassifiesByRecordedStackIdAndDefaultsUnknownToDurable() {
+    void dynamicResolverRequiresExplicitClassification() {
         var drives = DocumentSaves.Drives.dynamic("durable",
                 (account, drive) -> Optional.of(DURABLE), stackId -> Optional.of(DURABLE),
-                stackId -> stackId.equals(TEMPORARY.stackId()) ? Optional.of(true) : Optional.empty());
+                stackId -> stackId.equals(TEMPORARY.stackId()) ? Optional.of(true)
+                        : stackId.equals(DURABLE.stackId()) ? Optional.of(false) : Optional.empty());
         assertThat(drives.temporary(TEMPORARY)).isTrue();
         assertThat(drives.temporary(DURABLE)).isFalse();
-        assertThat(drives.temporary(new MemoryStack("stack-unknown"))).isFalse();
+        assertUnknown(drives, new MemoryStack("stack-unknown"));
+    }
+
+    private static void assertUnknown(DocumentSaves.Drives drives, Stack stack) {
+        assertThatThrownBy(() -> drives.temporary(stack))
+                .isInstanceOfSatisfying(AccessionException.class,
+                        failure -> assertThat(failure.code()).isEqualTo(io.grpc.Status.Code.UNAVAILABLE));
     }
 
     private static final class MemoryStack implements Stack {

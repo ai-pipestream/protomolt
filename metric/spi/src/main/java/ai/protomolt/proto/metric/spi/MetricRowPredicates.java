@@ -92,7 +92,7 @@ public final class MetricRowPredicates {
                     "CEL row filter on '" + mapping.subject() + "' must not be blank",
                     List.of());
         }
-        SchemaContext context = SchemaContext.forMapping(mapping, expression);
+        SchemaContext context = SchemaContext.forMapping(mapping);
         CelAbstractSyntaxTree ast;
         try {
             ast = context.cel().compile(expression).getAst();
@@ -118,7 +118,7 @@ public final class MetricRowPredicates {
         if (expression == null || expression.isBlank()) {
             return Set.of();
         }
-        SchemaContext context = SchemaContext.forMapping(mapping, expression);
+        SchemaContext context = SchemaContext.forMapping(mapping);
         CelExpr root;
         try {
             root = context.cel().parse(expression, "row_filter").getAst().getExpr();
@@ -572,7 +572,7 @@ public final class MetricRowPredicates {
                     || "false".equals(name) || "null".equals(name)) {
                 return null;
             }
-            return name;
+            return name.startsWith("this.") ? name.substring("this.".length()) : name;
         }
         List<String> parts = new ArrayList<>();
         CelExpr current = expr;
@@ -738,10 +738,10 @@ public final class MetricRowPredicates {
 
     private record SchemaContext(Cel cel, Map<String, ResolvedTarget> targets) {
 
-        static SchemaContext forMapping(MetricMapping mapping, String expression) {
+        static SchemaContext forMapping(MetricMapping mapping) {
             Map<String, ResolvedTarget> targets = new LinkedHashMap<>();
             Map<String, CelType> topLevelTypes = new LinkedHashMap<>();
-            boolean hasDoubleLiteral = containsDoubleLiteral(expression);
+            Set<String> untypedNumericNames = new LinkedHashSet<>();
 
             if (mapping.descriptor() != null) {
                 Set<String> visiting = new LinkedHashSet<>();
@@ -750,6 +750,7 @@ public final class MetricRowPredicates {
                         mapping.descriptor(), "", "", visiting, targets, topLevelTypes);
             }
 
+            var descriptorTargets = Map.copyOf(targets);
             for (MetricMember member : mapping.members().values()) {
                 FieldKind effectiveKind = member.kind() != null
                         ? member.kind()
@@ -760,10 +761,9 @@ public final class MetricRowPredicates {
                     topLevelTypes.put(member.name(), celTypeFor(effectiveKind, true));
                     continue;
                 }
-                ResolvedTarget existingByPath = targets.get(member.fieldPath());
-                boolean floating = existingByPath != null
-                        ? existingByPath.floating()
-                        : (effectiveKind == FieldKind.NUMERIC && hasDoubleLiteral);
+                ResolvedTarget existingByPath = descriptorTargets.get(member.fieldPath());
+                boolean floating = existingByPath != null && existingByPath.floating();
+                boolean untypedNumeric = existingByPath == null && effectiveKind == FieldKind.NUMERIC;
                 ResolvedTarget resolved = new ResolvedTarget(
                         member.name(),
                         member.fieldName(),
@@ -777,7 +777,13 @@ public final class MetricRowPredicates {
                 if (!member.fieldName().isEmpty()) {
                     targets.putIfAbsent(member.fieldName(), resolved);
                 }
-                topLevelTypes.put(member.name(), celTypeFor(effectiveKind, floating));
+                topLevelTypes.put(member.name(), untypedNumeric
+                        ? SimpleType.DYN : celTypeFor(effectiveKind, floating));
+                if (untypedNumeric) {
+                    untypedNumericNames.add(member.name());
+                    if (!member.fieldPath().isEmpty()) untypedNumericNames.add(member.fieldPath());
+                    if (!member.fieldName().isEmpty()) untypedNumericNames.add(member.fieldName());
+                }
             }
 
             Descriptor celDescriptor = buildCelDescriptor(mapping, targets);
@@ -788,6 +794,14 @@ public final class MetricRowPredicates {
                 if (!"this".equals(entry.getKey()) && !entry.getKey().contains(".")) {
                     env.addVar(entry.getKey(), entry.getValue());
                 }
+            }
+            // A synthetic NUMERIC member does not declare int versus double. Declare
+            // its qualified aliases as dyn instead of guessing from other literals.
+            // Translation still enforces NUMERIC operands and lowers each literal
+            // without converting int64 to double. Descriptor-backed fields stay typed.
+            for (String name : untypedNumericNames) {
+                env.addVar(name, SimpleType.DYN);
+                env.addVar("this." + name, SimpleType.DYN);
             }
             CelBuilder compiler = env.advisoryBuilder();
             addNumericComparisonOverloads(compiler);
@@ -971,37 +985,5 @@ public final class MetricRowPredicates {
             }
         }
 
-        private static boolean containsDoubleLiteral(String expression) {
-            try {
-                CelExpr root = CelEnvironmentFactory.builder().build()
-                        .parse(expression, "probe").getAst().getExpr();
-                return hasDoubleConstant(root);
-            } catch (CelValidationException e) {
-                return false;
-            }
-        }
-
-        private static boolean hasDoubleConstant(CelExpr expr) {
-            return switch (expr.getKind()) {
-                case CONSTANT -> expr.constant().getKind() == CelConstant.Kind.DOUBLE_VALUE;
-                case CALL -> {
-                    for (CelExpr arg : expr.call().args()) {
-                        if (hasDoubleConstant(arg)) {
-                            yield true;
-                        }
-                    }
-                    yield false;
-                }
-                case LIST -> {
-                    for (CelExpr elem : expr.list().elements()) {
-                        if (hasDoubleConstant(elem)) {
-                            yield true;
-                        }
-                    }
-                    yield false;
-                }
-                default -> false;
-            };
-        }
     }
 }

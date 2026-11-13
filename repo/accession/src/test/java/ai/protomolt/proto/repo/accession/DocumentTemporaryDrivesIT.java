@@ -34,6 +34,71 @@ import org.junit.jupiter.api.Test;
  */
 class DocumentTemporaryDrivesIT {
     @Test
+    void unknownCarriedStackRefusesWithoutClaimingOperationAndRetryReclassifies() throws Exception {
+        try (var f = new AccessionFixture(); var rpc = new TemporaryRpc(f)) {
+            var address = address("a", "doc");
+            rpc.stub.saveDocument(create("create", address, document("a", "doc", "one")).build());
+            var original = f.catalog.manifest(address, 1).orElseThrow();
+            rpc.unclassified.add(f.stack.stackId());
+            var request = update("second", address, 1, coreDocument("a", "doc", "two"))
+                    .setDrive("durable").addWrites(put(DocumentPart.DOCUMENT_PART_CORE)).build();
+            assertThatThrownBy(() -> rpc.stub.saveDocument(request))
+                    .isInstanceOfSatisfying(StatusRuntimeException.class,
+                            failure -> assertThat(failure.getStatus().getCode()).isEqualTo(Status.Code.UNAVAILABLE));
+            assertThat(f.catalog.outcome("a", "second")).isEmpty();
+            assertThat(f.catalog.current(address).orElseThrow().revision()).isEqualTo(1);
+            assertThat(f.catalog.manifest(address, 1)).contains(original);
+            assertThat(rpc.durableTarget.puts.get()).isZero();
+
+            rpc.unclassified.clear();
+            rpc.classifications.clear();
+            assertThat(rpc.stub.saveDocument(request).getAccession().getRevision()).isEqualTo(2);
+            // PARSED, BLOBS and its raw blob share one stack, classified once in this save.
+            assertThat(rpc.classifications.get(f.stack.stackId()).get()).isEqualTo(1);
+            assertThat(rpc.classifications.get(rpc.durableTarget.stackId()).get()).isEqualTo(1);
+        }
+    }
+
+    @Test
+    void unknownDestinationRefusesBeforeWritingOrRecordingAnOutcome() throws Exception {
+        try (var f = new AccessionFixture(); var rpc = new TemporaryRpc(f)) {
+            rpc.unclassified.add(rpc.durableTarget.stackId());
+            var request = create("create", address("a", "doc"), document("a", "doc", "one"))
+                    .setDrive("durable").build();
+            assertThatThrownBy(() -> rpc.stub.saveDocument(request))
+                    .isInstanceOfSatisfying(StatusRuntimeException.class,
+                            failure -> assertThat(failure.getStatus().getCode()).isEqualTo(Status.Code.UNAVAILABLE));
+            assertThat(f.catalog.outcome("a", "create")).isEmpty();
+            assertThat(f.catalog.current(address("a", "doc"))).isEmpty();
+            assertThat(rpc.durableTarget.puts.get()).isZero();
+        }
+    }
+
+    @Test
+    void unknownCarriedStackCleansAStagedUploadWithoutRecordingRejection() throws Exception {
+        try (var f = new AccessionFixture(); var rpc = new TemporaryRpc(f)) {
+            var address = address("a", "doc");
+            rpc.stub.saveDocument(create("create", address, document("a", "doc", "one")).build());
+            rpc.unclassified.add(f.stack.stackId());
+            var save = update("upload-second", address, 1, blobsDocument("doc")).setDrive("durable")
+                    .addWrites(put(DocumentPart.DOCUMENT_PART_BLOBS));
+            save.getDocumentBuilder().getBlobBagBuilder().getBlobBuilder().clearData();
+            byte[] bytes = "raw bytes of doc".getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            var header = UploadHeader.newBuilder().setStreamed(StreamedBody.getDefaultInstance())
+                    .setSave(save).setBlobId("b1").setDeclaredLength(bytes.length)
+                    .setExpectedSha256(SaveIntents.sha256Hex(bytes)).build();
+
+            assertThatThrownBy(() -> rpc.uploads.upload(processAuthority(), header, new ByteArrayInputStream(bytes)))
+                    .isInstanceOfSatisfying(AccessionException.class,
+                            failure -> assertThat(failure.code()).isEqualTo(Status.Code.UNAVAILABLE));
+            assertThat(rpc.durableTarget.puts.get()).isEqualTo(1);
+            assertThat(rpc.durableTarget.objects).isEmpty();
+            assertThat(f.catalog.outcome("a", "upload-second")).isEmpty();
+            assertThat(f.catalog.current(address).orElseThrow().revision()).isEqualTo(1);
+        }
+    }
+
+    @Test
     void ordinaryDurableSaveRefusesTemporaryCarryAndInstructsPlacement() throws Exception {
         try (var f = new AccessionFixture(); var rpc = new TemporaryRpc(f)) {
             var address = address("a", "doc");
@@ -282,6 +347,8 @@ class DocumentTemporaryDrivesIT {
         final DocumentSaves.Drives drives;
         final DocumentUploads uploads;
         final AtomicInteger driveResolutions = new AtomicInteger();
+        final Map<String, AtomicInteger> classifications = new ConcurrentHashMap<>();
+        final Set<String> unclassified = ConcurrentHashMap.newKeySet();
         final Server server;
         final ManagedChannel channel;
         final DocumentServiceGrpc.DocumentServiceBlockingStub stub;
@@ -302,7 +369,12 @@ class DocumentTemporaryDrivesIT {
                         return Optional.ofNullable(byName.get(drive.isEmpty() ? "default" : drive));
                     },
                     stackId -> byName.values().stream().filter(stack -> stack.stackId().equals(stackId)).findFirst(),
-                    stackId -> stackId.equals(temp.stackId()) ? Optional.of(true) : Optional.empty());
+                    stackId -> {
+                        classifications.computeIfAbsent(stackId, ignored -> new AtomicInteger()).incrementAndGet();
+                        if (unclassified.contains(stackId)) return Optional.empty();
+                        return byName.values().stream().filter(stack -> stack.stackId().equals(stackId))
+                                .findFirst().map(stack -> stack == temp);
+                    });
             var saves = new DocumentSaves(f.catalog, drives, resolver(), limits(), bytes -> () -> {}, Clock.systemUTC());
             var reads = new DocumentReads(f.catalog, drives, limits(), bytes -> () -> {}, Clock.systemUTC());
             uploads = new DocumentUploads(saves);

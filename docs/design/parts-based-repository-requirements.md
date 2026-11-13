@@ -408,14 +408,24 @@ serving a cached entry on a verified stack read, `CachingBlobStore` checks the
 entry's byte length and SHA-256 against the manifest's `StackRef`; any corrupt,
 truncated, or mismatched cache entry is evicted and re-read from the
 authoritative S3 backing store, and `BlobStoreStack` still wraps the returned
-stream in `VerifyingInputStream`. A cached entry is served only after
-`headObject` on S3 confirms the object still exists; when S3 no longer has it,
+stream in `VerifyingInputStream`. A cached entry is served only after metadata-only
+S3 reads confirm its source ETag, version and length. The cache retains this
+identity from the same provider response as the bytes, rather than pairing an
+unconditioned GET with a separate earlier HEAD. A delayed old fill cannot serve
+as the current object after a rewrite, including across decorator instances.
+When S3 no longer has the object,
 the entry is evicted and the read fails as S3 reports it (a stack part read
 answers `DATA_LOSS`), so the cache never hides authoritative loss. Existence
 checks (`headObject`) always ask S3. Bounded reads (`getBounded`) serve a cache
 hit only when it fits the caller's limit; otherwise S3 enforces the limit.
 Cache unavailability on read or write logs a warning and falls through to
-authoritative S3 without failing the operation.
+authoritative S3 without failing the operation. Verification and fill staging use
+bounded-memory transfers and owner-only, delete-on-close temporary files, bounded
+by the admitted length and configured cache ceiling. They do not allocate another
+whole-object heap buffer beside the repository read reservation. Early close or
+failed verification discards staging; a successful fill streams into the cache
+with its configured TTL. Authoritative read failures and cancellation still
+propagate; cache failure does not turn either into success.
 Administrator purge composes `CachingBlobStore.reclaimer(backing.reclaimer())`
 so physical reclamation evicts cached copies alongside authoritative S3 deletion.
 

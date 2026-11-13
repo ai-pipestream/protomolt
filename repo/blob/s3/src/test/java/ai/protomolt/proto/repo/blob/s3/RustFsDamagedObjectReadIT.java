@@ -68,6 +68,7 @@ class RustFsDamagedObjectReadIT {
         byte[] small = fixture("intact sibling fixture;", 2048);
         String bigVersion, bigEtag;
         try (var client = client(rustfs)) {
+            RustFsReadiness.awaitServing(client);
             client.createBucket(builder -> builder.bucket(BUCKET));
             client.putBucketVersioning(builder -> builder.bucket(BUCKET)
                     .versioningConfiguration(configuration -> configuration.status(BucketVersioningStatus.ENABLED)));

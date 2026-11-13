@@ -23,6 +23,7 @@ public final class RedisBlobStoreProvider implements BlobStoreProvider {
         RedisBlobStore store = new RedisBlobStore(config);
         var capabilities = java.util.EnumSet.of(
                 ai.protomolt.proto.repo.blob.spi.BlobCapability.LIST,
+                ai.protomolt.proto.repo.blob.spi.BlobCapability.STREAMING_WRITE,
                 ai.protomolt.proto.repo.blob.spi.BlobCapability.OBJECT_EXPIRY,
                 ai.protomolt.proto.repo.blob.spi.BlobCapability.BOUNDED_READ,
                 ai.protomolt.proto.repo.blob.spi.BlobCapability.AUTHORITATIVE_CONDITIONAL_READ,

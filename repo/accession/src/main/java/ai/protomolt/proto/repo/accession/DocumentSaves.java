@@ -124,7 +124,7 @@ public final class DocumentSaves {
 
         /**
          * Creates a static drive table shared across all accounts. Static tables
-         * classify every stack as durable; temporary classification needs the
+         * classify their registered stacks as durable; temporary classification needs the
          * dynamic resolver backed by a drive ledger.
          *
          * @param defaultDrive the drive name used when a save request leaves {@code drive} empty
@@ -140,14 +140,15 @@ public final class DocumentSaves {
             this.byStackId = stackId -> this.stacks.values().stream()
                     .filter(stack -> stack.stackId().equals(stackId))
                     .findFirst();
-            this.temporaryByStackId = stackId -> Optional.empty();
+            this.temporaryByStackId = stackId -> this.byStackId.apply(stackId).map(stack -> false);
         }
 
         private Drives(
                 String defaultDrive,
                 java.util.function.BiFunction<String, String, Optional<Stack>> byAccountAndDrive,
                 java.util.function.Function<String, Optional<Stack>> byStackId) {
-            this(defaultDrive, byAccountAndDrive, byStackId, stackId -> Optional.empty());
+            this(defaultDrive, byAccountAndDrive, byStackId, stackId -> byStackId.apply(stackId)
+                    .filter(stack -> stack.stackId().equals(stackId)).map(stack -> false));
         }
 
         private Drives(
@@ -167,7 +168,8 @@ public final class DocumentSaves {
 
         /**
          * Creates a dynamic drive resolver that resolves {@code (accountId, driveName)} on each save
-         * and {@code stackId} on each read or purge.
+         * and {@code stackId} on each read or purge. This overload declares resolved stacks
+         * durable; hosts with expiring objects must supply the explicit classifier.
          *
          * @param defaultDrive the drive name used when a save request leaves {@code drive} empty
          * @param byAccountAndDrive resolves an account ID and effective drive name to a {@link Stack}
@@ -189,7 +191,7 @@ public final class DocumentSaves {
          * @param byAccountAndDrive resolves an account ID and effective drive name to a {@link Stack}
          * @param byStackId resolves a recorded stack ID to a {@link Stack}
          * @param temporaryByStackId resolves a recorded stack ID to whether its objects expire;
-         *        an unclassified stack is treated as durable
+         *        an unclassified stack fails with UNAVAILABLE, without recording a save outcome
          * @return the dynamic drive resolver
          */
         public static Drives dynamic(
@@ -240,8 +242,8 @@ public final class DocumentSaves {
 
         /**
          * Whether the given stack is temporary: its objects expire per drive
-         * configuration. Stacks this resolver cannot classify are durable, so a
-         * static table never reports a temporary stack.
+         * configuration. An unknown classification fails with UNAVAILABLE; a static
+         * table explicitly classifies only its registered stacks as durable.
          *
          * @param stack the stack to classify
          * @return true when the stack's objects expire
@@ -251,7 +253,8 @@ public final class DocumentSaves {
         }
 
         boolean temporary(String stackId) {
-            return temporaryByStackId.apply(stackId).orElse(false);
+            return temporaryByStackId.apply(stackId).orElseThrow(() -> new AccessionException(
+                    Status.Code.UNAVAILABLE, "Durability of stack " + stackId + " is unavailable", null));
         }
     }
 
@@ -1267,9 +1270,14 @@ public final class DocumentSaves {
             return reject(caller, request, address, intentSha, authorized, RejectionReason.REJECTION_REASON_VALIDATION_FAILED,
                     "A concept tag does not fit the catalog", unstorableTags);
 
+        // Per-save memoization bounds catalog reads by distinct stack IDs. Do not retain
+        // this map across operations: a subsequent save must observe repaired host state.
+        var classifications = new HashMap<String, Boolean>();
+        java.util.function.Predicate<String> temporary = stackId ->
+                classifyForSave(classifications, stackId, preUploadedBlobs);
         boolean promotion = request.getStoragePlacement() == StoragePlacement.STORAGE_PLACEMENT_SELECTED_DRIVE;
         Stack resolvedStack = promotion ? drives.resolve(account, request.getDrive()) : null;
-        if (promotion && drives.temporary(resolvedStack))
+        if (promotion && temporary.test(resolvedStack.stackId()))
             return rejectWithUploadCleanup(caller, request, address, intentSha, authorized, resolvedStack, preUploadedBlobs,
                     RejectionReason.REJECTION_REASON_VALIDATION_FAILED,
                     "Selected-drive placement cannot target temporary drive '" + request.getDrive()
@@ -1284,7 +1292,7 @@ public final class DocumentSaves {
         // S12: write new bytes to the drive's stack, before the commit transaction. Each raw
         // blob is its own object, bound to its blob ID on the BLOBS entry (decision 45).
         var stack = resolvedStack == null ? drives.resolve(account, request.getDrive()) : resolvedStack;
-        if (!promotion && !drives.temporary(stack)) {
+        if (!promotion && !temporary.test(stack.stackId())) {
             // An ordinary save into a durable destination must not inherit expiring bytes.
             // Carried, sourced and blob-level-carried references on temporary stacks are
             // refused here, before any further object is written or the revision is published;
@@ -1293,19 +1301,19 @@ public final class DocumentSaves {
             var temporaryStacks = new LinkedHashSet<String>();
             for (var part : parts.values()) {
                 if (part.hasRef() && !part.getRef().getStackId().equals(stack.stackId())
-                        && drives.temporary(part.getRef().getStackId())) {
+                        && temporary.test(part.getRef().getStackId())) {
                     temporarySelectors.add(part.getEntry().getSelector());
                     temporaryStacks.add(part.getRef().getStackId());
                 }
                 for (var blob : part.getBlobRefsList())
                     if (!blob.getRef().getStackId().equals(stack.stackId())
-                            && drives.temporary(blob.getRef().getStackId())) {
+                            && temporary.test(blob.getRef().getStackId())) {
                         temporarySelectors.add(part.getEntry().getSelector());
                         temporaryStacks.add(blob.getRef().getStackId());
                     }
             }
             for (var blob : carriedBlobs)
-                if (!blob.getRef().getStackId().equals(stack.stackId()) && drives.temporary(blob.getRef().getStackId())) {
+                if (!blob.getRef().getStackId().equals(stack.stackId()) && temporary.test(blob.getRef().getStackId())) {
                     temporarySelectors.add(PartSelector.newBuilder().setPart(DocumentPart.DOCUMENT_PART_BLOBS).build());
                     temporaryStacks.add(blob.getRef().getStackId());
                 }
@@ -1592,6 +1600,25 @@ public final class DocumentSaves {
             }
         }
         return SaveIntents.sha256(SaveIntents.intent(p.request(), p.address(), contents));
+    }
+
+    private boolean classifyForSave(Map<String, Boolean> classifications, String stackId,
+            List<BlobObjectRef> preUploadedBlobs) {
+        try {
+            return classifications.computeIfAbsent(stackId, drives::temporary);
+        } catch (RuntimeException unavailable) {
+            // Uploads may have staged a raw blob before candidate composition. A failed
+            // durability lookup must not leave that attempt behind or consume its ID.
+            for (var uploaded : preUploadedBlobs) {
+                try {
+                    var cleanup = deleteUnreferenced(drives.byId(uploaded.getRef().getStackId()), uploaded.getRef());
+                    if (cleanup != null && cleanup != unavailable) unavailable.addSuppressed(cleanup);
+                } catch (RuntimeException cleanup) {
+                    if (cleanup != unavailable) unavailable.addSuppressed(cleanup);
+                }
+            }
+            throw unavailable;
+        }
     }
 
     private SaveDocumentResponse rejectWithUploadCleanup(RepositoryCaller caller, SaveDocumentRequest request,

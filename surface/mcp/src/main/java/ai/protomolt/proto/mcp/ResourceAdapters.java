@@ -32,6 +32,15 @@ final class ResourceAdapters {
                 McpResources.Page page = source.page(mapper, cursor, size, caller);
                 return new Page(page.resources(), page.nextCursor());
             }
+            @Override public Page pageTemplates(ObjectMapper mapper, String cursor, int size) {
+                McpResources.Page page = source.pageTemplates(mapper, cursor, size);
+                return new Page(page.resources(), page.nextCursor());
+            }
+            @Override public Page pageTemplates(ObjectMapper mapper, String cursor, int size,
+                    Caller caller) {
+                McpResources.Page page = source.pageTemplates(mapper, cursor, size, caller);
+                return new Page(page.resources(), page.nextCursor());
+            }
             @Override public Optional<ObjectNode> read(ObjectMapper mapper, String uri) {
                 return source.read(mapper, uri);
             }

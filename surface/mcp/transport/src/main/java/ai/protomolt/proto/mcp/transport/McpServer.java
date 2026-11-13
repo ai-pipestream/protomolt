@@ -206,13 +206,25 @@ public final class McpServer {
         }
 
         public Optional<ObjectNode> handle(JsonNode message) {
+            return handle(message, caller);
+        }
+
+        /**
+         * Dispatches {@code message} as {@code requestCaller}: the caller this request's own
+         * credential resolved to. A transport that authenticates every request passes it so
+         * scope changes take effect on the next request; the transport has already checked
+         * that it names the principal that opened the session. {@code initialize} always
+         * runs as the opening caller.
+         */
+        public Optional<ObjectNode> handle(JsonNode message, Caller requestCaller) {
+            Objects.requireNonNull(requestCaller, "requestCaller");
             checkAsynchronousFailure();
             if (message == null || !message.isObject()) {
                 return Optional.of(JsonRpc.error(mapper, null, JsonRpc.INVALID_REQUEST,
                         "Invalid request"));
             }
             if (!message.has("method")) {
-                return dispatcher.handle(message, caller, moonshotDialect);
+                return dispatcher.handle(message, requestCaller, moonshotDialect);
             }
             String method = message.get("method").asText();
             if (JsonRpc.isNotification(message)) {
@@ -252,7 +264,7 @@ public final class McpServer {
             if (state == State.CLOSED) {
                 return Optional.of(lifecycleError(id, "MCP session is closed"));
             }
-            return dispatcher.handle(message, caller, moonshotDialect);
+            return dispatcher.handle(message, requestCaller, moonshotDialect);
         }
 
         private void handleNotification(String method, JsonNode params) {
@@ -295,6 +307,16 @@ public final class McpServer {
         /** Runs a ready tool request and invokes the completion callback unless cancelled. */
         public Future<Optional<ObjectNode>> submit(JsonNode message,
                                                    Consumer<Optional<ObjectNode>> completion) {
+            return submit(message, caller, completion);
+        }
+
+        /**
+         * Runs a ready tool request as {@code requestCaller}, under the same contract as
+         * {@link #handle(JsonNode, Caller)}.
+         */
+        public Future<Optional<ObjectNode>> submit(JsonNode message, Caller requestCaller,
+                                                   Consumer<Optional<ObjectNode>> completion) {
+            Objects.requireNonNull(requestCaller, "requestCaller");
             checkAsynchronousFailure();
             if (!isToolCallReady(message)) {
                 throw new IllegalArgumentException("tool request is not valid in this session state");
@@ -306,7 +328,8 @@ public final class McpServer {
             String key = idKey(message.get("id"));
             var taskIdentity = new AtomicReference<FutureTask<Optional<ObjectNode>>>();
             FutureTask<Optional<ObjectNode>> task = new FutureTask<>(() -> {
-                Optional<ObjectNode> response = dispatcher.handle(message, caller, moonshotDialect);
+                Optional<ObjectNode> response =
+                        dispatcher.handle(message, requestCaller, moonshotDialect);
                 if (completion != null && inFlight.get(key) == taskIdentity.get()
                         && !Thread.currentThread().isInterrupted()) {
                     completion.accept(response);
@@ -351,18 +374,33 @@ public final class McpServer {
             return task;
         }
 
-        /** Dispatches a stream message, asynchronously tracking ready tool calls. */
+        /**
+         * Dispatches a stream message as the session's opening caller (used by the operator
+         * stdio transport), asynchronously tracking ready tool calls. Transports that
+         * re-resolve credentials per request use {@link #dispatch(JsonNode, Caller, Consumer)},
+         * {@link #handle(JsonNode, Caller)}, or {@link #submit(JsonNode, Caller, Consumer)}.
+         */
         public void dispatch(JsonNode message, Consumer<Optional<ObjectNode>> completion) {
+            dispatch(message, caller, completion);
+        }
+
+        /**
+         * Dispatches a stream message as {@code requestCaller}, asynchronously tracking ready
+         * tool calls under the same contract as {@link #handle(JsonNode, Caller)}.
+         */
+        public void dispatch(JsonNode message, Caller requestCaller,
+                             Consumer<Optional<ObjectNode>> completion) {
+            Objects.requireNonNull(requestCaller, "requestCaller");
             checkAsynchronousFailure();
             if (isToolCallReady(message)) {
                 try {
-                    submit(message, completion);
+                    submit(message, requestCaller, completion);
                 } catch (RejectedExecutionException e) {
                     completion.accept(Optional.of(JsonRpc.error(mapper, message.get("id"),
                             -32000, e.getMessage())));
                 }
             } else {
-                completion.accept(handle(message));
+                completion.accept(handle(message, requestCaller));
             }
         }
 

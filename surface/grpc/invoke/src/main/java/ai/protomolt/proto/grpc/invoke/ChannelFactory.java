@@ -1,6 +1,8 @@
 package ai.protomolt.proto.grpc.invoke;
 
 import ai.protomolt.proto.grpc.policy.OutboundChannelPolicy;
+import io.grpc.ChannelCredentials;
+import io.grpc.Grpc;
 import io.grpc.ManagedChannel;
 import io.grpc.ManagedChannelBuilder;
 
@@ -12,6 +14,16 @@ import io.grpc.ManagedChannelBuilder;
 public interface ChannelFactory {
 
     ManagedChannel open(String target, boolean tls);
+
+    /**
+     * Opens a TLS channel that presents host-resolved channel credentials: a custom trust
+     * bundle, a client certificate, or both. A factory that cannot honor them refuses
+     * rather than opening a channel without them.
+     */
+    default ManagedChannel open(String target, ChannelCredentials credentials) {
+        throw new IllegalArgumentException(
+                "this channel factory cannot present custom TLS credentials");
+    }
 
     /** Validates a target before any schema or network work begins. */
     default void validateTarget(String target, boolean tls) {
@@ -45,6 +57,15 @@ public interface ChannelFactory {
                     }
                     return builder.build();
                 });
+            }
+
+            @Override
+            public ManagedChannel open(String target, ChannelCredentials credentials) {
+                if (credentials == null) {
+                    throw new IllegalArgumentException("channel credentials must not be null");
+                }
+                return policy.open(target, true,
+                        canonical -> Grpc.newChannelBuilder(canonical, credentials).build());
             }
 
             @Override

@@ -28,7 +28,7 @@ class CacheMultipartForwardTest {
                 java.util.Map.of(), null), new ByteArrayInputStream(new byte[16]), 8);
 
         assertThat(backingCalls).containsExactly("putMultipart");
-        assertThat(cacheCalls).as("the cache fills read-through, not on write").isEmpty();
+        assertThat(cacheCalls).as("multipart completion invalidates the old cache entry").containsExactly("delete");
     }
 
     private static BlobStore recording(List<String> calls) {

@@ -31,7 +31,7 @@ class ValkeyProviderIT {
         var spec = new BlobStore.PutSpec("objects", "original", "application/x-protobuf", Map.of("origin", "legacy"), null);
         try (var legacy = providers.open("redis", options); var preferred = providers.open("valkey", options)) {
             assertThat(preferred.capabilities()).isEqualTo(legacy.capabilities())
-                    .doesNotContain(BlobCapability.STREAMING_WRITE);
+                    .contains(BlobCapability.STREAMING_WRITE);
             var result = legacy.store().put(spec, original);
             assertThat(preferred.store().get("objects", "original").data()).isEqualTo(original);
             assertThat(preferred.store().get("objects", "original").eTag()).isEqualTo(result.eTag());

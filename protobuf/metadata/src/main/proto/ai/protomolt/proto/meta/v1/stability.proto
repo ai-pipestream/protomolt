@@ -1,0 +1,86 @@
+syntax = "proto3";
+
+package ai.protomolt.proto.meta.v1;
+
+option java_multiple_files = true;
+option java_package = "ai.protomolt.proto.meta";
+option java_outer_classname = "StabilityProto";
+option (file_stability) = {
+  level: STABILITY_LEVEL_STABLE
+  since: "0.1.0"
+};
+
+import "ai/protomolt/proto/validate/v1/validate.proto";
+import "buf/validate/validate.proto";
+import "google/protobuf/descriptor.proto";
+
+// Stability tier classification for protobuf files, messages, fields, enums,
+// enum values, services, and RPC methods.
+enum StabilityLevel {
+  // Unspecified stability; inherits from the enclosing declaration or file.
+  STABILITY_LEVEL_UNSPECIFIED = 0;
+  // Public, supported contract protected by automated release-baseline gates.
+  STABILITY_LEVEL_STABLE = 1;
+  // Public contract under active refinement; additive evolution is expected.
+  STABILITY_LEVEL_EVOLVING = 2;
+  // Incubating or opt-in contract; may change or be removed without a waiver.
+  STABILITY_LEVEL_EXPERIMENTAL = 3;
+  // Internal contract not intended for external consumption.
+  STABILITY_LEVEL_INTERNAL = 4;
+  // Scheduled for removal; remains protected by gates until retired via waiver.
+  STABILITY_LEVEL_DEPRECATED = 5;
+}
+
+// Stability metadata attached to a protobuf declaration via descriptor options.
+message StabilityOption {
+  // Declared stability tier for this schema element.
+  StabilityLevel level = 1 [
+    (ai.protomolt.proto.validate.v1.field).enum.defined_only = true,
+    (buf.validate.field).enum.defined_only = true
+  ];
+  // Optional version or milestone when this tier took effect.
+  string since = 2 [
+    (ai.protomolt.proto.validate.v1.field).string.max_len = 64,
+    (buf.validate.field).string.max_len = 64
+  ];
+  // Optional migration or compatibility note.
+  string notes = 3 [
+    (ai.protomolt.proto.validate.v1.field).string.max_len = 1024,
+    (buf.validate.field).string.max_len = 1024
+  ];
+}
+
+extend google.protobuf.FileOptions {
+  // File-level default stability option inherited by declarations in the file.
+  StabilityOption file_stability = 59100493;
+}
+
+extend google.protobuf.MessageOptions {
+  // Message-level stability option.
+  StabilityOption message_stability = 59100494;
+}
+
+extend google.protobuf.FieldOptions {
+  // Field-level stability option.
+  StabilityOption field_stability = 59100495;
+}
+
+extend google.protobuf.EnumOptions {
+  // Enum-level stability option.
+  StabilityOption enum_stability = 59100496;
+}
+
+extend google.protobuf.EnumValueOptions {
+  // Enum-value stability option.
+  StabilityOption enum_value_stability = 59100497;
+}
+
+extend google.protobuf.ServiceOptions {
+  // Service-level stability option.
+  StabilityOption service_stability = 59100498;
+}
+
+extend google.protobuf.MethodOptions {
+  // RPC method-level stability option.
+  StabilityOption method_stability = 59100499;
+}

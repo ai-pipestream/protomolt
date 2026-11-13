@@ -505,8 +505,8 @@ Both names reuse `RedisBlobStore` in `repo/blob/redis`, with a single atomic has
 per encoded object. They preserve the existing physical keys, `redis/v2` and
 `redis/v3` backend identities, and persisted drive provider `redis`. Selecting
 Valkey does not change an endpoint or migrate data. Use `redis://` or `rediss://`.
-The adapter still buffers payloads and has no native streamed reads; it does not
-qualify as an unrestricted v2 stack. See the [provider documentation](blob/redis/README.md)
+The adapter streams reads, ranges and InputStream writes with bounded client
+buffers. Redis value limits and managed-storage durability restrictions still apply. See the [provider documentation](blob/redis/README.md)
 for limits, identity rules, real-server qualification and migration boundaries.
 
 Prefer `DOCUMENT_PLATFORM_VALKEY_*` environment variables. Their `REDIS_*` aliases
@@ -677,7 +677,13 @@ preventing cross-drive cache collisions. Catalog state and current-revision
 pointers are never cached in Valkey/Redis. Verified stack reads validate cached
 bytes against the manifest's expected length and SHA-256, evicting corrupt cache
 entries and falling back to S3 automatically; a cached entry is served only
-after S3 confirms the object still exists, so an object lost from S3 fails the
-read instead of being answered from the cache; cache outages degrade gracefully
+after S3 confirms the same ETag, version and length, so a rewrite or lost object
+cannot be hidden by a stale cache entry. Fills retain the identity from the same
+provider read response; a late old fill is rejected on the next lookup. Cache
+candidates and in-progress fills use owner-only, delete-on-close temporary files
+under `java.io.tmpdir` with bounded transport buffers, not whole-object heap
+arrays. Each spool is limited by the admitted object length and cache ceiling;
+cache staging failures fall back to authoritative reads. Streamed cache writes
+preserve the configured TTL. Cache outages degrade gracefully
 to direct S3 reads and writes; and administrator purge evicts cached entries
 through the composed `ObjectReclaimer`.

@@ -6,6 +6,9 @@ description = 'Protobuf metadata standard — Field/Message options for how meta
 
 dependencies {
     api libs.protobuf.java
+    api project(':protomolt-descriptors')
+    api project(':protomolt-protobuf-validation')
+    api project(':protomolt-protobuf-validation-protovalidate')
 }
 
 protobuf {

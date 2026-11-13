@@ -29,6 +29,9 @@ public final class RedisBlobStore implements ExpiringBlobStore, AutoCloseable {
     private static final int MAX_VALUE_BYTES = 512 * 1024 * 1024;
     private static final int DELETE_CHUNK = 1000;
     private final JedisPool pool;
+    private final URI uri;
+    private final java.util.Set<RedisTransfer> transfers = java.util.concurrent.ConcurrentHashMap.newKeySet();
+    private boolean closed;
     private final int ttlSeconds;
     private final long maxObjectBytes;
     private final RedisObjectKeys keys;
@@ -39,7 +42,8 @@ public final class RedisBlobStore implements ExpiringBlobStore, AutoCloseable {
         keys = new RedisObjectKeys(config.keyPrefix(), config.writePolicy());
         ttlSeconds = config.ttlSeconds();
         maxObjectBytes = config.maxObjectBytes();
-        pool = new JedisPool(URI.create(config.uri()));
+        uri = URI.create(config.uri());
+        pool = new JedisPool(uri);
     }
 
     public PutResult put(PutSpec spec, byte[] body, int ttlSeconds) {
@@ -50,17 +54,127 @@ public final class RedisBlobStore implements ExpiringBlobStore, AutoCloseable {
     }
     @Override public PutResult put(PutSpec spec, byte[] body) { return put(spec, body, ttlSeconds); }
 
-    /** Caller owns the stream. Length and configured limits are checked before allocation and write. */
+    /** Caller owns the stream. An incomplete or invalid body never completes the atomic command. */
     @Override public PutResult put(PutSpec spec, InputStream body, long contentLength) {
+        return put(spec, body, contentLength, ttlSeconds);
+    }
+
+    @Override public PutResult put(PutSpec spec, InputStream body, long contentLength, int ttl) {
         Objects.requireNonNull(body);
         requireSize(contentLength);
-        var target = prepare(spec, ttlSeconds);
-        try {
-            byte[] bytes = body.readNBytes((int) contentLength);
-            if (bytes.length != contentLength || body.read() != -1)
-                throw new IllegalArgumentException("Stream differs from declared contentLength");
-            return write(target, bytes);
+        var target = prepare(spec, ttl);
+        var digest = digest();
+        try (var transfer = openTransfer()) {
+            // EVAL, script, key count, key, body, type, etag, timestamp, TTL,
+            // attribute pairs, and (for create-only) the final condition.
+            transfer.begin(9 + target.metadata().attributes.size() + (createOnly ? 1 : 0));
+            transfer.bulk(bytes("EVAL"));
+            transfer.bulk(createOnly ? RedisObjectScripts.CONDITIONAL_PUT : RedisObjectScripts.PUT);
+            transfer.bulk(bytes("1"));
+            transfer.bulk(bytes(target.key()));
+            transfer.beginBulk((int) contentLength);
+            byte[] buffer = new byte[64 * 1024];
+            long remaining = contentLength;
+            while (remaining > 0) {
+                int count = body.read(buffer, 0, (int) Math.min(remaining, buffer.length));
+                if (count < 0) throw new IllegalArgumentException("Stream differs from declared contentLength");
+                if (count == 0) {
+                    int value = body.read();
+                    if (value < 0) throw new IllegalArgumentException("Stream differs from declared contentLength");
+                    buffer[0] = (byte) value;
+                    count = 1;
+                }
+                digest.update(buffer, 0, count);
+                transfer.write(buffer, count);
+                remaining -= count;
+            }
+            if (body.read() != -1) throw new IllegalArgumentException("Stream differs from declared contentLength");
+            String sha = HexFormat.of().formatHex(digest.digest());
+            if (target.declaredSha() != null && !target.declaredSha().isEmpty()
+                    && !sha.equalsIgnoreCase(target.declaredSha()))
+                throw new IllegalArgumentException("verified write rejected: checksum differs from declared body");
+            // Do not send the trailing arguments until all local validation succeeds.
+            transfer.endBulk();
+            transfer.bulk(target.metadata().contentType);
+            String etag = "\"" + sha + "\"";
+            transfer.bulk(bytes(etag));
+            transfer.bulk(bytes(Long.toString(System.currentTimeMillis())));
+            transfer.bulk(bytes(Integer.toString(target.ttl())));
+            for (byte[] attribute : target.metadata().attributes) transfer.bulk(attribute);
+            if (createOnly) transfer.bulk(bytes(""));
+            long status = transfer.integerReply();
+            if (status == 0) throw new BlobConflictException("Conditional Redis write conflicted");
+            if (status != 1) throw new BlobStoreException(BlobStoreException.Code.DATA_LOSS, "Invalid Redis object metadata", null);
+            return new PutResult(etag, null);
         } catch (IOException failure) { throw new UncheckedIOException(failure); }
+    }
+
+    @Override public ObjectMetadata statObject(String namespace, String key) {
+        try (var jedis = pool.getResource()) {
+            var result = (List<?>) jedis.eval(RedisObjectScripts.METADATA,
+                    List.of(bytes(keys.object(namespace, key))), List.of());
+            requireResult(result, MAX_VALUE_BYTES, key);
+            return metadata(result.subList(1, result.size()));
+        }
+    }
+
+    private static ObjectMetadata metadata(List<?> fields) {
+        var attributes = new LinkedHashMap<String, String>();
+        var pairs = (List<?>) fields.get(3);
+        for (int i = 0; i < pairs.size(); i += 2)
+            attributes.put(text(pairs.get(i)), text(pairs.get(i + 1)));
+        String type = text(fields.get(1));
+        return new ObjectMetadata(((Number) fields.get(0)).longValue(), type.isEmpty() ? null : type,
+                text(fields.get(2)), null, attributes);
+    }
+
+    @Override public ObjectRead openSnapshot(String namespace, String key) {
+        String physical = keys.object(namespace, key);
+        RedisTransfer transfer = null;
+        try {
+            transfer = openTransfer();
+            transfer.command(List.of(bytes("EVAL"), RedisObjectScripts.SNAPSHOT, bytes("1"), bytes(physical)));
+            requireResult(List.of(transfer.readStatus(3)), MAX_VALUE_BYTES, key);
+            ObjectMetadata metadata = metadata(transfer.metadataReply());
+            return new ObjectRead(metadata, transfer.payload(metadata.length()));
+        } catch (IOException | RuntimeException | Error failure) {
+            if (transfer != null) {
+                try { transfer.close(); } catch (IOException close) { failure.addSuppressed(close); }
+            }
+            if (failure instanceof IOException io) throw new UncheckedIOException(io);
+            if (failure instanceof RuntimeException runtime) throw runtime;
+            throw (Error) failure;
+        }
+    }
+
+    @Override public long objectLength(String namespace, String key) {
+        try (var jedis = pool.getResource()) {
+            var result = (List<?>) jedis.eval(RedisObjectScripts.STAT, List.of(bytes(keys.object(namespace, key))), List.of());
+            requireResult(result, MAX_VALUE_BYTES, key);
+            return ((Number) result.get(1)).longValue();
+        }
+    }
+
+    @Override public InputStream openStream(String namespace, String key, long offset, long length) {
+        if (offset < 0) throw new IllegalArgumentException("Offset must not be negative");
+        String physical = keys.object(namespace, key);
+        RedisTransfer transfer = null;
+        try {
+            transfer = openTransfer();
+            transfer.command(List.of(bytes("EVAL"), RedisObjectScripts.STREAM, bytes("1"), bytes(physical),
+                    bytes(Long.toString(Math.min(offset, MAX_VALUE_BYTES))),
+                    bytes(Long.toString(length < 0 ? MAX_VALUE_BYTES : Math.min(length, MAX_VALUE_BYTES)))));
+            long status = transfer.readStatus();
+            requireResult(List.of(status), MAX_VALUE_BYTES, key);
+            return transfer.payload(length < 0 ? MAX_VALUE_BYTES : Math.min(length, MAX_VALUE_BYTES));
+        } catch (IOException | RuntimeException | Error failure) {
+            if (transfer != null) {
+                try { transfer.close(); } catch (IOException close) { failure.addSuppressed(close); }
+            }
+            if (failure instanceof IOException io) throw new UncheckedIOException(io);
+            if (failure instanceof RuntimeException runtime) throw runtime;
+            throw (Error) failure;
+        }
     }
 
     private record WriteTarget(String key, RedisWriteMetadata metadata, String declaredSha, int ttl) {}
@@ -201,7 +315,42 @@ public final class RedisBlobStore implements ExpiringBlobStore, AutoCloseable {
             requireResult((List<?>) jedis.eval(RedisObjectScripts.STAT, List.of(bytes(keys.object(namespace, key))), List.of()), MAX_VALUE_BYTES, key);
         }
     }
-    @Override public void close() { pool.close(); }
+    private RedisTransfer openTransfer() throws IOException {
+        synchronized (transfers) {
+            if (closed) throw new IllegalStateException("Redis store is closed");
+        }
+        var transfer = new RedisTransfer(uri, transfers::remove);
+        synchronized (transfers) {
+            if (closed) {
+                transfer.close();
+                throw new IllegalStateException("Redis store is closed");
+            }
+            transfers.add(transfer);
+        }
+        return transfer;
+    }
+
+    @Override public void close() {
+        List<RedisTransfer> active;
+        synchronized (transfers) {
+            if (closed) return;
+            closed = true;
+            active = List.copyOf(transfers);
+        }
+        IOException failure = null;
+        for (var transfer : active) {
+            try { transfer.close(); }
+            catch (IOException close) {
+                if (failure == null) failure = close; else failure.addSuppressed(close);
+            }
+        }
+        try { pool.close(); }
+        catch (RuntimeException close) {
+            if (failure != null) close.addSuppressed(failure);
+            throw close;
+        }
+        if (failure != null) throw new UncheckedIOException(failure);
+    }
 
     private void requireSize(long size) {
         if (size < 0 || size > MAX_VALUE_BYTES || (maxObjectBytes > 0 && size > maxObjectBytes))
@@ -218,7 +367,10 @@ public final class RedisBlobStore implements ExpiringBlobStore, AutoCloseable {
     private static byte[] bytes(String value) { return value.getBytes(StandardCharsets.UTF_8); }
     private static String text(Object value) { return new String((byte[]) value, StandardCharsets.UTF_8); }
     private static String sha256(byte[] body) {
-        try { return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(body)); }
+        return HexFormat.of().formatHex(digest().digest(body));
+    }
+    private static MessageDigest digest() {
+        try { return MessageDigest.getInstance("SHA-256"); }
         catch (NoSuchAlgorithmException impossible) { throw new IllegalStateException("SHA-256 unavailable", impossible); }
     }
 }
