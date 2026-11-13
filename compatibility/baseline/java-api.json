@@ -56811,6 +56811,37 @@
           "stability" : "STABLE"
         },
         {
+          "name" : "pageTemplates",
+          "parameterTypes" : [
+            "com.fasterxml.jackson.databind.ObjectMapper",
+            "java.lang.String",
+            "int"
+          ],
+          "returnType" : "ai.protomolt.proto.mcp.McpResources.Page",
+          "visibility" : "PUBLIC",
+          "staticMethod" : false,
+          "finalMethod" : false,
+          "abstractMethod" : false,
+          "defaultMethod" : false,
+          "stability" : "STABLE"
+        },
+        {
+          "name" : "pageTemplates",
+          "parameterTypes" : [
+            "com.fasterxml.jackson.databind.ObjectMapper",
+            "java.lang.String",
+            "int",
+            "ai.protomolt.proto.actions.Caller"
+          ],
+          "returnType" : "ai.protomolt.proto.mcp.McpResources.Page",
+          "visibility" : "PUBLIC",
+          "staticMethod" : false,
+          "finalMethod" : false,
+          "abstractMethod" : false,
+          "defaultMethod" : false,
+          "stability" : "STABLE"
+        },
+        {
           "name" : "read",
           "parameterTypes" : [
             "com.fasterxml.jackson.databind.ObjectMapper",
@@ -57117,6 +57148,37 @@
         },
         {
           "name" : "page",
+          "parameterTypes" : [
+            "com.fasterxml.jackson.databind.ObjectMapper",
+            "java.lang.String",
+            "int",
+            "ai.protomolt.proto.actions.Caller"
+          ],
+          "returnType" : "ai.protomolt.proto.mcp.McpResources.Page",
+          "visibility" : "PUBLIC",
+          "staticMethod" : false,
+          "finalMethod" : false,
+          "abstractMethod" : false,
+          "defaultMethod" : true,
+          "stability" : "STABLE"
+        },
+        {
+          "name" : "pageTemplates",
+          "parameterTypes" : [
+            "com.fasterxml.jackson.databind.ObjectMapper",
+            "java.lang.String",
+            "int"
+          ],
+          "returnType" : "ai.protomolt.proto.mcp.McpResources.Page",
+          "visibility" : "PUBLIC",
+          "staticMethod" : false,
+          "finalMethod" : false,
+          "abstractMethod" : false,
+          "defaultMethod" : true,
+          "stability" : "STABLE"
+        },
+        {
+          "name" : "pageTemplates",
           "parameterTypes" : [
             "com.fasterxml.jackson.databind.ObjectMapper",
             "java.lang.String",
@@ -57476,6 +57538,21 @@
           "name" : "dispatch",
           "parameterTypes" : [
             "com.fasterxml.jackson.databind.JsonNode",
+            "ai.protomolt.proto.actions.Caller",
+            "java.util.function.Consumer"
+          ],
+          "returnType" : "void",
+          "visibility" : "PUBLIC",
+          "staticMethod" : false,
+          "finalMethod" : false,
+          "abstractMethod" : false,
+          "defaultMethod" : false,
+          "stability" : "STABLE"
+        },
+        {
+          "name" : "dispatch",
+          "parameterTypes" : [
+            "com.fasterxml.jackson.databind.JsonNode",
             "java.util.function.Consumer"
           ],
           "returnType" : "void",
@@ -57490,6 +57567,20 @@
           "name" : "handle",
           "parameterTypes" : [
             "com.fasterxml.jackson.databind.JsonNode"
+          ],
+          "returnType" : "java.util.Optional",
+          "visibility" : "PUBLIC",
+          "staticMethod" : false,
+          "finalMethod" : false,
+          "abstractMethod" : false,
+          "defaultMethod" : false,
+          "stability" : "STABLE"
+        },
+        {
+          "name" : "handle",
+          "parameterTypes" : [
+            "com.fasterxml.jackson.databind.JsonNode",
+            "ai.protomolt.proto.actions.Caller"
           ],
           "returnType" : "java.util.Optional",
           "visibility" : "PUBLIC",
@@ -57562,6 +57653,20 @@
           "name" : "submit",
           "parameterTypes" : [
             "com.fasterxml.jackson.databind.JsonNode"
+          ],
+          "returnType" : "java.util.concurrent.Future",
+          "visibility" : "PUBLIC",
+          "staticMethod" : false,
+          "finalMethod" : false,
+          "abstractMethod" : false,
+          "defaultMethod" : false,
+          "stability" : "STABLE"
+        },
+        {
+          "name" : "submit",
+          "parameterTypes" : [
+            "com.fasterxml.jackson.databind.JsonNode",
+            "ai.protomolt.proto.actions.Caller"
           ],
           "returnType" : "java.util.concurrent.Future",
           "visibility" : "PUBLIC",
@@ -58066,6 +58171,37 @@
           "stability" : "STABLE"
         },
         {
+          "name" : "pageTemplates",
+          "parameterTypes" : [
+            "com.fasterxml.jackson.databind.ObjectMapper",
+            "java.lang.String",
+            "int"
+          ],
+          "returnType" : "ai.protomolt.proto.mcp.transport.McpResources.Page",
+          "visibility" : "PUBLIC",
+          "staticMethod" : false,
+          "finalMethod" : false,
+          "abstractMethod" : false,
+          "defaultMethod" : false,
+          "stability" : "STABLE"
+        },
+        {
+          "name" : "pageTemplates",
+          "parameterTypes" : [
+            "com.fasterxml.jackson.databind.ObjectMapper",
+            "java.lang.String",
+            "int",
+            "ai.protomolt.proto.actions.Caller"
+          ],
+          "returnType" : "ai.protomolt.proto.mcp.transport.McpResources.Page",
+          "visibility" : "PUBLIC",
+          "staticMethod" : false,
+          "finalMethod" : false,
+          "abstractMethod" : false,
+          "defaultMethod" : false,
+          "stability" : "STABLE"
+        },
+        {
           "name" : "read",
           "parameterTypes" : [
             "com.fasterxml.jackson.databind.ObjectMapper",
@@ -58359,6 +58495,37 @@
           "finalMethod" : false,
           "abstractMethod" : false,
           "defaultMethod" : false,
+          "stability" : "STABLE"
+        },
+        {
+          "name" : "pageTemplates",
+          "parameterTypes" : [
+            "com.fasterxml.jackson.databind.ObjectMapper",
+            "java.lang.String",
+            "int"
+          ],
+          "returnType" : "ai.protomolt.proto.mcp.transport.McpResources.Page",
+          "visibility" : "PUBLIC",
+          "staticMethod" : false,
+          "finalMethod" : false,
+          "abstractMethod" : false,
+          "defaultMethod" : true,
+          "stability" : "STABLE"
+        },
+        {
+          "name" : "pageTemplates",
+          "parameterTypes" : [
+            "com.fasterxml.jackson.databind.ObjectMapper",
+            "java.lang.String",
+            "int",
+            "ai.protomolt.proto.actions.Caller"
+          ],
+          "returnType" : "ai.protomolt.proto.mcp.transport.McpResources.Page",
+          "visibility" : "PUBLIC",
+          "staticMethod" : false,
+          "finalMethod" : false,
+          "abstractMethod" : false,
+          "defaultMethod" : true,
           "stability" : "STABLE"
         },
         {
@@ -58735,6 +58902,21 @@
           "name" : "dispatch",
           "parameterTypes" : [
             "com.fasterxml.jackson.databind.JsonNode",
+            "ai.protomolt.proto.actions.Caller",
+            "java.util.function.Consumer"
+          ],
+          "returnType" : "void",
+          "visibility" : "PUBLIC",
+          "staticMethod" : false,
+          "finalMethod" : false,
+          "abstractMethod" : false,
+          "defaultMethod" : false,
+          "stability" : "STABLE"
+        },
+        {
+          "name" : "dispatch",
+          "parameterTypes" : [
+            "com.fasterxml.jackson.databind.JsonNode",
             "java.util.function.Consumer"
           ],
           "returnType" : "void",
@@ -58749,6 +58931,20 @@
           "name" : "handle",
           "parameterTypes" : [
             "com.fasterxml.jackson.databind.JsonNode"
+          ],
+          "returnType" : "java.util.Optional",
+          "visibility" : "PUBLIC",
+          "staticMethod" : false,
+          "finalMethod" : false,
+          "abstractMethod" : false,
+          "defaultMethod" : false,
+          "stability" : "STABLE"
+        },
+        {
+          "name" : "handle",
+          "parameterTypes" : [
+            "com.fasterxml.jackson.databind.JsonNode",
+            "ai.protomolt.proto.actions.Caller"
           ],
           "returnType" : "java.util.Optional",
           "visibility" : "PUBLIC",
@@ -58821,6 +59017,21 @@
           "name" : "submit",
           "parameterTypes" : [
             "com.fasterxml.jackson.databind.JsonNode"
+          ],
+          "returnType" : "java.util.concurrent.Future",
+          "visibility" : "PUBLIC",
+          "staticMethod" : false,
+          "finalMethod" : false,
+          "abstractMethod" : false,
+          "defaultMethod" : false,
+          "stability" : "STABLE"
+        },
+        {
+          "name" : "submit",
+          "parameterTypes" : [
+            "com.fasterxml.jackson.databind.JsonNode",
+            "ai.protomolt.proto.actions.Caller",
+            "java.util.function.Consumer"
           ],
           "returnType" : "java.util.concurrent.Future",
           "visibility" : "PUBLIC",
