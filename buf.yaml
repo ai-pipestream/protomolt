@@ -105,6 +105,8 @@ modules:
     name: buf.build/ai-pipestream/mesh-cluster
   - path: surface/grpc/service-profile/src/main/proto
     name: buf.build/ai-pipestream/grpc-service-profile
+  - path: surface/grpc/service-workspace/src/main/proto
+    name: buf.build/ai-pipestream/grpc-service-workspace
   - path: transform/receipt/src/main/proto
     name: buf.build/ai-pipestream/receipt
   - path: protobuf/quality/src/test/proto

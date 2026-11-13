@@ -54,6 +54,7 @@ dependencies {
 
     testImplementation project(':protomolt-grpc-invoke')
     testImplementation libs.grpc.inprocess
+    testImplementation libs.grpc.services
     testImplementation libs.testcontainers.junit.jupiter
 }
 

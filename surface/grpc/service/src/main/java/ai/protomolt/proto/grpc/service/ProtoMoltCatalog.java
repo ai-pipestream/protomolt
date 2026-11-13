@@ -214,9 +214,31 @@ public final class ProtoMoltCatalog {
                                      SchemaRegistryStore registry,
                                      Supplier<TrustSnapshot> trust,
                                      ai.protomolt.proto.grpc.workspace.ProfileCredentialResolver credentials) {
+        return full(context, gatherCacheRoot, workflows, jobs, maxAttemptsDefault, inference,
+                serviceProfiles, outboundPolicy, null, artifacts, runEvidence, workflowVersions,
+                registry, trust, credentials);
+    }
+
+    /**
+     * Complete catalog with an explicit host-managed {@link ChannelFactory} (such as a pooled
+     * {@link ChannelFactory.Closeable}) and outbound profile credential resolver.
+     */
+    public static ActionCatalog full(ActionContext context, Path gatherCacheRoot,
+                                     WorkflowRepository workflows, WorkflowRunStore jobs,
+                                     int maxAttemptsDefault, InferenceEngines inference,
+                                     ServiceProfileRepository serviceProfiles,
+                                     OutboundChannelPolicy outboundPolicy,
+                                     ChannelFactory outboundChannels,
+                                     ArtifactRepository artifacts,
+                                     RunEvidenceRepository runEvidence,
+                                     WorkflowVersionRepository workflowVersions,
+                                     SchemaRegistryStore registry,
+                                     Supplier<TrustSnapshot> trust,
+                                     ai.protomolt.proto.grpc.workspace.ProfileCredentialResolver credentials) {
         OutboundChannelPolicy policy = outboundPolicy == null
                 ? OutboundChannelPolicy.defaults() : outboundPolicy;
-        ChannelFactory channels = ChannelFactory.standard(policy);
+        ChannelFactory channels = outboundChannels == null
+                ? ChannelFactory.standard(policy) : outboundChannels;
         StructuredGenerator structured = inference == null
                 ? null : new StructuredGenerator(inference, context.registry());
         WorkflowRunner runner = new WorkflowRunner(policy, structured);

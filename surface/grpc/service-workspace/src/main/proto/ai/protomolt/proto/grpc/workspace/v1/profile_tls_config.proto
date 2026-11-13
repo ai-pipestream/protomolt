@@ -1,0 +1,180 @@
+syntax = "proto3";
+
+package ai.protomolt.proto.grpc.workspace.v1;
+
+import "ai/protomolt/proto/validate/v1/validate.proto";
+import "buf/validate/validate.proto";
+
+option java_multiple_files = true;
+option java_outer_classname = "ProfileTlsConfigProto";
+option java_package = "ai.protomolt.proto.grpc.workspace.v1";
+
+// Host-owned configuration mapping opaque service-profile TLS references to
+// mounted PEM files and pinning which profile endpoints may present them.
+message ProfileTlsConfig {
+  // Optional base directory for resolving relative PEM paths; when empty,
+  // relative paths resolve against the configuration file's parent directory.
+  string root_directory = 1 [
+    (ai.protomolt.proto.validate.v1.field).string.max_len = 4096,
+    (buf.validate.field).string.max_len = 4096
+  ];
+  // Named CA trust bundles referenced by ServiceEndpoint.trust_ref.
+  repeated TrustBundleMount trust_bundles = 2 [
+    (ai.protomolt.proto.validate.v1.field).repeated.max_items = 256,
+    (buf.validate.field).repeated.max_items = 256
+  ];
+  // Named client certificate and PKCS#8 key pairs referenced by
+  // ServiceEndpoint.client_certificate_ref.
+  repeated ClientCertificateMount client_certificates = 3 [
+    (ai.protomolt.proto.validate.v1.field).repeated.max_items = 256,
+    (buf.validate.field).repeated.max_items = 256
+  ];
+  // Exact profile endpoints approved to present configured TLS references.
+  repeated ApprovedTlsEndpoint bindings = 4 [
+    (ai.protomolt.proto.validate.v1.field).repeated = {
+      min_items: 1
+      max_items: 1024
+    },
+    (buf.validate.field).repeated = {
+      min_items: 1
+      max_items: 1024
+    }
+  ];
+}
+
+// Maps an opaque trust_ref identifier to a mounted PEM bundle of CA roots.
+message TrustBundleMount {
+  // Opaque trust reference matched against ServiceEndpoint.trust_ref.
+  string ref = 1 [
+    (ai.protomolt.proto.validate.v1.field).string = {
+      min_len: 1
+      max_len: 256
+    },
+    (buf.validate.field).string = {
+      min_len: 1
+      max_len: 256
+    }
+  ];
+  // Path to the PEM CA bundle file, relative to root_directory or absolute.
+  string bundle_path = 2 [
+    (ai.protomolt.proto.validate.v1.field).string = {
+      min_len: 1
+      max_len: 4096
+    },
+    (buf.validate.field).string = {
+      min_len: 1
+      max_len: 4096
+    }
+  ];
+}
+
+// Maps an opaque client_certificate_ref identifier to a mounted leaf-first PEM
+// certificate chain and unencrypted PKCS#8 PEM private key.
+message ClientCertificateMount {
+  // Opaque reference matched against ServiceEndpoint.client_certificate_ref.
+  string ref = 1 [
+    (ai.protomolt.proto.validate.v1.field).string = {
+      min_len: 1
+      max_len: 256
+    },
+    (buf.validate.field).string = {
+      min_len: 1
+      max_len: 256
+    }
+  ];
+  // Path to the leaf-first PEM certificate chain file.
+  string certificate_chain_path = 2 [
+    (ai.protomolt.proto.validate.v1.field).string = {
+      min_len: 1
+      max_len: 4096
+    },
+    (buf.validate.field).string = {
+      min_len: 1
+      max_len: 4096
+    }
+  ];
+  // Path to the unencrypted PKCS#8 PEM private key file.
+  string private_key_path = 3 [
+    (ai.protomolt.proto.validate.v1.field).string = {
+      min_len: 1
+      max_len: 4096
+    },
+    (buf.validate.field).string = {
+      min_len: 1
+      max_len: 4096
+    }
+  ];
+}
+
+// Approves one exact service-profile endpoint to use specific TLS references.
+message ApprovedTlsEndpoint {
+  option (ai.protomolt.proto.validate.v1.message) = {
+    cel: {
+      id: "approved_tls_endpoint.reference_required"
+      message: "an approved TLS endpoint must name a trust_ref or a client_certificate_ref"
+      expression: "this.trust_ref != '' || this.client_certificate_ref != ''"
+    }
+  };
+  option (buf.validate.message) = {
+    cel: {
+      id: "approved_tls_endpoint.reference_required"
+      message: "an approved TLS endpoint must name a trust_ref or a client_certificate_ref"
+      expression: "this.trust_ref != '' || this.client_certificate_ref != ''"
+    }
+  };
+
+  // ServiceProfile.name allowed to use this binding.
+  string profile = 1 [
+    (ai.protomolt.proto.validate.v1.field).string = {
+      min_len: 1
+      max_len: 128
+    },
+    (buf.validate.field).string = {
+      min_len: 1
+      max_len: 128
+    }
+  ];
+  // ServiceEndpoint.name within the profile.
+  string endpoint = 2 [
+    (ai.protomolt.proto.validate.v1.field).string = {
+      min_len: 1
+      max_len: 128
+    },
+    (buf.validate.field).string = {
+      min_len: 1
+      max_len: 128
+    }
+  ];
+  // Exact ServiceEndpoint.host approved for this binding.
+  string host = 3 [
+    (ai.protomolt.proto.validate.v1.field).string = {
+      min_len: 1
+      max_len: 255
+    },
+    (buf.validate.field).string = {
+      min_len: 1
+      max_len: 255
+    }
+  ];
+  // Exact ServiceEndpoint.port approved for this binding.
+  uint32 port = 4 [
+    (ai.protomolt.proto.validate.v1.field).uint32 = {
+      gte: 1
+      lte: 65535
+    },
+    (buf.validate.field).uint32 = {
+      gte: 1
+      lte: 65535
+    }
+  ];
+  // Approved trust_ref, or empty when system roots are used.
+  string trust_ref = 5 [
+    (ai.protomolt.proto.validate.v1.field).string.max_len = 256,
+    (buf.validate.field).string.max_len = 256
+  ];
+  // Approved client_certificate_ref, or empty when no client certificate is presented.
+  string client_certificate_ref = 6 [
+    (ai.protomolt.proto.validate.v1.field).string.max_len = 256,
+    (buf.validate.field).string.max_len = 256
+  ];
+}

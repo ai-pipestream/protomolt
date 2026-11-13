@@ -71,6 +71,7 @@ public final class ReflectedServiceActions {
                                         SchemaRegistryStore registry, ChannelFactory channels,
                                         ProfileCredentialResolver credentials)
             throws ActionException {
+        EvictableTlsResolver.bind(credentials, channels);
         List<MethodDescriptor> methods = unaryMethods(profile, repository, registry);
         Map<String, String> names = verbNames(profile, methods);
         List<String> registered = new ArrayList<>(methods.size());

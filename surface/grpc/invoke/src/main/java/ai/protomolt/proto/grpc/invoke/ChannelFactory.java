@@ -38,8 +38,38 @@ public interface ChannelFactory {
         return null;
     }
 
+    /**
+     * Evicts any pooled channels associated with {@code credentials} so rotated or revoked TLS
+     * material is never reused on subsequent calls. Unpooled factories ignore this notification.
+     */
+    default void evict(ChannelCredentials credentials) {
+    }
+
+    /** A {@link ChannelFactory} that owns reusable underlying channels and shuts them down on close. */
+    interface Closeable extends ChannelFactory, AutoCloseable {
+        @Override
+        void close();
+    }
+
     static ChannelFactory standard() {
         return standard(OutboundChannelPolicy.defaults());
+    }
+
+    /**
+     * Creates a bounded pooled factory with {@link OutboundChannelPolicy#defaults()} that reuses
+     * healthy credentialed TLS channels across per-call policy leases until evicted or closed.
+     */
+    static Closeable pooled() {
+        return pooled(OutboundChannelPolicy.defaults());
+    }
+
+    /**
+     * Creates a bounded pooled factory backed by {@code policy}. Each call still acquires and
+     * releases a policy concurrency slot when its returned channel is shut down, while healthy
+     * credentialed TLS channels return to the pool until evicted or {@link Closeable#close()} runs.
+     */
+    static Closeable pooled(OutboundChannelPolicy policy) {
+        return new PooledChannelFactory(policy);
     }
 
     /** Creates a factory that validates every target and leases a bounded channel slot. */

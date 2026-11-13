@@ -9,15 +9,19 @@ code. An item with nothing left open does not belong here at all.
 
 ## Service connectivity
 
-### Profile TLS from host configuration
+### Profile credentials and parser TLS from host configuration
 
-Let an operator configure profile TLS material on the launchers, not only in
-code. Bearer references (`env:`) and TLS references (`trust_ref`,
-`client_certificate_ref`) resolve on every gRPC path through
-`EnvProfileCredentialResolver` and `FileProfileTlsResolver`, as described in
-the [service workspace guide](../surface/service-workspace.md). Still open:
-serve and the platform expose no flag or environment variable that builds
-those resolvers' approved bindings, so a host has to wire them in code.
+Let an operator configure general profile bearer bindings and parser-profile TLS
+from host configuration, not only in code. Bearer references (`env:`) and TLS
+references (`trust_ref`, `client_certificate_ref`) resolve on every service
+workspace gRPC path through `EnvProfileCredentialResolver` and
+`FileProfileTlsResolver`, and `protomolt-serve` and `protomolt-mcp` load
+`ProfileTlsConfig` mounts from `--profile-tls-config` /
+`PROTOMOLT_PROFILE_TLS_CONFIG`, as described in the
+[service workspace guide](../surface/service-workspace.md). Still open:
+general launcher configuration for arbitrary `env:` bearer bindings outside the
+correction starter, and `DocumentPlatform` parser-profile TLS
+(`ParserRegistry.fromProfiles` still requires plaintext parser endpoints).
 
 ### Shared outbound policy
 

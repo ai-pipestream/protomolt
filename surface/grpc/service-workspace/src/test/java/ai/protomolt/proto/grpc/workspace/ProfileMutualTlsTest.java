@@ -18,6 +18,7 @@ import ai.protomolt.proto.grpc.profile.v1.Transport;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.google.protobuf.Message;
+import io.grpc.Attributes;
 import io.grpc.ChannelCredentials;
 import io.grpc.Grpc;
 import io.grpc.ManagedChannel;
@@ -27,6 +28,7 @@ import io.grpc.ServerCall;
 import io.grpc.ServerCallHandler;
 import io.grpc.ServerInterceptor;
 import io.grpc.ServerInterceptors;
+import io.grpc.ServerTransportFilter;
 import io.grpc.Status;
 import io.grpc.TlsServerCredentials;
 import io.grpc.protobuf.services.HealthStatusManager;
@@ -37,17 +39,21 @@ import java.nio.file.Files;
 import java.nio.file.NoSuchFileException;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
+import java.nio.file.attribute.FileTime;
 import java.security.GeneralSecurityException;
 import java.security.KeyStore;
 import java.security.PrivateKey;
 import java.security.cert.X509Certificate;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import javax.net.ssl.SSLPeerUnverifiedException;
 import javax.net.ssl.SSLSession;
@@ -77,9 +83,12 @@ class ProfileMutualTlsTest {
     static Path pki;
 
     private static Pem trustedCa;
+    private static Pem intermediateCa;
     private static Pem server;
+    private static Pem wrongSanServer;
     private static Pem clientOne;
     private static Pem clientTwo;
+    private static Pem rsaChainClient;
     private static Pem untrustedClient;
     private static Pem otherCa;
     private static final List<String> keyLines = new ArrayList<>();
@@ -89,6 +98,8 @@ class ProfileMutualTlsTest {
 
     private final AtomicReference<String> presentedClient = new AtomicReference<>();
     private final AtomicBoolean rejectEchoingIdentity = new AtomicBoolean();
+    private final AtomicInteger tlsHandshakes = new AtomicInteger();
+    private final AtomicInteger terminatedTransports = new AtomicInteger();
     private Server tlsServer;
     private int port;
     private Path trustFile;
@@ -100,12 +111,16 @@ class ProfileMutualTlsTest {
     static void issueCertificates() throws Exception {
         Keytool keytool = new Keytool(pki);
         trustedCa = keytool.authority("trusted-ca");
+        intermediateCa = keytool.subordinateAuthority("intermediate-ca", "trusted-ca");
         otherCa = keytool.authority("other-ca");
         server = keytool.leaf("server", "trusted-ca", "SAN=dns:localhost,ip:127.0.0.1");
+        wrongSanServer = keytool.leaf("wrong-san-server", "trusted-ca",
+                "SAN=dns:wrong.example.internal");
         clientOne = keytool.leaf("client-one", "trusted-ca", null);
         clientTwo = keytool.leaf("client-two", "trusted-ca", null);
+        rsaChainClient = keytool.rsaLeaf("rsa-chain-client", "intermediate-ca", null);
         untrustedClient = keytool.leaf("untrusted-client", "other-ca", null);
-        for (Pem pem : List.of(clientOne, clientTwo, untrustedClient)) {
+        for (Pem pem : List.of(clientOne, clientTwo, rsaChainClient, untrustedClient)) {
             keyLines.add(Files.readString(pem.key()).lines()
                     .filter(line -> !line.startsWith("-----")).findFirst().orElseThrow());
         }
@@ -113,6 +128,8 @@ class ProfileMutualTlsTest {
 
     @BeforeEach
     void start() throws Exception {
+        tlsHandshakes.set(0);
+        terminatedTransports.set(0);
         ServerInterceptor identity = new ServerInterceptor() {
             @Override
             public <ReqT, RespT> ServerCall.Listener<ReqT> interceptCall(
@@ -142,6 +159,18 @@ class ProfileMutualTlsTest {
                         .trustManager(trustedCa.certificate().toFile())
                         .clientAuth(TlsServerCredentials.ClientAuth.REQUIRE)
                         .build())
+                .addTransportFilter(new ServerTransportFilter() {
+                    @Override
+                    public Attributes transportReady(Attributes transportAttrs) {
+                        tlsHandshakes.incrementAndGet();
+                        return transportAttrs;
+                    }
+
+                    @Override
+                    public void transportTerminated(Attributes transportAttrs) {
+                        terminatedTransports.incrementAndGet();
+                    }
+                })
                 .addService(ServerInterceptors.intercept(
                         new HealthStatusManager().getHealthService(), identity))
                 .addService(ServerInterceptors.intercept(
@@ -497,6 +526,207 @@ class ProfileMutualTlsTest {
                 });
     }
 
+    @Test
+    void oversizedPemFilesFailClosedBeforeFullParseWithoutLeakingMaterial() throws Exception {
+        int byteLimit = 2_048;
+        FileProfileTlsResolver boundedResolver = new FileProfileTlsResolver(
+                Set.of(binding(TRUST_REF, CLIENT_REF)),
+                Map.of(TRUST_REF, trustFile),
+                Map.of(CLIENT_REF, new FileProfileTlsResolver.KeyPairFiles(
+                        clientCertificateFile, clientKeyFile)),
+                byteLimit);
+        FileSystemServiceProfileRepository repository =
+                new FileSystemServiceProfileRepository(directory.resolve("bounded-profiles"));
+        ActionCatalog catalog = ServiceWorkspaceActions.register(
+                ActionCatalog.defaults(ActionContext.create()), repository, null,
+                channels, ProfileCredentialResolver.withTls(null, boundedResolver));
+
+        ObjectNode registered = catalog.execute("service-register", registerInput(CLIENT_REF));
+        assertThat(registered.path("ok").asBoolean()).isTrue();
+        presentedClient.set(null);
+
+        String secretCanary = "SENSITIVE_CANARY_PAYLOAD_DO_NOT_ECHO";
+        String oversizedKey = Files.readString(clientOne.key(), StandardCharsets.US_ASCII)
+                + "\n" + secretCanary + "\n" + "A".repeat(byteLimit * 2);
+        Files.writeString(clientKeyFile, oversizedKey, StandardCharsets.US_ASCII);
+
+        for (String verb : List.of("service-inspect", "service-invoke", "service-refresh",
+                "mtls-health-check")) {
+            ObjectNode input = switch (verb) {
+                case "service-invoke" -> checkInput();
+                case "mtls-health-check" -> MAPPER.createObjectNode();
+                default -> MAPPER.createObjectNode().put("name", PROFILE);
+            };
+            assertThatThrownBy(() -> catalog.execute(verb, input))
+                    .as(verb)
+                    .isInstanceOfSatisfying(ActionException.class, refused -> {
+                        assertThat(refused.code()).isEqualTo("credential-unavailable");
+                        assertThat(refused.getMessage()).contains("TLS material could not be loaded");
+                        assertThat(refused.getCause())
+                                .isInstanceOf(FileProfileTlsResolver.PemSizeLimitException.class);
+                        assertNoMaterial(refused.getMessage());
+                        assertThat(refused.getMessage()).doesNotContain(secretCanary);
+                    });
+        }
+        assertThat(presentedClient.get()).isNull();
+
+        // Restore a valid client key and verify an oversized trust bundle also fails closed.
+        install(clientOne);
+        String oversizedTrust = Files.readString(trustedCa.certificate(), StandardCharsets.US_ASCII)
+                + "\n" + secretCanary + "\n" + "B".repeat(byteLimit * 2);
+        Files.writeString(trustFile, oversizedTrust, StandardCharsets.US_ASCII);
+        assertThatThrownBy(() -> catalog.execute("service-invoke", checkInput()))
+                .isInstanceOfSatisfying(ActionException.class, refused -> {
+                    assertThat(refused.code()).isEqualTo("credential-unavailable");
+                    assertThat(refused.getCause())
+                            .isInstanceOf(FileProfileTlsResolver.PemSizeLimitException.class);
+                    assertNoMaterial(refused.getMessage());
+                    assertThat(refused.getMessage()).doesNotContain(secretCanary);
+                });
+        assertThat(presentedClient.get()).isNull();
+    }
+
+    @Test
+    void rsaPkcs8KeyAndMultiCertIntermediateChainCompleteHandshakeWithinCap() throws Exception {
+        String multiRootBundle = Files.readString(otherCa.certificate(), StandardCharsets.US_ASCII)
+                + "\n" + Files.readString(trustedCa.certificate(), StandardCharsets.US_ASCII);
+        Files.writeString(trustFile, multiRootBundle, StandardCharsets.US_ASCII);
+
+        String leafPlusIntermediateChain =
+                Files.readString(rsaChainClient.certificate(), StandardCharsets.US_ASCII)
+                        + "\n"
+                        + Files.readString(intermediateCa.certificate(), StandardCharsets.US_ASCII);
+        Files.writeString(clientCertificateFile, leafPlusIntermediateChain, StandardCharsets.US_ASCII);
+        Files.copy(rsaChainClient.key(), clientKeyFile, StandardCopyOption.REPLACE_EXISTING);
+
+        ActionCatalog catalog = catalog(resolver(binding(TRUST_REF, CLIENT_REF)));
+        ObjectNode registered = catalog.execute("service-register", registerInput(CLIENT_REF));
+        assertThat(registered.path("ok").asBoolean()).as("%s", registered).isTrue();
+        assertThat(presentedClient.get()).isEqualTo("CN=rsa-chain-client");
+
+        presentedClient.set(null);
+        ObjectNode invoked = catalog.execute("service-invoke", checkInput());
+        assertThat(invoked.path("ok").asBoolean()).isTrue();
+        assertThat(presentedClient.get()).isEqualTo("CN=rsa-chain-client");
+    }
+
+    @Test
+    void cachedCredentialsAndPooledTlsChannelReuseAcrossCallsAndEvictOnRotation() throws Exception {
+        FileProfileTlsResolver tlsResolver = new FileProfileTlsResolver(
+                Set.of(binding(TRUST_REF, CLIENT_REF)),
+                Map.of(TRUST_REF, trustFile),
+                Map.of(CLIENT_REF, new FileProfileTlsResolver.KeyPairFiles(
+                        clientCertificateFile, clientKeyFile)));
+        OutboundChannelPolicy singleSlotPolicy = OutboundChannelPolicy.builder()
+                .maxActiveChannels(1)
+                .build();
+        FileSystemServiceProfileRepository repository =
+                new FileSystemServiceProfileRepository(directory.resolve("pooled-profiles"));
+
+        try (ChannelFactory.Closeable pooled = ChannelFactory.pooled(singleSlotPolicy)) {
+            ActionCatalog catalog = ServiceWorkspaceActions.register(
+                    ActionCatalog.defaults(ActionContext.create()), repository, null,
+                    pooled, ProfileCredentialResolver.withTls(null, tlsResolver));
+
+            ObjectNode registered = catalog.execute("service-register", registerInput(CLIENT_REF));
+            assertThat(registered.path("ok").asBoolean()).isTrue();
+            assertThat(presentedClient.get()).isEqualTo("CN=client-one");
+            assertThat(tlsResolver.pemReads()).isEqualTo(3);
+            assertThat(tlsResolver.trustFactoryBuilds()).isEqualTo(1);
+            assertThat(tlsResolver.keyFactoryBuilds()).isEqualTo(1);
+            assertThat(tlsResolver.credentialsBuilds()).isEqualTo(1);
+            assertThat(tlsHandshakes.get()).isEqualTo(1);
+
+            // service-inspect calls ProfileCredentials.requireResolvable -> hits cache cleanly.
+            ObjectNode inspected = catalog.execute("service-inspect",
+                    MAPPER.createObjectNode().put("name", PROFILE));
+            assertThat(inspected.path("profile").path("name").asText()).isEqualTo(PROFILE);
+
+            // Two consecutive service-invoke calls plus the reflected verb reuse both cached
+            // ChannelCredentials AND the single pooled Netty TLS channel despite maxActiveChannels(1).
+            for (int i = 0; i < 2; i++) {
+                presentedClient.set(null);
+                ObjectNode invoked = catalog.execute("service-invoke", checkInput());
+                assertThat(invoked.path("ok").asBoolean()).isTrue();
+                assertThat(presentedClient.get()).isEqualTo("CN=client-one");
+            }
+            presentedClient.set(null);
+            ObjectNode reflected = catalog.execute("mtls-health-check", MAPPER.createObjectNode());
+            assertThat(reflected.path("status").asText()).isEqualTo("SERVING");
+            assertThat(presentedClient.get()).isEqualTo("CN=client-one");
+
+            assertThat(tlsResolver.pemReads()).isEqualTo(3);
+            assertThat(tlsResolver.trustFactoryBuilds()).isEqualTo(1);
+            assertThat(tlsResolver.keyFactoryBuilds()).isEqualTo(1);
+            assertThat(tlsResolver.credentialsBuilds()).isEqualTo(1);
+            assertThat(tlsHandshakes.get()).isEqualTo(1);
+            assertThat(terminatedTransports.get()).isZero();
+
+            // Rotate client certificate + key on disk and advance mtime so FileStamp changes even
+            // on coarse-grained filesystems.
+            FileTime bumpedMtime = FileTime.from(
+                    Files.getLastModifiedTime(clientCertificateFile).toInstant()
+                            .plus(Duration.ofSeconds(5)));
+            install(clientTwo);
+            Files.setLastModifiedTime(clientCertificateFile, bumpedMtime);
+            Files.setLastModifiedTime(clientKeyFile, bumpedMtime);
+
+            presentedClient.set(null);
+            ObjectNode afterRotation = catalog.execute("service-invoke", checkInput());
+            assertThat(afterRotation.path("ok").asBoolean()).isTrue();
+            assertThat(presentedClient.get()).isEqualTo("CN=client-two");
+
+            // Only the 2 rotated client PEMs were re-read; trustFile stayed cached.
+            assertThat(tlsResolver.pemReads()).isEqualTo(5);
+            assertThat(tlsResolver.trustFactoryBuilds()).isEqualTo(1);
+            assertThat(tlsResolver.keyFactoryBuilds()).isEqualTo(2);
+            assertThat(tlsResolver.credentialsBuilds()).isEqualTo(2);
+            assertThat(tlsHandshakes.get()).isEqualTo(2);
+            awaitTerminatedTransports(1);
+        }
+        awaitTerminatedTransports(2);
+    }
+
+    @Test
+    void serverCertificateWithMismatchedSanIsRefusedOnHandshake() throws Exception {
+        CountDownLatch unused = new CountDownLatch(0);
+        unused.countDown();
+        Server mismatchedServer = Grpc.newServerBuilderForPort(0, TlsServerCredentials.newBuilder()
+                        .keyManager(wrongSanServer.certificate().toFile(),
+                                wrongSanServer.key().toFile())
+                        .trustManager(trustedCa.certificate().toFile())
+                        .clientAuth(TlsServerCredentials.ClientAuth.REQUIRE)
+                        .build())
+                .addService(new HealthStatusManager().getHealthService())
+                .addService(ProtoReflectionServiceV1.newInstance())
+                .build()
+                .start();
+        try {
+            int mismatchedPort = mismatchedServer.getPort();
+            FileProfileTlsResolver.Binding mismatchedBinding = new FileProfileTlsResolver.Binding(
+                    PROFILE, "local", "localhost", mismatchedPort, TRUST_REF, CLIENT_REF);
+            ActionCatalog catalog = catalog(resolver(mismatchedBinding));
+            ObjectNode input = registerInput(CLIENT_REF);
+            ((ObjectNode) input.path("profile").path("endpoints").get(0))
+                    .put("port", mismatchedPort);
+
+            ObjectNode result = catalog.execute("service-register", input);
+            assertThat(result.path("ok").asBoolean()).isFalse();
+            assertThat(result.path("error").asText()).contains("UNAVAILABLE");
+            assertNoMaterial(result.toString());
+        } finally {
+            mismatchedServer.shutdownNow().awaitTermination(5, TimeUnit.SECONDS);
+        }
+    }
+
+    private void awaitTerminatedTransports(int expected) throws InterruptedException {
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+        while (terminatedTransports.get() < expected && System.nanoTime() < deadline) {
+            Thread.sleep(20);
+        }
+        assertThat(terminatedTransports.get()).isGreaterThanOrEqualTo(expected);
+    }
+
     private void assertRefused(ActionCatalog catalog, String message) {
         for (String verb : List.of("service-invoke", "service-refresh", "service-inspect")) {
             ObjectNode input = "service-invoke".equals(verb) ? checkInput()
@@ -601,12 +831,40 @@ class ProfileMutualTlsTest {
             return new Pem(certificate, exportKey(store, name));
         }
 
-        Pem leaf(String name, String issuer, String san) throws Exception {
+        Pem subordinateAuthority(String name, String issuer) throws Exception {
             Path store = dir.resolve(name + ".p12");
             run("-genkeypair", "-alias", name, "-keyalg", "EC", "-groupname", "secp256r1",
-                    "-dname", "CN=" + name, "-validity", "2",
+                    "-dname", "CN=" + name, "-ext", "bc:c", "-validity", "2",
                     "-keystore", store.toString(), "-storetype", "PKCS12",
                     "-storepass", PASSWORD);
+            Path request = dir.resolve(name + ".csr");
+            run("-certreq", "-alias", name, "-file", request.toString(),
+                    "-keystore", store.toString(), "-storepass", PASSWORD);
+            Path certificate = dir.resolve(name + ".pem");
+            run("-gencert", "-rfc", "-alias", issuer, "-infile", request.toString(),
+                    "-outfile", certificate.toString(), "-ext", "bc:c", "-validity", "2",
+                    "-keystore", dir.resolve(issuer + ".p12").toString(),
+                    "-storepass", PASSWORD);
+            return new Pem(certificate, exportKey(store, name));
+        }
+
+        Pem leaf(String name, String issuer, String san) throws Exception {
+            return issueLeaf(name, issuer, san, "-keyalg", "EC", "-groupname", "secp256r1");
+        }
+
+        Pem rsaLeaf(String name, String issuer, String san) throws Exception {
+            return issueLeaf(name, issuer, san, "-keyalg", "RSA", "-keysize", "2048");
+        }
+
+        private Pem issueLeaf(String name, String issuer, String san, String... keySpec)
+                throws Exception {
+            Path store = dir.resolve(name + ".p12");
+            List<String> gen = new ArrayList<>(List.of("-genkeypair", "-alias", name));
+            gen.addAll(List.of(keySpec));
+            gen.addAll(List.of("-dname", "CN=" + name, "-validity", "2",
+                    "-keystore", store.toString(), "-storetype", "PKCS12",
+                    "-storepass", PASSWORD));
+            run(gen.toArray(String[]::new));
             Path request = dir.resolve(name + ".csr");
             run("-certreq", "-alias", name, "-file", request.toString(),
                     "-keystore", store.toString(), "-storepass", PASSWORD);

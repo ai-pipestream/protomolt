@@ -18,7 +18,7 @@ dependencies {
     implementation project(':protomolt-acquire-gather-git')
     implementation project(':protomolt-emit-okf')
     implementation project(':protomolt-workflow')
-    implementation project(':protomolt-grpc-invoke')
+    api project(':protomolt-grpc-invoke')
     api project(':protomolt-grpc-service-workspace')
     implementation project(':protomolt-registry')
     implementation project(':protomolt-codegen')
