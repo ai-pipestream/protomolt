@@ -42,7 +42,15 @@ jobs:
           # GITHUB_TOKEN cannot publish packages on this instance even with
           # `permissions: packages: write` (kept above as defense in depth).
           FORGEJO_TOKEN: ${{ secrets.REGISTRY_PUBLISH_TOKEN }}
-        run: ./gradlew publishMavenPublicationToRegistryRepository --no-daemon --console=plain
+        # One upload at a time, with HTTP timeouts above the registry's
+        # slowest observed PUT (51 s on 2026-11-10). With the 30 s Gradle
+        # default, the client gave up on uploads the server still stored,
+        # and the retry of the same file got HTTP 409 Conflict (#857).
+        run: >-
+          ./gradlew publishMavenPublicationToRegistryRepository
+          --no-daemon --console=plain --no-parallel --max-workers=1
+          -Dorg.gradle.internal.http.connectionTimeout=180000
+          -Dorg.gradle.internal.http.socketTimeout=180000
 
       - name: Print resolved snapshot version
         run: ./gradlew currentVersion --no-daemon --console=plain -q
