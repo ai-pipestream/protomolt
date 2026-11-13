@@ -26,7 +26,6 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.ArrayDeque;
-import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
@@ -37,6 +36,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
+import java.util.function.Consumer;
 import org.apache.jena.datatypes.TypeMapper;
 import org.apache.jena.datatypes.xsd.XSDDatatype;
 import org.apache.jena.graph.GraphMemFactory;
@@ -70,6 +70,28 @@ public final class SkosConverter {
     private static final String REPLACED_BY = "http://purl.org/dc/terms/isReplacedBy";
     private static final String XSD_STRING = "http://www.w3.org/2001/XMLSchema#string";
     private static final String XSD_BOOLEAN = "http://www.w3.org/2001/XMLSchema#boolean";
+    private static final Node RDF_TYPE_NODE = uri(RDF_TYPE);
+    private static final Node CONCEPT_SCHEME_NODE = uri(SKOS + "ConceptScheme");
+    private static final Node CONCEPT_NODE = uri(SKOS + "Concept");
+    private static final Node IN_SCHEME_NODE = uri(SKOS + "inScheme");
+    private static final Node PREF_LABEL_NODE = uri(SKOS + "prefLabel");
+    private static final Node ALT_LABEL_NODE = uri(SKOS + "altLabel");
+    private static final Node HIDDEN_LABEL_NODE = uri(SKOS + "hiddenLabel");
+    private static final Node DEFINITION_NODE = uri(SKOS + "definition");
+    private static final Node SCOPE_NOTE_NODE = uri(SKOS + "scopeNote");
+    private static final Node NOTATION_NODE = uri(SKOS + "notation");
+    private static final Node BROADER_NODE = uri(SKOS + "broader");
+    private static final Node NARROWER_NODE = uri(SKOS + "narrower");
+    private static final Node RELATED_NODE = uri(SKOS + "related");
+    private static final Node EXACT_MATCH_NODE = uri(SKOS + "exactMatch");
+    private static final Node CLOSE_MATCH_NODE = uri(SKOS + "closeMatch");
+    private static final Node BROAD_MATCH_NODE = uri(SKOS + "broadMatch");
+    private static final Node NARROW_MATCH_NODE = uri(SKOS + "narrowMatch");
+    private static final Node RELATED_MATCH_NODE = uri(SKOS + "relatedMatch");
+    private static final Node DEPRECATED_NODE = uri(DEPRECATED);
+    private static final Node TRUE_NODE = NodeFactory.createLiteralDT("true", XSDDatatype.XSDboolean);
+    private static final Node REPLACED_BY_NODE = uri(REPLACED_BY);
+    private static final String DUPLICATE_VALUES_MESSAGE = "duplicate protobuf values cannot survive RDF set semantics";
     private static final ProtoValidator VALIDATOR = ProtoValidator.create(List.of(new ProtomoltRuleSource()));
     // UUIDv5(URL namespace, "https://protomolt.ai/ns/skos/concept"). Never change:
     // imported concept IDs are UUIDv5 of the resolved RDF IRI under this namespace.
@@ -88,8 +110,9 @@ public final class SkosConverter {
 
     private final String schemeId;
     private final String schemeIri;
+    private final Node schemeNode;
     private final Map<String, ConceptRef> externalConcepts;
-    private final Map<ConceptRef, String> externalIris;
+    private final Map<ConceptRef, Node> externalIris;
 
     /**
      * @param schemeId config-lane scheme slug, independent of its external IRI
@@ -102,8 +125,9 @@ public final class SkosConverter {
         if (!Identifiers.isSlug(schemeId) || schemeId.length() > 200)
             throw refused("invalid scheme_id: " + schemeId);
         this.schemeIri = requireIri(schemeIri);
+        this.schemeNode = uri(this.schemeIri);
         this.externalConcepts = Map.copyOf(externalConcepts);
-        var reverse = new HashMap<ConceptRef, String>();
+        var reverse = new HashMap<ConceptRef, Node>();
         this.externalConcepts.forEach((iri, ref) -> {
             requireIri(iri);
             if (iri.equals(schemeIri)) throw refused("scheme IRI cannot be an external concept: " + iri);
@@ -111,7 +135,7 @@ public final class SkosConverter {
             requireValid(VALIDATOR.validate(ref));
             if (ref.getSchemeId().equals(schemeId))
                 throw refused("external mapping names this scheme: " + iri);
-            if (reverse.putIfAbsent(ref, iri) != null)
+            if (reverse.putIfAbsent(ref, uri(iri)) != null)
                 throw refused("ambiguous IRIs for external ConceptRef: " + ref.getSchemeId() + "/" + ref.getConceptId());
         });
         externalIris = Map.copyOf(reverse);
@@ -173,17 +197,16 @@ public final class SkosConverter {
     public void write(ConceptScheme scheme, OutputStream output, Format format) {
         Objects.requireNonNull(output, "output");
         Objects.requireNonNull(format, "format");
-        requireScheme(scheme);
-        var triples = toTriples(scheme);
+        var iris = prepareExport(scheme);
         if (format == Format.TURTLE) {
             var writer = StreamRDFWriter.getWriterStream(output, RDFFormat.TURTLE_BLOCKS);
             writer.start();
-            triples.forEach(writer::triple);
+            emitTriples(scheme, iris, writer::triple);
             writer.finish();
         } else {
             var graph = GraphMemFactory.createDefaultGraph();
             try {
-                triples.forEach(graph::add);
+                emitTriples(scheme, iris, graph::add);
                 RDFDataMgr.write(output, graph, RDFFormat.RDFXML_PLAIN);
             } finally {
                 graph.close();
@@ -202,10 +225,9 @@ public final class SkosConverter {
      */
     public void write(ConceptScheme scheme, StreamRDF destination) {
         Objects.requireNonNull(destination, "destination");
-        requireScheme(scheme);
-        var triples = toTriples(scheme);
+        var iris = prepareExport(scheme);
         destination.start();
-        triples.forEach(destination::triple);
+        emitTriples(scheme, iris, destination::triple);
         destination.finish();
     }
 
@@ -308,69 +330,106 @@ public final class SkosConverter {
         return result;
     }
 
-    private List<Triple> toTriples(ConceptScheme scheme) {
-        var triples = new ArrayList<Triple>();
-        var iris = new HashMap<String, String>();
-        var used = new HashSet<String>();
-        for (var concept : scheme.getConceptsList()) {
+    private Map<String, Node> prepareExport(ConceptScheme scheme) {
+        requireScheme(scheme);
+        var concepts = scheme.getConceptsList();
+        var iris = HashMap.<String, Node>newHashMap(concepts.size());
+        var used = HashSet.<String>newHashSet(concepts.size());
+        for (var concept : concepts) {
             if (!concept.hasIri()) throw refused("missing export IRI for concept " + concept.getId());
             String iri = requireIri(concept.getIri());
             if (!used.add(iri) || iri.equals(schemeIri) || externalConcepts.containsKey(iri))
                 throw refused("ambiguous export concept IRI " + iri);
-            iris.put(concept.getId(), iri);
+            iris.put(concept.getId(), uri(iri));
         }
-        add(triples, schemeIri, RDF_TYPE, uri(SKOS + "ConceptScheme"));
-        labels(triples, schemeIri, "prefLabel", scheme.getPrefLabelList());
-        for (var concept : scheme.getConceptsList()) {
-            String subject = iris.get(concept.getId());
-            add(triples, subject, RDF_TYPE, uri(SKOS + "Concept"));
-            add(triples, subject, SKOS + "inScheme", uri(schemeIri));
-            labels(triples, subject, "prefLabel", concept.getPrefLabelList());
-            labels(triples, subject, "altLabel", concept.getAltLabelList());
-            labels(triples, subject, "hiddenLabel", concept.getHiddenLabelList());
-            labels(triples, subject, "definition", concept.getDefinitionList());
-            labels(triples, subject, "scopeNote", concept.getScopeNoteList());
+        for (var concept : concepts) {
             for (var notation : concept.getNotationList()) {
                 if (notation.getDatatypeIri().equals(XSD_STRING))
                     throw refused("xsd:string notation must use the canonical empty datatype_iri: " + concept.getId());
-                String datatype = notation.getDatatypeIri().isEmpty() ? XSD_STRING : requireIri(notation.getDatatypeIri());
-                add(triples, subject, SKOS + "notation", NodeFactory.createLiteralDT(notation.getValue(),
+                if (!notation.getDatatypeIri().isEmpty()) requireIri(notation.getDatatypeIri());
+            }
+            requireExportMappings(concept.getExactMatchList());
+            requireExportMappings(concept.getCloseMatchList());
+            requireExportMappings(concept.getBroadMatchList());
+            requireExportMappings(concept.getNarrowMatchList());
+            requireExportMappings(concept.getRelatedMatchList());
+            requireUniqueLabels(concept.getAltLabelList());
+            requireUniqueLabels(concept.getHiddenLabelList());
+            requireUniqueLabels(concept.getScopeNoteList());
+            requireUniqueValues(concept.getReplacedByList());
+        }
+        return iris;
+    }
+
+    private void emitTriples(ConceptScheme scheme, Map<String, Node> iris, Consumer<Triple> sink) {
+        add(sink, schemeNode, RDF_TYPE_NODE, CONCEPT_SCHEME_NODE);
+        labels(sink, schemeNode, PREF_LABEL_NODE, scheme.getPrefLabelList());
+        for (var concept : scheme.getConceptsList()) {
+            Node subject = iris.get(concept.getId());
+            add(sink, subject, RDF_TYPE_NODE, CONCEPT_NODE);
+            add(sink, subject, IN_SCHEME_NODE, schemeNode);
+            labels(sink, subject, PREF_LABEL_NODE, concept.getPrefLabelList());
+            labels(sink, subject, ALT_LABEL_NODE, concept.getAltLabelList());
+            labels(sink, subject, HIDDEN_LABEL_NODE, concept.getHiddenLabelList());
+            labels(sink, subject, DEFINITION_NODE, concept.getDefinitionList());
+            labels(sink, subject, SCOPE_NOTE_NODE, concept.getScopeNoteList());
+            for (var notation : concept.getNotationList()) {
+                String datatype = notation.getDatatypeIri().isEmpty() ? XSD_STRING : notation.getDatatypeIri();
+                add(sink, subject, NOTATION_NODE, NodeFactory.createLiteralDT(notation.getValue(),
                         TypeMapper.getInstance().getSafeTypeByName(datatype)));
             }
             for (String parent : concept.getBroaderList()) {
-                add(triples, subject, SKOS + "broader", uri(iris.get(parent)));
-                add(triples, iris.get(parent), SKOS + "narrower", uri(subject));
+                Node parentNode = iris.get(parent);
+                add(sink, subject, BROADER_NODE, parentNode);
+                add(sink, parentNode, NARROWER_NODE, subject);
             }
-            for (String related : concept.getRelatedList()) add(triples, subject, SKOS + "related", uri(iris.get(related)));
-            mappings(triples, subject, "exactMatch", concept.getExactMatchList());
-            mappings(triples, subject, "closeMatch", concept.getCloseMatchList());
-            mappings(triples, subject, "broadMatch", concept.getBroadMatchList());
-            mappings(triples, subject, "narrowMatch", concept.getNarrowMatchList());
-            mappings(triples, subject, "relatedMatch", concept.getRelatedMatchList());
-            if (concept.getDeprecated()) add(triples, subject, DEPRECATED,
-                    NodeFactory.createLiteralDT("true", XSDDatatype.XSDboolean));
-            for (String target : concept.getReplacedByList()) add(triples, subject, REPLACED_BY, uri(iris.get(target)));
+            for (String related : concept.getRelatedList()) add(sink, subject, RELATED_NODE, iris.get(related));
+            mappings(sink, subject, EXACT_MATCH_NODE, concept.getExactMatchList());
+            mappings(sink, subject, CLOSE_MATCH_NODE, concept.getCloseMatchList());
+            mappings(sink, subject, BROAD_MATCH_NODE, concept.getBroadMatchList());
+            mappings(sink, subject, NARROW_MATCH_NODE, concept.getNarrowMatchList());
+            mappings(sink, subject, RELATED_MATCH_NODE, concept.getRelatedMatchList());
+            if (concept.getDeprecated()) add(sink, subject, DEPRECATED_NODE, TRUE_NODE);
+            for (String target : concept.getReplacedByList()) add(sink, subject, REPLACED_BY_NODE, iris.get(target));
         }
-        if (new HashSet<>(triples).size() != triples.size())
-            throw refused("duplicate protobuf values cannot survive RDF set semantics");
-        return triples;
     }
 
-    private void mappings(List<Triple> triples, String subject, String predicate, List<ConceptRef> refs) {
+    private void requireExportMappings(List<ConceptRef> refs) {
         for (var ref : refs) {
-            String target = externalIris.get(ref);
-            if (target == null) throw refused("unresolved export mapping " + ref.getSchemeId() + "/" + ref.getConceptId());
-            add(triples, subject, SKOS + predicate, uri(target));
+            if (!externalIris.containsKey(ref))
+                throw refused("unresolved export mapping " + ref.getSchemeId() + "/" + ref.getConceptId());
+        }
+        requireUniqueValues(refs);
+    }
+
+    private static void requireUniqueLabels(List<LangLabel> labels) {
+        if (labels.size() < 2) return;
+        var seen = HashSet.newHashSet(labels.size());
+        for (var label : labels) {
+            if (!seen.add(NodeFactory.createLiteralLang(label.getText(), label.getLanguage())))
+                throw refused(DUPLICATE_VALUES_MESSAGE);
         }
     }
 
-    private static void labels(List<Triple> triples, String subject, String predicate, List<LangLabel> labels) {
-        for (var label : labels) add(triples, subject, SKOS + predicate,
+    private static void requireUniqueValues(List<?> values) {
+        if (values.size() < 2) return;
+        var seen = HashSet.newHashSet(values.size());
+        for (var value : values) {
+            if (!seen.add(value)) throw refused(DUPLICATE_VALUES_MESSAGE);
+        }
+    }
+
+    private void mappings(Consumer<Triple> sink, Node subject, Node predicate, List<ConceptRef> refs) {
+        for (var ref : refs) add(sink, subject, predicate, externalIris.get(ref));
+    }
+
+    private static void labels(Consumer<Triple> sink, Node subject, Node predicate, List<LangLabel> labels) {
+        for (var label : labels) add(sink, subject, predicate,
                 NodeFactory.createLiteralLang(label.getText(), label.getLanguage()));
     }
 
-    private static void add(List<Triple> triples, String subject, String predicate, Node value) {
-        triples.add(Triple.create(uri(subject), uri(predicate), value));
+    private static void add(Consumer<Triple> sink, Node subject, Node predicate, Node value) {
+        sink.accept(Triple.create(subject, predicate, value));
     }
 
     private ConceptRef external(Node node) {

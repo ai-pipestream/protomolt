@@ -4,10 +4,14 @@ import ai.protomolt.proto.descriptors.DescriptorFingerprints;
 import ai.protomolt.proto.emit.v1.RendererCapability;
 import ai.protomolt.proto.validate.ProtoValidator;
 import com.google.protobuf.ByteString;
+import com.google.protobuf.Descriptors.Descriptor;
+import com.google.protobuf.Descriptors.FieldDescriptor;
 import com.google.protobuf.Message;
-import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.OutputStream;
+import java.util.ArrayDeque;
+import java.util.Comparator;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -17,44 +21,60 @@ import java.util.Set;
 
 /** Explicit enablement over ServiceLoader; no implicit default provider or destination. */
 public final class RendererRegistry {
-    private record Entry(RendererProvider provider, RendererCapability capability) {}
+    private static final ProtoValidator CAPABILITY_VALIDATOR =
+            ProtoValidator.forMessageType(RendererCapability.getDescriptor());
+
+    private record Discovered(RendererProvider provider, RendererCapability capability, Descriptor optionsDescriptor) {}
+    private record Entry(
+            RendererProvider provider,
+            RendererCapability capability,
+            Descriptor optionsDescriptor,
+            ProtoValidator optionsValidator) {}
+
     private final Map<String, Entry> enabled;
 
+    /** Discovers installed {@link RendererProvider}s from {@code loader} and enables {@code enabled}. */
     public static RendererRegistry load(ClassLoader loader, Set<String> enabled) {
         return new RendererRegistry(ServiceLoader.load(RendererProvider.class, loader), enabled);
     }
 
     /** Also accepts host-configured remote adapters. Duplicate ids fail even when disabled. */
     public RendererRegistry(Iterable<RendererProvider> providers, Set<String> enabledIds) {
-        Map<String, Entry> discovered = new LinkedHashMap<>();
+        Map<String, Discovered> discovered = new LinkedHashMap<>();
         for (RendererProvider provider : providers) {
             RendererCapability c = Objects.requireNonNull(provider.capability());
-            if (!ProtoValidator.forMessageType(RendererCapability.getDescriptor()).validate(c).valid()
+            Descriptor optionsDescriptor = Objects.requireNonNull(provider.optionsDescriptor());
+            if (!CAPABILITY_VALIDATOR.validate(c).valid()
                     || !c.getUnknownFields().asMap().isEmpty()
                     || c.getMaxInputBytes() <= 0 || c.getMaxOutputBytes() <= 0
-                    || !c.getOptionsType().equals(provider.optionsDescriptor().getFullName())
-                    || !c.getOptionsFingerprint().equals(DescriptorFingerprints.fingerprintOf(provider.optionsDescriptor())))
+                    || !c.getOptionsType().equals(optionsDescriptor.getFullName())
+                    || !c.getOptionsFingerprint().equals(DescriptorFingerprints.fingerprintOf(optionsDescriptor)))
                 throw new IllegalArgumentException("Invalid renderer capability: " + c.getProviderId());
-            if (discovered.putIfAbsent(c.getProviderId(), new Entry(provider, c)) != null)
+            if (discovered.putIfAbsent(c.getProviderId(), new Discovered(provider, c, optionsDescriptor)) != null)
                 throw new IllegalArgumentException("Duplicate renderer id: " + c.getProviderId());
         }
+        Map<Descriptor, ProtoValidator> validatorsByOptions = new HashMap<>();
         Map<String, Entry> selected = new LinkedHashMap<>();
         for (String id : enabledIds) {
-            Entry entry = discovered.get(id);
-            if (entry == null) throw new IllegalArgumentException("Enabled renderer is not installed: " + id);
-            selected.put(id, entry);
+            Discovered item = discovered.get(id);
+            if (item == null) throw new IllegalArgumentException("Enabled renderer is not installed: " + id);
+            ProtoValidator optionsValidator = validatorsByOptions.computeIfAbsent(
+                    item.optionsDescriptor(), ProtoValidator::forMessageType);
+            selected.put(id, new Entry(item.provider(), item.capability(), item.optionsDescriptor(), optionsValidator));
         }
         this.enabled = Map.copyOf(selected);
     }
 
+    /** Returns the capabilities of enabled providers ordered by provider ID. */
     public List<RendererCapability> capabilities() {
         return enabled.values().stream().map(Entry::capability)
-                .sorted(java.util.Comparator.comparing(RendererCapability::getProviderId)).toList();
+                .sorted(Comparator.comparing(RendererCapability::getProviderId)).toList();
     }
 
     /** Must enforce the current caller's source access and disclosure policy, including options. */
     @FunctionalInterface
     public interface Authorization {
+        /** Authorizes {@code input} and {@code options} for {@code capability}, or throws {@link RenderFailure}. */
         void check(RendererCapability capability, Message input, Message options) throws RenderFailure;
     }
 
@@ -69,11 +89,13 @@ public final class RendererRegistry {
         authorization.check(c, input, options);
         if ((long) input.getSerializedSize() + options.getSerializedSize() > c.getMaxInputBytes())
             throw new RenderFailure(RenderFailure.Kind.LIMIT, "Renderer input limit exceeded");
-        if (!options.getDescriptorForType().getFullName().equals(c.getOptionsType())
-                || !DescriptorFingerprints.fingerprintOf(options.getDescriptorForType()).equals(c.getOptionsFingerprint()))
+        Descriptor candidateOptions = options.getDescriptorForType();
+        if (candidateOptions != entry.optionsDescriptor()
+                && (!candidateOptions.getFullName().equals(c.getOptionsType())
+                        || !DescriptorFingerprints.fingerprintOf(candidateOptions).equals(c.getOptionsFingerprint())))
             throw new RenderFailure(RenderFailure.Kind.INVALID, "Renderer options descriptor differs from capability");
         requireKnownOptions(options);
-        if (!ProtoValidator.forMessageType(options.getDescriptorForType()).validate(options).valid())
+        if (!entry.optionsValidator().validate(options).valid())
             throw new RenderFailure(RenderFailure.Kind.INVALID, "Invalid renderer options");
         try { entry.provider().check(input, options); }
         catch (RenderFailure e) { throw e; }
@@ -87,7 +109,7 @@ public final class RendererRegistry {
                              RendererProvider.Cancellation cancellation) throws IOException {
         var c = check(id, input, options, authorization, cancellation);
         Entry entry = enabled.get(id);
-        var bytes = new ByteArrayOutputStream();
+        ByteString.Output bytes = ByteString.newOutput();
         OutputStream bounded = new OutputStream() {
             private int size;
             private void reserve(int count) throws RenderFailure {
@@ -105,7 +127,7 @@ public final class RendererRegistry {
         try {
             entry.provider().render(input, options, bounded, cancellation);
             cancellation.check();
-            return ByteString.copyFrom(bytes.toByteArray());
+            return bytes.toByteString();
         } catch (RenderFailure e) { throw e; }
         catch (IOException | RuntimeException e) {
             throw new RenderFailure(RenderFailure.Kind.FAILED, "Renderer failed: " + id, e);
@@ -113,13 +135,13 @@ public final class RendererRegistry {
     }
 
     private static void requireKnownOptions(Message root) throws RenderFailure {
-        var queue = new java.util.ArrayDeque<Message>(); queue.add(root);
+        var queue = new ArrayDeque<Message>(); queue.add(root);
         while (!queue.isEmpty()) {
             Message m = queue.removeFirst();
             if (!m.getUnknownFields().asMap().isEmpty())
                 throw new RenderFailure(RenderFailure.Kind.INVALID, "Unknown renderer option fields");
             for (var field : m.getAllFields().entrySet()) {
-                if (field.getKey().getJavaType() != com.google.protobuf.Descriptors.FieldDescriptor.JavaType.MESSAGE) continue;
+                if (field.getKey().getJavaType() != FieldDescriptor.JavaType.MESSAGE) continue;
                 if (field.getKey().isRepeated())
                     for (Object item : (List<?>) field.getValue()) queue.add((Message) item);
                 else queue.add((Message) field.getValue());
