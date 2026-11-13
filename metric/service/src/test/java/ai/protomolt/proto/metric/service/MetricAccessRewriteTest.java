@@ -301,19 +301,31 @@ class MetricAccessRewriteTest {
                             "revenue", "amount_cents", "amount_cents", 100L, 1000L));
             assertThat(executor.executed.predicates()).hasSize(1);
 
-            // Probing a denied member through a caller CEL filter is refused as PERMISSION_DENIED.
-            assertThatThrownBy(() -> stub(RESTRICTED).queryMetrics(revenue("orders")
+            // Probing a denied member through a caller CEL filter (even with a type mismatch)
+            // is refused as PERMISSION_DENIED rather than leaking type-check errors.
+            for (String probe : List.of("this.segment == 'smb'", "this.segment > 100")) {
+                assertThatThrownBy(() -> stub(RESTRICTED).queryMetrics(revenue("orders")
+                        .toBuilder()
+                        .addFilters(MetricFilter.newBuilder().setCel(probe))
+                        .build()))
+                        .as(probe)
+                        .isInstanceOfSatisfying(StatusRuntimeException.class, e -> {
+                            assertThat(e.getStatus().getCode())
+                                    .isEqualTo(Status.Code.PERMISSION_DENIED);
+                            assertThat(e.getStatus().getDescription())
+                                    .contains("restricted")
+                                    .contains("segment");
+                        });
+            }
+
+            // Allowed caller CEL filters compose alongside injected policy CEL filters.
+            executor.executed = null;
+            assertThat(stub(RESTRICTED).queryMetrics(revenue("orders")
                     .toBuilder()
-                    .addFilters(MetricFilter.newBuilder()
-                            .setCel("this.segment == 'smb'"))
-                    .build()))
-                    .isInstanceOfSatisfying(StatusRuntimeException.class, e -> {
-                        assertThat(e.getStatus().getCode())
-                                .isEqualTo(Status.Code.PERMISSION_DENIED);
-                        assertThat(e.getStatus().getDescription())
-                                .contains("restricted")
-                                .contains("segment");
-                    });
+                    .addFilters(MetricFilter.newBuilder().setCel("this.revenue >= 200"))
+                    .build()).getRowsCount())
+                    .isEqualTo(1);
+            assertThat(executor.executed.predicates()).hasSize(2);
 
             // A policy with a type-mismatched CEL expression fails closed as FAILED_PRECONDITION.
             assertThatThrownBy(() -> stub(MISCONFIGURED).queryMetrics(revenue("orders")))
