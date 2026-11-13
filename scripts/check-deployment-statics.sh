@@ -274,6 +274,40 @@ if "protobuf-compiler-grpc" not in workers or "protoc-gen-grpc-java" not in work
 print("worker images carry common gRPC tools and pinned Java SDKs")
 PYEOF
 
+say "mcp-inspector lane: engines.node matches pinned @modelcontextprotocol/inspector"
+python3 - <<'PYEOF'
+import json, sys
+
+with open("tests/mcp-inspector/package.json", encoding="utf-8") as handle:
+    manifest = json.load(handle)
+with open("tests/mcp-inspector/package-lock.json", encoding="utf-8") as handle:
+    lock = json.load(handle)
+
+inspector_pkg = "@modelcontextprotocol/inspector"
+inspector_meta = lock.get("packages", {}).get(f"node_modules/{inspector_pkg}", {})
+inspector_node = (inspector_meta.get("engines") or {}).get("node", "").strip()
+if not inspector_node:
+    print(f"tests/mcp-inspector/package-lock.json is missing engines.node on {inspector_pkg}")
+    sys.exit(1)
+
+manifest_node = (manifest.get("engines") or {}).get("node", "").strip()
+lock_root_node = (lock.get("packages", {}).get("", {}).get("engines") or {}).get("node", "").strip()
+if manifest_node != inspector_node:
+    print(f"tests/mcp-inspector/package.json engines.node ({manifest_node!r}) != {inspector_pkg} ({inspector_node!r})")
+    sys.exit(1)
+if lock_root_node != inspector_node:
+    print(f"tests/mcp-inspector/package-lock.json root engines.node ({lock_root_node!r}) != {inspector_pkg} ({inspector_node!r})")
+    sys.exit(1)
+
+manifest_ver = (manifest.get("devDependencies") or {}).get(inspector_pkg)
+lock_root_ver = (lock.get("packages", {}).get("", {}).get("devDependencies") or {}).get(inspector_pkg)
+pinned_ver = inspector_meta.get("version")
+if manifest_ver != pinned_ver or lock_root_ver != pinned_ver:
+    print(f"tests/mcp-inspector version mismatch: package.json={manifest_ver!r}, lock root={lock_root_ver!r}, pinned={pinned_ver!r}")
+    sys.exit(1)
+print(f"mcp-inspector {pinned_ver} and lane manifests agree on engines.node: {inspector_node}")
+PYEOF
+
 say "no em dashes in authored deployment files"
 python3 - <<'PYEOF'
 import glob, sys
