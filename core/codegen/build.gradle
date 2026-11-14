@@ -41,6 +41,12 @@ tasks.named('check') {
     dependsOn('verifyEmbeddedWasm')
 }
 
+tasks.named('test', Test) {
+    inputs.dir(layout.projectDirectory.dir('provenance'))
+    systemProperty 'protomolt.codegen.provenance.dir',
+            layout.projectDirectory.dir('provenance').asFile.absolutePath
+}
+
 // Ship the attribution material for the components compiled into the embedded
 // WASM binary inside the jar that carries the binary.
 tasks.named('jar') {
