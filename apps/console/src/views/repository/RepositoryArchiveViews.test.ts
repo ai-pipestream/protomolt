@@ -1,8 +1,13 @@
 // @vitest-environment jsdom
 import { createHash } from 'node:crypto'
 import { create } from '@bufbuild/protobuf'
-import { Code, ConnectError, type ConnectRouter } from '@connectrpc/connect'
+import { Code, ConnectError, createRouterTransport, type ConnectRouter } from '@connectrpc/connect'
+import { mount } from '@vue/test-utils'
+import { defineComponent, h } from 'vue'
+import { createMemoryHistory, createRouter, RouterView } from 'vue-router'
 import { afterEach, describe, expect, it } from 'vitest'
+import { installDomStubs, vuetifyForTests } from '@/componentTestKit'
+import ArchiveDeleteReceiptBanner from '@/components/repository/ArchiveDeleteReceiptBanner.vue'
 import { CharacterizationEvidenceSchema, ClassificationSchema, ClassificationState } from '@/gen/ai/protomolt/proto/asset/v1/classification_pb'
 import { BridgeKind, BridgeStatus } from '@/gen/ai/protomolt/proto/asset/v1/bridge_pb'
 import { ContentClass, ContentProfileSchema, QualityScoreSchema } from '@/gen/ai/protomolt/proto/asset/v1/content_pb'
@@ -40,6 +45,9 @@ import {
 } from '@/gen/ai/protomolt/proto/repo/v2/document_service_pb'
 import { ArchiveMutationService, ArchiveMutationResponseSchema } from '@/gen/ai/protomolt/proto/repo/archive/v1/archive_mutation_service_pb'
 import { ArchiveMutationReceiptSchema, ArchiveMutationKind, ArchiveMutationState, type ArchiveMutationRequest } from '@/gen/ai/protomolt/proto/repo/archive/v1/archive_mutation_pb'
+import { archiveDeleteDigest } from '@/repository/archiveDeleteCore'
+import { useArchiveDeleteReceiptHost } from '@/repository/archiveDeleteReceipts'
+import { REPOSITORY_CLIENTS, REPOSITORY_SIGN_IN, repositoryClients } from '@/repository/clients'
 import { at } from '@/repository/repositoryTestKit'
 import { mountRepositoryView, settle } from '@/repository/repositoryViewKit'
 import RepositoryArchiveEntryView from './RepositoryArchiveEntryView.vue'
@@ -816,4 +824,286 @@ describe('PutEntry draft and retry identity', () => {
     } finally { release(); wrapper.unmount() }
   })
 
+})
+
+describe('Archive delete receipt survival across navigation (#871)', () => {
+  const HarnessShell = defineComponent({
+    setup() {
+      const { showBanner } = useArchiveDeleteReceiptHost()
+      return () => h('div', [showBanner.value ? h(ArchiveDeleteReceiptBanner) : null, h(RouterView)])
+    },
+  })
+
+  async function mountArchiveNavigation(
+    routes: (router: ConnectRouter) => void,
+    onMutationResponse?: () => void,
+  ) {
+    installDomStubs()
+    const stub = { template: '<div />' }
+    const router = createRouter({
+      history: createMemoryHistory(),
+      routes: [
+        {
+          path: '/repository',
+          component: HarnessShell,
+          children: [
+            { path: '', name: 'repository', component: stub },
+            { path: 'accounts/:accountId', name: 'repository-account', component: stub },
+            { path: 'document', name: 'repository-document', component: stub },
+            { path: 'upload', name: 'repository-upload', component: stub },
+            { path: 'archive', name: 'repository-archive', component: RepositoryArchiveView },
+            { path: 'archive-entry', name: 'repository-archive-entry', component: RepositoryArchiveEntryView },
+            { path: 'lookup', name: 'repository-lookup', component: { template: '<div data-testid="lookup-stub">Lookup</div>' } },
+          ],
+        },
+      ],
+    })
+    await router.push(ENTRY)
+    await router.isReady()
+    const transport = createRouterTransport(routes, {
+      transport: {
+        interceptors: onMutationResponse
+          ? [
+              (next) => async (req) => {
+                const res = await next(req)
+                if (req.method.name === 'ArchiveMutation') onMutationResponse()
+                return res
+              },
+            ]
+          : [],
+      },
+    })
+    const wrapper = mount({ template: '<router-view />' }, {
+      global: {
+        plugins: [vuetifyForTests(), router],
+        provide: {
+          [REPOSITORY_CLIENTS as symbol]: repositoryClients(transport),
+          [REPOSITORY_SIGN_IN as symbol]: () => {},
+        },
+      },
+      attachTo: document.body,
+    })
+    await settle()
+    return { wrapper, router }
+  }
+
+  it('retains and shows a COMPLETED receipt across entry navigation without hijacking the new route', async () => {
+    installDomStubs()
+    let navigateOnResponse = () => {}
+    let sentOperationId = ''
+    let expectedDigest = ''
+    const router = createRouter({
+      history: createMemoryHistory(),
+      routes: [
+        { path: '/repository/archive', name: 'repository-archive', component: { template: '<div />' } },
+        { path: '/repository/archive-entry', name: 'repository-archive-entry', component: RepositoryArchiveEntryView },
+        { path: '/repository/lookup', name: 'repository-lookup', component: { template: '<div />' } },
+      ],
+    })
+    await router.push(ENTRY)
+    await router.isReady()
+    const transport = createRouterTransport(
+      (r) => {
+        archives(seen())(r)
+        r.service(ArchiveService, {
+          getEntryManifest(req) {
+            const id = req.address?.entryId ?? 'e-1'
+            return create(GetEntryManifestResponseSchema, {
+              info: create(EntryInfoSchema, { address: address(id), currentVersion: 3n, title: `Title ${id}` }),
+              manifest: create(VersionManifestSchema, { ...manifest(3n), address: address(id) }),
+            })
+          },
+          listVersions: () => create(ListVersionsResponseSchema, { versions: [manifest(3n)] }),
+        })
+        r.service(ArchiveMutationService, {
+          archiveMutation(request) {
+            sentOperationId = request.operationId
+            expectedDigest = archiveDeleteDigest(request)
+            return create(ArchiveMutationResponseSchema, {
+              receipt: create(ArchiveMutationReceiptSchema, {
+                operationId: request.operationId,
+                address: address('e-1'),
+                kind: ArchiveMutationKind.DELETE_ENTRY,
+                state: ArchiveMutationState.COMPLETED,
+                entryDeleted: true,
+                commandSha256: expectedDigest,
+              }),
+            })
+          },
+        })
+      },
+      {
+        transport: {
+          interceptors: [
+            (next) => async (req) => {
+              const res = await next(req)
+              if (req.method.name === 'ArchiveMutation') navigateOnResponse()
+              return res
+            },
+          ],
+        },
+      },
+    )
+    const wrapper = mount(RepositoryArchiveEntryView, {
+      global: {
+        plugins: [vuetifyForTests(), router],
+        provide: {
+          [REPOSITORY_CLIENTS as symbol]: repositoryClients(transport),
+          [REPOSITORY_SIGN_IN as symbol]: () => {},
+        },
+      },
+      attachTo: document.body,
+    })
+    try {
+      await settle()
+      await wrapper.get('[data-testid="delete-archive-entry"]').trigger('click')
+      await settle()
+      navigateOnResponse = () => {
+        void router.push({ name: 'repository-archive-entry', query: { account: 'acct-a', archive: 'papers', entry: 'e-2' } })
+      }
+      ;(document.body.querySelector('[data-testid="delete-archive-confirm"]') as HTMLElement).click()
+      await settle()
+
+      expect(router.currentRoute.value.name).toBe('repository-archive-entry')
+      expect(router.currentRoute.value.query.entry).toBe('e-2')
+      expect(wrapper.get('[data-testid="entry-id"]').text()).toBe('e-2')
+      const banner = wrapper.get('[data-testid="archive-delete-receipt-banner"]')
+      expect(banner.text()).toContain('acct-a / papers / e-1')
+      expect(banner.text()).toContain(sentOperationId)
+      expect(banner.text()).toContain('COMPLETED')
+      expect(banner.text()).toContain(expectedDigest)
+
+      await banner.get('button[aria-label]').trigger('click')
+      await settle()
+      expect(wrapper.find('[data-testid="archive-delete-receipt-banner"]').exists()).toBe(false)
+    } finally {
+      wrapper.unmount()
+      document.body.innerHTML = ''
+    }
+  })
+
+  it('shows a COMPLETED receipt on the archive and subsequent routes when navigating away as the RPC resolves', async () => {
+    let deleted = false
+    let sentOperationId = ''
+    let triggerNav = () => {}
+    const { wrapper, router } = await mountArchiveNavigation(
+      (r) => {
+        archives(seen())(r)
+        r.service(ArchiveService, {
+          getArchive: (req) =>
+            create(GetArchiveResponseSchema, {
+              archive: create(ArchiveSchema, { name: req.archive, accountId: req.accountId, driveName: 'pipeline' }),
+            }),
+          getArchiveStats: (req) =>
+            create(GetArchiveStatsResponseSchema, { stats: create(ArchiveStatsSchema, { archive: req.archive }) }),
+          listEntries() {
+            const remaining = deleted ? ['e-2'] : ['e-1', 'e-2']
+            return create(ListEntriesResponseSchema, {
+              entries: remaining.map((id) => create(EntryInfoSchema, { address: address(id), currentVersion: 3n, title: `Paper ${id}` })),
+              totalCount: BigInt(remaining.length),
+            })
+          },
+          getEntryManifest: () =>
+            create(GetEntryManifestResponseSchema, {
+              info: create(EntryInfoSchema, { address: address('e-1'), currentVersion: 3n, title: 'Paper e-1' }),
+              manifest: manifest(3n),
+            }),
+          listVersions: () => create(ListVersionsResponseSchema, { versions: [manifest(3n)] }),
+        })
+        r.service(ArchiveMutationService, {
+          archiveMutation(request) {
+            deleted = true
+            sentOperationId = request.operationId
+            return create(ArchiveMutationResponseSchema, {
+              receipt: create(ArchiveMutationReceiptSchema, {
+                operationId: request.operationId,
+                address: address('e-1'),
+                kind: ArchiveMutationKind.DELETE_ENTRY,
+                state: ArchiveMutationState.COMPLETED,
+                entryDeleted: true,
+                commandSha256: archiveDeleteDigest(request),
+              }),
+            })
+          },
+        })
+      },
+      () => triggerNav(),
+    )
+    try {
+      await wrapper.get('[data-testid="delete-archive-entry"]').trigger('click')
+      await settle()
+      triggerNav = () => {
+        void router.push({ name: 'repository-archive', query: { account: 'acct-a', archive: 'papers' } })
+      }
+      ;(document.body.querySelector('[data-testid="delete-archive-confirm"]') as HTMLElement).click()
+      await settle()
+
+      expect(router.currentRoute.value.name).toBe('repository-archive')
+      const banners = wrapper.findAll('[data-testid="archive-delete-receipt-banner"]')
+      expect(banners).toHaveLength(1)
+      expect(banners[0].text()).toContain('acct-a / papers / e-1')
+      expect(banners[0].text()).toContain(sentOperationId)
+      expect(banners[0].text()).toContain('COMPLETED')
+      expect(wrapper.find('[data-testid="entry-e-1"]').exists()).toBe(false)
+      expect(wrapper.find('[data-testid="entry-e-2"]').exists()).toBe(true)
+
+      await router.push({ name: 'repository-lookup' })
+      await settle()
+      expect(wrapper.get('[data-testid="lookup-stub"]').text()).toBe('Lookup')
+      expect(wrapper.get('[data-testid="archive-delete-receipt-banner"]').text()).toContain(sentOperationId)
+    } finally {
+      wrapper.unmount()
+      document.body.innerHTML = ''
+    }
+  })
+
+  it('aborts an incomplete delete call on navigation without displaying a receipt or error', async () => {
+    let release!: () => void
+    const pending = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    let entered!: () => void
+    const started = new Promise<void>((resolve) => {
+      entered = resolve
+    })
+    let serverSignal: AbortSignal | undefined
+    const { wrapper, router } = await mountArchiveNavigation((r) => {
+      archives(seen())(r)
+      r.service(ArchiveMutationService, {
+        async archiveMutation(request, context) {
+          serverSignal = context.signal
+          entered()
+          await pending
+          return create(ArchiveMutationResponseSchema, {
+            receipt: create(ArchiveMutationReceiptSchema, {
+              operationId: request.operationId,
+              address: address('e-1'),
+              kind: ArchiveMutationKind.DELETE_ENTRY,
+              state: ArchiveMutationState.COMPLETED,
+              entryDeleted: true,
+              commandSha256: archiveDeleteDigest(request),
+            }),
+          })
+        },
+      })
+    })
+    try {
+      await wrapper.get('[data-testid="delete-archive-entry"]').trigger('click')
+      await settle()
+      ;(document.body.querySelector('[data-testid="delete-archive-confirm"]') as HTMLElement).click()
+      await started
+      await router.push({ name: 'repository-archive', query: { account: 'acct-a', archive: 'papers' } })
+      await settle()
+      release()
+      await settle()
+
+      expect(serverSignal?.aborted).toBe(true)
+      expect(wrapper.find('[data-testid="archive-delete-receipt-banner"]').exists()).toBe(false)
+      expect(wrapper.find('[data-testid="rpc-failure"]').exists()).toBe(false)
+    } finally {
+      release()
+      wrapper.unmount()
+      document.body.innerHTML = ''
+    }
+  })
 })

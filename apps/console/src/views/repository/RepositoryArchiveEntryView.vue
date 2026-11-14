@@ -1,5 +1,6 @@
 <template>
   <div>
+    <ArchiveDeleteReceiptBanner v-if="showBanner" />
     <v-card class="mb-4">
       <v-card-title class="text-subtitle-1 d-flex align-center flex-wrap ga-2">
         <v-btn icon="mdi-arrow-left" size="small" variant="text" aria-label="Archive entries"
@@ -809,16 +810,18 @@
 </template>
 
 <script setup lang="ts">
-import { computed, inject, reactive, ref, shallowRef, watch } from 'vue'
+import { computed, inject, onBeforeUnmount, reactive, ref, shallowRef, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { create } from '@bufbuild/protobuf'
 import { Code, ConnectError } from '@connectrpc/connect'
+import ArchiveDeleteReceiptBanner from '@/components/repository/ArchiveDeleteReceiptBanner.vue'
 import ByteReader from '@/components/repository/ByteReader.vue'
 import DeleteArchiveEntryDialog from '@/components/repository/DeleteArchiveEntryDialog.vue'
 import RpcFailureAlert from '@/components/repository/RpcFailureAlert.vue'
 import type { BridgeKind } from '@/gen/ai/protomolt/proto/asset/v1/bridge_pb'
 import type { Classification } from '@/gen/ai/protomolt/proto/asset/v1/classification_pb'
 import { HeaderPresence } from '@/gen/ai/protomolt/proto/asset/v1/format_pb'
+import type { ArchiveMutationReceipt } from '@/gen/ai/protomolt/proto/repo/archive/v1/archive_mutation_pb'
 import {
   GetEntryManifestRequestSchema,
   ListVersionsRequestSchema,
@@ -827,6 +830,7 @@ import {
   type UploadRenditionResponse,
 } from '@/gen/ai/protomolt/proto/repo/archive/v1/archive_service_pb'
 import type { EntryAddress, EntryInfo, VersionManifest } from '@/gen/ai/protomolt/proto/repo/archive/v1/entry_pb'
+import { useArchiveDeleteReceiptHost } from '@/repository/archiveDeleteReceipts'
 import {
   BRIDGE_KIND_ITEMS,
   DECLARED_FORMAT_ITEMS,
@@ -1056,15 +1060,26 @@ async function submitPutEntry() {
   }
 }
 
+const { showBanner } = useArchiveDeleteReceiptHost()
+let viewUnmounted = false
+onBeforeUnmount(() => {
+  viewUnmounted = true
+})
+
 function openAsV2Document() {
   if (!address.value) return
   void router.push(documentRoute(entryCallNumber(address.value), pinned.value))
 }
 
-function onEntryDeleted() {
+function onEntryDeleted(deletedReceipt: ArchiveMutationReceipt) {
+  if (viewUnmounted || route.name !== 'repository-archive-entry') return
+  const deletedAddress = deletedReceipt.address
+  if (!deletedAddress || !sameEntry(address.value, deletedAddress) || requested.value !== null) return
   deletingEntry.value = false
-  if (!address.value) return
-  void router.push({ name: 'repository-archive', query: { account: address.value.accountId, archive: address.value.archive } })
+  void router.push({
+    name: 'repository-archive',
+    query: { account: deletedAddress.accountId, archive: deletedAddress.archive },
+  })
 }
 
 function onEntryReloadAfterConflict() {
