@@ -748,6 +748,15 @@ public final class RepositorySink implements AutoCloseable {
             tracker.completion.complete(settled);
             return settled;
         } catch (RuntimeException | Error unexpected) {
+            Thread.interrupted();
+            if (tracker.cancelled.get() && !tracker.enteringCommit.get()) {
+                RepositorySinkJob cancelledJob = markCancelled(stored, tracker.reasonOrDefault());
+                tracker.completion.complete(cancelledJob);
+                if (unexpected instanceof Error err) {
+                    throw err;
+                }
+                return cancelledJob;
+            }
             Status status = Status.fromThrowable(unexpected);
             RepositorySinkFailure failure = failureOf(
                     status.getCode(),
@@ -1450,8 +1459,15 @@ public final class RepositorySink implements AutoCloseable {
                 .setUpdatedAt(now())
                 .build();
         DocumentArchive.requireValidView(updated);
-        jobStore.save(new RepositorySinkJobStore.StoredJob(
-                updated, stored.request(), pendingProvenance));
+        boolean restoreInterrupt = Thread.interrupted();
+        try {
+            jobStore.save(new RepositorySinkJobStore.StoredJob(
+                    updated, stored.request(), pendingProvenance));
+        } finally {
+            if (restoreInterrupt) {
+                Thread.currentThread().interrupt();
+            }
+        }
         return updated;
     }
 

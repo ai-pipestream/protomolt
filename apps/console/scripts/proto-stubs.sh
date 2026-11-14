@@ -22,6 +22,7 @@ fi
 protos=(
   sink/emit/renderer/src/main/proto/ai/protomolt/proto/emit/v1/renderer.proto
   repo/proto/src/main/proto/ai/protomolt/proto/repo/sink/v1/repository_sink.proto
+  sink/emit/parquet/src/main/proto/ai/protomolt/proto/emit/parquet/v1/parquet_renderer.proto
   repo/proto/src/main/proto/ai/protomolt/proto/repo/v2/document_service.proto
   repo/proto/src/main/proto/ai/protomolt/proto/repo/v1/drive.proto
   repo/proto/src/main/proto/ai/protomolt/proto/repo/archive/v1/archive_service.proto
