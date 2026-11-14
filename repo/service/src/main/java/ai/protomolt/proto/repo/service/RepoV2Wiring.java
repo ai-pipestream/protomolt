@@ -270,7 +270,7 @@ final class RepoV2Wiring {
         var stacksByDrive = new ConcurrentHashMap<UUID, Stack>();
         var driveFlights = new ConcurrentHashMap<UUID, CompletableFuture<Stack>>();
         var stackFlights = new ConcurrentHashMap<String, CompletableFuture<Stack>>();
-        var stackIdentities = new ConcurrentHashMap<String, DriveBackingPool.BackingIdentity>();
+        var stackIdentities = new ConcurrentHashMap<String, DriveStoreIdentities.BackingIdentity>();
         return record -> singleFlight(stacksByDrive, driveFlights, record.driveId, () -> {
             String prefix = RepositoryNamespaces.under(
                     record.prefix == null ? "" : stripLeadingSlashes(record.prefix), "documents");

@@ -666,7 +666,7 @@ sweep because in-flight writes are not fenced for safe orphan collection.
 Temporary drives (`RedisDriveConfig.ttl_seconds > 0` on an explicit per-drive
 Valkey/Redis configuration) use this explicit promotion path
 (`STORAGE_PLACEMENT_SELECTED_DRIVE`) to materialize staged candidates onto a
-durable drive (`ttl_seconds = 0` or S3) before expiry (#809); revision pruning
+durable drive (`ttl_seconds = 0` or S3) before expiry; revision pruning
 remains a later feature.
 
 ### Per-drive read-through caches

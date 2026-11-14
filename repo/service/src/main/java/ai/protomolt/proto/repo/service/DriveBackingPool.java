@@ -1,8 +1,6 @@
 package ai.protomolt.proto.repo.service;
 
 import ai.protomolt.proto.repo.blob.cache.CachingBlobStore;
-import ai.protomolt.proto.repo.blob.redis.RedisBackendIdentity;
-import ai.protomolt.proto.repo.blob.s3.S3BackendIdentity;
 import ai.protomolt.proto.repo.blob.spi.BlobCapability;
 import ai.protomolt.proto.repo.blob.spi.BlobStore;
 import ai.protomolt.proto.repo.blob.spi.BlobStores;
@@ -12,6 +10,9 @@ import ai.protomolt.proto.repo.blob.spi.OpenedBlobStore;
 import ai.protomolt.proto.repo.catalog.CatalogEntries;
 import ai.protomolt.proto.repo.codec.RepositoryNamespaces;
 import ai.protomolt.proto.repo.container.ledger.DriveRecord;
+import ai.protomolt.proto.repo.service.DriveStoreIdentities.BackingIdentity;
+import ai.protomolt.proto.repo.service.DriveStoreIdentities.CacheIdentity;
+import ai.protomolt.proto.repo.service.DriveStoreIdentities.StoreIdentity;
 import ai.protomolt.proto.repo.spi.RepositoryException;
 import ai.protomolt.proto.repo.v1.DriveCacheConfig;
 import ai.protomolt.proto.repo.v1.DriveProviderConfig;
@@ -26,12 +27,9 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.CompletionException;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 import java.util.function.Function;
-import java.util.function.Supplier;
 
 /**
  * Process-owned provider handles, shared by explicit canonical backend identity without
@@ -74,38 +72,6 @@ final class DriveBackingPool implements AutoCloseable {
 
     private static final String TEMPORARY_PREFIX = "protomolt:temporary:v1:";
     private static final String TEMPORARY_NAMESPACE = "redis-expiring:";
-
-    /**
-     * Explicit canonical identity of an underlying {@link BlobStore} provider handle.
-     *
-     * <p>Compatible provider aliases ({@code valkey} and {@code redis}) and equivalent
-     * normalized endpoint/URI spellings produce identical {@link StoreIdentity} values so
-     * they share one physical client handle, while differing credentials, limits, write
-     * policies, or timeouts remain distinct.
-     */
-    record StoreIdentity(String canonicalProvider, Map<String, String> canonicalOptions) {
-        StoreIdentity {
-            Objects.requireNonNull(canonicalProvider, "canonicalProvider");
-            canonicalOptions = Map.copyOf(canonicalOptions);
-        }
-    }
-
-    /** Canonical identity of a read-through cache configuration fronting an S3 store. */
-    record CacheIdentity(StoreIdentity store, int ttlSeconds, long maxCacheableBytes) {
-        CacheIdentity {
-            Objects.requireNonNull(store, "store");
-        }
-    }
-
-    /**
-     * Complete canonical store configuration of a resolved {@link Backing}, combining its
-     * authoritative store identity and optional read-through cache identity.
-     */
-    record BackingIdentity(StoreIdentity authoritative, CacheIdentity cache) {
-        BackingIdentity {
-            Objects.requireNonNull(authoritative, "authoritative");
-        }
-    }
 
     record Backing(String provider, String endpoint, BlobStore store,
             NamespaceProvisioner namespaces, ObjectReclaimer reclaimer, String keyPrefix, String writePolicy,
@@ -168,8 +134,8 @@ final class DriveBackingPool implements AutoCloseable {
     private final Function<String, String> environment;
     private final boolean bounded;
     private final OwnedResources owned = new OwnedResources();
-    private final SingleFlightHandles authoritativeHandles = new SingleFlightHandles();
-    private final SingleFlightHandles cacheHandles = new SingleFlightHandles();
+    private final SingleFlightStoreHandles authoritativeHandles = new SingleFlightStoreHandles();
+    private final SingleFlightStoreHandles cacheHandles = new SingleFlightStoreHandles();
     private final ConcurrentHashMap<BackingKey, Backing> backings = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<PhysicalNamespace, BackingIdentity> namespaceIdentities =
             new ConcurrentHashMap<>();
@@ -195,9 +161,9 @@ final class DriveBackingPool implements AutoCloseable {
         String writePolicy = bounded ? WRITE_POLICY_CREATE_ONLY : WRITE_POLICY_REPLACE;
         if (config.hasS3Backing()) {
             boolean pathStyle = config.s3Endpoint() != null;
-            String hostEndpoint = s3Endpoint(config.s3Endpoint(), config.s3Region(), pathStyle);
+            String hostEndpoint = DriveStoreIdentities.s3Endpoint(config.s3Endpoint(), config.s3Region(), pathStyle);
             Map<String, String> hostS3Options = Map.copyOf(RepoStorageWiring.s3Options(config));
-            StoreIdentity hostAuthIdentity = s3StoreIdentity(hostS3Options);
+            StoreIdentity hostAuthIdentity = DriveStoreIdentities.s3(hostS3Options);
             CacheIdentity hostCacheIdentity = null;
             if (config.hasRedisCache()) {
                 Map<String, String> hostCacheOptions = Map.of(
@@ -207,7 +173,7 @@ final class DriveBackingPool implements AutoCloseable {
                         OPT_KEY_PREFIX, "",
                         OPT_WRITE_POLICY, WRITE_POLICY_REPLACE);
                 hostCacheIdentity = new CacheIdentity(
-                        redisStoreIdentity(hostCacheOptions, "Invalid host cache endpoint"),
+                        DriveStoreIdentities.redis(hostCacheOptions, "Invalid host cache endpoint"),
                         config.redisTtlSeconds(),
                         config.redisMaxObjectBytes());
             }
@@ -236,14 +202,14 @@ final class DriveBackingPool implements AutoCloseable {
                         defaults.reclaimer()));
             }
         } else {
-            String hostEndpoint = endpoint(config.redisUri());
+            String hostEndpoint = DriveStoreIdentities.redisEndpoint(config.redisUri());
             Map<String, String> hostRedisOptions = Map.of(
                     OPT_URI, config.redisUri(),
                     OPT_TTL_SECONDS, Integer.toString(config.redisTtlSeconds()),
                     OPT_MAX_OBJECT_BYTES, Long.toString(config.redisMaxObjectBytes()),
                     OPT_KEY_PREFIX, "",
                     OPT_WRITE_POLICY, writePolicy);
-            StoreIdentity hostAuthIdentity = redisStoreIdentity(hostRedisOptions, "Invalid drive endpoint");
+            StoreIdentity hostAuthIdentity = DriveStoreIdentities.redis(hostRedisOptions, "Invalid drive endpoint");
             BackingIdentity hostBackingIdentity = new BackingIdentity(hostAuthIdentity, null);
             this.defaults = new Backing(
                     provider,
@@ -416,11 +382,11 @@ final class DriveBackingPool implements AutoCloseable {
         String region = PROVIDER_S3.equals(provider) ? rawOptions.getOrDefault(OPT_REGION, "") : "";
         boolean pathStyle = PROVIDER_S3.equals(provider) && Boolean.parseBoolean(rawOptions.get(OPT_PATH_STYLE));
         String resolvedEndpoint = PROVIDER_S3.equals(provider)
-                ? s3Endpoint(rawOptions.get(OPT_ENDPOINT), region, pathStyle)
-                : endpoint(rawOptions.get(OPT_URI));
+                ? DriveStoreIdentities.s3Endpoint(rawOptions.get(OPT_ENDPOINT), region, pathStyle)
+                : DriveStoreIdentities.redisEndpoint(rawOptions.get(OPT_URI));
         StoreIdentity authIdentity = PROVIDER_S3.equals(provider)
-                ? s3StoreIdentity(rawOptions, resolvedEndpoint, region, pathStyle)
-                : redisStoreIdentity(rawOptions, "Invalid Redis endpoint");
+                ? DriveStoreIdentities.s3(rawOptions, resolvedEndpoint, region, pathStyle)
+                : DriveStoreIdentities.redis(rawOptions, "Invalid Redis endpoint");
         BackingIdentity backingIdentity = new BackingIdentity(
                 authIdentity,
                 cacheSpec == null ? null : cacheSpec.identity());
@@ -464,7 +430,7 @@ final class DriveBackingPool implements AutoCloseable {
                 OPT_MAX_OBJECT_BYTES, Long.toString(maxBytes),
                 OPT_KEY_PREFIX, keyPrefix,
                 OPT_WRITE_POLICY, WRITE_POLICY_REPLACE);
-        StoreIdentity cacheStoreIdentity = redisStoreIdentity(
+        StoreIdentity cacheStoreIdentity = DriveStoreIdentities.redis(
                 cacheOptions, "Invalid drive read_through_cache configuration");
         return new CacheOpenSpec(
                 cacheProvider,
@@ -492,7 +458,7 @@ final class DriveBackingPool implements AutoCloseable {
     }
 
     private Backing open(OpenSpec spec) {
-        SingleFlightHandles.HandleLease authLease = authoritativeHandles.acquire(
+        SingleFlightStoreHandles.HandleLease authLease = authoritativeHandles.acquire(
                 spec.identity().authoritative(),
                 () -> openAuthoritativeHandle(spec.provider(), spec.rawOptions(), spec.ttlSeconds()));
         try {
@@ -500,7 +466,7 @@ final class DriveBackingPool implements AutoCloseable {
             BlobStore store = handle.store();
             ObjectReclaimer reclaimer = handle.reclaimer();
             if (spec.cache() != null) {
-                SingleFlightHandles.HandleLease cacheLease = cacheHandles.acquire(
+                SingleFlightStoreHandles.HandleLease cacheLease = cacheHandles.acquire(
                         spec.cache().identity().store(),
                         () -> openCacheHandle(spec.cache().provider(), spec.cache().rawOptions()));
                 cacheLease.commit(owned);
@@ -510,7 +476,7 @@ final class DriveBackingPool implements AutoCloseable {
                         cacheHandle.store(),
                         spec.cache().identity().ttlSeconds(),
                         spec.cache().identity().maxCacheableBytes(),
-                        s3CacheNamespace(spec.endpoint(), spec.region(), spec.pathStyle()));
+                        DriveStoreIdentities.s3CacheNamespace(spec.endpoint(), spec.region(), spec.pathStyle()));
                 store = cachingStore;
                 reclaimer = cachingStore.reclaimer(handle.reclaimer());
             }
@@ -652,54 +618,6 @@ final class DriveBackingPool implements AutoCloseable {
         return retention + writePolicy + ":" + encode(keyPrefix) + ":" + encode(bucket) + ":" + encode(prefix);
     }
 
-    private static StoreIdentity s3StoreIdentity(Map<String, String> options) {
-        String region = options.getOrDefault(OPT_REGION, "");
-        boolean pathStyle = Boolean.parseBoolean(options.get(OPT_PATH_STYLE));
-        String canonicalEndpoint = s3Endpoint(options.get(OPT_ENDPOINT), region, pathStyle);
-        return s3StoreIdentity(options, canonicalEndpoint, region, pathStyle);
-    }
-
-    private static StoreIdentity s3StoreIdentity(
-            Map<String, String> options, String canonicalEndpoint, String region, boolean pathStyle) {
-        var normalized = new HashMap<>(options);
-        normalized.put(OPT_ENDPOINT, canonicalEndpoint);
-        normalized.put(OPT_REGION, region);
-        normalized.put(OPT_PATH_STYLE, Boolean.toString(pathStyle));
-        normalized.put(
-                OPT_CONDITIONAL_WRITES,
-                Boolean.toString(Boolean.parseBoolean(options.get(OPT_CONDITIONAL_WRITES))));
-        return new StoreIdentity(PROVIDER_S3, normalized);
-    }
-
-    private static StoreIdentity redisStoreIdentity(Map<String, String> options, String errorMessage) {
-        var normalized = new HashMap<>(options);
-        normalized.put(OPT_URI, canonicalRedisUri(options.get(OPT_URI), errorMessage));
-        return new StoreIdentity(PROVIDER_REDIS, normalized);
-    }
-
-    private static String canonicalRedisUri(String value, String errorMessage) {
-        final URI parsed;
-        final Map<String, String> location;
-        try {
-            parsed = URI.create(value);
-            location = RedisBackendIdentity.of(value, "").location();
-        } catch (RuntimeException invalidUri) {
-            throw invalid(errorMessage);
-        }
-        try {
-            return new URI(
-                    location.get("scheme"),
-                    parsed.getUserInfo(),
-                    location.get("host"),
-                    Integer.parseInt(location.get("port")),
-                    "/" + location.get("database"),
-                    null,
-                    null).toString();
-        } catch (URISyntaxException invalidUri) {
-            throw invalid(errorMessage);
-        }
-    }
-
     private static DriveProviderConfig normalizedProviderConfig(DriveProviderConfig stored) {
         if (stored != null
                 && stored.getConfigCase() == DriveProviderConfig.ConfigCase.CONFIG_NOT_SET
@@ -772,56 +690,6 @@ final class DriveBackingPool implements AutoCloseable {
         }
     }
 
-    static String s3Endpoint(String value, String region, boolean pathStyle) {
-        if (blank(value)) {
-            return "";
-        }
-        final URI uri;
-        try {
-            uri = URI.create(value);
-        } catch (IllegalArgumentException invalidUri) {
-            throw invalid("Invalid S3 endpoint");
-        }
-        // S3BackendIdentity deliberately covers origins; the unmanaged provider
-        // also supports explicit path prefixes, whose exact spelling stays identity.
-        if (uri.getRawPath() != null && !uri.getRawPath().isEmpty() && !uri.getRawPath().equals("/")) {
-            return value;
-        }
-        try {
-            return S3BackendIdentity.of(value, region, pathStyle).location().get(OPT_ENDPOINT);
-        } catch (IllegalArgumentException invalidIdentity) {
-            throw invalid("Invalid S3 drive configuration: " + invalidIdentity.getMessage());
-        }
-    }
-
-    /** Canonical physical backing identity isolating cache entries across S3 backends. */
-    static String s3CacheNamespace(String endpoint, String region, boolean pathStyle) {
-        return "s3:" + encode(text(endpoint)) + ":" + encode(text(region)) + ":" + (pathStyle ? "path" : "virtual");
-    }
-
-    private static String endpoint(String value) {
-        final Map<String, String> location;
-        try {
-            location = RedisBackendIdentity.of(value, "").location();
-        } catch (IllegalArgumentException invalidUri) {
-            throw invalid("Invalid drive endpoint");
-        }
-        try {
-            return new URI(
-                    location.get("scheme"),
-                    null,
-                    location.get("host"),
-                    Integer.parseInt(location.get("port")),
-                    "/" + location.get("database"),
-                    null,
-                    null).toString();
-        } catch (URISyntaxException invalidUri) {
-            // The identity has already removed credentials, so this cause is safe.
-            throw new RepositoryException(
-                    RepositoryException.Code.FAILED_PRECONDITION, "Invalid drive endpoint", invalidUri);
-        }
-    }
-
     void requireStorable(DriveRecord drive, Backing backing) {
         String prefix = RepositoryNamespaces.under(
                 drive.prefix == null ? "" : RepoV2Wiring.stripLeadingSlashes(drive.prefix),
@@ -880,205 +748,6 @@ final class DriveBackingPool implements AutoCloseable {
             owned.close();
         } finally {
             lifecycleLock.writeLock().unlock();
-        }
-    }
-
-    /**
-     * Per-identity single-flight pool for {@link OpenedBlobStore} handles.
-     *
-     * <p>Provider initialization executes outside map bucket locks and outside per-slot
-     * monitors so slow opens on one backend never block unrelated resolves or pin virtual
-     * threads, while concurrent opens on the same canonical {@link StoreIdentity} share
-     * one initialization flight.
-     */
-    private static final class SingleFlightHandles {
-        private final ConcurrentHashMap<StoreIdentity, HandleSlot> slots = new ConcurrentHashMap<>();
-
-        void preseed(StoreIdentity identity, OpenedBlobStore handle) {
-            slots.put(identity, HandleSlot.preseeded(handle));
-        }
-
-        HandleLease acquire(StoreIdentity identity, Supplier<OpenedBlobStore> opener) {
-            while (true) {
-                HandleSlot existing = slots.get(identity);
-                if (existing != null) {
-                    HandleLease joined = existing.tryJoin(slots, identity);
-                    if (joined != null) {
-                        return joined;
-                    }
-                    continue;
-                }
-                HandleSlot created = new HandleSlot();
-                HandleSlot raced = slots.putIfAbsent(identity, created);
-                if (raced != null) {
-                    HandleLease joined = raced.tryJoin(slots, identity);
-                    if (joined != null) {
-                        return joined;
-                    }
-                    continue;
-                }
-                try {
-                    OpenedBlobStore opened = opener.get();
-                    created.complete(opened);
-                    return new HandleLease(slots, identity, created, opened, true);
-                } catch (RuntimeException | Error failure) {
-                    created.markAborted();
-                    slots.remove(identity, created);
-                    created.fail(failure);
-                    throw failure;
-                }
-            }
-        }
-
-        void clear() {
-            slots.clear();
-        }
-
-        private static final class HandleSlot {
-            private final CompletableFuture<OpenedBlobStore> future;
-            private OpenedBlobStore resolved;
-            private int uncommittedAcquirers;
-            private boolean committed;
-            private boolean aborted;
-
-            HandleSlot() {
-                this.future = new CompletableFuture<>();
-                this.uncommittedAcquirers = 1;
-            }
-
-            private HandleSlot(OpenedBlobStore handle) {
-                this.future = CompletableFuture.completedFuture(handle);
-                this.resolved = handle;
-                this.committed = true;
-            }
-
-            static HandleSlot preseeded(OpenedBlobStore handle) {
-                return new HandleSlot(handle);
-            }
-
-            HandleLease tryJoin(ConcurrentHashMap<StoreIdentity, HandleSlot> map, StoreIdentity identity) {
-                boolean counted;
-                synchronized (this) {
-                    if (aborted) {
-                        return null;
-                    }
-                    if (committed) {
-                        return new HandleLease(map, identity, this, resolved, false);
-                    }
-                    uncommittedAcquirers++;
-                    counted = true;
-                }
-                OpenedBlobStore opened = await();
-                return new HandleLease(map, identity, this, opened, counted);
-            }
-
-            void complete(OpenedBlobStore handle) {
-                synchronized (this) {
-                    this.resolved = handle;
-                }
-                future.complete(handle);
-            }
-
-            void fail(Throwable failure) {
-                future.completeExceptionally(failure);
-            }
-
-            synchronized void markAborted() {
-                this.aborted = true;
-            }
-
-            void commit(OwnedResources owned, OpenedBlobStore handle) {
-                boolean register = false;
-                synchronized (this) {
-                    if (!committed) {
-                        committed = true;
-                        uncommittedAcquirers = 0;
-                        register = true;
-                    }
-                }
-                if (register) {
-                    owned.add(handle);
-                }
-            }
-
-            void abort(
-                    ConcurrentHashMap<StoreIdentity, HandleSlot> map,
-                    StoreIdentity identity,
-                    OpenedBlobStore handle,
-                    Throwable cause) {
-                boolean closeNow = false;
-                synchronized (this) {
-                    if (committed) {
-                        return;
-                    }
-                    uncommittedAcquirers--;
-                    if (uncommittedAcquirers <= 0) {
-                        aborted = true;
-                        map.remove(identity, this);
-                        closeNow = true;
-                    }
-                }
-                if (closeNow) {
-                    try {
-                        handle.close();
-                    } catch (Exception cleanup) {
-                        cause.addSuppressed(cleanup);
-                    }
-                }
-            }
-
-            private OpenedBlobStore await() {
-                try {
-                    return future.join();
-                } catch (CompletionException wrapped) {
-                    Throwable cause = wrapped.getCause();
-                    if (cause instanceof RuntimeException runtime) {
-                        throw runtime;
-                    }
-                    if (cause instanceof Error error) {
-                        throw error;
-                    }
-                    throw wrapped;
-                }
-            }
-        }
-
-        static final class HandleLease {
-            private final ConcurrentHashMap<StoreIdentity, HandleSlot> map;
-            private final StoreIdentity identity;
-            private final HandleSlot slot;
-            private final OpenedBlobStore handle;
-            private boolean pendingDecision;
-
-            HandleLease(
-                    ConcurrentHashMap<StoreIdentity, HandleSlot> map,
-                    StoreIdentity identity,
-                    HandleSlot slot,
-                    OpenedBlobStore handle,
-                    boolean pendingDecision) {
-                this.map = map;
-                this.identity = identity;
-                this.slot = slot;
-                this.handle = handle;
-                this.pendingDecision = pendingDecision;
-            }
-
-            OpenedBlobStore handle() {
-                return handle;
-            }
-
-            void commit(OwnedResources owned) {
-                pendingDecision = false;
-                slot.commit(owned, handle);
-            }
-
-            void abort(Throwable cause) {
-                if (!pendingDecision) {
-                    return;
-                }
-                pendingDecision = false;
-                slot.abort(map, identity, handle, cause);
-            }
         }
     }
 }

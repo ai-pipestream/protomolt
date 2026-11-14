@@ -117,13 +117,13 @@ class RepoV2WiringTest {
         var opened = new AtomicInteger();
         var stacksById = new ConcurrentHashMap<String, Stack>();
 
-        var sharedIdentity = new DriveBackingPool.BackingIdentity(
-                new DriveBackingPool.StoreIdentity(
+        var sharedIdentity = new DriveStoreIdentities.BackingIdentity(
+                new DriveStoreIdentities.StoreIdentity(
                         "redis",
                         java.util.Map.of("uri", "redis://host:6379/0", "max-object-bytes", "4096")),
                 null);
-        var conflictingIdentity = new DriveBackingPool.BackingIdentity(
-                new DriveBackingPool.StoreIdentity(
+        var conflictingIdentity = new DriveStoreIdentities.BackingIdentity(
+                new DriveStoreIdentities.StoreIdentity(
                         "redis",
                         java.util.Map.of("uri", "redis://host:6379/0", "max-object-bytes", "8192")),
                 null);
