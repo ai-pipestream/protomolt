@@ -259,8 +259,12 @@ public final class ReflectionClient {
             }
             ServerReflectionResponse response = (ServerReflectionResponse) taken;
             if (response.hasErrorResponse()) {
-                throw new ReflectionException("Reflection error " + response.getErrorResponse()
-                        .getErrorCode() + ": " + response.getErrorResponse().getErrorMessage());
+                var err = response.getErrorResponse();
+                Status candidate = Status.fromCodeValue(err.getErrorCode());
+                Status status = (candidate.isOk() ? Status.UNKNOWN : candidate)
+                        .withDescription(err.getErrorMessage());
+                throw new ReflectionException("Reflection error " + err.getErrorCode()
+                        + ": " + err.getErrorMessage(), status.asRuntimeException());
             }
             return response;
         }
@@ -374,8 +378,12 @@ public final class ReflectionClient {
             }
             var response = (io.grpc.reflection.v1alpha.ServerReflectionResponse) taken;
             if (response.hasErrorResponse()) {
-                throw new ReflectionException("Reflection error " + response.getErrorResponse()
-                        .getErrorCode() + ": " + response.getErrorResponse().getErrorMessage());
+                var err = response.getErrorResponse();
+                Status candidate = Status.fromCodeValue(err.getErrorCode());
+                Status status = (candidate.isOk() ? Status.UNKNOWN : candidate)
+                        .withDescription(err.getErrorMessage());
+                throw new ReflectionException("Reflection error " + err.getErrorCode()
+                        + ": " + err.getErrorMessage(), status.asRuntimeException());
             }
             return response;
         }

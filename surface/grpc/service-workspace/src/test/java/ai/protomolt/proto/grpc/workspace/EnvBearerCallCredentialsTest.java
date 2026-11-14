@@ -5,7 +5,10 @@ import ai.protomolt.proto.actions.ActionContext;
 import ai.protomolt.proto.actions.ActionException;
 import ai.protomolt.proto.actions.CatalogContract;
 import ai.protomolt.proto.actions.StreamingAction;
+import ai.protomolt.proto.grpc.invoke.ReflectionException;
 import ai.protomolt.proto.grpc.profile.FileSystemServiceProfileRepository;
+import ai.protomolt.proto.grpc.profile.v1.ServiceEndpoint;
+import ai.protomolt.proto.grpc.profile.v1.ServiceProfile;
 import ai.protomolt.proto.grpc.profile.v1.Transport;
 import ai.protomolt.proto.inference.spi.EnvCredentialResolver;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -24,6 +27,11 @@ import io.grpc.inprocess.InProcessServerBuilder;
 import io.grpc.protobuf.services.ChannelzService;
 import io.grpc.protobuf.services.HealthStatusManager;
 import io.grpc.protobuf.services.ProtoReflectionServiceV1;
+import io.grpc.reflection.v1.ErrorResponse;
+import io.grpc.reflection.v1.ServerReflectionGrpc;
+import io.grpc.reflection.v1.ServerReflectionRequest;
+import io.grpc.reflection.v1.ServerReflectionResponse;
+import io.grpc.stub.StreamObserver;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
@@ -344,6 +352,148 @@ class EnvBearerCallCredentialsTest {
                 .isInstanceOfSatisfying(ActionException.class,
                         e -> assertThat(e.code()).isEqualTo("invalid-input"));
         assertThat(repository.list()).isEmpty();
+    }
+
+    @Test
+    void authenticatedReflectionErrorResponsePublishesStatusCodeAndWithholdsMessage()
+            throws Exception {
+        envValue.set("secret-reflection-token");
+        String errorServerName = "env-bearer-reflection-error-" + UUID.randomUUID();
+        AtomicReference<Server> errorServer = new AtomicReference<>();
+        ProfileCredentialResolver resolver =
+                new EnvProfileCredentialResolver(Set.of(binding()), environment());
+        ActionCatalog errorCatalog = ServiceWorkspaceActions.register(
+                ActionCatalog.defaults(ActionContext.create()), repository, null,
+                (target, tls) -> InProcessChannelBuilder.forName(errorServerName).build(),
+                resolver);
+
+        errorServer.set(InProcessServerBuilder.forName(errorServerName)
+                .addService(new ServerReflectionGrpc.ServerReflectionImplBase() {
+                    @Override
+                    public StreamObserver<ServerReflectionRequest> serverReflectionInfo(
+                            StreamObserver<ServerReflectionResponse> responseObserver) {
+                        return new StreamObserver<>() {
+                            @Override
+                            public void onNext(ServerReflectionRequest value) {
+                                responseObserver.onNext(ServerReflectionResponse.newBuilder()
+                                        .setErrorResponse(ErrorResponse.newBuilder()
+                                                .setErrorCode(Status.Code.PERMISSION_DENIED.value())
+                                                .setErrorMessage("reflection denied for Bearer "
+                                                        + envValue.get()))
+                                        .build());
+                            }
+
+                            @Override
+                            public void onError(Throwable t) {
+                            }
+
+                            @Override
+                            public void onCompleted() {
+                                responseObserver.onCompleted();
+                            }
+                        };
+                    }
+                })
+                .build()
+                .start());
+        try {
+            ObjectNode rejectedRegister =
+                    errorCatalog.execute("service-register", registerInput());
+            assertThat(rejectedRegister.path("ok").asBoolean()).isFalse();
+            assertThat(rejectedRegister.path("error").asText())
+                    .isEqualTo("reflection failed against the authenticated endpoint: "
+                            + "PERMISSION_DENIED (upstream status withheld)");
+            assertThat(rejectedRegister.toString())
+                    .doesNotContain("UNKNOWN")
+                    .doesNotContain("secret-reflection-token")
+                    .doesNotContain("reflection denied");
+
+            ServiceProfile candidateProfile = ServiceProfile.newBuilder()
+                    .setName("secure-health")
+                    .setDescription("Bearer-gated test service")
+                    .addEndpoints(ServiceEndpoint.newBuilder()
+                            .setName("local")
+                            .setHost("localhost")
+                            .setPort(50051)
+                            .setTransport(Transport.TRANSPORT_PLAINTEXT)
+                            .setCredentialRef("env:PROFILE_TOKEN"))
+                    .build();
+            assertThatThrownBy(() -> ServiceActionSupport.reflectAndStore(
+                    candidateProfile, "local", 5_000, repository, null,
+                    (target, tls) -> InProcessChannelBuilder.forName(errorServerName).build(),
+                    resolver))
+                    .isInstanceOfSatisfying(ReflectionException.class, ex -> {
+                        Status status = Status.fromThrowable(ex);
+                        assertThat(status.getCode()).isEqualTo(Status.Code.PERMISSION_DENIED);
+                        assertThat(status.getDescription()).isNull();
+                        assertThat(ex.getMessage())
+                                .doesNotContain("secret-reflection-token")
+                                .doesNotContain("reflection denied");
+                    });
+        } finally {
+            errorServer.get().shutdownNow().awaitTermination(5, java.util.concurrent.TimeUnit.SECONDS);
+        }
+
+        // Seed a valid profile, verify inspect stays clean, then refresh against a v1alpha
+        // ErrorResponse carrying sensitive diagnostics.
+        requiredToken.set("secret-reflection-token");
+        assertThat(catalog.execute("service-register", registerInput())
+                .path("ok").asBoolean()).isTrue();
+        ObjectNode inspected = catalog.execute("service-inspect",
+                MAPPER.createObjectNode().put("name", "secure-health"));
+        assertThat(inspected.toString()).doesNotContain("secret-reflection-token");
+
+        errorServer.set(InProcessServerBuilder.forName(errorServerName)
+                .addService(new io.grpc.reflection.v1alpha.ServerReflectionGrpc
+                        .ServerReflectionImplBase() {
+                    @Override
+                    public StreamObserver<io.grpc.reflection.v1alpha.ServerReflectionRequest>
+                            serverReflectionInfo(StreamObserver<
+                                    io.grpc.reflection.v1alpha.ServerReflectionResponse> out) {
+                        return new StreamObserver<>() {
+                            @Override
+                            public void onNext(
+                                    io.grpc.reflection.v1alpha.ServerReflectionRequest value) {
+                                out.onNext(io.grpc.reflection.v1alpha.ServerReflectionResponse
+                                        .newBuilder()
+                                        .setErrorResponse(
+                                                io.grpc.reflection.v1alpha.ErrorResponse
+                                                        .newBuilder()
+                                                        .setErrorCode(
+                                                                Status.Code.NOT_FOUND.value())
+                                                        .setErrorMessage(
+                                                                "symbol hidden from Bearer "
+                                                                        + envValue.get()))
+                                        .build());
+                            }
+
+                            @Override
+                            public void onError(Throwable t) {
+                            }
+
+                            @Override
+                            public void onCompleted() {
+                                out.onCompleted();
+                            }
+                        };
+                    }
+                })
+                .build()
+                .start());
+        try {
+            ObjectNode rejectedRefresh = errorCatalog.execute("service-refresh",
+                    MAPPER.createObjectNode().put("name", "secure-health"));
+            assertThat(rejectedRefresh.path("ok").asBoolean()).isFalse();
+            assertThat(rejectedRefresh.path("error").asText())
+                    .isEqualTo("reflection failed against the authenticated endpoint: "
+                            + "NOT_FOUND (upstream status withheld)");
+            assertThat(rejectedRefresh.toString())
+                    .doesNotContain("UNKNOWN")
+                    .doesNotContain("secret-reflection-token")
+                    .doesNotContain("symbol hidden");
+        } finally {
+            errorServer.get().shutdownNow().awaitTermination(5, java.util.concurrent.TimeUnit.SECONDS);
+        }
     }
 
     private ObjectNode registerInput() {
