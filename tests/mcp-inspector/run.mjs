@@ -309,10 +309,59 @@ async function awaitHttp(url, child, log) {
   throw new Error(`protomolt-serve did not answer on ${url} within 120s:\n${log()}`);
 }
 
+function checkManifestAlignment(manifest, lock) {
+  const inspectorEntry = lock.packages?.[`node_modules/${INSPECTOR_PACKAGE}`];
+  const inspectorNode = inspectorEntry?.engines?.node;
+  if (typeof inspectorNode !== "string" || inspectorNode.trim() === "") {
+    throw new Error(`${INSPECTOR_PACKAGE} in package-lock.json is missing engines.node`);
+  }
+  const manifestNode = manifest.engines?.node;
+  if (manifestNode !== inspectorNode) {
+    throw new Error(
+      `package.json engines.node (${manifestNode}) does not match ${INSPECTOR_PACKAGE} (${inspectorNode})`);
+  }
+  const lockRootNode = lock.packages?.[""]?.engines?.node;
+  if (lockRootNode !== inspectorNode) {
+    throw new Error(
+      `package-lock.json root engines.node (${lockRootNode}) does not match ${INSPECTOR_PACKAGE} (${inspectorNode})`);
+  }
+  const manifestVersion = manifest.devDependencies?.[INSPECTOR_PACKAGE];
+  const lockRootVersion = lock.packages?.[""]?.devDependencies?.[INSPECTOR_PACKAGE];
+  if (manifestVersion !== inspectorEntry.version || lockRootVersion !== inspectorEntry.version) {
+    throw new Error(
+      `package.json (${manifestVersion}), lock root (${lockRootVersion}), and pinned ${INSPECTOR_PACKAGE} (${inspectorEntry.version}) versions disagree`);
+  }
+  return inspectorEntry.version;
+}
+
 function selfTest() {
   const baseline = new Report("fixture baseline");
   console.log("fixture baseline (must pass)");
   baseChecks(baseline, ["-e", "MCP_BREAK=none", process.execPath, FIXTURE]);
+  baseline.check("manifest engine check rejects contradictory Node.js ranges", () => {
+    const manifest = JSON.parse(readFileSync(join(HERE, "package.json"), "utf8"));
+    const lock = JSON.parse(readFileSync(join(HERE, "package-lock.json"), "utf8"));
+    let caughtManifestDrift = false;
+    try {
+      checkManifestAlignment({ ...manifest, engines: { node: ">=22.19.0" } }, lock);
+    } catch {
+      caughtManifestDrift = true;
+    }
+    expect(caughtManifestDrift, "contradictory package.json engines.node was accepted");
+    let caughtLockDrift = false;
+    try {
+      checkManifestAlignment(manifest, {
+        ...lock,
+        packages: {
+          ...lock.packages,
+          "": { ...lock.packages[""], engines: { node: ">=22.19.0" } },
+        },
+      });
+    } catch {
+      caughtLockDrift = true;
+    }
+    expect(caughtLockDrift, "contradictory package-lock.json root engines.node was accepted");
+  });
   let ok = baseline.failed.length === 0;
   for (const name of FIXTURE_BREAKS) {
     const broken = new Report(`break ${name}`);
@@ -329,8 +378,9 @@ function selfTest() {
 }
 
 function versions() {
+  const manifest = JSON.parse(readFileSync(join(HERE, "package.json"), "utf8"));
   const lock = JSON.parse(readFileSync(join(HERE, "package-lock.json"), "utf8"));
-  const pinned = lock.packages?.[`node_modules/${INSPECTOR_PACKAGE}`]?.version;
+  const pinned = checkManifestAlignment(manifest, lock);
   const reported = spawnSync(process.execPath, [INSPECTOR, "--version"],
     { env: inspectorEnv, encoding: "utf8" }).stdout.trim();
   if (pinned !== reported) {

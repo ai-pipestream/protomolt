@@ -4,7 +4,7 @@
   "description": "Runs the official MCP Inspector CLI against ProtoMolt's stdio and streamable-HTTP MCP servers.",
   "type": "module",
   "engines": {
-    "node": ">=22.19.0"
+    "node": "^22.23.4 || ^24.22.1 || >=26.12.1"
   },
   "scripts": {
     "self-test": "node run.mjs --self-test"

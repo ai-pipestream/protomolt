@@ -6,8 +6,13 @@ protocol framing, negotiation and error behaviour are checked by a client we
 did not write. The `mcp-inspector` CI job runs it on pull requests and main.
 
 `package-lock.json` pins `@modelcontextprotocol/inspector` and its whole
-dependency tree; `run.mjs` refuses to run when the installed CLI reports a
-different version. Each run prints the Node and inspector versions it used.
+dependency tree; `package.json` and the lockfile root declare the same Node.js
+`engines.node` range (`^22.23.4 || ^24.22.1 || >=26.12.1`) as the pinned
+Inspector so `npm ci` cannot accept an unsupported Node.js release without
+warning. Both `run.mjs` and `scripts/check-deployment-statics.sh` refuse to
+proceed when the lane's declared engine range or version drifts from the pinned
+Inspector, or when the installed CLI reports a different version. Each run
+prints the Node and inspector versions it used.
 
 ## Running it
 
