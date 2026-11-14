@@ -12,7 +12,9 @@ import org.apache.parquet.schema.Types;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Deque;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Objects;
 import java.util.Set;
 
 /**
@@ -29,8 +31,9 @@ import java.util.Set;
  * treatment: {@code google.protobuf.Timestamp} becomes a microsecond UTC timestamp column,
  * and the JSON family ({@code Struct}, {@code Value}, {@code ListValue}) becomes a JSON
  * string column — which also keeps their recursive definitions out of the columnar schema.
- * Any other recursive message type cannot exist in a columnar schema and is rejected with
- * the cycle named.</p>
+ * Empty message types (such as {@code google.protobuf.Empty} or {@code message Empty {}}) have
+ * no leaf columns and are rejected with the message type and field path named; any recursive
+ * message type outside the JSON well-known family is rejected with the cycle named.</p>
  */
 public final class ProtoParquetSchemas {
 
@@ -58,32 +61,64 @@ public final class ProtoParquetSchemas {
      * descriptor-to-schema entry point, a pure function of the descriptor. Strings and enums
      * become annotated UTF-8 binary columns, {@code google.protobuf.Timestamp} a microsecond
      * UTC timestamp column; the class javadoc carries the full mapping.
+     *
+     * @param descriptor protobuf message descriptor to convert
+     * @return the corresponding Parquet {@link MessageType}
+     * @throws IllegalArgumentException if {@code descriptor} or a nested message field has no
+     *         columns, or forms a cycle outside the JSON well-known family
      */
     public static MessageType schema(Descriptor descriptor) {
         return schema(descriptor, FieldIdResolver.NONE);
     }
 
     static MessageType schema(Descriptor descriptor, FieldIdResolver ids) {
+        Objects.requireNonNull(descriptor, "descriptor");
+        Objects.requireNonNull(ids, "ids");
         Deque<String> ancestry = new ArrayDeque<>();
         return new MessageType(descriptor.getFullName(), fields(descriptor, "", ids, ancestry));
     }
 
     /**
      * The schema keeping only the named top-level columns (empty {@code projection} keeps all).
-     * Nested structure under a kept column is unchanged; only the top level is filtered.
+     * Nested structure under a kept column is unchanged; only the top level is filtered, and
+     * unknown or dotted column names in {@code projection} are rejected rather than ignored.
      */
     static MessageType schema(Descriptor descriptor, FieldIdResolver ids, Set<String> projection) {
-        MessageType full = schema(descriptor, ids);
+        Objects.requireNonNull(descriptor, "descriptor");
+        Objects.requireNonNull(ids, "ids");
         if (projection == null || projection.isEmpty()) {
-            return full;
+            return schema(descriptor, ids);
         }
-        List<Type> kept = full.getFields().stream()
-                .filter(type -> projection.contains(type.getName()))
+        if (descriptor.getFields().isEmpty()) {
+            throw emptyMessage(descriptor, "");
+        }
+        List<FieldDescriptor> selected = descriptor.getFields().stream()
+                .filter(field -> projection.contains(field.getName()))
                 .toList();
-        if (kept.isEmpty()) {
+        if (selected.isEmpty()) {
             throw new IllegalArgumentException("Projection selected no columns of "
                     + descriptor.getFullName() + "; requested " + projection);
         }
+        if (selected.size() < projection.size()) {
+            Set<String> declared = new LinkedHashSet<>();
+            for (FieldDescriptor field : descriptor.getFields()) {
+                declared.add(field.getName());
+            }
+            List<String> unknown = projection.stream()
+                    .filter(name -> !declared.contains(name))
+                    .sorted()
+                    .toList();
+            throw new IllegalArgumentException("Projection requested unknown top-level columns "
+                    + unknown + " of " + descriptor.getFullName()
+                    + " (nested dotted paths are not top-level columns)");
+        }
+        Deque<String> ancestry = new ArrayDeque<>();
+        ancestry.push(descriptor.getFullName());
+        List<Type> kept = new ArrayList<>(selected.size());
+        for (FieldDescriptor field : selected) {
+            kept.add(convert(field, "", ids, ancestry));
+        }
+        ancestry.pop();
         return new MessageType(descriptor.getFullName(), kept);
     }
 
@@ -94,6 +129,9 @@ public final class ProtoParquetSchemas {
                     + "columnar schema: " + String.join(" -> ", ancestry.reversed())
                     + " -> " + descriptor.getFullName());
         }
+        if (descriptor.getFields().isEmpty()) {
+            throw emptyMessage(descriptor, prefix);
+        }
         ancestry.push(descriptor.getFullName());
         List<Type> fields = new ArrayList<>(descriptor.getFields().size());
         for (FieldDescriptor field : descriptor.getFields()) {
@@ -101,6 +139,14 @@ public final class ProtoParquetSchemas {
         }
         ancestry.pop();
         return fields;
+    }
+
+    private static IllegalArgumentException emptyMessage(Descriptor descriptor, String prefix) {
+        String target = prefix.isEmpty()
+                ? descriptor.getFullName()
+                : prefix + " (" + descriptor.getFullName() + ")";
+        return new IllegalArgumentException(
+                "Empty message type cannot become a columnar schema: " + target);
     }
 
     private static Type convert(FieldDescriptor field, String prefix, FieldIdResolver ids,

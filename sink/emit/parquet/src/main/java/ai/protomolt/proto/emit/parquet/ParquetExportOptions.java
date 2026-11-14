@@ -11,7 +11,8 @@ import java.util.Set;
  *
  * <ul>
  *   <li><b>Projection</b> drops columns from the file entirely: only the named top-level fields
- *       are written, and the file schema has no others.</li>
+ *       are written, and the file schema has no others. Unknown or nested dotted column names are
+ *       rejected rather than ignored.</li>
  *   <li><b>Masking</b> keeps every projected column but runs each message through
  *       {@link SensitivityMasker} first, so fields carrying one of {@code maskClasses} are
  *       redacted, encrypted, or cleared before they are written.</li>
