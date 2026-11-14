@@ -54,8 +54,9 @@ dependencies {
     // Parts-based v2 accession: the outbox relay's publisher port and the
     // streaming HTTP upload handler this host mounts.
     implementation project(':protomolt-repo-accession')
-    // Archive over v2 documents: the streaming HTTP archive upload route.
+    // Archive over v2 documents: the streaming HTTP archive upload route and repository sink.
     api project(':protomolt-repo-archive')
+    api project(':protomolt-emit-renderer')
     // The console's Connect calls on the repository HTTP port.
     api project(':protomolt-http-connect')
     // Descriptor closures/fingerprints and stability contracts for module-contributed admission schemas and HTTP routes.
@@ -72,8 +73,11 @@ dependencies {
     testImplementation libs.testcontainers.junit.jupiter
 
     // The bridge-entry envelope is parsed and verified against the real
-    // descriptors rather than string-matched.
+    // descriptors rather than string-matched; workflow sink integration tests
+    // run WorkflowRunWorker end to end against RepoServices.
     testImplementation project(':protomolt-workflow')
+    testImplementation project(':protomolt-jobs-service')
+    testImplementation project(':protomolt-sources')
     testImplementation libs.hikari
 }
 
