@@ -6,6 +6,7 @@ import { createClient, type Client, type Transport } from '@connectrpc/connect'
 import { inject, type InjectionKey } from 'vue'
 import { ArchiveMutationService } from '@/gen/ai/protomolt/proto/repo/archive/v1/archive_mutation_service_pb'
 import { ArchiveService } from '@/gen/ai/protomolt/proto/repo/archive/v1/archive_service_pb'
+import { RepositorySinkService } from '@/gen/ai/protomolt/proto/repo/sink/v1/repository_sink_pb'
 import { DriveService } from '@/gen/ai/protomolt/proto/repo/v1/drive_pb'
 import { DocumentService } from '@/gen/ai/protomolt/proto/repo/v2/document_service_pb'
 import { SessionApi } from '@/services/session'
@@ -17,6 +18,7 @@ export interface RepositoryClients {
   drives: Client<typeof DriveService>
   archives: Client<typeof ArchiveService>
   archiveMutations: Client<typeof ArchiveMutationService>
+  repositorySink: Client<typeof RepositorySinkService>
 }
 
 /** Clients for every repository service over one transport. */
@@ -26,6 +28,7 @@ export function repositoryClients(transport: Transport): RepositoryClients {
     drives: createClient(DriveService, transport),
     archives: createClient(ArchiveService, transport),
     archiveMutations: createClient(ArchiveMutationService, transport),
+    repositorySink: createClient(RepositorySinkService, transport),
   }
 }
 

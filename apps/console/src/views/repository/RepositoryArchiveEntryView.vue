@@ -713,23 +713,51 @@
           {{ byteSize(manifest.totalBytes) }} in this version<span v-if="manifest.rootChecksum"> · root checksum
           <span class="text-mono">{{ manifest.rootChecksum }}</span></span>
         </div>
+        <v-alert
+          v-if="saveAsAccess.readOnly && renditions.some((r) => r.canSaveAsSource)"
+          type="info"
+          variant="tonal"
+          density="compact"
+          class="mb-3"
+          data-testid="save-as-readonly-notice"
+        >
+          {{ saveAsAccess.reason }}
+        </v-alert>
+        <RpcFailureAlert v-if="provenanceFailure" :failure="provenanceFailure" title="Reading rendition provenance" class="mb-3" />
         <v-table v-if="renditions.length > 0" density="compact" class="mb-3" data-testid="rendition-table">
           <thead>
             <tr>
               <th scope="col">Rendition</th>
-              <th scope="col">Media type</th>
+              <th scope="col">Format &amp; media type</th>
               <th scope="col">State</th>
               <th scope="col">Size</th>
               <th scope="col">SHA-256</th>
               <th scope="col">Content profile</th>
-              <th scope="col">Written</th>
+              <th scope="col">Written &amp; provenance</th>
               <th scope="col"><span class="d-sr-only">Actions</span></th>
             </tr>
           </thead>
           <tbody>
             <tr v-for="r in renditions" :key="r.key" :data-testid="`rendition-${r.label}`">
-              <td class="text-mono">{{ r.label }}</td>
-              <td class="text-mono text-caption">{{ r.mediaType }}</td>
+              <td class="text-mono">
+                <div>{{ r.label }}</div>
+                <div v-if="r.safeExternalUrl" class="text-caption mt-1">
+                  <a :href="r.safeExternalUrl" target="_blank" rel="noopener noreferrer" data-testid="rendition-external-link">
+                    External source
+                  </a>
+                </div>
+              </td>
+              <td>
+                <FormatIcon
+                  :media-type="r.mediaType"
+                  :filename="r.name === 'original' ? info?.filename : undefined"
+                  :authoritative-protobuf="r.authoritativeProtobuf"
+                  :derived="r.isDerived"
+                  :stale="r.isStale"
+                  :stale-reason="r.staleExplanation"
+                  show-media-type
+                />
+              </td>
               <td>
                 {{ r.state }}
                 <div v-if="r.deletedReason" class="text-caption text-medium-emphasis">{{ r.deletedReason }}</div>
@@ -737,12 +765,45 @@
               <td class="text-mono">{{ byteSize(r.sizeBytes) }}</td>
               <td class="text-mono text-caption">{{ r.sha256 }}</td>
               <td class="text-caption" :data-testid="`rendition-profile-${r.label}`">{{ r.contentProfile ?? '—' }}</td>
-              <td class="text-caption">
-                {{ r.writtenAt ?? '' }}
+              <td class="text-caption" :data-testid="`rendition-provenance-${r.label}`">
+                <div>{{ r.writtenAt ?? '' }}</div>
                 <div v-if="r.writtenBy">{{ r.writtenBy }}</div>
+                <div v-if="r.sourceRevision > 0n" class="mt-1">
+                  Source revision: <span class="text-mono">r{{ r.sourceRevision.toString() }}</span>
+                  <span v-if="r.currentSourceRevision > 0n"> (current <span class="text-mono">r{{ r.currentSourceRevision.toString() }}</span>)</span>
+                </div>
+                <div v-if="r.isStale && r.staleExplanation" class="text-warning mt-1" :data-testid="`rendition-stale-${r.label}`">
+                  Stale: {{ r.staleExplanation }}
+                </div>
+                <div v-if="r.providerId !== ''" class="mt-1">
+                  Provider: <code>{{ r.providerId }}</code>
+                  <template v-if="r.providerVersion !== ''"> v{{ r.providerVersion }}</template>
+                  <template v-if="r.sourceProfile !== ''"> ({{ r.sourceProfile }})</template>
+                </div>
+                <div v-if="r.mappingId !== '' || r.policyId !== ''" class="mt-1">
+                  <span v-if="r.mappingId !== ''">Mapping: <code>{{ r.mappingId }}</code></span>
+                  <span v-if="r.mappingId !== '' && r.policyId !== ''"> · </span>
+                  <span v-if="r.policyId !== ''">Policy: <code>{{ r.policyId }}</code></span>
+                </div>
+                <div v-if="r.lossDescription !== ''" class="mt-1" :data-testid="`rendition-loss-${r.label}`">
+                  Fidelity: {{ r.lossDescription }}
+                </div>
               </td>
               <td>
-                <v-btn v-if="r.readable" size="x-small" variant="tonal" :data-testid="`select-rendition-${r.label}`" @click="selected = r">Select</v-btn>
+                <div class="d-flex align-center ga-1 flex-wrap">
+                  <v-btn v-if="r.readable" size="x-small" variant="tonal" :data-testid="`select-rendition-${r.label}`" @click="selected = r">Select</v-btn>
+                  <v-btn
+                    v-if="r.canSaveAsSource"
+                    size="x-small"
+                    variant="outlined"
+                    :disabled="saveAsAccess.readOnly"
+                    :title="saveAsAccess.reason || undefined"
+                    :data-testid="`save-as-rendition-${r.label}`"
+                    @click="openSaveAsForRendition(r)"
+                  >
+                    Save as…
+                  </v-btn>
+                </div>
               </td>
             </tr>
           </tbody>
@@ -758,6 +819,20 @@
         />
       </v-card-text>
     </v-card>
+
+    <SaveAsRenditionDialog
+      :open="saveAsDialogOpen"
+      source-kind="archive-rendition"
+      :source-label="saveAsSourceLabel"
+      :account-id="address?.accountId ?? ''"
+      :archive-source="saveAsArchiveSource"
+      :default-destination-archive="address?.archive ?? ''"
+      :default-destination-entry-id="address?.entryId ?? ''"
+      :default-expected-destination-version="info?.currentVersion ?? pinned"
+      @close="saveAsDialogOpen = false"
+      @saved="onSaveAsCommitted"
+      @reload-source="onSaveAsReloadSource"
+    />
 
     <v-card v-if="manifest" class="mb-4" data-testid="versions">
       <v-card-title class="text-subtitle-2">Versions</v-card-title>
@@ -855,17 +930,30 @@ import {
   type RenditionRow,
   type VersionRow,
 } from '@/repository/archiveCore'
+import FormatIcon from '@/components/repository/FormatIcon.vue'
+import SaveAsRenditionDialog from '@/components/repository/SaveAsRenditionDialog.vue'
+import type { ConsoleSessionStatus } from '@/gen/ai/protomolt/proto/authz/v1/console_session_pb'
+import type { ListRenditionProvenanceResponse } from '@/gen/ai/protomolt/proto/repo/sink/v1/repository_sink_pb'
 import type { ByteRead } from '@/repository/byteReadCore'
-import { REPOSITORY_UPLOAD_REQUEST, useRepositoryClients } from '@/repository/clients'
+import { REPOSITORY_UPLOAD_REQUEST, useRepositoryClients, useRepositorySession } from '@/repository/clients'
 import { byteSize, instant } from '@/repository/formatCore'
 import { documentRoute } from '@/repository/linksCore'
 import { rpcFailure, type RpcFailure } from '@/repository/rpcErrorCore'
+import {
+  buildListRenditionProvenanceRequest,
+  evaluateSaveAsSessionAccess,
+  mergeRenditionsWithProvenance,
+  type ArchiveRenditionSourceInput,
+  type EnrichedRenditionRow,
+  type SinkJobSummary,
+} from '@/repository/saveAsCore'
 import { UploadInputError, fileSha256, newOperationId } from '@/repository/uploadCore'
 import { useCallScope } from '@/repository/useCallScope'
 
 const VERSIONS_PAGE_SIZE = 25
 
 const clients = useRepositoryClients()
+const sessions = useRepositorySession()
 const newRequest = inject(REPOSITORY_UPLOAD_REQUEST, () => new XMLHttpRequest())
 const route = useRoute()
 const router = useRouter()
@@ -1140,7 +1228,62 @@ function resetRenditionUpload() {
   })
 }
 
-const renditions = computed(() => (manifest.value ? renditionRows(manifest.value) : []))
+const provenanceResponse = shallowRef<ListRenditionProvenanceResponse | null>(null)
+const provenanceFailure = ref<RpcFailure | null>(null)
+const sessionStatus = shallowRef<ConsoleSessionStatus | null>(null)
+let sessionLoaded = false
+const saveAsDialogOpen = ref(false)
+const saveAsArchiveSource = shallowRef<ArchiveRenditionSourceInput | null>(null)
+const saveAsSourceLabel = ref('')
+
+const saveAsAccess = computed(() =>
+  evaluateSaveAsSessionAccess(sessionStatus.value, address.value?.accountId ?? queryText('account')),
+)
+
+const renditions = computed<EnrichedRenditionRow[]>(() =>
+  manifest.value
+    ? mergeRenditionsWithProvenance(renditionRows(manifest.value), provenanceResponse.value, {
+        viewedEntryVersion: pinned.value ?? undefined,
+        originalFilename: info.value?.filename,
+        sourceUri: info.value?.sourceUri,
+      })
+    : [],
+)
+
+function openSaveAsForRendition(row: EnrichedRenditionRow) {
+  if (saveAsAccess.value.readOnly || !address.value || pinned.value === null) return
+  saveAsArchiveSource.value = {
+    address: address.value,
+    rendition: {
+      name: row.name,
+      subKey: row.subKey,
+      mediaType: row.mediaType,
+    },
+    revision: pinned.value,
+  }
+  saveAsSourceLabel.value = `${address.value.archive} / ${address.value.entryId} · rendition "${row.label}"`
+  saveAsDialogOpen.value = true
+}
+
+function onSaveAsCommitted(job: SinkJobSummary) {
+  const dest = job.destinationAddress
+  if (dest && address.value && sameEntry(address.value, dest)) {
+    if (requested.value !== null && job.destinationVersion > 0n && requested.value !== job.destinationVersion) {
+      openVersion(job.destinationVersion)
+      return
+    }
+    void load()
+  }
+}
+
+function onSaveAsReloadSource() {
+  saveAsDialogOpen.value = false
+  if (requested.value !== null) {
+    openVersion(null)
+    return
+  }
+  void load()
+}
 const classification = computed(() => classificationLabel(classifyResolved.value ?? info.value?.classification))
 const classificationEvidence = computed(() =>
   classificationEvidenceRows(classifyResolved.value ?? info.value?.classification),
@@ -1356,12 +1499,45 @@ async function loadCompareVersion(target: EntryAddress, baseVersion: bigint) {
   }
 }
 
+async function ensureSessionLoaded() {
+  if (sessionLoaded) return
+  sessionLoaded = true
+  try {
+    sessionStatus.value = await sessions.status()
+  } catch {
+    // Advisory only: server authorization remains authoritative.
+  }
+}
+
+async function loadProvenance(target: EntryAddress, version: bigint, signal: AbortSignal) {
+  provenanceFailure.value = null
+  try {
+    const resp = await clients.repositorySink.listRenditionProvenance(
+      buildListRenditionProvenanceRequest(target, version),
+      { signal },
+    )
+    if (!signal.aborted) {
+      provenanceResponse.value = resp
+    }
+  } catch (error) {
+    if (signal.aborted) return
+    if (error instanceof ConnectError && error.code === Code.Unimplemented) {
+      provenanceResponse.value = null
+      return
+    }
+    provenanceFailure.value = rpcFailure(error)
+  }
+}
+
 async function load() {
+  void ensureSessionLoaded()
   const previousAddress = address.value
   const signal = readScope.next()
   versionsScope.next()
   compareScope.next()
   deletingEntry.value = false
+  provenanceResponse.value = null
+  provenanceFailure.value = null
   routeError.value = null
   manifestFailure.value = null
   info.value = null
@@ -1413,6 +1589,7 @@ async function load() {
     // Rendition reads pin the version this manifest describes.
     pinned.value = answer.manifest.version
     selectPendingInspection()
+    void loadProvenance(target, answer.manifest.version, signal)
   } catch (error) {
     if (!signal.aborted) manifestFailure.value = rpcFailure(error)
     return
@@ -1465,6 +1642,7 @@ function closeVersionCompare() {
 watch(() => route.fullPath, () => {
   // A refresh after ClassifyEntry keeps its result. Navigation does not: even
   // an answer that arrives after the new manifest must belong to its old route.
+  saveAsDialogOpen.value = false
   classifyScope.next()
   classifyResolved.value = null
   classifyFailure.value = null
