@@ -11,20 +11,14 @@ import tei.v1.Tei.EmbedResponse;
 
 import java.time.Duration;
 import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
-import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.locks.Condition;
-import java.util.concurrent.locks.ReentrantLock;
-import java.util.function.Supplier;
 
 /**
  * {@link EmbeddingProvider} that calls a Hugging Face Text Embeddings Inference (TEI) server
@@ -100,7 +94,6 @@ public final class TeiEmbeddingProvider implements EmbeddingProvider, AutoClosea
 
     private static final long RPC_DEADLINE_SECONDS = 30L;
     private static final String CLOSED_MESSAGE = "TEI embedding provider is closed";
-    private static final String INTERRUPTED_BATCH_MESSAGE = "Interrupted while embedding a batch";
     private static final String INTERRUPTED_DIMENSION_MESSAGE =
             "Interrupted while waiting for embedding dimension";
 
@@ -321,7 +314,7 @@ public final class TeiEmbeddingProvider implements EmbeddingProvider, AutoClosea
         Duration wait = admissionTimeout();
         ManagedChannel active = channel();
         boolean shouldTruncate = truncate();
-        Batch batch = new Batch(texts.size(), activeBatchWorkers);
+        EmbedBatch batch = new EmbedBatch(texts.size(), activeBatchWorkers);
         int dispatched = 0;
         try {
             for (int i = 0; i < texts.size(); i++) {
@@ -409,7 +402,7 @@ public final class TeiEmbeddingProvider implements EmbeddingProvider, AutoClosea
             } else {
                 probe.completeExceptionally(failure);
             }
-            throw Batch.rethrow(failure);
+            throw EmbedBatch.rethrow(failure);
         }
     }
 
@@ -420,7 +413,7 @@ public final class TeiEmbeddingProvider implements EmbeddingProvider, AutoClosea
             Thread.currentThread().interrupt();
             throw new IllegalStateException(INTERRUPTED_DIMENSION_MESSAGE, e);
         } catch (ExecutionException e) {
-            throw Batch.rethrow(e.getCause());
+            throw EmbedBatch.rethrow(e.getCause());
         }
     }
 
@@ -488,176 +481,6 @@ public final class TeiEmbeddingProvider implements EmbeddingProvider, AutoClosea
                         ADMISSION_TIMEOUT_PROPERTY + " / " + ADMISSION_TIMEOUT_ENVIRONMENT_VARIABLE);
             }
             return admissionTimeout;
-        }
-    }
-
-    private static final class Batch {
-        private final ReentrantLock batchLock = new ReentrantLock();
-        private final Condition doneOrFailed = batchLock.newCondition();
-        private final Condition workersExited = batchLock.newCondition();
-        private final Set<Thread> runningWorkers = new HashSet<>();
-        private final float[][] vectors;
-        private final AtomicInteger providerWorkers;
-        private volatile boolean cancelled;
-        private Throwable firstFailure;
-        private int activeWorkers;
-
-        private Batch(int size, AtomicInteger providerWorkers) {
-            this.vectors = new float[size][];
-            this.providerWorkers = providerWorkers;
-        }
-
-        private boolean isCancelled() {
-            return cancelled;
-        }
-
-        private boolean startWorker(
-                int index,
-                Supplier<float[]> call,
-                EmbeddingInFlightLimit.Permit permit) {
-            boolean closePermit = true;
-            try {
-                batchLock.lock();
-                try {
-                    if (cancelled) {
-                        return false;
-                    }
-                    Thread worker;
-                    try {
-                        worker = Thread.ofVirtual().unstarted(() -> runWorker(index, call, permit));
-                    } catch (Throwable startFailure) {
-                        recordFailureLocked(startFailure);
-                        throw startFailure;
-                    }
-                    activeWorkers++;
-                    providerWorkers.incrementAndGet();
-                    runningWorkers.add(worker);
-                    try {
-                        worker.start();
-                        closePermit = false;
-                    } catch (Throwable startFailure) {
-                        runningWorkers.remove(worker);
-                        providerWorkers.decrementAndGet();
-                        activeWorkers--;
-                        recordFailureLocked(startFailure);
-                        if (activeWorkers == 0) {
-                            workersExited.signalAll();
-                        }
-                        throw startFailure;
-                    }
-                    return true;
-                } finally {
-                    batchLock.unlock();
-                }
-            } finally {
-                if (closePermit) {
-                    permit.close();
-                }
-            }
-        }
-
-        private void runWorker(
-                int index,
-                Supplier<float[]> call,
-                EmbeddingInFlightLimit.Permit permit) {
-            Throwable problem = null;
-            try {
-                vectors[index] = call.get();
-            } catch (Throwable failure) {
-                problem = failure;
-            } finally {
-                if (problem != null) {
-                    batchLock.lock();
-                    try {
-                        recordFailureLocked(problem);
-                    } finally {
-                        batchLock.unlock();
-                    }
-                }
-                permit.close();
-                batchLock.lock();
-                try {
-                    runningWorkers.remove(Thread.currentThread());
-                    providerWorkers.decrementAndGet();
-                    activeWorkers--;
-                    if (activeWorkers == 0) {
-                        doneOrFailed.signalAll();
-                        workersExited.signalAll();
-                    }
-                } finally {
-                    batchLock.unlock();
-                }
-            }
-        }
-
-        private void recordFailureLocked(Throwable failure) {
-            if (firstFailure == null) {
-                firstFailure = failure;
-            }
-            cancelled = true;
-            Thread current = Thread.currentThread();
-            for (Thread worker : runningWorkers) {
-                if (worker != current) {
-                    worker.interrupt();
-                }
-            }
-            doneOrFailed.signalAll();
-        }
-
-        private void cancelAll() {
-            batchLock.lock();
-            try {
-                cancelled = true;
-                for (Thread worker : runningWorkers) {
-                    worker.interrupt();
-                }
-                doneOrFailed.signalAll();
-            } finally {
-                batchLock.unlock();
-            }
-        }
-
-        private List<float[]> awaitResults(int dispatched) {
-            batchLock.lock();
-            try {
-                while (!cancelled && activeWorkers > 0) {
-                    doneOrFailed.await();
-                }
-                if (firstFailure != null) {
-                    throw rethrow(firstFailure);
-                }
-                if (dispatched != vectors.length) {
-                    throw new IllegalStateException("Batch embedding stopped after "
-                            + dispatched + " of " + vectors.length + " items");
-                }
-                return new ArrayList<>(Arrays.asList(vectors));
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-                throw new IllegalStateException(INTERRUPTED_BATCH_MESSAGE, e);
-            } finally {
-                batchLock.unlock();
-            }
-        }
-
-        private void awaitWorkersExitedUninterruptibly() {
-            batchLock.lock();
-            try {
-                while (activeWorkers > 0) {
-                    workersExited.awaitUninterruptibly();
-                }
-            } finally {
-                batchLock.unlock();
-            }
-        }
-
-        private static RuntimeException rethrow(Throwable failure) {
-            if (failure instanceof RuntimeException runtime) {
-                return runtime;
-            }
-            if (failure instanceof Error error) {
-                throw error;
-            }
-            return new IllegalStateException("Embedding a batch failed", failure);
         }
     }
 
