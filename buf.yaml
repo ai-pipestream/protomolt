@@ -4,6 +4,8 @@ version: v2
 modules:
   - path: sink/emit/renderer/src/main/proto
     name: buf.build/ai-pipestream/renderer
+  - path: sink/emit/parquet/src/main/proto
+    name: buf.build/ai-pipestream/emit-parquet
   - path: transform/workflow/authoring/src/main/proto
     name: buf.build/ai-pipestream/workflow-authoring
   - path: apps/correction/src/main/proto

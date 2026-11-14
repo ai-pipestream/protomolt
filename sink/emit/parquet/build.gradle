@@ -1,13 +1,26 @@
+plugins {
+    alias(libs.plugins.protobuf)
+}
+
 description = 'Parquet renderer: descriptor-driven columnar files from protobuf messages, no generated classes and no native Hadoop'
+
+protobuf {
+    protoc {
+        artifact = "com.google.protobuf:protoc:${libs.versions.protobuf.asProvider().get()}"
+    }
+}
 
 dependencies {
     api project(':protomolt-emit')
+    api project(':protomolt-emit-renderer')
+    api project(':protomolt-projection')
     api libs.protobuf.java
     implementation libs.protobuf.java.util
     // Masking-on-export reads the sensitivity field option through SensitivityMasker.
     implementation project(':protomolt-protobuf-metadata')
     // Validate-on-write enforces the descriptor's declared constraint and CEL rules.
     api project(':protomolt-protobuf-validation')
+    api project(':protomolt-protobuf-validation-protovalidate')
 
     implementation libs.parquet.hadoop
     implementation libs.snappy.java
@@ -22,3 +35,12 @@ dependencies {
     // Configuration; the writer under test never does.
     testRuntimeOnly libs.hadoop.client.runtime
 }
+
+ext.forbiddenRuntimeModules = [
+    'hadoop-client-api',
+    'hadoop-client-runtime',
+    'parquet-protobuf',
+    'protomolt-emit-parquet-s3',
+    's3',
+]
+apply from: rootProject.file('gradle/runtime-boundaries.gradle')
