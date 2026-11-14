@@ -23,6 +23,7 @@ test "$(git -C "${work_dir}/protobuf4j" rev-parse HEAD)" = "${source_commit}"
 # exact commits. See README.md for the pin table.
 # The patch is reviewed against ${source_commit}; if it stops applying, the
 # source moved and the pins must be re-derived, not worked around.
+git -C "${work_dir}/protobuf4j" apply --check "${script_dir}/pin-generator-inputs.patch"
 git -C "${work_dir}/protobuf4j" apply "${script_dir}/pin-generator-inputs.patch"
 
 make -C "${work_dir}/protobuf4j" build-v4

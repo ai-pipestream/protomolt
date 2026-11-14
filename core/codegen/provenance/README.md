@@ -42,7 +42,8 @@ which exact bytes may be built from:
 | Input | Identity | Pin |
 |---|---|---|
 | Docker base image | `ubuntu:24.04` (OCI index), `linux/amd64` platform | `sha256:fe81560990fae86dc4743202b2cb4d3df98d0bcf949173cecef15ce1127ef852` |
-| apt packages (git, patch, curl, wget, cmake) | Ubuntu snapshot `20261024T120000Z`, the pinned base image's creation date (update the two together) | `http://snapshot.ubuntu.com/ubuntu/20261024T120000Z/` |
+| Bootstrap CA bundle `.deb`s (`openssl`, `ca-certificates`) | Ubuntu `noble-updates`/`noble-security` packages from snapshot `20261024T120000Z`, fetched by BuildKit `ADD --checksum` over host-verified HTTPS before `apt-get` runs | `openssl_3.0.13-0ubuntu3.16_amd64.deb`: `675b84971ffd4467707008c25ef7520f90ea7c23ef27b7a76b0dccf1d7c4dc3f`; `ca-certificates_20260816ubuntu0.24.04.1_all.deb`: `8a0a754aaafed72cc8efb8c1731808133284a84fbfc76a4fcc73fce9e01b4187` |
+| apt packages (`ca-certificates`, `git`, `patch`, `curl`, `wget`, `cmake`) | Ubuntu snapshot `20261024T120000Z`, the pinned base image's creation date (update the image digest, snapshot timestamp, and bootstrap `.deb` pins together) | `https://snapshot.ubuntu.com/ubuntu/20261024T120000Z/` |
 | WASI SDK 34.0 `x86_64-linux` tarball | `wasi-sdk-34.0-x86_64-linux.tar.gz` (upstream publishes no checksum; computed from the release asset) | `b761e3a0721dbae9c09a0059e5fdb2bf917d1b4a8a7b430fb3b5aafb0984b2c4` |
 | Binaryen 133 `x86_64-linux` tarball | `binaryen-version_133-x86_64-linux.tar.gz` (matches upstream's published `.sha256`) | `2dc9c7813f5375db93d96ead4b78222fcc3e2677bbb832297af4797782a37489` |
 | grpc-java `v1.85.1` | git clone of the tag; HEAD must equal the tag's commit before any use | `54c634aed4b5c78a29d0fa51d9282e9538722543` |
@@ -95,12 +96,17 @@ packages; the Dockerfile requests the amd64 platform, an arm64 host runs it
 under emulation, and the WASI SDK script refuses any architecture without a
 pinned checksum. The WASM output does not depend on the build architecture.
 
-The snapshot host redirects to HTTPS and the base image ships no CA bundle,
-so apt TLS peer and host verification is off for `snapshot.ubuntu.com` only;
-package integrity and origin authentication come from apt's signed Release
-files, as with the plain-HTTP archive the recipe used before. The Dockerfile
-checks that the source rewrite took effect and that no unpinned archive host
-remains before running `apt-get`.
+The minimal `ubuntu:24.04` base image ships `apt`'s HTTPS transport and
+`libgnutls30t64` (`libssl3t64` `3.0.13-0ubuntu3.16`) but no `/etc/ssl/certs`
+bundle. Before `apt-get` runs, BuildKit fetches `openssl` and `ca-certificates`
+from the pinned `20261024T120000Z` snapshot over host-verified HTTPS and checks
+their SHA-256 digests (`ADD --checksum`), and `dpkg -i` populates
+`/etc/ssl/certs/ca-certificates.crt`. With that CA bundle present, the
+Dockerfile rewrites `ubuntu.sources` directly to
+`https://snapshot.ubuntu.com/ubuntu/20261024T120000Z/`, checks that no
+unpinned archive host or plain-HTTP `URIs:` entry remains, and runs
+`apt-get --error-on=any update` with `Verify-Peer`, `Verify-Host`,
+`Check-Valid-Until`, and signed `InRelease` verification all enabled.
 
 In the patched recipe every archive is checksum-verified before extraction,
 each git checkout is verified before its contents are used, and a wrong image
