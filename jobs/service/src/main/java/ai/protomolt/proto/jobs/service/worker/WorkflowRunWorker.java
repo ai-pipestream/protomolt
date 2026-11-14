@@ -1,9 +1,14 @@
 package ai.protomolt.proto.jobs.service.worker;
 
 import ai.protomolt.proto.actions.ActionContext;
-import ai.protomolt.proto.composer.Channels;
+import ai.protomolt.proto.grpc.invoke.ChannelFactory;
+import ai.protomolt.proto.grpc.policy.OutboundChannelPolicy;
+import ai.protomolt.proto.grpc.profile.ServiceProfileRepository;
+import ai.protomolt.proto.grpc.profile.v1.ServiceEndpoint;
+import ai.protomolt.proto.grpc.profile.v1.ServiceProfile;
 import ai.protomolt.proto.grpc.workflow.v1.ServiceDependency;
 import ai.protomolt.proto.http.json.MalformedProtobufJsonException;
+import ai.protomolt.proto.inference.structured.StructuredGenerator;
 import ai.protomolt.proto.jobs.service.PipelineJobCoordinator;
 import ai.protomolt.proto.jobs.service.PipelineJobCoordinator.PipelineDefinitionException;
 import ai.protomolt.proto.jobs.service.WorkflowRunSubmitter;
@@ -17,7 +22,6 @@ import ai.protomolt.proto.jobs.service.store.WorkflowRunStoreException;
 import ai.protomolt.proto.jobs.v1.WorkflowRunRequest;
 import ai.protomolt.proto.kafka.serde.ProtoMoltProtobufDeserializer;
 import ai.protomolt.proto.kafka.serde.ProtoMoltSerdeConfig;
-import ai.protomolt.proto.pipeline.DynamicPipelineTransport;
 import ai.protomolt.proto.pipeline.PipelineExecutor;
 import ai.protomolt.proto.pipeline.v1.EdgeCardinality;
 import ai.protomolt.proto.pipeline.v1.Pipeline;
@@ -33,10 +37,9 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.google.protobuf.DynamicMessage;
 import com.google.protobuf.Message;
 import com.google.protobuf.util.JsonFormat;
-import io.grpc.ManagedChannel;
+import io.grpc.ChannelCredentials;
+import io.grpc.Metadata;
 import io.grpc.Status;
-import io.grpc.inprocess.InProcessChannelBuilder;
-import io.grpc.netty.shaded.io.grpc.netty.NettyChannelBuilder;
 import org.apache.kafka.clients.consumer.ConsumerConfig;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.apache.kafka.clients.consumer.ConsumerRecords;
@@ -102,16 +105,61 @@ public final class WorkflowRunWorker implements AutoCloseable {
 
     private static final Logger LOG = LoggerFactory.getLogger(WorkflowRunWorker.class);
 
+    /**
+     * Resolves host-owned call headers and TLS channel credentials for a service endpoint.
+     * Unconfigured credential or TLS references fail closed before any channel opens.
+     */
+    public interface EndpointCredentials {
+
+        /** Fails closed whenever an endpoint names a credential, trust, or client-cert reference. */
+        EndpointCredentials NONE = new EndpointCredentials() {
+        };
+
+        /**
+         * Resolves call headers for {@code endpoint}.
+         *
+         * @param profile the owning service profile
+         * @param endpoint the selected service endpoint
+         * @return call metadata headers (empty when uncredentialed)
+         */
+        default Metadata headers(ServiceProfile profile, ServiceEndpoint endpoint) {
+            if (!endpoint.getCredentialRef().isBlank()) {
+                throw new IllegalArgumentException("endpoint '" + endpoint.getName()
+                        + "' of service profile '" + profile.getName()
+                        + "' requires credential_ref resolution, which is not configured");
+            }
+            return new Metadata();
+        }
+
+        /**
+         * Resolves custom TLS channel credentials for {@code endpoint}, or {@code null} when the
+         * endpoint uses default system trust roots.
+         *
+         * @param profile the owning service profile
+         * @param endpoint the selected service endpoint
+         * @return custom TLS channel credentials, or {@code null} when none are referenced
+         */
+        default ChannelCredentials channelCredentials(ServiceProfile profile,
+                                                      ServiceEndpoint endpoint) {
+            if (!endpoint.getTrustRef().isBlank()
+                    || !endpoint.getClientCertificateRef().isBlank()) {
+                throw new IllegalArgumentException("endpoint '" + endpoint.getName()
+                        + "' of service profile '" + profile.getName()
+                        + "' requires custom TLS credentials, which are not configured");
+            }
+            return null;
+        }
+    }
+
     private final WorkflowRunStore store;
     private final ActionContext context;
     private final WorkflowRepository repository;
     private final WorkflowRunner runner;
     private final PipelineExecutor pipelineExecutor;
+    private final ServiceProfilePipelineTransport pipelineTransport;
     private final WorkflowRunsConfig config;
     private final WorkflowRunSubmitter submitter;
     private final ConcurrentHashMap<String, Semaphore> targetPermits = new ConcurrentHashMap<>();
-    private final ConcurrentHashMap<String, ManagedChannel> defaultPipelineChannels =
-            new ConcurrentHashMap<>();
     private final List<Thread> threads = new CopyOnWriteArrayList<>();
     private volatile boolean closed;
 
@@ -126,14 +174,69 @@ public final class WorkflowRunWorker implements AutoCloseable {
      */
     public WorkflowRunWorker(WorkflowRunStore store, ActionContext context,
             WorkflowRepository repository, WorkflowRunner runner, WorkflowRunsConfig config) {
+        this(store, context, repository, runner, OutboundChannelPolicy.defaults(),
+                null, null, config);
+    }
+
+    /**
+     * Creates a worker whose durable pipeline execution resolves endpoints from
+     * {@code serviceProfiles} and enforces {@code outboundPolicy} on every outbound gRPC call.
+     *
+     * @param store the jobs store (the truth)
+     * @param context type resolution and JSON machinery
+     * @param repository resolves stored workflow names, or null for inline-only
+     * @param runner the workflow executor
+     * @param outboundPolicy host outbound channel policy; null selects
+     *        {@link OutboundChannelPolicy#defaults()}
+     * @param serviceProfiles resolves pipeline {@link ServiceDependency} entries, or null when
+     *        no service workspace is mounted
+     * @param structured optional structured-generation coordinator for structured pipeline steps
+     * @param config worker/consumer settings
+     */
+    public WorkflowRunWorker(WorkflowRunStore store, ActionContext context,
+            WorkflowRepository repository, WorkflowRunner runner,
+            OutboundChannelPolicy outboundPolicy,
+            ServiceProfileRepository serviceProfiles,
+            StructuredGenerator structured,
+            WorkflowRunsConfig config) {
+        this(store, context, repository, runner,
+                ChannelFactory.standard(outboundPolicy == null
+                        ? OutboundChannelPolicy.defaults() : outboundPolicy),
+                serviceProfiles, structured, EndpointCredentials.NONE, config);
+    }
+
+    /**
+     * Creates a worker whose durable pipeline execution uses a policy-enforcing
+     * {@link ChannelFactory}, {@code serviceProfiles}, and host-owned {@code credentials}.
+     *
+     * @param store the jobs store (the truth)
+     * @param context type resolution and JSON machinery
+     * @param repository resolves stored workflow names, or null for inline-only
+     * @param runner the workflow executor
+     * @param channelFactory policy-enforcing outbound channel factory
+     * @param serviceProfiles resolves pipeline {@link ServiceDependency} entries, or null when
+     *        no service workspace is mounted
+     * @param structured optional structured-generation coordinator for structured pipeline steps
+     * @param credentials resolves host-owned call headers and custom TLS credentials
+     * @param config worker/consumer settings
+     */
+    public WorkflowRunWorker(WorkflowRunStore store, ActionContext context,
+            WorkflowRepository repository, WorkflowRunner runner,
+            ChannelFactory channelFactory,
+            ServiceProfileRepository serviceProfiles,
+            StructuredGenerator structured,
+            EndpointCredentials credentials,
+            WorkflowRunsConfig config) {
         this.store = Objects.requireNonNull(store, "store");
         this.context = Objects.requireNonNull(context, "context");
         this.repository = repository;
         this.runner = Objects.requireNonNull(runner, "runner");
         this.config = Objects.requireNonNull(config, "config");
-        this.pipelineExecutor = new PipelineExecutor(new DynamicPipelineTransport(
-                dependency -> defaultPipelineChannels.computeIfAbsent(
-                        dependency.getEndpoint(), WorkflowRunWorker::openChannel)));
+        this.pipelineTransport = new ServiceProfilePipelineTransport(
+                Objects.requireNonNull(channelFactory, "channelFactory"),
+                serviceProfiles,
+                Objects.requireNonNull(credentials, "credentials"));
+        this.pipelineExecutor = new PipelineExecutor(this.pipelineTransport, structured);
         this.submitter = new WorkflowRunSubmitter(store, repository, config.maxAttemptsDefault());
     }
 
@@ -155,6 +258,7 @@ public final class WorkflowRunWorker implements AutoCloseable {
         this.repository = repository;
         this.runner = Objects.requireNonNull(runner, "runner");
         this.pipelineExecutor = Objects.requireNonNull(pipelineExecutor, "pipelineExecutor");
+        this.pipelineTransport = null;
         this.config = Objects.requireNonNull(config, "config");
         this.submitter = new WorkflowRunSubmitter(store, repository, config.maxAttemptsDefault());
     }
@@ -580,7 +684,7 @@ public final class WorkflowRunWorker implements AutoCloseable {
         for (ServiceDependency dependency : pipeline.getDependenciesList()) {
             if (dependency.getAlias().equals(step.getDependency())
                     && !dependency.getEndpoint().isEmpty()) {
-                target = dependency.getEndpoint();
+                target = dependency.getServiceProfile() + "/" + dependency.getEndpoint();
                 break;
             }
         }
@@ -594,22 +698,6 @@ public final class WorkflowRunWorker implements AutoCloseable {
                     + "for " + target, e);
         }
         return semaphore;
-    }
-
-    private static final String IN_PROCESS_PATH_SAFE_PREFIX = "in-process.";
-
-    private static ManagedChannel openChannel(String target) {
-        if (target.startsWith(Channels.IN_PROCESS_PREFIX)) {
-            return InProcessChannelBuilder.forName(
-                            target.substring(Channels.IN_PROCESS_PREFIX.length()))
-                    .build();
-        }
-        if (target.startsWith(IN_PROCESS_PATH_SAFE_PREFIX)) {
-            return InProcessChannelBuilder.forName(
-                            target.substring(IN_PROCESS_PATH_SAFE_PREFIX.length()))
-                    .build();
-        }
-        return NettyChannelBuilder.forTarget(target).usePlaintext().build();
     }
 
     private String checkpointsJson(List<WorkflowRunner.Checkpoint> checkpoints) {
@@ -771,8 +859,9 @@ public final class WorkflowRunWorker implements AutoCloseable {
             }
         }
         threads.clear();
-        defaultPipelineChannels.values().forEach(ManagedChannel::shutdownNow);
-        defaultPipelineChannels.clear();
+        if (pipelineTransport != null) {
+            pipelineTransport.close();
+        }
     }
 
     private static void sleep(long millis) {

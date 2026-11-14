@@ -95,7 +95,11 @@ worker reassignments.
 `WorkflowRunSubmitter.submitPipeline`, `WorkflowRunWorker`, and `complete-step`)
 persists pipeline definitions, transitive descriptor sets, inputs, and step
 checkpoints in `workflow_run` with canonical protobuf wire bytes preserved in
-base64 alongside JSON projections for `get-job` and `list-jobs`. External
+base64 alongside JSON projections for `get-job` and `list-jobs`. Production
+workers (`JobsFleetMount`, `JobsModule`, and policy-backed `WorkflowRunWorker`
+constructors) resolve `ServiceDependency` endpoints from
+`ServiceProfileRepository` and enforce `OutboundChannelPolicy` allowlists,
+plaintext/TLS rules, and deadline bounds before opening any channel. External
 completions validate against the parked step's descriptor and
 `validate_response` rules, accept idempotent redeliveries, and refuse altered
 intent or conflicting payloads without mutating committed outcomes.

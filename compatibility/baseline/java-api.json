@@ -50063,6 +50063,16 @@
           ],
           "visibility" : "PUBLIC",
           "stability" : "STABLE"
+        },
+        {
+          "parameterTypes" : [
+            "ai.protomolt.proto.jobs.service.store.WorkflowRunStoreConfig",
+            "ai.protomolt.proto.jobs.service.WorkflowRunsConfig",
+            "ai.protomolt.proto.grpc.policy.OutboundChannelPolicy",
+            "ai.protomolt.proto.grpc.profile.ServiceProfileRepository"
+          ],
+          "visibility" : "PUBLIC",
+          "stability" : "STABLE"
         }
       ],
       "methods" : [
@@ -53383,6 +53393,35 @@
             "ai.protomolt.proto.actions.ActionContext",
             "ai.protomolt.proto.workflow.WorkflowRepository",
             "ai.protomolt.proto.workflow.WorkflowRunner",
+            "ai.protomolt.proto.grpc.invoke.ChannelFactory",
+            "ai.protomolt.proto.grpc.profile.ServiceProfileRepository",
+            "ai.protomolt.proto.inference.structured.StructuredGenerator",
+            "ai.protomolt.proto.jobs.service.worker.WorkflowRunWorker.EndpointCredentials",
+            "ai.protomolt.proto.jobs.service.WorkflowRunsConfig"
+          ],
+          "visibility" : "PUBLIC",
+          "stability" : "STABLE"
+        },
+        {
+          "parameterTypes" : [
+            "ai.protomolt.proto.jobs.service.store.WorkflowRunStore",
+            "ai.protomolt.proto.actions.ActionContext",
+            "ai.protomolt.proto.workflow.WorkflowRepository",
+            "ai.protomolt.proto.workflow.WorkflowRunner",
+            "ai.protomolt.proto.grpc.policy.OutboundChannelPolicy",
+            "ai.protomolt.proto.grpc.profile.ServiceProfileRepository",
+            "ai.protomolt.proto.inference.structured.StructuredGenerator",
+            "ai.protomolt.proto.jobs.service.WorkflowRunsConfig"
+          ],
+          "visibility" : "PUBLIC",
+          "stability" : "STABLE"
+        },
+        {
+          "parameterTypes" : [
+            "ai.protomolt.proto.jobs.service.store.WorkflowRunStore",
+            "ai.protomolt.proto.actions.ActionContext",
+            "ai.protomolt.proto.workflow.WorkflowRepository",
+            "ai.protomolt.proto.workflow.WorkflowRunner",
             "ai.protomolt.proto.jobs.service.WorkflowRunsConfig"
           ],
           "visibility" : "PUBLIC",
@@ -53437,6 +53476,57 @@
         }
       ],
       "fields" : [ ]
+    },
+    {
+      "className" : "ai.protomolt.proto.jobs.service.worker.WorkflowRunWorker$EndpointCredentials",
+      "kind" : "INTERFACE",
+      "visibility" : "PUBLIC",
+      "finalType" : false,
+      "abstractType" : false,
+      "superclass" : "",
+      "interfaces" : [ ],
+      "stability" : "STABLE",
+      "constructors" : [ ],
+      "methods" : [
+        {
+          "name" : "channelCredentials",
+          "parameterTypes" : [
+            "ai.protomolt.proto.grpc.profile.v1.ServiceProfile",
+            "ai.protomolt.proto.grpc.profile.v1.ServiceEndpoint"
+          ],
+          "returnType" : "io.grpc.ChannelCredentials",
+          "visibility" : "PUBLIC",
+          "staticMethod" : false,
+          "finalMethod" : false,
+          "abstractMethod" : false,
+          "defaultMethod" : true,
+          "stability" : "STABLE"
+        },
+        {
+          "name" : "headers",
+          "parameterTypes" : [
+            "ai.protomolt.proto.grpc.profile.v1.ServiceProfile",
+            "ai.protomolt.proto.grpc.profile.v1.ServiceEndpoint"
+          ],
+          "returnType" : "io.grpc.Metadata",
+          "visibility" : "PUBLIC",
+          "staticMethod" : false,
+          "finalMethod" : false,
+          "abstractMethod" : false,
+          "defaultMethod" : true,
+          "stability" : "STABLE"
+        }
+      ],
+      "fields" : [
+        {
+          "name" : "NONE",
+          "fieldType" : "ai.protomolt.proto.jobs.service.worker.WorkflowRunWorker.EndpointCredentials",
+          "visibility" : "PUBLIC",
+          "staticField" : true,
+          "finalField" : true,
+          "stability" : "STABLE"
+        }
+      ]
     },
     {
       "className" : "ai.protomolt.proto.kafka.connect.CelFilter",

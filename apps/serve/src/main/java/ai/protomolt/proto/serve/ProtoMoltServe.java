@@ -981,7 +981,8 @@ public final class ProtoMoltServe implements AutoCloseable {
             // the jobs verbs serve from the same truth the worker fleet executes from.
             if (options.jobs() != null) {
                 JobsFleetMount.Prepared jobs = JobsFleetMount.prepare(options.jobs(), context,
-                        workflows, structured, outboundPolicy);
+                        workflows, structured, outboundPolicy, serviceProfiles,
+                        starter == null ? null : starter.credentials());
                 jobsDatabase = jobs.database();
                 jobsWorker = jobs.worker();
                 jobsRelay = jobs.relay();

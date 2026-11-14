@@ -585,13 +585,7 @@ class PipelineJobCoordinationTest {
         assertThat(submitReply.path("ok").asBoolean()).isTrue();
         String jobId = submitReply.path("jobId").asText();
 
-        // Use the 5-arg WorkflowRunWorker constructor (verifies default in-process channel wiring!).
-        WorkflowRunWorker defaultWorker = new WorkflowRunWorker(
-                store, context, null,
-                new WorkflowRunner(step -> channel),
-                new WorkflowRunsConfig("default-worker", 1, java.time.Duration.ofSeconds(30),
-                        java.time.Duration.ofMillis(20), 1, 4, 4,
-                        null, "workflow-run-events", null, null));
+        WorkflowRunWorker defaultWorker = newWorker("default-worker");
         try {
             assertThat(defaultWorker.workOnce()).isTrue();
             assertThat(store.get(UUID.fromString(jobId)).orElseThrow().status)

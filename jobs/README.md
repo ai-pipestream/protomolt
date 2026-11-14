@@ -115,9 +115,13 @@ state machine, lease sweeper, `WorkerClaim` fencing, and outbox relay:
   message (`bytes`, `uint64`, `google.protobuf.Any`, and unknown fields remain
   intact across restarts), paired with SHA-256 pipeline and input fingerprints.
 - `WorkflowRunWorker` executes segments via `PipelineExecutor.runSegment` with
-  `ExecutionIdentity(jobId, attempt)` so `DynamicPipelineTransport` propagates
+  `ExecutionIdentity(jobId, attempt)` so outbound calls propagate
   `x-protomolt-operation-id` (`<jobId>/<stepName>` or `<jobId>/<step>#<branch>`)
-  to downstream gRPC services.
+  to downstream gRPC services. Production workers resolve pipeline
+  `ServiceDependency` targets and transport security from
+  `ServiceProfileRepository` and validate every target, TLS setting, and call
+  deadline through `OutboundChannelPolicy` / `ChannelFactory` before opening
+  outbound channels, closing owned channels on worker shutdown.
 - Each pipeline checkpoint stores canonical protobuf message bytes, cardinality
   (`ONE` or `MANY`), `StepOutcome` counts, and fan-out `BranchOutcome` evidence
   alongside a JSON `response` view (`{"items": [...]}` for streams) for
