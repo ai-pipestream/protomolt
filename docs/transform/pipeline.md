@@ -66,8 +66,39 @@ explicit item and concurrency limits, stable branch order, and `FAIL_FAST` or
 `CONTINUE` failure behavior. Branch work runs on virtual threads while a
 semaphore enforces the declared concurrency cap.
 
-Pipeline and step deadlines bound the run. External-completion steps require a
-durable job coordinator and are rejected by the in-process executor.
+Pipeline and step deadlines bound the run. Synchronous `PipelineExecutor.run`
+evaluates each step's `when` gate first and rejects unskipped
+`STEP_COMPLETION_EXTERNAL` steps with `FailureKind.EXTERNAL`.
+
+## Segmented execution and durable job coordination
+
+`PipelineExecutor.runSegment` executes a pipeline up to completion or the next
+unskipped `STEP_COMPLETION_EXTERNAL` step, returning a sealed `Segment`
+(`Segment.Completed` or `Segment.Parked`). Prior `Checkpoint` entries replay
+completed steps in order without re-invoking upstream services after verifying:
+
+- canonical SHA-256 fingerprints of the `Pipeline` + descriptor set and the
+  binary input message;
+- ordered step identity, output `Descriptor` full name and structural
+  fingerprint, cardinality (`ONE` or `MANY`), and `max_stream_messages` bounds;
+- `StepOutcome` request/response counts, fan-out `BranchOutcome` evidence,
+  declared `validate_response` constraints, and linear stream consumption.
+
+When an `ExecutionIdentity` (`jobId` + `attempt`) is supplied,
+`DynamicPipelineTransport` stamps `x-protomolt-job-id`,
+`x-protomolt-step-name`, `x-protomolt-branch-id`, and
+`x-protomolt-operation-id` (`<jobId>/<stepName>` or `<jobId>/<stepName>#<index>`)
+onto outbound gRPC calls so side-effecting services deduplicate retries across
+worker reassignments.
+
+`protomolt-jobs-service` (`PipelineJobCoordinator`,
+`WorkflowRunSubmitter.submitPipeline`, `WorkflowRunWorker`, and `complete-step`)
+persists pipeline definitions, transitive descriptor sets, inputs, and step
+checkpoints in `workflow_run` with canonical protobuf wire bytes preserved in
+base64 alongside JSON projections for `get-job` and `list-jobs`. External
+completions validate against the parked step's descriptor and
+`validate_response` rules, accept idempotent redeliveries, and refuse altered
+intent or conflicting payloads without mutating committed outcomes.
 
 ## Workflows
 

@@ -15,6 +15,22 @@ import java.util.concurrent.TimeUnit;
 /** Descriptor-driven {@link PipelineTransport} over host-resolved gRPC channels. */
 public final class DynamicPipelineTransport implements PipelineTransport {
 
+    /** Durable job ID metadata header stamped on coordinated pipeline RPCs. */
+    public static final Metadata.Key<String> JOB_ID_HEADER =
+            Metadata.Key.of("x-protomolt-job-id", Metadata.ASCII_STRING_MARSHALLER);
+
+    /** Pipeline step name metadata header stamped on coordinated pipeline RPCs. */
+    public static final Metadata.Key<String> STEP_NAME_HEADER =
+            Metadata.Key.of("x-protomolt-step-name", Metadata.ASCII_STRING_MARSHALLER);
+
+    /** Fan-out branch ID metadata header stamped on coordinated fan-out branch RPCs. */
+    public static final Metadata.Key<String> BRANCH_ID_HEADER =
+            Metadata.Key.of("x-protomolt-branch-id", Metadata.ASCII_STRING_MARSHALLER);
+
+    /** Stable idempotency key ({@code jobId/stepName} or {@code jobId/step#index}) header. */
+    public static final Metadata.Key<String> OPERATION_ID_HEADER =
+            Metadata.Key.of("x-protomolt-operation-id", Metadata.ASCII_STRING_MARSHALLER);
+
     /** Resolves an opaque service-profile dependency to a host-owned channel. */
     @FunctionalInterface
     public interface ChannelResolver {
@@ -45,6 +61,16 @@ public final class DynamicPipelineTransport implements PipelineTransport {
                                        List<DynamicMessage> requests,
                                        long deadlineMillis,
                                        int maxResponses) {
+        return invoke(null, dependency, method, requests, deadlineMillis, maxResponses);
+    }
+
+    @Override
+    public List<DynamicMessage> invoke(CallContext context,
+                                       ServiceDependency dependency,
+                                       MethodDescriptor method,
+                                       List<DynamicMessage> requests,
+                                       long deadlineMillis,
+                                       int maxResponses) {
         Objects.requireNonNull(dependency, "dependency");
         Objects.requireNonNull(method, "method");
         Objects.requireNonNull(requests, "requests");
@@ -60,8 +86,18 @@ public final class DynamicPipelineTransport implements PipelineTransport {
         }
         Channel channel = Objects.requireNonNull(channels.resolve(dependency),
                 "channel resolver returned null");
-        Metadata headers = Objects.requireNonNull(metadata.resolve(dependency),
+        Metadata resolved = Objects.requireNonNull(metadata.resolve(dependency),
                 "metadata resolver returned null");
+        Metadata headers = new Metadata();
+        headers.merge(resolved);
+        if (context != null && !context.jobId().isEmpty()) {
+            headers.put(JOB_ID_HEADER, context.jobId());
+            headers.put(STEP_NAME_HEADER, context.stepName());
+            if (!context.branchId().isEmpty()) {
+                headers.put(BRANCH_ID_HEADER, context.branchId());
+            }
+            headers.put(OPERATION_ID_HEADER, context.operationId());
+        }
         CallOptions options = CallOptions.DEFAULT.withDeadlineAfter(
                 deadlineMillis, TimeUnit.MILLISECONDS);
         if (!method.isClientStreaming()) {
