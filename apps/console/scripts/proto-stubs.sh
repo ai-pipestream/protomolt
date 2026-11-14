@@ -26,6 +26,7 @@ protos=(
   repo/proto/src/main/proto/ai/protomolt/proto/repo/archive/v1/archive_service.proto
   repo/proto/src/main/proto/ai/protomolt/proto/repo/archive/v1/archive_mutation_service.proto
   protobuf/types/src/main/proto/ai/protomolt/proto/authz/v1/console_session.proto
+  repo/proto/src/main/proto/ai/protomolt/proto/repo/external/v1/external_publication.proto
 )
 stubs=apps/console/src/gen
 work_dir=$(mktemp -d)

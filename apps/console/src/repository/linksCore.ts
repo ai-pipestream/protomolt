@@ -8,6 +8,12 @@
 import { create } from '@bufbuild/protobuf'
 import type { NodeAddress } from '@/gen/ai/protomolt/proto/repo/v1/address_pb'
 import {
+  ExternalBindingLifecycleSchema,
+  ExternalProjectionLifecycleSchema,
+  ExternalServingVisibilitySchema,
+  type ExternalLink,
+} from '@/gen/ai/protomolt/proto/repo/external/v1/external_publication_pb'
+import {
   DocumentSortFieldSchema,
   ListBacklinksRequestSchema,
   ListLinksRequestSchema,
@@ -28,20 +34,43 @@ import { enumLabel, instant } from './formatCore'
 /** Targets per ResolveLink page and backlinks per ListBacklinks page. */
 export const LINK_PAGE_SIZE = 50
 
+const FORBIDDEN_EXTERNAL_QUERY_KEYS = new Set([
+  'access_token',
+  'bearer',
+  'token',
+  'id_token',
+  'api_key',
+  'apikey',
+  'client_secret',
+  'password',
+  'secret',
+  'sig',
+  'x-amz-signature',
+  'x-amz-credential',
+  'x-goog-signature',
+])
+
 /**
- * The href an extension relation or concept URI may carry: the URL itself when
- * it parses as an absolute `http:` or `https:` URL, otherwise null and the
- * value is shown as text. `javascript:`, `data:`, `vbscript:`, relative and
- * unparseable values never become a link.
+ * The href an extension relation, concept URI, or external display URL may
+ * carry: the URL itself when it parses as an absolute `http:` or `https:` URL
+ * with no embedded userinfo and no bearer/credential query parameters,
+ * otherwise null and the value is shown as text. `javascript:`, `data:`,
+ * `vbscript:`, bearer URLs, relative and unparseable values never become a link.
  */
 export function safeExternalHref(raw: string): string | null {
+  if (raw.length === 0 || raw.trim() !== raw) return null
   let url: URL
   try {
     url = new URL(raw)
   } catch {
     return null
   }
-  return url.protocol === 'https:' || url.protocol === 'http:' ? url.href : null
+  if (url.protocol !== 'https:' && url.protocol !== 'http:') return null
+  if (url.username !== '' || url.password !== '') return null
+  for (const [key] of url.searchParams) {
+    if (FORBIDDEN_EXTERNAL_QUERY_KEYS.has(key.toLowerCase())) return null
+  }
+  return url.href
 }
 
 /**
@@ -439,4 +468,80 @@ export function buildLinkNeighborhoodGraph(
   })
 
   return { width, height, nodes, edges }
+}
+
+/**
+ * One confirmed external-system derived artifact projection (#814).
+ * Canonical identity comes exclusively from bindingId + bindingRevision +
+ * externalObjectId (+ optional externalVersion) and exact sourceRevision.
+ * displayHref is optional guarded navigation metadata, never identity or auth.
+ */
+export interface ExternalLinkRow {
+  key: string
+  bindingId: string
+  bindingRevision: bigint
+  provider: string
+  dataset: string
+  namespace: string
+  contractVersion: string
+  endpointSummary: string | null
+  bindingLifecycle: string
+  externalObjectId: string
+  externalVersion: string | null
+  sourceCall: CallNumber
+  sourceRevision: bigint
+  projectionLifecycle: string
+  confirmedByOperationId: string
+  confirmedAt: string | null
+  providerReceiptId: string
+  servingVisibility: string | null
+  displayHref: string | null
+}
+
+export function externalLinkRow(link: ExternalLink): ExternalLinkRow {
+  if (link.sourceAddress === undefined) {
+    throw new Error(`ExternalLink for binding ${link.bindingId} is missing sourceAddress.`)
+  }
+  if (link.bindingSnapshot === undefined) {
+    throw new Error(`ExternalLink for binding ${link.bindingId} is missing bindingSnapshot.`)
+  }
+  if (link.confirmationEvidence === undefined) {
+    throw new Error(`ExternalLink for binding ${link.bindingId} is missing confirmationEvidence.`)
+  }
+  const sourceCall = callNumberOf(link.sourceAddress)
+  const snapshot = link.bindingSnapshot
+  const endpoint = snapshot.endpointSummary
+  const endpointSummary =
+    endpoint === undefined
+      ? null
+      : `${endpoint.tlsEnabled ? 'tls' : 'plaintext'}://${endpoint.host}:${endpoint.port}`
+  const servingVisibility =
+    link.managedSearch === undefined
+      ? null
+      : enumLabel(ExternalServingVisibilitySchema, link.managedSearch.servingVisibility)
+  return {
+    key: `${link.bindingId}\u0000${link.bindingRevision}\u0000${sourceCall.graphId}\u0000${sourceCall.graphAddressId}\u0000${sourceCall.docId}\u0000${link.sourceRevision}`,
+    bindingId: link.bindingId,
+    bindingRevision: link.bindingRevision,
+    provider: snapshot.provider,
+    dataset: snapshot.dataset,
+    namespace: snapshot.namespace,
+    contractVersion: snapshot.contractVersion,
+    endpointSummary,
+    bindingLifecycle: enumLabel(ExternalBindingLifecycleSchema, snapshot.lifecycle),
+    externalObjectId: link.externalObjectId,
+    externalVersion: link.externalVersion ?? null,
+    sourceCall,
+    sourceRevision: link.sourceRevision,
+    projectionLifecycle: enumLabel(ExternalProjectionLifecycleSchema, link.projectionLifecycle),
+    confirmedByOperationId: link.confirmedByOperationId,
+    confirmedAt: instant(link.confirmedAt),
+    providerReceiptId: link.confirmationEvidence.providerReceiptId,
+    servingVisibility,
+    displayHref: link.displayUrl !== undefined ? safeExternalHref(link.displayUrl) : null,
+  }
+}
+
+export function externalLinkRows(links: readonly ExternalLink[]): ExternalLinkRow[] {
+  return links.map(externalLinkRow)
 }
