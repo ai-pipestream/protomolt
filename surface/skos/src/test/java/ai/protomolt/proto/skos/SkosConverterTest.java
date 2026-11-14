@@ -6,6 +6,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import ai.protomolt.proto.types.ConceptRef;
 import ai.protomolt.proto.types.ConceptNotation;
 import ai.protomolt.proto.types.ConceptScheme;
+import ai.protomolt.proto.types.LangLabel;
 import com.google.protobuf.UnknownFieldSet;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
@@ -20,9 +21,12 @@ import java.util.Map;
 import org.apache.jena.graph.Triple;
 import org.apache.jena.graph.GraphMemFactory;
 import org.apache.jena.riot.Lang;
+import org.apache.jena.riot.RDFDataMgr;
+import org.apache.jena.riot.RDFFormat;
 import org.apache.jena.riot.RDFParser;
 import org.apache.jena.riot.system.StreamRDFBase;
 import org.apache.jena.riot.system.StreamRDFLib;
+import org.apache.jena.riot.system.StreamRDFWriter;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -370,6 +374,127 @@ class SkosConverterTest {
                     assertThat(converter.read(new ByteArrayInputStream(output.toByteArray()), format)).isEqualTo(scheme);
                 }
             }
+        }
+    }
+
+    @Test void exportsDirectlyAcrossTurtleRdfXmlNTriplesAndJsonLdWithIdenticalGraphs() {
+        var original = read(SIMPLE + """
+                ex:a skos:prefLabel "Alphabète"@fr; skos:altLabel "First"@en;
+                  skos:hiddenLabel "Alfa"@en; skos:definition "First letter."@en;
+                  skos:scopeNote "Use for letters."@en; skos:notation "001"^^<urn:notation:code>;
+                  skos:exactMatch <https://other.example/concept>;
+                  skos:closeMatch <https://other.example/concept>;
+                  skos:broadMatch <https://other.example/concept>;
+                  skos:narrowMatch <https://other.example/concept>;
+                  skos:relatedMatch <https://other.example/concept> .
+                ex:b a skos:Concept; skos:inScheme ex:scheme; skos:prefLabel "Beta"@en; skos:broader ex:a .
+                ex:c a skos:Concept; skos:inScheme ex:scheme; skos:prefLabel "Old"@en;
+                  owl:deprecated true; dct:isReplacedBy ex:b; skos:related ex:a .
+                """);
+
+        var streamedEvents = new ArrayList<Triple>();
+        var started = new int[1];
+        var finished = new int[1];
+        converter.write(original, new StreamRDFBase() {
+            @Override public void start() { started[0]++; }
+            @Override public void triple(Triple triple) {
+                assertThat(started[0]).isEqualTo(1);
+                assertThat(finished[0]).isZero();
+                streamedEvents.add(triple);
+            }
+            @Override public void finish() { finished[0]++; }
+        });
+        assertThat(started[0]).isEqualTo(1);
+        assertThat(finished[0]).isEqualTo(1);
+        assertThat(streamedEvents).isNotEmpty();
+
+        // A failing StreamRDF sink aborts on the very first emitted triple.
+        var seenBeforeAbort = new int[1];
+        assertThatThrownBy(() -> converter.write(original, new StreamRDFBase() {
+            @Override public void triple(Triple triple) {
+                seenBeforeAbort[0]++;
+                throw new IllegalStateException("abort-first-triple");
+            }
+        })).isInstanceOf(IllegalStateException.class).hasMessage("abort-first-triple");
+        assertThat(seenBeforeAbort[0]).isEqualTo(1);
+
+        var directGraph = GraphMemFactory.createDefaultGraph();
+        converter.write(original, StreamRDFLib.graph(directGraph));
+        assertThat(directGraph.size()).isEqualTo(streamedEvents.size());
+
+        var turtleOut = new ByteArrayOutputStream();
+        converter.write(original, turtleOut, SkosConverter.Format.TURTLE);
+        var turtleGraph = GraphMemFactory.createDefaultGraph();
+        RDFParser.source(new ByteArrayInputStream(turtleOut.toByteArray())).lang(Lang.TURTLE).parse(turtleGraph);
+        assertThat(turtleGraph.isIsomorphicWith(directGraph)).isTrue();
+        assertThat(converter.read(new ByteArrayInputStream(turtleOut.toByteArray()), SkosConverter.Format.TURTLE))
+                .isEqualTo(original);
+
+        var rdfXmlOut = new ByteArrayOutputStream();
+        converter.write(original, rdfXmlOut, SkosConverter.Format.RDF_XML);
+        var rdfXmlGraph = GraphMemFactory.createDefaultGraph();
+        RDFParser.source(new ByteArrayInputStream(rdfXmlOut.toByteArray())).lang(Lang.RDFXML).parse(rdfXmlGraph);
+        assertThat(rdfXmlGraph.isIsomorphicWith(directGraph)).isTrue();
+
+        var nTriplesOut = new ByteArrayOutputStream();
+        converter.write(original, StreamRDFWriter.getWriterStream(nTriplesOut, RDFFormat.NTRIPLES_UTF8));
+        var nTriplesGraph = GraphMemFactory.createDefaultGraph();
+        RDFParser.source(new ByteArrayInputStream(nTriplesOut.toByteArray())).lang(Lang.NTRIPLES).parse(nTriplesGraph);
+        assertThat(nTriplesGraph.isIsomorphicWith(directGraph)).isTrue();
+
+        var jsonLdOut = new ByteArrayOutputStream();
+        RDFDataMgr.write(jsonLdOut, directGraph, RDFFormat.JSONLD11_PLAIN);
+        var jsonLdGraph = GraphMemFactory.createDefaultGraph();
+        RDFParser.source(new ByteArrayInputStream(jsonLdOut.toByteArray())).lang(Lang.JSONLD11).parse(jsonLdGraph);
+        assertThat(jsonLdGraph.isIsomorphicWith(directGraph)).isTrue();
+    }
+
+    @Test void exportRefusesAllDuplicateRepeatedValuesBeforeStartingSinkOrWritingBytes() {
+        var valid = read(SIMPLE + """
+                ex:b a skos:Concept; skos:inScheme ex:scheme; skos:prefLabel "Beta"@en .
+                """);
+        var alpha = valid.getConcepts(0);
+        var betaId = valid.getConcepts(1).getId();
+        var duplicateCases = new ConceptScheme[] {
+                valid.toBuilder().setConcepts(0, alpha.toBuilder()
+                        .addAltLabel(LangLabel.newBuilder().setLanguage("en").setText("Synonym"))
+                        .addAltLabel(LangLabel.newBuilder().setLanguage("en").setText("Synonym"))).build(),
+                valid.toBuilder().setConcepts(0, alpha.toBuilder()
+                        .addAltLabel(LangLabel.newBuilder().setLanguage("en").setText("CaseFolded"))
+                        .addAltLabel(LangLabel.newBuilder().setLanguage("EN").setText("CaseFolded"))).build(),
+                valid.toBuilder().setConcepts(0, alpha.toBuilder()
+                        .addHiddenLabel(LangLabel.newBuilder().setLanguage("en").setText("Typo"))
+                        .addHiddenLabel(LangLabel.newBuilder().setLanguage("EN").setText("Typo"))).build(),
+                valid.toBuilder().setConcepts(0, alpha.toBuilder()
+                        .addScopeNote(LangLabel.newBuilder().setLanguage("en").setText("Note"))
+                        .addScopeNote(LangLabel.newBuilder().setLanguage("en").setText("Note"))).build(),
+                valid.toBuilder().setConcepts(0, alpha.toBuilder()
+                        .addCloseMatch(EXTERNAL).addCloseMatch(EXTERNAL)).build(),
+                valid.toBuilder().setConcepts(0, alpha.toBuilder()
+                        .addBroadMatch(EXTERNAL).addBroadMatch(EXTERNAL)).build(),
+                valid.toBuilder().setConcepts(0, alpha.toBuilder()
+                        .addNarrowMatch(EXTERNAL).addNarrowMatch(EXTERNAL)).build(),
+                valid.toBuilder().setConcepts(0, alpha.toBuilder()
+                        .addRelatedMatch(EXTERNAL).addRelatedMatch(EXTERNAL)).build(),
+                valid.toBuilder().setConcepts(0, alpha.toBuilder()
+                        .setDeprecated(true).addReplacedBy(betaId).addReplacedBy(betaId)).build()
+        };
+        for (var duplicate : duplicateCases) {
+            for (var format : SkosConverter.Format.values()) {
+                var output = new ByteArrayOutputStream();
+                assertThatThrownBy(() -> converter.write(duplicate, output, format))
+                        .isInstanceOf(IllegalArgumentException.class)
+                        .hasMessageContaining("duplicate protobuf values cannot survive RDF set semantics");
+                assertThat(output.size()).isZero();
+            }
+            var events = new ArrayList<String>();
+            assertThatThrownBy(() -> converter.write(duplicate, new StreamRDFBase() {
+                @Override public void start() { events.add("start"); }
+                @Override public void triple(Triple triple) { events.add("triple"); }
+                @Override public void finish() { events.add("finish"); }
+            })).isInstanceOf(IllegalArgumentException.class)
+                    .hasMessageContaining("duplicate protobuf values cannot survive RDF set semantics");
+            assertThat(events).isEmpty();
         }
     }
 
