@@ -136,9 +136,10 @@ final class ServiceActionSupport {
             // its status text; authenticated reflection keeps the status code, not the
             // diagnostics.
             if (callCredentials != null || tlsCredentials != null) {
-                String code = Status.fromThrowable(e).getCode().name();
+                Status.Code code = Status.fromThrowable(e).getCode();
                 throw new ReflectionException("reflection failed against the authenticated endpoint: "
-                        + code + " (upstream status withheld)");
+                        + code.name() + " (upstream status withheld)",
+                        code.toStatus().asRuntimeException());
             }
             throw e;
         } finally {
