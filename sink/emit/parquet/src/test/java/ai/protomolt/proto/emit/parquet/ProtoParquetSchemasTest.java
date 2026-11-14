@@ -60,6 +60,8 @@ class ProtoParquetSchemasTest {
             message Child { string name = 1; }
             enum Kind { KIND_UNSPECIFIED = 0; KIND_A = 1; }
             message Node { Node next = 1; }
+            message EmptyMsg {}
+            message HasEmpty { string id = 1; EmptyMsg empty = 2; }
             """;
 
     private static final String PROTO2 = """
@@ -254,6 +256,30 @@ class ProtoParquetSchemasTest {
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("Projection selected no columns")
                 .hasMessageContaining("nope");
+
+        // Mixing an unknown or nested dotted path with a valid column is also rejected rather
+        // than silently dropping the unknown selector.
+        assertThatThrownBy(() -> ProtoParquetSchemas.schema(type,
+                ProtoParquetSchemas.FieldIdResolver.NONE, Set.of("text", "child.name")))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("unknown top-level columns")
+                .hasMessageContaining("child.name");
+    }
+
+    @Test
+    void emptyMessagesAreRejectedAtRootAndNestedFields() throws Exception {
+        FileDescriptor compiled = file();
+        Descriptor empty = compiled.findMessageTypeByName("EmptyMsg");
+        assertThatThrownBy(() -> ProtoParquetSchemas.schema(empty))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("Empty message type")
+                .hasMessageContaining("pq.schema.EmptyMsg");
+
+        Descriptor hasEmpty = compiled.findMessageTypeByName("HasEmpty");
+        assertThatThrownBy(() -> ProtoParquetSchemas.schema(hasEmpty))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("Empty message type")
+                .hasMessageContaining("empty (pq.schema.EmptyMsg)");
     }
 
     @Test

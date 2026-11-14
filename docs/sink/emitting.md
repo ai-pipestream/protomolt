@@ -159,9 +159,11 @@ Mapping: plain singular scalars are `required` (proto3 defaults are values),
 when present, repeated fields are `repeated`, maps are repeated
 `(key, value)` groups, enums are plain UTF-8 strings holding the value
 name, and unsigned 32-bit values widen to `int64` so no value changes
-sign. Recursive
-message types cannot exist in a columnar schema and are rejected with the
-cycle named.
+sign. Empty message types (`google.protobuf.Empty`, `message Empty {}`, or
+nested fields of an empty message type) have no leaf columns and are rejected
+with the message type and field path named; recursive message types outside the
+JSON well-known family (`Struct`, `Value`, `ListValue`) cannot exist in a
+columnar schema and are rejected with the cycle named.
 
 Every message is validated against the constraint and CEL rules its descriptor
 declares before it is written, and the write fails on the first offending
@@ -184,7 +186,9 @@ ParquetEmitter.toBytes(descriptor, messages, ids,
         ParquetExportOptions.masking(Set.of("pii"), SensitivityMasker.Strategy.REDACT, null));
 ```
 
-**Projection** drops columns from the file schema entirely; **masking** runs each
+**Projection** drops columns from the file schema entirely (only top-level
+column names are valid selectors; unknown or nested dotted names are rejected);
+**masking** runs each
 message through `SensitivityMasker` first, so fields carrying one of the named
 sensitivity classes are redacted, encrypted, or cleared before they are written.
 They compose. One distinction that matters: a proto3 plain scalar is a `required`
