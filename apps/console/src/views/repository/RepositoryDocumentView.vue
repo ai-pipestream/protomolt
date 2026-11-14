@@ -70,39 +70,70 @@
               <div v-if="manifest.tombstone" class="text-body-2 text-medium-emphasis">
                 A tombstone revision holds no parts. Earlier revisions keep their bytes; open one from History.
               </div>
-              <v-table v-else density="compact" data-testid="parts-table">
-                <thead>
-                  <tr>
-                    <th>Part</th>
-                    <th>State</th>
-                    <th>Size</th>
-                    <th>SHA-256</th>
-                    <th>Written in</th>
-                    <th>Provenance</th>
-                    <th />
-                  </tr>
-                </thead>
-                <tbody>
-                  <tr v-for="(row, i) in parts" :key="row.label">
-                    <td>
-                      {{ row.label }}
-                      <v-chip v-if="row.opaque" size="x-small" color="warning" variant="tonal" class="ml-1">opaque</v-chip>
-                    </td>
-                    <td>
-                      {{ row.state }}
-                      <div v-if="row.deletedReason" class="text-caption text-medium-emphasis">{{ row.deletedReason }}</div>
-                    </td>
-                    <td class="text-mono">{{ byteSize(row.sizeBytes) }}</td>
-                    <td class="text-mono text-caption">{{ row.sha256 }}</td>
-                    <td class="text-mono">{{ row.writtenInRevision }}</td>
-                    <td class="text-caption">{{ row.owner }}</td>
-                    <td>
-                      <v-btn v-if="row.state === 'PRESENT'" size="x-small" variant="tonal" :loading="partBusy === i"
-                             :data-testid="`read-part-${i}`" @click="readPartAt(i)">Read</v-btn>
-                    </td>
-                  </tr>
-                </tbody>
-              </v-table>
+              <template v-else>
+                <v-alert
+                  v-if="saveAsAccess.readOnly && parts.some((_, idx) => canSavePartAs(idx))"
+                  type="info"
+                  variant="tonal"
+                  density="compact"
+                  class="mb-3"
+                  data-testid="save-as-readonly-notice"
+                >
+                  {{ saveAsAccess.reason }}
+                </v-alert>
+                <v-table density="compact" data-testid="parts-table">
+                  <thead>
+                    <tr>
+                      <th>Part</th>
+                      <th>State</th>
+                      <th>Size</th>
+                      <th>SHA-256</th>
+                      <th>Written in</th>
+                      <th>Provenance</th>
+                      <th />
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr v-for="(row, i) in parts" :key="row.label">
+                      <td>
+                        <div class="d-flex align-center flex-wrap ga-2">
+                          <span>{{ row.label }}</span>
+                          <v-chip v-if="row.opaque" size="x-small" color="warning" variant="tonal">opaque</v-chip>
+                          <FormatIcon
+                            :media-type="row.opaque ? 'application/octet-stream' : 'application/x-protobuf'"
+                            :authoritative-protobuf="!row.opaque && hasRetainedPartSchema(i)"
+                          />
+                        </div>
+                      </td>
+                      <td>
+                        {{ row.state }}
+                        <div v-if="row.deletedReason" class="text-caption text-medium-emphasis">{{ row.deletedReason }}</div>
+                      </td>
+                      <td class="text-mono">{{ byteSize(row.sizeBytes) }}</td>
+                      <td class="text-mono text-caption">{{ row.sha256 }}</td>
+                      <td class="text-mono">{{ row.writtenInRevision }}</td>
+                      <td class="text-caption">{{ row.owner }}</td>
+                      <td>
+                        <div class="d-flex align-center ga-1 flex-wrap">
+                          <v-btn v-if="row.state === 'PRESENT'" size="x-small" variant="tonal" :loading="partBusy === i"
+                                 :data-testid="`read-part-${i}`" @click="readPartAt(i)">Read</v-btn>
+                          <v-btn
+                            v-if="canSavePartAs(i)"
+                            size="x-small"
+                            variant="outlined"
+                            :disabled="saveAsAccess.readOnly"
+                            :title="saveAsAccess.reason || undefined"
+                            :data-testid="`save-as-part-${i}`"
+                            @click="openSaveAsForPartIndex(i)"
+                          >
+                            Save as…
+                          </v-btn>
+                        </div>
+                      </td>
+                    </tr>
+                  </tbody>
+                </v-table>
+              </template>
               <v-checkbox v-model="allowOpaque" density="compact" hide-details class="mt-2"
                           label="Allow opaque payloads (the read is refused otherwise when a part holds opaque content)" />
             </v-card-text>
@@ -111,8 +142,24 @@
           <RpcFailureAlert v-if="partFailure" :failure="partFailure" title="Reading the part" />
           <v-card v-if="partView" class="mb-4" data-testid="part-view">
             <v-card-title class="text-subtitle-2 d-flex align-center flex-wrap ga-2">
-              {{ partView.label }}
+              <FormatIcon
+                :media-type="partView.decoded.kind === 'decoded' ? 'application/x-protobuf' : 'application/octet-stream'"
+                :authoritative-protobuf="partView.decoded.kind === 'decoded'"
+                compact
+              />
+              <span>{{ partView.label }}</span>
               <v-btn size="x-small" variant="text" data-testid="download-part" @click="downloadPart">Download protobuf</v-btn>
+              <v-btn
+                v-if="partView.decoded.kind === 'decoded'"
+                size="x-small"
+                variant="outlined"
+                :disabled="saveAsAccess.readOnly"
+                :title="saveAsAccess.reason || undefined"
+                data-testid="save-as-open-part"
+                @click="openSaveAsForLoadedPart"
+              >
+                Save as rendition…
+              </v-btn>
               <span class="text-caption text-medium-emphasis">revision {{ partView.revision }} · {{ byteSize(partView.size) }}</span>
             </v-card-title>
             <v-card-text>
@@ -169,6 +216,18 @@
                              :descriptor-set="partView.decoded.descriptorSet" :unavailable="partView.previewUnavailable" />
               </template>
               <template v-else>
+                <v-alert
+                  v-if="partView.schemaFailure"
+                  type="warning"
+                  variant="tonal"
+                  density="compact"
+                  class="mb-2"
+                  data-testid="part-schema-failure"
+                >
+                  The retained fragment schema for this part did not load
+                  ({{ partView.schemaFailure.code }}: {{ partView.schemaFailure.message }}).
+                  Metadata, raw protobuf bytes, and Download remain available.
+                </v-alert>
                 <v-alert type="info" variant="tonal" density="compact" class="mb-2" data-testid="raw-reason">
                   {{ partView.decoded.reason }} Showing the raw bytes.
                 </v-alert>
@@ -333,6 +392,20 @@
         </v-window-item>
       </v-window>
     </template>
+
+    <SaveAsRenditionDialog
+      :open="saveAsDialogOpen"
+      source-kind="document-part"
+      :source-label="saveAsSourceLabel"
+      :account-id="address?.accountId ?? ''"
+      :document-source="saveAsDocumentSource"
+      :occurrence-options="saveAsOccurrenceOptions"
+      :default-destination-archive="defaultSaveAsArchive"
+      :default-destination-entry-id="call?.docId ?? ''"
+      :default-expected-destination-version="defaultSaveAsExpectedVersion"
+      @close="saveAsDialogOpen = false"
+      @reload-source="onSaveAsReloadSource"
+    />
   </div>
 </template>
 
@@ -346,9 +419,12 @@ import TypeExplorerPanel from '@/components/TypeExplorerPanel.vue'
 import BlobFiles from '@/components/repository/BlobFiles.vue'
 import DeleteDocumentDialog from '@/components/repository/DeleteDocumentDialog.vue'
 import DocumentLinks from '@/components/repository/DocumentLinks.vue'
+import FormatIcon from '@/components/repository/FormatIcon.vue'
 import RevisionCompare from '@/components/repository/RevisionCompare.vue'
 import RevisionHistory from '@/components/repository/RevisionHistory.vue'
 import RpcFailureAlert from '@/components/repository/RpcFailureAlert.vue'
+import SaveAsRenditionDialog from '@/components/repository/SaveAsRenditionDialog.vue'
+import type { ConsoleSessionStatus } from '@/gen/ai/protomolt/proto/authz/v1/console_session_pb'
 import type { NodeAddress } from '@/gen/ai/protomolt/proto/repo/v1/address_pb'
 import {
   GetDocumentRequestSchema,
@@ -361,10 +437,11 @@ import {
   PartSelectorSchema,
   type Accession,
   type DocumentManifest,
+  type PartSelector,
   type RevisionValidation,
 } from '@/gen/ai/protomolt/proto/repo/v2/manifest_pb'
 import { filterViewTree, type ViewNode } from '@/lib/message-view/messageTree'
-import { useRepositoryClients } from '@/repository/clients'
+import { useRepositoryClients, useRepositorySession } from '@/repository/clients'
 import WasmPreview from '@/components/WasmPreview.vue'
 import { AnySchemas } from '@/repository/anySchemas'
 import { decodedTree } from '@/repository/decodedTreeCore'
@@ -383,10 +460,17 @@ import {
 import { byteSize, hexDump } from '@/repository/formatCore'
 import { decodePart, readPart, retainedDescriptorSet, type DecodedPart } from '@/repository/partReadCore'
 import { rpcFailure, type RpcFailure } from '@/repository/rpcErrorCore'
+import {
+  evaluateSaveAsSessionAccess,
+  listPartOccurrenceOptions,
+  type DocumentPartSourceInput,
+  type ResolvedOccurrenceOption,
+} from '@/repository/saveAsCore'
 import { useCallScope } from '@/repository/useCallScope'
 import { buildDescriptorModel, type DescriptorModel } from '@/services/descriptorModel'
 
 const clients = useRepositoryClients()
+const sessions = useRepositorySession()
 const route = useRoute()
 const router = useRouter()
 const readScope = useCallScope()
@@ -458,16 +542,107 @@ const partFailure = ref<RpcFailure | null>(null)
 const partTreeFilter = ref('')
 const partView = shallowRef<{
   label: string
+  selector: PartSelector
   revision: bigint
   size: bigint
   decoded: DecodedPart
-  /** Why the retained Any schemas did not load; the part is shown without them. */
+  /** Why the retained fragment or Any schemas did not load; the part is still shown. */
   schemaFailure: RpcFailure | null
   bytes: Uint8Array
   previewUnavailable: string | null
+  occurrenceOptions: ResolvedOccurrenceOption[]
   tree: ViewNode[]
   hex: string[]
 } | null>(null)
+
+const sessionStatus = shallowRef<ConsoleSessionStatus | null>(null)
+let sessionLoaded = false
+const saveAsDialogOpen = ref(false)
+const saveAsDocumentSource = shallowRef<Omit<DocumentPartSourceInput, 'occurrenceFieldPath'> | null>(null)
+const saveAsOccurrenceOptions = shallowRef<ResolvedOccurrenceOption[]>([])
+const saveAsSourceLabel = ref('')
+
+const saveAsAccess = computed(() =>
+  evaluateSaveAsSessionAccess(sessionStatus.value, address.value?.accountId ?? queryText('account')),
+)
+
+const defaultSaveAsArchive = computed(() => {
+  const c = call.value
+  if (c === null) return ''
+  if (c.graphId === `archive:${c.accountId}`) return c.graphAddressId
+  return ''
+})
+
+const defaultSaveAsExpectedVersion = computed<bigint | null>(() => {
+  const c = call.value
+  if (c === null || manifest.value === null) return null
+  if (c.graphId === `archive:${c.accountId}`) return manifest.value.revision
+  return null
+})
+
+function hasRetainedPartSchema(index: number): boolean {
+  const selector = manifest.value?.parts[index]?.selector
+  if (!selector || !validation.value) return false
+  return validation.value.partSchemas.some(
+    (b) => b.part !== undefined && equals(PartSelectorSchema, b.part, selector) && Boolean(b.fragmentSchema?.descriptorSha256),
+  )
+}
+
+function canSavePartAs(index: number): boolean {
+  const row = parts.value[index]
+  if (!row || row.state !== 'PRESENT' || row.opaque) return false
+  return hasRetainedPartSchema(index)
+}
+
+function openSaveAsForPartIndex(index: number) {
+  const entry = manifest.value?.parts[index]
+  const row = parts.value[index]
+  if (saveAsAccess.value.readOnly || !entry?.selector || !row || !address.value || pinned.value === null) return
+  saveAsDocumentSource.value = {
+    address: address.value,
+    selector: entry.selector,
+    revision: pinned.value,
+  }
+  if (partView.value && equals(PartSelectorSchema, partView.value.selector, entry.selector)) {
+    saveAsOccurrenceOptions.value = partView.value.occurrenceOptions
+  } else {
+    saveAsOccurrenceOptions.value = []
+  }
+  saveAsSourceLabel.value = `${address.value.docId} · part ${row.label}`
+  saveAsDialogOpen.value = true
+}
+
+function openSaveAsForLoadedPart() {
+  const pv = partView.value
+  if (saveAsAccess.value.readOnly || !pv || pv.decoded.kind !== 'decoded' || !address.value) return
+  saveAsDocumentSource.value = {
+    address: address.value,
+    selector: pv.selector,
+    revision: pv.revision,
+  }
+  saveAsOccurrenceOptions.value = pv.occurrenceOptions
+  saveAsSourceLabel.value = `${address.value.docId} · part ${pv.label}`
+  saveAsDialogOpen.value = true
+}
+
+function onSaveAsReloadSource() {
+  saveAsDialogOpen.value = false
+  if (requested.value !== null) {
+    openRevision(null)
+    return
+  }
+  void load()
+}
+
+async function ensureSessionLoaded() {
+  if (sessionLoaded) return
+  sessionLoaded = true
+  try {
+    sessionStatus.value = await sessions.status()
+  } catch {
+    // Advisory only: server authorization remains authoritative.
+  }
+}
 
 const filteredPartView = computed(() =>
   filterViewTree(partView.value?.tree ?? [], partTreeFilter.value ?? ''),
@@ -492,6 +667,7 @@ function routeDocumentKey(): string {
 let loadedKey = ''
 
 async function load() {
+  void ensureSessionLoaded()
   loadedKey = routeDocumentKey()
   // A new route starts from nothing: earlier reads, a part read still running
   // and the previous revision's metadata and files all go.
@@ -502,6 +678,7 @@ async function load() {
   schemaBusy.value = null
   // A delete dialog belongs to the document it opened on.
   deleting.value = false
+  saveAsDialogOpen.value = false
   routeError.value = null
   manifestFailure.value = null
   documentFailure.value = null
@@ -632,13 +809,27 @@ async function readPartAt(index: number) {
   partTreeFilter.value = ''
   try {
     const part = await readPart(clients.documents, address.value, pinned.value, entry.selector, allowOpaque.value, signal)
-    const decoded = await decodePart(clients.documents, address.value, part.revision, validation.value, entry.selector, part.bytes, signal)
-    // A retained schema that fails to load is distinct from a failed part read:
-    // the part still decodes and shows. Its occurrence record is kept, so
-    // opaque payloads stay opaque and resolved ones read as retained but not
-    // loaded, never as absent bindings.
-    let schemas = AnySchemas.none()
+    let decoded: DecodedPart
     let schemaFailure: RpcFailure | null = null
+    try {
+      decoded = await decodePart(clients.documents, address.value, part.revision, validation.value, entry.selector, part.bytes, signal)
+    } catch (error) {
+      if (signal.aborted) return
+      schemaFailure = rpcFailure(error)
+      const boundSha = validation.value.partSchemas.find(
+        (b) => b.part !== undefined && equals(PartSelectorSchema, b.part, entry.selector!),
+      )?.fragmentSchema?.descriptorSha256 ?? null
+      decoded = {
+        kind: 'raw',
+        reason: 'The retained fragment schema could not be loaded.',
+        descriptorSha256: boundSha,
+      }
+    }
+    // A retained schema that fails to load is distinct from a failed part read:
+    // the part still shows its metadata, raw bytes and Download. When the root
+    // fragment decodes, its occurrence record is kept so opaque payloads stay
+    // opaque and resolved ones read as retained but not loaded.
+    let schemas = AnySchemas.none()
     if (decoded.kind === 'decoded') {
       try {
         schemas = await AnySchemas.load(clients.documents, address.value, part.revision, validation.value, signal, entry.selector)
@@ -649,8 +840,17 @@ async function readPartAt(index: number) {
       }
     }
     if (signal.aborted) return
+    const occurrenceOptions = decoded.kind === 'decoded'
+      ? listPartOccurrenceOptions(
+          validation.value,
+          entry.selector,
+          decoded.desc as DescMessage,
+          (typeUrl) => schemas.descForTypeUrl(typeUrl),
+        )
+      : []
     partView.value = {
       label: parts.value[index].label,
+      selector: entry.selector,
       revision: part.revision,
       size: BigInt(part.bytes.length),
       decoded,
@@ -658,6 +858,7 @@ async function readPartAt(index: number) {
       bytes: part.bytes,
       previewUnavailable: entry.opaque || validation.value.opaqueOccurrences.some((o) => o.occurrence?.part && equals(PartSelectorSchema, o.occurrence.part, entry.selector!))
         ? 'Custom previews are unavailable for parts containing opaque payloads.' : null,
+      occurrenceOptions,
       tree: decoded.kind === 'decoded' ? decodedTree(decoded.desc as DescMessage, decoded.message as Message, { schemas, location: { part: entry.selector, steps: [] } }) : [],
       hex: decoded.kind === 'raw' ? hexDump(part.bytes.subarray(0, 4096)) : [],
     }

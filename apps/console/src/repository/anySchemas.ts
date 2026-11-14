@@ -125,6 +125,14 @@ export class AnySchemas {
       || retained.payloadSha256 !== new Sha256().update(any.value).hex()) return null
     return { desc, boundary }
   }
+
+  /** Lookup a loaded message descriptor by retained `Any` type URL, or null when not loaded. */
+  descForTypeUrl(typeUrl: string): DescMessage | null {
+    for (const entry of this.byOccurrence.values()) {
+      if (entry.retained.schema?.typeUrl === typeUrl) return entry.desc
+    }
+    return null
+  }
 }
 
 export interface AnyLocation {
