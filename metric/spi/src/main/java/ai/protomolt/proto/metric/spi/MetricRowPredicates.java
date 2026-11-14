@@ -37,10 +37,6 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ConcurrentLinkedQueue;
-import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * Schema-aware CEL compiler and translator for metric row-security and query
@@ -65,43 +61,27 @@ public final class MetricRowPredicates {
     private static final int MAX_SCHEMA_CACHE_SIZE = 256;
     private static final int MAX_EXPRESSION_CACHE_SIZE = 512;
 
-    private static final ConcurrentHashMap<SchemaKey, SchemaContext> SCHEMA_CACHE =
-            new ConcurrentHashMap<>();
-    private static final ConcurrentLinkedQueue<SchemaKey> SCHEMA_EVICTION_ORDER =
-            new ConcurrentLinkedQueue<>();
-    private static final AtomicInteger DESCRIPTOR_BUILDS = new AtomicInteger();
-    private static final AtomicInteger CEL_COMPILATIONS = new AtomicInteger();
+    private static final BoundedFifoCache<SchemaKey, SchemaContext> SCHEMA_CACHE =
+            new BoundedFifoCache<>(MAX_SCHEMA_CACHE_SIZE);
 
     private MetricRowPredicates() {
     }
 
-    /** Package-private counter of synthetic {@code CelRowContext} descriptor builds for tests. */
-    static int descriptorBuildCount() {
-        return DESCRIPTOR_BUILDS.get();
-    }
-
-    /** Package-private counter of CEL expression parse+check compilations for tests. */
-    static int celCompilationCount() {
-        return CEL_COMPILATIONS.get();
-    }
-
-    /** Package-private schema cache entry count for bounded-eviction tests. */
+    /** Schema cache entry count, for bounded-eviction tests. */
     static int schemaCacheSize() {
         return SCHEMA_CACHE.size();
     }
 
-    /** Package-private expression cache entry count on {@code mapping} for bounded-eviction tests. */
+    /** Expression cache entry count on {@code mapping}, for bounded-eviction tests. */
     static int expressionCacheSize(MetricMapping mapping) {
-        SchemaContext context = SCHEMA_CACHE.get(new SchemaKey(mapping, mapping.memberNames()));
+        SchemaContext context = SCHEMA_CACHE.getIfPresent(new SchemaKey(mapping, mapping.memberNames()));
         return context == null ? 0 : context.expressions().size();
     }
 
-    /** Package-private cache and counter reset for deterministic unit tests. */
+    /** Drops cached schemas and resets {@link MetricRowPredicateStats}, for deterministic tests. */
     static void resetCacheAndStats() {
         SCHEMA_CACHE.clear();
-        SCHEMA_EVICTION_ORDER.clear();
-        DESCRIPTOR_BUILDS.set(0);
-        CEL_COMPILATIONS.set(0);
+        MetricRowPredicateStats.reset();
     }
 
     /**
@@ -798,58 +778,19 @@ public final class MetricRowPredicates {
     private record SchemaContext(
             Cel cel,
             Map<String, ResolvedTarget> targets,
-            ConcurrentHashMap<String, CachedExpression> expressions,
-            ConcurrentLinkedQueue<String> expressionOrder) {
+            BoundedFifoCache<String, CachedExpression> expressions) {
 
         static SchemaContext forMapping(MetricMapping mapping) {
-            SchemaKey key = new SchemaKey(mapping, mapping.memberNames());
-            SchemaContext cached = SCHEMA_CACHE.get(key);
-            if (cached != null) {
-                return cached;
-            }
-            AtomicBoolean created = new AtomicBoolean();
-            SchemaContext resolved = SCHEMA_CACHE.computeIfAbsent(key, k -> {
-                created.set(true);
-                return build(k.mapping());
-            });
-            if (created.get()) {
-                SCHEMA_EVICTION_ORDER.offer(key);
-                while (SCHEMA_CACHE.size() > MAX_SCHEMA_CACHE_SIZE) {
-                    SchemaKey oldest = SCHEMA_EVICTION_ORDER.poll();
-                    if (oldest == null) {
-                        break;
-                    }
-                    SCHEMA_CACHE.remove(oldest);
-                }
-            }
-            return resolved;
+            return SCHEMA_CACHE.computeIfAbsent(
+                    new SchemaKey(mapping, mapping.memberNames()), key -> build(key.mapping()));
         }
 
         CachedExpression resolveExpression(MetricMapping mapping, String expression) {
-            CachedExpression cached = expressions.get(expression);
-            if (cached != null) {
-                return cached;
-            }
-            AtomicBoolean created = new AtomicBoolean();
-            CachedExpression resolved = expressions.computeIfAbsent(expression, expr -> {
-                created.set(true);
-                return analyze(mapping, expr);
-            });
-            if (created.get()) {
-                expressionOrder.offer(expression);
-                while (expressions.size() > MAX_EXPRESSION_CACHE_SIZE) {
-                    String oldest = expressionOrder.poll();
-                    if (oldest == null) {
-                        break;
-                    }
-                    expressions.remove(oldest);
-                }
-            }
-            return resolved;
+            return expressions.computeIfAbsent(expression, expr -> analyze(mapping, expr));
         }
 
         private CachedExpression analyze(MetricMapping mapping, String expression) {
-            CEL_COMPILATIONS.incrementAndGet();
+            MetricRowPredicateStats.recordCelCompilation();
             CelAbstractSyntaxTree parsedAst;
             try {
                 parsedAst = cel.parse(expression, CEL_SOURCE_DESCRIPTION).getAst();
@@ -959,8 +900,7 @@ public final class MetricRowPredicates {
             return new SchemaContext(
                     compiler.build(),
                     Collections.unmodifiableMap(new LinkedHashMap<>(targets)),
-                    new ConcurrentHashMap<>(),
-                    new ConcurrentLinkedQueue<>());
+                    new BoundedFifoCache<>(MAX_EXPRESSION_CACHE_SIZE));
         }
 
         private static void collectDescriptorTargets(
@@ -1103,7 +1043,7 @@ public final class MetricRowPredicates {
                 file.addDependency(base.getFile().getName());
             }
             try {
-                DESCRIPTOR_BUILDS.incrementAndGet();
+                MetricRowPredicateStats.recordDescriptorBuild();
                 FileDescriptor built = FileDescriptor.buildFrom(
                         file.build(), deps.toArray(FileDescriptor[]::new));
                 return built.findMessageTypeByName("CelRowContext");

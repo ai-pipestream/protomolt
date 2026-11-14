@@ -33,7 +33,7 @@ import org.junit.jupiter.api.Test;
  * Verifies {@link MetricRowPredicates} reuses a single cached synthetic row-context
  * {@link FileDescriptor}, CEL environment, and compiled expression entry per
  * {@link MetricMapping} across member collection, access-policy validation, and query
- * compilation (#866), while isolating distinct descriptors and bounding cache growth.
+ * compilation, while isolating distinct descriptors and bounding cache growth.
  */
 class MetricRowPredicatesCacheTest {
 
@@ -55,13 +55,13 @@ class MetricRowPredicatesCacheTest {
         // 1. Access-policy member collection over the caller's CEL filter.
         Set<String> referenced = MetricRowPredicates.referencedMembers(mapping, callerCel);
         assertThat(referenced).containsExactlyInAnyOrder("segment", "revenue");
-        assertThat(MetricRowPredicates.descriptorBuildCount()).isEqualTo(1);
-        assertThat(MetricRowPredicates.celCompilationCount()).isEqualTo(1);
+        assertThat(MetricRowPredicateStats.descriptorBuilds()).isEqualTo(1);
+        assertThat(MetricRowPredicateStats.celCompilations()).isEqualTo(1);
 
         // 2. Access-policy validation of the injected policy CEL filter.
         MetricQueries.validateFilter(mapping, policyFilter);
-        assertThat(MetricRowPredicates.descriptorBuildCount()).isEqualTo(1);
-        assertThat(MetricRowPredicates.celCompilationCount()).isEqualTo(2);
+        assertThat(MetricRowPredicateStats.descriptorBuilds()).isEqualTo(1);
+        assertThat(MetricRowPredicateStats.celCompilations()).isEqualTo(2);
 
         // 3. Query compilation of the rewritten request containing both CEL filters.
         QueryMetricsRequest rewritten = MetricQueriesTest.request("revenue")
@@ -70,8 +70,8 @@ class MetricRowPredicatesCacheTest {
                 .build();
         MetricQueries.query(mapping, executors, rewritten);
 
-        assertThat(MetricRowPredicates.descriptorBuildCount()).isEqualTo(1);
-        assertThat(MetricRowPredicates.celCompilationCount()).isEqualTo(2);
+        assertThat(MetricRowPredicateStats.descriptorBuilds()).isEqualTo(1);
+        assertThat(MetricRowPredicateStats.celCompilations()).isEqualTo(2);
         assertThat(lucene.executed.predicates()).hasSize(2);
 
         // 4. Subsequent queries over the same mapping and expressions perform zero builds/compiles.
@@ -79,8 +79,8 @@ class MetricRowPredicatesCacheTest {
         MetricQueries.validateFilter(mapping, policyFilter);
         MetricQueries.query(mapping, executors, rewritten);
 
-        assertThat(MetricRowPredicates.descriptorBuildCount()).isEqualTo(1);
-        assertThat(MetricRowPredicates.celCompilationCount()).isEqualTo(2);
+        assertThat(MetricRowPredicateStats.descriptorBuilds()).isEqualTo(1);
+        assertThat(MetricRowPredicateStats.celCompilations()).isEqualTo(2);
     }
 
     @Test
@@ -126,7 +126,7 @@ class MetricRowPredicatesCacheTest {
         assertThat(first.code()).isEqualTo(MetricRefusal.UNSUPPORTED_FILTER);
         assertThat(second.code()).isEqualTo(MetricRefusal.UNSUPPORTED_FILTER);
         assertThat(second).isNotSameAs(first);
-        assertThat(MetricRowPredicates.celCompilationCount()).isEqualTo(1);
+        assertThat(MetricRowPredicateStats.celCompilations()).isEqualTo(1);
 
         // Syntax-invalid expression returns empty referenced members and refuses compile cleanly.
         String syntaxInvalid = "this.segment ==";
@@ -134,7 +134,7 @@ class MetricRowPredicatesCacheTest {
         MetricRefusal third = MetricQueriesTest.refusalOf(
                 () -> MetricRowPredicates.compile(mapping, syntaxInvalid));
         assertThat(third.code()).isEqualTo(MetricRefusal.UNSUPPORTED_FILTER);
-        assertThat(MetricRowPredicates.celCompilationCount()).isEqualTo(2);
+        assertThat(MetricRowPredicateStats.celCompilations()).isEqualTo(2);
     }
 
     @Test
@@ -199,8 +199,8 @@ class MetricRowPredicatesCacheTest {
         } finally {
             pool.shutdownNow();
         }
-        assertThat(MetricRowPredicates.descriptorBuildCount()).isEqualTo(1);
-        assertThat(MetricRowPredicates.celCompilationCount()).isEqualTo(1);
+        assertThat(MetricRowPredicateStats.descriptorBuilds()).isEqualTo(1);
+        assertThat(MetricRowPredicateStats.celCompilations()).isEqualTo(1);
     }
 
     private static Descriptor buildOrderDescriptor(boolean includeTier) throws Exception {
