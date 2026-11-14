@@ -8,6 +8,8 @@ import ai.protomolt.proto.actions.ProtoAction;
 import ai.protomolt.proto.actions.Reply;
 import ai.protomolt.proto.actions.Scopes;
 import ai.protomolt.proto.http.json.MalformedProtobufJsonException;
+import ai.protomolt.proto.jobs.service.PipelineJobCoordinator;
+import ai.protomolt.proto.jobs.service.PipelineJobCoordinator.PipelineDefinitionException;
 import ai.protomolt.proto.jobs.service.events.WorkflowRunEventFactory;
 import ai.protomolt.proto.jobs.service.store.ParkedCompletion;
 import ai.protomolt.proto.jobs.service.store.WorkflowRunRecord;
@@ -101,6 +103,9 @@ public final class CompleteStepAction implements ProtoAction {
                     .build();
         }
         WorkflowRunRecord job = found.get();
+        if (PipelineJobCoordinator.isPipelineJob(job)) {
+            return executePipelineCompletion(jobId, stepName, response, context);
+        }
 
         // The wrong-state gate comes first — fail fast without mutating
         // anything. The store re-gates under the row lock when the entry is
@@ -146,9 +151,32 @@ public final class CompleteStepAction implements ProtoAction {
         entry.set("response", response);
         // ParkedCompletion is sealed: the switch is exhaustive, so the last
         // verdict needs no cast and a new one would not compile.
-        return switch (store.completeParkedStep(jobId, stepName, entry.toString(),
+        return renderCompletion(store.completeParkedStep(jobId, stepName, entry.toString(),
                 validationError == null ? WorkflowRunEventFactory.stepCheckpoint(job, stepName)
-                        : WorkflowRunEventFactory.failed(job, stepName, validationError), validationError)) {
+                        : WorkflowRunEventFactory.failed(job, stepName, validationError), validationError),
+                stepName, jobId);
+    }
+
+    private Message executePipelineCompletion(UUID jobId, String stepName,
+            ObjectNode response, ActionContext context) throws ActionException {
+        ParkedCompletion outcome;
+        try {
+            outcome = new PipelineJobCoordinator(store)
+                    .completeStepJson(jobId, stepName, response, context.registry());
+        } catch (PipelineDefinitionException e) {
+            throw new ActionException("job-corrupt",
+                    "the job's stored pipeline definition is not valid: " + e.getMessage());
+        } catch (MalformedProtobufJsonException e) {
+            throw ActionSupport.invalidInput("'response' is not valid proto3 JSON for step '"
+                    + stepName + "': " + e.getMessage());
+        } catch (IllegalArgumentException e) {
+            throw ActionSupport.invalidInput(e.getMessage());
+        }
+        return renderCompletion(outcome, stepName, jobId);
+    }
+
+    private Message renderCompletion(ParkedCompletion outcome, String stepName, UUID jobId) {
+        return switch (outcome) {
             case ParkedCompletion.Completed _ -> ok(WorkflowRunRecord.STATUS_QUEUED);
             case ParkedCompletion.AlreadyDone(String currentStatus) -> ok(currentStatus);
             case ParkedCompletion.Conflict(String currentStatus) -> Reply.of(responseType())

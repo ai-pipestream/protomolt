@@ -1,30 +1,42 @@
 package ai.protomolt.proto.jobs.service.worker;
 
 import ai.protomolt.proto.actions.ActionContext;
+import ai.protomolt.proto.composer.Channels;
+import ai.protomolt.proto.grpc.workflow.v1.ServiceDependency;
+import ai.protomolt.proto.http.json.MalformedProtobufJsonException;
+import ai.protomolt.proto.jobs.service.PipelineJobCoordinator;
+import ai.protomolt.proto.jobs.service.PipelineJobCoordinator.PipelineDefinitionException;
+import ai.protomolt.proto.jobs.service.WorkflowRunSubmitter;
+import ai.protomolt.proto.jobs.service.WorkflowRunsConfig;
+import ai.protomolt.proto.jobs.service.events.WorkflowRunEventFactory;
+import ai.protomolt.proto.jobs.service.store.ClaimLostException;
+import ai.protomolt.proto.jobs.service.store.WorkerClaim;
+import ai.protomolt.proto.jobs.service.store.WorkflowRunRecord;
+import ai.protomolt.proto.jobs.service.store.WorkflowRunStore;
+import ai.protomolt.proto.jobs.service.store.WorkflowRunStoreException;
+import ai.protomolt.proto.jobs.v1.WorkflowRunRequest;
+import ai.protomolt.proto.kafka.serde.ProtoMoltProtobufDeserializer;
+import ai.protomolt.proto.kafka.serde.ProtoMoltSerdeConfig;
+import ai.protomolt.proto.pipeline.DynamicPipelineTransport;
+import ai.protomolt.proto.pipeline.PipelineExecutor;
+import ai.protomolt.proto.pipeline.v1.EdgeCardinality;
+import ai.protomolt.proto.pipeline.v1.Pipeline;
+import ai.protomolt.proto.pipeline.v1.PipelineStep;
 import ai.protomolt.proto.workflow.CompiledWorkflow;
 import ai.protomolt.proto.workflow.WorkflowJson;
 import ai.protomolt.proto.workflow.WorkflowRepository;
 import ai.protomolt.proto.workflow.WorkflowRunner;
 import ai.protomolt.proto.workflow.WorkflowVerifier;
-import ai.protomolt.proto.jobs.service.WorkflowRunSubmitter;
-import ai.protomolt.proto.jobs.service.WorkflowRunsConfig;
-import ai.protomolt.proto.jobs.service.events.WorkflowRunEventFactory;
-import ai.protomolt.proto.jobs.service.store.WorkflowRunRecord;
-import ai.protomolt.proto.jobs.service.store.WorkflowRunStore;
-import ai.protomolt.proto.jobs.service.store.WorkflowRunStoreException;
-import ai.protomolt.proto.jobs.service.store.ClaimLostException;
-import ai.protomolt.proto.jobs.service.store.WorkerClaim;
-import ai.protomolt.proto.jobs.v1.WorkflowRunRequest;
-import ai.protomolt.proto.http.json.MalformedProtobufJsonException;
-import ai.protomolt.proto.kafka.serde.ProtoMoltProtobufDeserializer;
-import ai.protomolt.proto.kafka.serde.ProtoMoltSerdeConfig;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.google.protobuf.DynamicMessage;
 import com.google.protobuf.Message;
 import com.google.protobuf.util.JsonFormat;
+import io.grpc.ManagedChannel;
 import io.grpc.Status;
+import io.grpc.inprocess.InProcessChannelBuilder;
+import io.grpc.netty.shaded.io.grpc.netty.NettyChannelBuilder;
 import org.apache.kafka.clients.consumer.ConsumerConfig;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.apache.kafka.clients.consumer.ConsumerRecords;
@@ -94,9 +106,12 @@ public final class WorkflowRunWorker implements AutoCloseable {
     private final ActionContext context;
     private final WorkflowRepository repository;
     private final WorkflowRunner runner;
+    private final PipelineExecutor pipelineExecutor;
     private final WorkflowRunsConfig config;
     private final WorkflowRunSubmitter submitter;
     private final ConcurrentHashMap<String, Semaphore> targetPermits = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, ManagedChannel> defaultPipelineChannels =
+            new ConcurrentHashMap<>();
     private final List<Thread> threads = new CopyOnWriteArrayList<>();
     private volatile boolean closed;
 
@@ -115,6 +130,31 @@ public final class WorkflowRunWorker implements AutoCloseable {
         this.context = Objects.requireNonNull(context, "context");
         this.repository = repository;
         this.runner = Objects.requireNonNull(runner, "runner");
+        this.config = Objects.requireNonNull(config, "config");
+        this.pipelineExecutor = new PipelineExecutor(new DynamicPipelineTransport(
+                dependency -> defaultPipelineChannels.computeIfAbsent(
+                        dependency.getEndpoint(), WorkflowRunWorker::openChannel)));
+        this.submitter = new WorkflowRunSubmitter(store, repository, config.maxAttemptsDefault());
+    }
+
+    /**
+     * Creates a worker with explicit workflow and pipeline executors.
+     *
+     * @param store the jobs store (the truth)
+     * @param context type resolution and JSON machinery
+     * @param repository resolves stored workflow names, or null for inline-only
+     * @param runner the workflow executor
+     * @param pipelineExecutor the pipeline executor used for durable pipeline runs
+     * @param config worker/consumer settings
+     */
+    public WorkflowRunWorker(WorkflowRunStore store, ActionContext context,
+            WorkflowRepository repository, WorkflowRunner runner,
+            PipelineExecutor pipelineExecutor, WorkflowRunsConfig config) {
+        this.store = Objects.requireNonNull(store, "store");
+        this.context = Objects.requireNonNull(context, "context");
+        this.repository = repository;
+        this.runner = Objects.requireNonNull(runner, "runner");
+        this.pipelineExecutor = Objects.requireNonNull(pipelineExecutor, "pipelineExecutor");
         this.config = Objects.requireNonNull(config, "config");
         this.submitter = new WorkflowRunSubmitter(store, repository, config.maxAttemptsDefault());
     }
@@ -198,6 +238,10 @@ public final class WorkflowRunWorker implements AutoCloseable {
     }
 
     private void executeClaimed(WorkflowRunRecord job, WorkerClaim claim) {
+        if (PipelineJobCoordinator.isPipelineJob(job)) {
+            executeClaimedPipeline(job, claim);
+            return;
+        }
         CompiledWorkflow definition = parseAndVerify(job, claim);
         if (definition == null) {
             return;
@@ -252,6 +296,76 @@ public final class WorkflowRunWorker implements AutoCloseable {
                 throw lost;
             }
             handleFailure(job, claim, e);
+        } finally {
+            if (permit != null) {
+                permit.release();
+            }
+        }
+    }
+
+    private void executeClaimedPipeline(WorkflowRunRecord job, WorkerClaim claim) {
+        PipelineJobCoordinator.Definition definition;
+        try {
+            definition = PipelineJobCoordinator.readDefinition(job);
+        } catch (PipelineDefinitionException e) {
+            fail(job, claim, e.step(), "PIPELINE: " + e.getMessage());
+            return;
+        }
+        List<PipelineExecutor.Checkpoint> prior;
+        try {
+            prior = PipelineJobCoordinator.readCheckpoints(job, definition);
+        } catch (PipelineDefinitionException e) {
+            fail(job, claim, e.step(), "PIPELINE: " + e.getMessage());
+            return;
+        }
+        List<PipelineExecutor.Checkpoint> accumulated = new ArrayList<>(prior);
+        Semaphore permit = acquirePipelinePermit(definition.pipeline(), prior.size());
+        PipelineExecutor.ExecutionIdentity identity =
+                new PipelineExecutor.ExecutionIdentity(job.jobId.toString(), job.attempt);
+        try {
+            PipelineExecutor.Segment segment = pipelineExecutor.runSegment(
+                    definition.pipeline(),
+                    definition.files(),
+                    definition.input(),
+                    prior,
+                    identity,
+                    checkpoint -> {
+                        accumulated.add(checkpoint);
+                        store.saveCheckpoint(claim,
+                                PipelineJobCoordinator.writeCheckpoints(
+                                        accumulated, definition.files()),
+                                WorkflowRunEventFactory.stepCheckpoint(
+                                        job, checkpoint.outcome().name()));
+                    });
+            switch (segment) {
+                case PipelineExecutor.Segment.Completed completed -> {
+                    String resultJson = PipelineJobCoordinator.writeResult(
+                            completed.result(), definition.files());
+                    String verdict = completed.result().cardinality()
+                            == EdgeCardinality.EDGE_CARDINALITY_ONE
+                            ? completed.result().steps().size() + " steps, output "
+                                    + completed.result().message()
+                                            .getDescriptorForType().getFullName()
+                            : completed.result().steps().size() + " steps, stream ("
+                                    + completed.result().messages().size() + " messages)";
+                    store.markCompleted(claim, resultJson, verdict,
+                            WorkflowRunEventFactory.completed(job, verdict));
+                    LOG.info("pipeline run {} completed: {}", job.jobId, verdict);
+                }
+                case PipelineExecutor.Segment.Parked parked -> {
+                    store.markWaiting(claim, parked.step(),
+                            PipelineJobCoordinator.writeCheckpoints(
+                                    accumulated, definition.files()),
+                            WorkflowRunEventFactory.waiting(job, parked.step()));
+                    LOG.info("pipeline run {} parked on external step '{}'",
+                            job.jobId, parked.step());
+                }
+            }
+        } catch (PipelineExecutor.PipelineExecutionException e) {
+            if (e.getCause() instanceof ClaimLostException lost) {
+                throw lost;
+            }
+            handlePipelineFailure(job, claim, e);
         } finally {
             if (permit != null) {
                 permit.release();
@@ -391,6 +505,37 @@ public final class WorkflowRunWorker implements AutoCloseable {
                 && e.getCause() instanceof WorkflowRunStoreException;
     }
 
+    private void handlePipelineFailure(WorkflowRunRecord job, WorkerClaim claim,
+            PipelineExecutor.PipelineExecutionException e) {
+        boolean retryable = isPipelineRetryable(e);
+        String detail = e.kind() + ": " + e.getMessage();
+        if (retryable && job.attempt < job.maxAttempts) {
+            Duration backoff = backoff(job.attempt);
+            store.requeue(claim, backoff);
+            LOG.info("pipeline run {} attempt {}/{} failed retryably ({}); requeued in {}s",
+                    job.jobId, job.attempt, job.maxAttempts, detail, backoff.toSeconds());
+        } else if (retryable) {
+            store.markDead(claim, detail, WorkflowRunEventFactory.dead(job, detail));
+            LOG.warn("pipeline run {} is DEAD after {} attempt(s): {}",
+                    job.jobId, job.attempt, detail);
+        } else {
+            fail(job, claim, e.step(), detail);
+        }
+    }
+
+    private static boolean isPipelineRetryable(PipelineExecutor.PipelineExecutionException e) {
+        if (e.kind() == PipelineExecutor.FailureKind.DEADLINE) {
+            return true;
+        }
+        if (e.kind() == PipelineExecutor.FailureKind.GRPC) {
+            return e.grpcCode() == Status.Code.UNAVAILABLE
+                    || e.grpcCode() == Status.Code.DEADLINE_EXCEEDED
+                    || e.grpcCode() == Status.Code.RESOURCE_EXHAUSTED;
+        }
+        return e.kind() == PipelineExecutor.FailureKind.PIPELINE
+                && e.getCause() instanceof WorkflowRunStoreException;
+    }
+
     private Duration backoff(int attempt) {
         // attempt is the 1-based counter of the attempt that just failed.
         long shift = Math.min(Math.max(attempt - 1, 0), WorkflowRunsConfig.MAX_BACKOFF_EXPONENT);
@@ -421,6 +566,50 @@ public final class WorkflowRunWorker implements AutoCloseable {
                     + "for " + target, e);
         }
         return semaphore;
+    }
+
+    private Semaphore acquirePipelinePermit(Pipeline pipeline, int nextStepIndex) {
+        if (nextStepIndex >= pipeline.getStepsCount()) {
+            return null;
+        }
+        PipelineStep step = pipeline.getSteps(nextStepIndex);
+        if (step.getDependency().isEmpty()) {
+            return null;
+        }
+        String target = step.getDependency();
+        for (ServiceDependency dependency : pipeline.getDependenciesList()) {
+            if (dependency.getAlias().equals(step.getDependency())
+                    && !dependency.getEndpoint().isEmpty()) {
+                target = dependency.getEndpoint();
+                break;
+            }
+        }
+        Semaphore semaphore = targetPermits.computeIfAbsent(target,
+                key -> new Semaphore(config.maxConcurrentPerTarget()));
+        try {
+            semaphore.acquire();
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException("interrupted acquiring the per-target permit "
+                    + "for " + target, e);
+        }
+        return semaphore;
+    }
+
+    private static final String IN_PROCESS_PATH_SAFE_PREFIX = "in-process.";
+
+    private static ManagedChannel openChannel(String target) {
+        if (target.startsWith(Channels.IN_PROCESS_PREFIX)) {
+            return InProcessChannelBuilder.forName(
+                            target.substring(Channels.IN_PROCESS_PREFIX.length()))
+                    .build();
+        }
+        if (target.startsWith(IN_PROCESS_PATH_SAFE_PREFIX)) {
+            return InProcessChannelBuilder.forName(
+                            target.substring(IN_PROCESS_PATH_SAFE_PREFIX.length()))
+                    .build();
+        }
+        return NettyChannelBuilder.forTarget(target).usePlaintext().build();
     }
 
     private String checkpointsJson(List<WorkflowRunner.Checkpoint> checkpoints) {
@@ -582,6 +771,8 @@ public final class WorkflowRunWorker implements AutoCloseable {
             }
         }
         threads.clear();
+        defaultPipelineChannels.values().forEach(ManagedChannel::shutdownNow);
+        defaultPipelineChannels.clear();
     }
 
     private static void sleep(long millis) {

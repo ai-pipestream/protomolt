@@ -90,7 +90,8 @@ The failure model rides `WorkflowRunner.WorkflowExecutionException.kind()`:
 
 ## Park / resume (external steps)
 
-A step declaring `completion: "external"` parks the job: the worker persists
+A step declaring `completion: "external"` (or `STEP_COMPLETION_EXTERNAL` in a
+`Pipeline`) parks the job: the worker persists
 the checkpoint prefix, writes the WAITING event, and stops (the workflow
 deadline bounds a segment, not the hours a human may take). `complete-step`
 supplies the response: the job's state is gated first (only a WAITING job
@@ -98,7 +99,34 @@ parked on exactly that step accepts it), the response is parsed against the
 step's output type and — when the step declares `validate` — checked against
 its declared rules (a rejection fails the job as a verdict). Accepted, the
 checkpoint appends and the job requeues in one transaction; the worker fleet
-runs the next segment. Redelivering a completed step is idempotent.
+runs the next segment. Redelivering a completed step is idempotent, while
+reusing a `jobId` or completing an already-settled step with an altered
+definition, input, or response payload is refused as a conflict without
+mutating the committed outcome.
+
+## Durable pipeline runs
+
+`PipelineJobCoordinator` and `WorkflowRunSubmitter.submitPipeline` run compiled
+`ai.protomolt.proto.pipeline.v1.Pipeline` definitions on the same `workflow_run`
+state machine, lease sweeper, `WorkerClaim` fencing, and outbox relay:
+
+- The `protomolt.pipeline.v1` job snapshot stores canonical protobuf wire bytes
+  for the `Pipeline`, topological `FileDescriptorSet` closure, and input
+  message (`bytes`, `uint64`, `google.protobuf.Any`, and unknown fields remain
+  intact across restarts), paired with SHA-256 pipeline and input fingerprints.
+- `WorkflowRunWorker` executes segments via `PipelineExecutor.runSegment` with
+  `ExecutionIdentity(jobId, attempt)` so `DynamicPipelineTransport` propagates
+  `x-protomolt-operation-id` (`<jobId>/<stepName>` or `<jobId>/<step>#<branch>`)
+  to downstream gRPC services.
+- Each pipeline checkpoint stores canonical protobuf message bytes, cardinality
+  (`ONE` or `MANY`), `StepOutcome` counts, and fan-out `BranchOutcome` evidence
+  alongside a JSON `response` view (`{"items": [...]}` for streams) for
+  `get-job`.
+- `complete-step` settles both unary (`ONE`) and server-streaming (`MANY`, via
+  `{"items": [...]}`) external pipeline steps, enforcing `max_stream_messages`
+  and `validate_response` before requeuing.
+- `JobsModule` contributes all four job verbs (`submit-workflow`, `get-job`,
+  `list-jobs`, and `complete-step`).
 
 ## Per-target concurrency
 

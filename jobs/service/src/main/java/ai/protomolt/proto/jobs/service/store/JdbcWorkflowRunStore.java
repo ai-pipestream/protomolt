@@ -361,7 +361,7 @@ public final class JdbcWorkflowRunStore implements WorkflowRunStore {
             // Idempotent redelivery: the step's checkpoint already persisted.
             for (JsonNode entry : checkpoints) {
                 if (stepName.equals(entry.path("name").asText())) {
-                    return entry.path("response").equals(candidate.path("response"))
+                    return sameCompletion(entry, candidate)
                             ? new ParkedCompletion.AlreadyDone(status)
                             : new ParkedCompletion.Conflict(status);
                 }
@@ -561,5 +561,20 @@ public final class JdbcWorkflowRunStore implements WorkflowRunStore {
             return null;
         }
         return error.length() <= MAX_ERROR_LENGTH ? error : error.substring(0, MAX_ERROR_LENGTH);
+    }
+
+    private static boolean sameCompletion(JsonNode stored, JsonNode candidate) {
+        if (stored.path("skipped").asBoolean(false)
+                != candidate.path("skipped").asBoolean(false)) {
+            return false;
+        }
+        if (!stored.path("response").equals(candidate.path("response"))) {
+            return false;
+        }
+        if (stored.has("pipelineCheckpoint") || candidate.has("pipelineCheckpoint")) {
+            return stored.path("pipelineCheckpoint")
+                    .equals(candidate.path("pipelineCheckpoint"));
+        }
+        return true;
     }
 }

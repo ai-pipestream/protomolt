@@ -53,6 +53,20 @@ final class FanOutBranches {
         DynamicMessage run(DynamicMessage input) throws PipelineExecutionException;
     }
 
+    /** One indexed branch's work: 0-based branch index and delivered item in, output out. */
+    @FunctionalInterface
+    interface IndexedBranchCall {
+        /**
+         * Runs one branch with its stable 0-based item index.
+         *
+         * @param index 0-based branch index
+         * @param input the delivered item for this branch
+         * @return the branch output collected into the step's result
+         * @throws PipelineExecutionException when the branch fails with a classified failure
+         */
+        DynamicMessage run(int index, DynamicMessage input) throws PipelineExecutionException;
+    }
+
     private FanOutBranches() {
     }
 
@@ -73,6 +87,14 @@ final class FanOutBranches {
                                     FanOutSpec fanOut, BranchCall call, long deadlineNanos,
                                     List<BranchOutcome> branchEvidence)
             throws PipelineExecutionException {
+        return runIndexed(step, items, fanOut, (index, item) -> call.run(item), deadlineNanos,
+                branchEvidence);
+    }
+
+    static List<DynamicMessage> runIndexed(String step, List<DynamicMessage> items,
+                                           FanOutSpec fanOut, IndexedBranchCall call,
+                                           long deadlineNanos, List<BranchOutcome> branchEvidence)
+            throws PipelineExecutionException {
         DynamicMessage[] slots = new DynamicMessage[items.size()];
         PipelineExecutionException[] failures = new PipelineExecutionException[items.size()];
         Semaphore permits = new Semaphore(fanOut.getMaxConcurrency());
@@ -91,7 +113,7 @@ final class FanOutBranches {
                         permits.acquire();
                         acquired = true;
                         if (!abandoned.get()) {
-                            slots[index] = call.run(items.get(index));
+                            slots[index] = call.run(index, items.get(index));
                         }
                     } catch (InterruptedException e) {
                         Thread.currentThread().interrupt();

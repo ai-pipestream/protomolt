@@ -198,9 +198,10 @@ public final class InMemoryWorkflowRunStore implements WorkflowRunStore {
         try {
             ArrayNode checkpoints = (ArrayNode) JSON.readTree(
                     job.checkpoints == null ? "[]" : job.checkpoints);
+            JsonNode candidate = JSON.readTree(checkpointEntryJson);
             for (JsonNode entry : checkpoints) {
                 if (stepName.equals(entry.path("name").asText())) {
-                    return entry.path("response").equals(JSON.readTree(checkpointEntryJson).path("response"))
+                    return sameCompletion(entry, candidate)
                             ? new ParkedCompletion.AlreadyDone(job.status)
                             : new ParkedCompletion.Conflict(job.status);
                 }
@@ -220,7 +221,7 @@ public final class InMemoryWorkflowRunStore implements WorkflowRunStore {
                 events.add(stepEvent);
                 return new ParkedCompletion.Rejected(validationError);
             }
-            checkpoints.add(JSON.readTree(checkpointEntryJson));
+            checkpoints.add(candidate);
             job.checkpoints = checkpoints.toString();
             job.status = WorkflowRunRecord.STATUS_QUEUED;
             job.outstandingStep = null;
@@ -231,6 +232,21 @@ public final class InMemoryWorkflowRunStore implements WorkflowRunStore {
         } catch (Exception e) {
             throw WorkflowRunStoreException.wrap("complete-parked-step failed", e);
         }
+    }
+
+    private static boolean sameCompletion(JsonNode stored, JsonNode candidate) {
+        if (stored.path("skipped").asBoolean(false)
+                != candidate.path("skipped").asBoolean(false)) {
+            return false;
+        }
+        if (!stored.path("response").equals(candidate.path("response"))) {
+            return false;
+        }
+        if (stored.has("pipelineCheckpoint") || candidate.has("pipelineCheckpoint")) {
+            return stored.path("pipelineCheckpoint")
+                    .equals(candidate.path("pipelineCheckpoint"));
+        }
+        return true;
     }
 
     @Override
