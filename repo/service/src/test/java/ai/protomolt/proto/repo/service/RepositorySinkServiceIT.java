@@ -26,6 +26,8 @@ import ai.protomolt.proto.jobs.service.store.WorkflowRunDatabase;
 import ai.protomolt.proto.jobs.service.store.WorkflowRunRecord;
 import ai.protomolt.proto.jobs.service.store.WorkflowRunStoreConfig;
 import ai.protomolt.proto.jobs.service.worker.WorkflowRunWorker;
+import ai.protomolt.proto.repo.archive.RepositorySink;
+import ai.protomolt.proto.repo.archive.RepositorySinkJobStore;
 import ai.protomolt.proto.repo.archive.RepositorySinkRenderers;
 import ai.protomolt.proto.repo.archive.v1.Archive;
 import ai.protomolt.proto.repo.archive.v1.ArchiveServiceGrpc;
@@ -40,6 +42,8 @@ import ai.protomolt.proto.repo.archive.v1.RenditionDescriptor;
 import ai.protomolt.proto.repo.archive.v1.VersioningPolicy;
 import ai.protomolt.proto.repo.container.ledger.LedgerConfig;
 import ai.protomolt.proto.repo.sink.v1.ArchiveRenditionSource;
+import ai.protomolt.proto.repo.sink.v1.CancelRepositorySinkJobRequest;
+import ai.protomolt.proto.repo.sink.v1.CancelRepositorySinkJobResponse;
 import ai.protomolt.proto.repo.sink.v1.ConversionSpec;
 import ai.protomolt.proto.repo.sink.v1.GetRepositorySinkJobRequest;
 import ai.protomolt.proto.repo.sink.v1.ListRenditionProvenanceRequest;
@@ -743,6 +747,365 @@ class RepositorySinkServiceIT {
         assertThat(provenanceAfterRestart.getEntriesList()).hasSize(2);
     }
 
+    @Test
+    void twoInstancesSharingPostgresPreserveLiveLeaseOnPollPropagateCancelAndFenceExpiredOrphans()
+            throws Exception {
+        JdbcRepositorySinkJobStore directStore =
+                new JdbcRepositorySinkJobStore(services.ledgerDataSource());
+
+        // ---------------------------------------------------------------------
+        // 1. Live cross-instance GetRepositorySinkJob poll:
+        //    instanceA renders slowly; polling on instanceB returns RUNNING
+        //    (never FAILED), and instanceA commits SUCCEEDED cleanly.
+        // ---------------------------------------------------------------------
+        CountDownLatch pollRenderStarted = new CountDownLatch(1);
+        CountDownLatch pollAllowFinish = new CountDownLatch(1);
+        RendererProvider pollRenderer = gatedMarkdownProvider(
+                pollRenderStarted, pollAllowFinish, new AtomicInteger());
+        RepositorySinkRenderers pollMounted = RepositorySinkRenderers.of(
+                List.of(pollRenderer), Set.of(pollRenderer.capability().getProviderId()));
+        services.withRenderers(pollMounted);
+
+        try (PeerHost instanceB = bootPeerHost(
+                defaultAccountBindings(true),
+                pollMounted,
+                RepositorySink.LeaseConfig.DEFAULT)) {
+            EntryAddress pollDest = entry("multi-instance-live-poll");
+            DynamicMessage pollRecord = buildDomainRecord("rec-multi-1", "Live Multi Instance");
+            String pollOpId = "op-multi-live-poll-1";
+            PublishRepositorySinkResponse admittedOnA =
+                    as(WRITER_TOKEN, RepositorySinkServiceGrpc.newBlockingStub(repoChannel))
+                            .publishRepositorySink(PublishRepositorySinkRequest.newBuilder()
+                                    .setOperationId(pollOpId)
+                                    .setAsync(true)
+                                    .setSource(processingSource(pollRecord, "run-multi-1", "render"))
+                                    .setConversion(markdownConversionSpec(pollRenderer.capability()))
+                                    .setDestination(SinkDestination.newBuilder()
+                                            .setAddress(pollDest)
+                                            .setRendition(RenditionDescriptor.newBuilder()
+                                                    .setName("readme_md")
+                                                    .setMediaType("text/markdown")))
+                                    .build());
+            assertThat(admittedOnA.getJob().getOperationId()).isEqualTo(pollOpId);
+            assertThat(pollRenderStarted.await(10, TimeUnit.SECONDS)).isTrue();
+
+            for (int i = 0; i < 3; i++) {
+                RepositorySinkJob seenOnB = as(
+                                READER_TOKEN,
+                                RepositorySinkServiceGrpc.newBlockingStub(instanceB.channel))
+                        .getRepositorySinkJob(GetRepositorySinkJobRequest.newBuilder()
+                                .setAccountId(accountId)
+                                .setOperationId(pollOpId)
+                                .build())
+                        .getJob();
+                assertThat(seenOnB.getState())
+                        .isEqualTo(RepositorySinkJobState.REPOSITORY_SINK_JOB_STATE_RUNNING);
+            }
+            RepositorySinkJobStore.StoredJob storedMidFlight =
+                    directStore.find(accountId, pollOpId).orElseThrow();
+            assertThat(storedMidFlight.lease().leaseEpoch()).isEqualTo(1L);
+
+            pollAllowFinish.countDown();
+            RepositorySinkJob settledOnA = awaitTerminalJobOn(repoChannel, READER_TOKEN, pollOpId);
+            assertThat(settledOnA.getState())
+                    .isEqualTo(RepositorySinkJobState.REPOSITORY_SINK_JOB_STATE_SUCCEEDED);
+            assertThat(settledOnA.getDestinationVersion()).isEqualTo(1L);
+
+            RepositorySinkJob settledOnB = as(
+                            READER_TOKEN,
+                            RepositorySinkServiceGrpc.newBlockingStub(instanceB.channel))
+                    .getRepositorySinkJob(GetRepositorySinkJobRequest.newBuilder()
+                            .setAccountId(accountId)
+                            .setOperationId(pollOpId)
+                            .build())
+                    .getJob();
+            assertThat(settledOnB.getState())
+                    .isEqualTo(RepositorySinkJobState.REPOSITORY_SINK_JOB_STATE_SUCCEEDED);
+            assertThat(settledOnB.getDestinationVersion()).isEqualTo(1L);
+
+            // -----------------------------------------------------------------
+            // 2. Cross-instance CancelRepositorySinkJob:
+            //    Submit slow render on instanceA, cancel on instanceB ->
+            //    instanceA observes durable cancel_requested on heartbeat,
+            //    aborts before commit (bytes_committed == 0, no entry created),
+            //    and both instances observe settled CANCELLED.
+            // -----------------------------------------------------------------
+            CountDownLatch cancelRenderStarted = new CountDownLatch(1);
+            CountDownLatch cancelNeverReleased = new CountDownLatch(1);
+            RendererProvider cancelRenderer = gatedMarkdownProvider(
+                    cancelRenderStarted, cancelNeverReleased, new AtomicInteger());
+            RepositorySinkRenderers cancelMounted = RepositorySinkRenderers.of(
+                    List.of(cancelRenderer), Set.of(cancelRenderer.capability().getProviderId()));
+            services.withRenderers(cancelMounted)
+                    .withSinkLeaseConfig(new RepositorySink.LeaseConfig(
+                            Duration.ofSeconds(10),
+                            Duration.ofMillis(30),
+                            Duration.ofSeconds(3)));
+            instanceB.services.withRenderers(cancelMounted)
+                    .withSinkLeaseConfig(new RepositorySink.LeaseConfig(
+                            Duration.ofSeconds(10),
+                            Duration.ofMillis(30),
+                            Duration.ofSeconds(3)));
+
+            EntryAddress cancelDest = entry("multi-instance-cancelled-entry");
+            String cancelOpId = "op-multi-cancel-1";
+            as(WRITER_TOKEN, RepositorySinkServiceGrpc.newBlockingStub(repoChannel))
+                    .publishRepositorySink(PublishRepositorySinkRequest.newBuilder()
+                            .setOperationId(cancelOpId)
+                            .setAsync(true)
+                            .setSource(processingSource(pollRecord, "run-multi-2", "render"))
+                            .setConversion(markdownConversionSpec(cancelRenderer.capability()))
+                            .setDestination(SinkDestination.newBuilder()
+                                    .setAddress(cancelDest)
+                                    .setRendition(RenditionDescriptor.newBuilder()
+                                            .setName("readme_md")
+                                            .setMediaType("text/markdown")))
+                            .build());
+            assertThat(cancelRenderStarted.await(10, TimeUnit.SECONDS)).isTrue();
+
+            CancelRepositorySinkJobResponse cancelOnB = as(
+                            WRITER_TOKEN,
+                            RepositorySinkServiceGrpc.newBlockingStub(instanceB.channel))
+                    .cancelRepositorySinkJob(CancelRepositorySinkJobRequest.newBuilder()
+                            .setAccountId(accountId)
+                            .setOperationId(cancelOpId)
+                            .setReason("cancelled-via-instance-B")
+                            .build());
+            assertThat(cancelOnB.getJob().getState())
+                    .isEqualTo(RepositorySinkJobState.REPOSITORY_SINK_JOB_STATE_CANCELLED);
+            assertThat(cancelOnB.getJob().getBytesCommitted()).isZero();
+            assertThat(cancelOnB.getJob().getFailure().getMessage())
+                    .isEqualTo("cancelled-via-instance-B");
+
+            RepositorySinkJob cancelledSeenOnA =
+                    awaitTerminalJobOn(repoChannel, READER_TOKEN, cancelOpId);
+            assertThat(cancelledSeenOnA.getState())
+                    .isEqualTo(RepositorySinkJobState.REPOSITORY_SINK_JOB_STATE_CANCELLED);
+            assertThat(cancelledSeenOnA.getBytesCommitted()).isZero();
+            assertThatThrownBy(() -> as(READER_TOKEN, ArchiveServiceGrpc.newBlockingStub(repoChannel))
+                    .getEntryManifest(GetEntryManifestRequest.newBuilder()
+                            .setAddress(cancelDest)
+                            .build()))
+                    .isInstanceOfSatisfying(StatusRuntimeException.class, ex ->
+                            assertThat(ex.getStatus().getCode()).isEqualTo(Status.Code.NOT_FOUND));
+
+            // -----------------------------------------------------------------
+            // 2b. Non-interruptible renderer + zero settle wait on instanceB:
+            //     instanceB sets cancel_requested = true and returns RUNNING
+            //     immediately (never falsely reporting CANCELLED while A runs);
+            //     when A finishes rendering, prepareCommit blocks commit and
+            //     settles CANCELLED with bytes_committed == 0!
+            // -----------------------------------------------------------------
+            CountDownLatch preCommitCancelStarted = new CountDownLatch(1);
+            CountDownLatch preCommitCancelRelease = new CountDownLatch(1);
+            RendererProvider uninterruptibleCancelRenderer = uninterruptibleGatedMarkdownProvider(
+                    preCommitCancelStarted, preCommitCancelRelease);
+            RepositorySinkRenderers uninterruptibleMounted = RepositorySinkRenderers.of(
+                    List.of(uninterruptibleCancelRenderer),
+                    Set.of(uninterruptibleCancelRenderer.capability().getProviderId()));
+            // Long heartbeat interval on A ensures prepareCommit itself (not heartbeat) catches
+            // durable cancel_requested right before commit; zero settle wait on B exercises the
+            // immediate non-terminal RUNNING response path.
+            services.withRenderers(uninterruptibleMounted)
+                    .withSinkLeaseConfig(new RepositorySink.LeaseConfig(
+                            Duration.ofSeconds(15),
+                            Duration.ofSeconds(30),
+                            Duration.ZERO));
+            instanceB.services.withRenderers(uninterruptibleMounted)
+                    .withSinkLeaseConfig(new RepositorySink.LeaseConfig(
+                            Duration.ofSeconds(15),
+                            Duration.ofMillis(50),
+                            Duration.ZERO));
+
+            EntryAddress preCommitCancelDest = entry("multi-instance-precommit-cancel");
+            String preCommitCancelOpId = "op-multi-precommit-cancel-1";
+            as(WRITER_TOKEN, RepositorySinkServiceGrpc.newBlockingStub(repoChannel))
+                    .publishRepositorySink(PublishRepositorySinkRequest.newBuilder()
+                            .setOperationId(preCommitCancelOpId)
+                            .setAsync(true)
+                            .setSource(processingSource(pollRecord, "run-multi-2b", "render"))
+                            .setConversion(markdownConversionSpec(
+                                    uninterruptibleCancelRenderer.capability()))
+                            .setDestination(SinkDestination.newBuilder()
+                                    .setAddress(preCommitCancelDest)
+                                    .setRendition(RenditionDescriptor.newBuilder()
+                                            .setName("readme_md")
+                                            .setMediaType("text/markdown")))
+                            .build());
+            assertThat(preCommitCancelStarted.await(10, TimeUnit.SECONDS)).isTrue();
+
+            CancelRepositorySinkJobResponse nonTerminalCancelOnB = as(
+                            WRITER_TOKEN,
+                            RepositorySinkServiceGrpc.newBlockingStub(instanceB.channel))
+                    .cancelRepositorySinkJob(CancelRepositorySinkJobRequest.newBuilder()
+                            .setAccountId(accountId)
+                            .setOperationId(preCommitCancelOpId)
+                            .setReason("abort-at-precommit-fence")
+                            .build());
+            assertThat(nonTerminalCancelOnB.getJob().getState())
+                    .isEqualTo(RepositorySinkJobState.REPOSITORY_SINK_JOB_STATE_RUNNING);
+
+            preCommitCancelRelease.countDown();
+            RepositorySinkJob preCommitSettledOnB =
+                    awaitTerminalJobOn(instanceB.channel, READER_TOKEN, preCommitCancelOpId);
+            assertThat(preCommitSettledOnB.getState())
+                    .isEqualTo(RepositorySinkJobState.REPOSITORY_SINK_JOB_STATE_CANCELLED);
+            assertThat(preCommitSettledOnB.getBytesRendered()).isGreaterThan(0L);
+            assertThat(preCommitSettledOnB.getBytesCommitted()).isZero();
+            assertThat(preCommitSettledOnB.getFailure().getMessage())
+                    .isEqualTo("abort-at-precommit-fence");
+            assertThatThrownBy(() -> as(READER_TOKEN, ArchiveServiceGrpc.newBlockingStub(repoChannel))
+                    .getEntryManifest(GetEntryManifestRequest.newBuilder()
+                            .setAddress(preCommitCancelDest)
+                            .build()))
+                    .isInstanceOfSatisfying(StatusRuntimeException.class, ex ->
+                            assertThat(ex.getStatus().getCode()).isEqualTo(Status.Code.NOT_FOUND));
+
+            // -----------------------------------------------------------------
+            // 3a. Expired-lease orphan fencing (uncommitted):
+            //     Simulate stalled heartbeat on instanceA so lease_expires_at <= now
+            //     while instanceA's worker is still paused with lease_epoch = 1.
+            //     instanceB fences lease_epoch = 2 and marks FAILED; when stale
+            //     instanceA wakes up, prepareCommit rejects it with LEASE_LOST so
+            //     zero bytes commit and FAILED is not overwritten!
+            // -----------------------------------------------------------------
+            CountDownLatch staleStarted = new CountDownLatch(1);
+            CountDownLatch staleRelease = new CountDownLatch(1);
+            RendererProvider staleRenderer = uninterruptibleGatedMarkdownProvider(
+                    staleStarted, staleRelease);
+            RepositorySinkRenderers staleMounted = RepositorySinkRenderers.of(
+                    List.of(staleRenderer), Set.of(staleRenderer.capability().getProviderId()));
+            // Heartbeat interval (30s) > lease duration (120ms) simulates a stalled owner A whose
+            // lease expires before its render thread wakes up.
+            services.withRenderers(staleMounted)
+                    .withSinkLeaseConfig(new RepositorySink.LeaseConfig(
+                            Duration.ofMillis(120),
+                            Duration.ofSeconds(30),
+                            Duration.ofMillis(100)));
+            instanceB.services.withRenderers(staleMounted)
+                    .withSinkLeaseConfig(RepositorySink.LeaseConfig.DEFAULT);
+
+            EntryAddress staleDest = entry("multi-instance-stale-fenced");
+            String staleOpId = "op-multi-stale-uncommitted";
+            as(WRITER_TOKEN, RepositorySinkServiceGrpc.newBlockingStub(repoChannel))
+                    .publishRepositorySink(PublishRepositorySinkRequest.newBuilder()
+                            .setOperationId(staleOpId)
+                            .setAsync(true)
+                            .setSource(processingSource(pollRecord, "run-multi-3", "render"))
+                            .setConversion(markdownConversionSpec(staleRenderer.capability()))
+                            .setDestination(SinkDestination.newBuilder()
+                                    .setAddress(staleDest)
+                                    .setRendition(RenditionDescriptor.newBuilder()
+                                            .setName("readme_md")
+                                            .setMediaType("text/markdown")))
+                            .build());
+            assertThat(staleStarted.await(10, TimeUnit.SECONDS)).isTrue();
+
+            // Wait for instanceA's 120ms lease to expire.
+            Thread.sleep(220L);
+
+            RepositorySinkJob fencedByB = as(
+                            READER_TOKEN,
+                            RepositorySinkServiceGrpc.newBlockingStub(instanceB.channel))
+                    .getRepositorySinkJob(GetRepositorySinkJobRequest.newBuilder()
+                            .setAccountId(accountId)
+                            .setOperationId(staleOpId)
+                            .build())
+                    .getJob();
+            assertThat(fencedByB.getState())
+                    .isEqualTo(RepositorySinkJobState.REPOSITORY_SINK_JOB_STATE_FAILED);
+            assertThat(fencedByB.getFailure().getReasonCode()).isEqualTo("COMMIT_NOT_RECORDED");
+            assertThat(fencedByB.getFailure().getRetryable()).isTrue();
+
+            RepositorySinkJobStore.StoredJob afterFence =
+                    directStore.find(accountId, staleOpId).orElseThrow();
+            assertThat(afterFence.lease().leaseEpoch()).isEqualTo(2L);
+
+            // Release stale instanceA worker (still holding epoch 1): it must NOT commit or
+            // overwrite epoch 2's FAILED job!
+            staleRelease.countDown();
+            Thread.sleep(150L);
+
+            RepositorySinkJobStore.StoredJob afterStaleWake =
+                    directStore.find(accountId, staleOpId).orElseThrow();
+            assertThat(afterStaleWake.lease().leaseEpoch()).isEqualTo(2L);
+            assertThat(afterStaleWake.job().getState())
+                    .isEqualTo(RepositorySinkJobState.REPOSITORY_SINK_JOB_STATE_FAILED);
+            assertThatThrownBy(() -> as(READER_TOKEN, ArchiveServiceGrpc.newBlockingStub(repoChannel))
+                    .getEntryManifest(GetEntryManifestRequest.newBuilder()
+                            .setAddress(staleDest)
+                            .build()))
+                    .isInstanceOfSatisfying(StatusRuntimeException.class, ex ->
+                            assertThat(ex.getStatus().getCode()).isEqualTo(Status.Code.NOT_FOUND));
+
+            // -----------------------------------------------------------------
+            // 3b. Expired-lease orphan fencing (already committed before crash):
+            //     Simulate an owner that committed in v2, then crashed while row
+            //     was still RUNNING at lease_epoch = 1 with expired lease.
+            //     instanceB fences lease_epoch = 2, checks GetOperationOutcome,
+            //     reconciles to SUCCEEDED, and fences out stale epoch 1 writes!
+            // -----------------------------------------------------------------
+            services.withSinkLeaseConfig(RepositorySink.LeaseConfig.DEFAULT);
+            EntryAddress committedOrphanDest = entry("multi-instance-committed-orphan");
+            String committedOrphanOpId = "op-multi-stale-committed";
+            PublishRepositorySinkResponse committedFirst = as(
+                            WRITER_TOKEN, RepositorySinkServiceGrpc.newBlockingStub(repoChannel))
+                    .publishRepositorySink(PublishRepositorySinkRequest.newBuilder()
+                            .setOperationId(committedOrphanOpId)
+                            .setSource(processingSource(pollRecord, "run-multi-4", "ingest"))
+                            .setDestination(SinkDestination.newBuilder()
+                                    .setAddress(committedOrphanDest)
+                                    .setRendition(RenditionDescriptor.newBuilder()
+                                            .setName("state")
+                                            .setMediaType("application/x-protobuf")))
+                            .build());
+            assertThat(committedFirst.getJob().getDestinationVersion()).isEqualTo(1L);
+
+            RepositorySinkJobStore.StoredJob settledRow =
+                    directStore.find(accountId, committedOrphanOpId).orElseThrow();
+            RepositorySinkJob crashedRunningSnapshot = settledRow.job().toBuilder()
+                    .setState(RepositorySinkJobState.REPOSITORY_SINK_JOB_STATE_RUNNING)
+                    .setDestinationVersion(0L)
+                    .setBytesCommitted(0L)
+                    .clearProvenance()
+                    .build();
+            try (var conn = services.ledgerDataSource().getConnection();
+                    var ps = conn.prepareStatement(
+                            """
+                            UPDATE repo_sink.sink_jobs
+                               SET state = 'REPOSITORY_SINK_JOB_STATE_RUNNING',
+                                   job_pb = ?,
+                                   owner_id = 'crashed-owner-A',
+                                   lease_epoch = 1,
+                                   lease_expires_at = now() - interval '5 seconds'
+                             WHERE account_id = ? AND operation_id = ?
+                            """)) {
+                ps.setBytes(1, crashedRunningSnapshot.toByteArray());
+                ps.setString(2, accountId);
+                ps.setString(3, committedOrphanOpId);
+                assertThat(ps.executeUpdate()).isEqualTo(1);
+            }
+
+            RepositorySinkJob reconciledCommitted = as(
+                            READER_TOKEN,
+                            RepositorySinkServiceGrpc.newBlockingStub(instanceB.channel))
+                    .getRepositorySinkJob(GetRepositorySinkJobRequest.newBuilder()
+                            .setAccountId(accountId)
+                            .setOperationId(committedOrphanOpId)
+                            .build())
+                    .getJob();
+            assertThat(reconciledCommitted.getState())
+                    .isEqualTo(RepositorySinkJobState.REPOSITORY_SINK_JOB_STATE_SUCCEEDED);
+            assertThat(reconciledCommitted.getDestinationVersion()).isEqualTo(1L);
+            assertThat(reconciledCommitted.getReplayed()).isTrue();
+
+            RepositorySinkJobStore.StoredJob reconciledRow =
+                    directStore.find(accountId, committedOrphanOpId).orElseThrow();
+            assertThat(reconciledRow.lease().leaseEpoch()).isEqualTo(2L);
+            assertThat(directStore.transitionOwned(settledRow, "crashed-owner-A", 1L)).isFalse();
+        }
+    }
+
     // -------------------------------------------------------------------------
     // Helpers & Fixtures
     // -------------------------------------------------------------------------
@@ -774,6 +1137,31 @@ class RepositorySinkServiceIT {
         if (services != null) {
             services.close();
             services = null;
+        }
+    }
+
+    private PeerHost bootPeerHost(
+            AccountBindings bindings,
+            RepositorySinkRenderers renderers,
+            RepositorySink.LeaseConfig leaseConfig) {
+        RepoServices peer = RepoServices.build(repoConfig)
+                .withAccountBindings(AccountBindingResolver.of(bindings))
+                .withRenderers(renderers)
+                .withSinkLeaseConfig(leaseConfig);
+        int grpcPort = peer.startNetty(0, OPERATOR, accessPolicy).getPort();
+        ManagedChannel channel = NettyChannelBuilder.forAddress("127.0.0.1", grpcPort)
+                .usePlaintext()
+                .maxInboundMessageSize(10 * 1024 * 1024)
+                .build();
+        return new PeerHost(peer, channel);
+    }
+
+    private record PeerHost(RepoServices services, ManagedChannel channel)
+            implements AutoCloseable {
+        @Override
+        public void close() {
+            channel.shutdownNow();
+            services.close();
         }
     }
 
@@ -1169,10 +1557,75 @@ class RepositorySinkServiceIT {
         };
     }
 
+    private RendererProvider uninterruptibleGatedMarkdownProvider(
+            CountDownLatch started, CountDownLatch finishGate) {
+        RendererCapability capability = RendererCapability.newBuilder()
+                .setProviderId("it.markdown.domain.v1")
+                .setProviderVersion("1.0.0")
+                .setSourceProfile("sink-it-domain-record")
+                .setMediaType("text/markdown")
+                .setExtension("md")
+                .setOptionsType(renderOptionsDesc.getFullName())
+                .setOptionsFingerprint(DescriptorFingerprints.fingerprintOf(renderOptionsDesc))
+                .setLossDescription("Projections omit raw binary signal and uint64 counter")
+                .setMaxInputBytes(1024 * 1024)
+                .setMaxOutputBytes(1024 * 1024)
+                .build();
+        return new RendererProvider() {
+            @Override
+            public RendererCapability capability() {
+                return capability;
+            }
+
+            @Override
+            public Descriptor optionsDescriptor() {
+                return renderOptionsDesc;
+            }
+
+            @Override
+            public void check(Message input, Message options) throws RenderFailure {
+                if (!domainRecordDesc.getFullName()
+                        .equals(input.getDescriptorForType().getFullName())) {
+                    throw new RenderFailure(
+                            RenderFailure.Kind.UNSUPPORTED, "Requires sink.it.DomainRecord");
+                }
+            }
+
+            @Override
+            public void render(
+                    Message input, Message options, OutputStream output, Cancellation cancellation)
+                    throws IOException, RenderFailure {
+                Descriptor desc = input.getDescriptorForType();
+                String recId = (String) input.getField(desc.findFieldByName("record_id"));
+                String title = (String) input.getField(desc.findFieldByName("title"));
+                output.write(("# " + title + "\n\nRecord: " + recId + "\n")
+                        .getBytes(StandardCharsets.UTF_8));
+                output.flush();
+                started.countDown();
+                long deadlineNanos = System.nanoTime() + TimeUnit.SECONDS.toNanos(15);
+                while (System.nanoTime() < deadlineNanos) {
+                    try {
+                        if (finishGate.await(50, TimeUnit.MILLISECONDS)) {
+                            return;
+                        }
+                    } catch (InterruptedException ignoredBySlowPlugin) {
+                        // Simulates a slow/paused renderer that finishes after lease expiration.
+                    }
+                }
+                throw new RenderFailure(RenderFailure.Kind.LIMIT, "Uninterruptible gate timed out");
+            }
+        };
+    }
+
     private RepositorySinkJob awaitTerminalJob(String token, String operationId) throws Exception {
+        return awaitTerminalJobOn(repoChannel, token, operationId);
+    }
+
+    private RepositorySinkJob awaitTerminalJobOn(
+            ManagedChannel channel, String token, String operationId) throws Exception {
         long deadlineNanos = System.nanoTime() + TimeUnit.SECONDS.toNanos(15);
         while (System.nanoTime() < deadlineNanos) {
-            RepositorySinkJob job = as(token, RepositorySinkServiceGrpc.newBlockingStub(repoChannel))
+            RepositorySinkJob job = as(token, RepositorySinkServiceGrpc.newBlockingStub(channel))
                     .getRepositorySinkJob(GetRepositorySinkJobRequest.newBuilder()
                             .setAccountId(accountId)
                             .setOperationId(operationId)

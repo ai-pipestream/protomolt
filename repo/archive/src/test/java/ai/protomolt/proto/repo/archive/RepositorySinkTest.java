@@ -12,7 +12,10 @@ import ai.protomolt.proto.emit.v1.RendererCapability;
 import ai.protomolt.proto.repo.archive.v1.EntryAddress;
 import ai.protomolt.proto.repo.archive.v1.RenditionDescriptor;
 import ai.protomolt.proto.repo.archive.v1.VersioningPolicy;
+import ai.protomolt.proto.repo.sink.v1.CancelRepositorySinkJobRequest;
+import ai.protomolt.proto.repo.sink.v1.CancelRepositorySinkJobResponse;
 import ai.protomolt.proto.repo.sink.v1.ConversionSpec;
+import ai.protomolt.proto.repo.sink.v1.GetRepositorySinkJobRequest;
 import ai.protomolt.proto.repo.sink.v1.ListSaveAsCapabilitiesRequest;
 import ai.protomolt.proto.repo.sink.v1.ListSaveAsCapabilitiesResponse;
 import ai.protomolt.proto.repo.sink.v1.ProcessingStateSource;
@@ -43,12 +46,16 @@ import io.grpc.inprocess.InProcessChannelBuilder;
 import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
 import java.time.Clock;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -309,6 +316,173 @@ class RepositorySinkTest {
         assertThat(wrapped.optionsDescriptor("md.search.v1")).contains(Empty.getDescriptor());
     }
 
+    @Test
+    void sharedJobStoreEnforcesLeaseEpochsAndPreventsCrossInstanceOrphanClobbering()
+            throws Exception {
+        InMemoryRepositorySinkJobStore sharedStore = new InMemoryRepositorySinkJobStore();
+        AtomicReference<Instant> nowRef =
+                new AtomicReference<>(Instant.parse("2026-11-14T00:00:00Z"));
+        Clock sharedClock = new Clock() {
+            @Override
+            public ZoneOffset getZone() {
+                return ZoneOffset.UTC;
+            }
+
+            @Override
+            public Clock withZone(java.time.ZoneId zone) {
+                return this;
+            }
+
+            @Override
+            public Instant instant() {
+                return nowRef.get();
+            }
+        };
+
+        CountDownLatch renderStarted = new CountDownLatch(1);
+        CountDownLatch releaseRender = new CountDownLatch(1);
+        RendererProvider blockingMarkdown = blockingMarkdownProvider(
+                "md.blocking.v1", renderStarted, releaseRender);
+        RepositorySinkRenderers renderers = RepositorySinkRenderers.of(
+                List.of(blockingMarkdown), Set.of("md.blocking.v1"));
+
+        ArchiveBindings bindings = (acct, name) -> Optional.of(new ArchiveBinding(
+                acct, name, "ds-archive", "", VersioningPolicy.VERSIONING_POLICY_RETAINED));
+        DocumentArchive archive = new DocumentArchive(dummyChannel, bindings, sharedClock);
+        RepositorySink.LeaseConfig fastLease = new RepositorySink.LeaseConfig(
+                Duration.ofSeconds(5),
+                Duration.ofMillis(20),
+                Duration.ofMillis(500));
+
+        try (RepositorySink instanceA = new RepositorySink(
+                        "owner-A",
+                        archive,
+                        new RenditionUploads(archive, dummyChannel),
+                        new RenditionReads(archive),
+                        () -> renderers,
+                        sharedStore,
+                        RepositorySinkAuthorizer.PASS_THROUGH,
+                        () -> fastLease,
+                        sharedClock);
+                RepositorySink instanceB = new RepositorySink(
+                        "owner-B",
+                        archive,
+                        new RenditionUploads(archive, dummyChannel),
+                        new RenditionReads(archive),
+                        () -> renderers,
+                        sharedStore,
+                        RepositorySinkAuthorizer.PASS_THROUGH,
+                        () -> fastLease,
+                        sharedClock)) {
+            PublishRepositorySinkRequest asyncReq = PublishRepositorySinkRequest.newBuilder()
+                    .setOperationId("shared-op-1")
+                    .setAsync(true)
+                    .setSource(processingStateSource(
+                            "acct-1", SearchMetadata.newBuilder().setTitle("Live").build()))
+                    .setConversion(ConversionSpec.newBuilder()
+                            .setProviderId("md.blocking.v1")
+                            .setProviderVersion("1.0.0")
+                            .setSourceProfile("search-metadata")
+                            .setMediaType("text/markdown")
+                            .setExtension("md")
+                            .setOptionsType(Empty.getDescriptor().getFullName())
+                            .setOptionsFingerprint(
+                                    DescriptorFingerprints.fingerprintOf(Empty.getDescriptor())))
+                    .setDestination(SinkDestination.newBuilder()
+                            .setAddress(EntryAddress.newBuilder()
+                                    .setAccountId("acct-1")
+                                    .setArchive("reports")
+                                    .setEntryId("entry-shared-1"))
+                            .setRendition(RenditionDescriptor.newBuilder()
+                                    .setName("summary_md")
+                                    .setMediaType("text/markdown")))
+                    .build();
+
+            instanceA.publish(asyncReq);
+            assertThat(renderStarted.await(5, TimeUnit.SECONDS)).isTrue();
+
+            // Polling GetRepositorySinkJob on instanceB while instanceA holds a live lease MUST
+            // return RUNNING without calling GetOperationOutcome on dummyChannel or marking FAILED.
+            RepositorySinkJob polledFromB = instanceB.getJob(GetRepositorySinkJobRequest.newBuilder()
+                            .setAccountId("acct-1")
+                            .setOperationId("shared-op-1")
+                            .build())
+                    .getJob();
+            assertThat(polledFromB.getState())
+                    .isEqualTo(RepositorySinkJobState.REPOSITORY_SINK_JOB_STATE_RUNNING);
+            RepositorySinkJobStore.StoredJob rawWhileRunning =
+                    sharedStore.find("acct-1", "shared-op-1").orElseThrow();
+            assertThat(rawWhileRunning.lease().ownerId()).isEqualTo("owner-A");
+            assertThat(rawWhileRunning.lease().leaseEpoch()).isEqualTo(1L);
+
+            // Calling CancelRepositorySinkJob on instanceB records durable cancel_requested;
+            // instanceA's heartbeat observes it, interrupts rendering before commit, and settles
+            // the job to CANCELLED without touching the downstream upload channel.
+            CancelRepositorySinkJobResponse cancelResp =
+                    instanceB.cancelJob(CancelRepositorySinkJobRequest.newBuilder()
+                            .setAccountId("acct-1")
+                            .setOperationId("shared-op-1")
+                            .setReason("cancelled-from-peer-B")
+                            .build());
+            assertThat(cancelResp.getJob().getState())
+                    .isEqualTo(RepositorySinkJobState.REPOSITORY_SINK_JOB_STATE_CANCELLED);
+            assertThat(cancelResp.getJob().getBytesCommitted()).isZero();
+            assertThat(cancelResp.getJob().getFailure().getMessage())
+                    .isEqualTo("cancelled-from-peer-B");
+
+            // Verify stale owner with epoch 1 is fenced out when lease expires and epoch 2 is claimed.
+            PublishRepositorySinkRequest secondReq =
+                    samplePublishRequest("acct-1").toBuilder().setOperationId("op-fence-1").build();
+            Instant t0 = nowRef.get();
+            RepositorySinkJob runningFenceJob = RepositorySinkJob.newBuilder()
+                    .setAccountId("acct-1")
+                    .setOperationId("op-fence-1")
+                    .setIntentSha256("c".repeat(64))
+                    .setState(RepositorySinkJobState.REPOSITORY_SINK_JOB_STATE_RUNNING)
+                    .setDestinationAddress(secondReq.getDestination().getAddress())
+                    .setDestinationRendition(secondReq.getDestination().getRendition())
+                    .setCreatedAt(Timestamp.newBuilder().setSeconds(t0.getEpochSecond()))
+                    .setUpdatedAt(Timestamp.newBuilder().setSeconds(t0.getEpochSecond()))
+                    .build();
+            RepositorySinkJobStore.StoredJob epoch1Record = new RepositorySinkJobStore.StoredJob(
+                    runningFenceJob,
+                    secondReq,
+                    null,
+                    new RepositorySinkJobStore.JobLease("owner-A", 1L, t0.plusSeconds(5)),
+                    false,
+                    "");
+            sharedStore.insertOrGet(epoch1Record);
+
+            // Before expiry, owner-B cannot claim the active lease.
+            assertThat(sharedStore.tryClaimExpiredOrUnresolved(
+                            "acct-1", "op-fence-1", 1L, "owner-B", t0.plusSeconds(2), t0.plusSeconds(7)))
+                    .isEmpty();
+
+            // Advance past expiration: owner-B claims epoch 2, fencing out stale owner-A (epoch 1).
+            Instant expiredNow = t0.plusSeconds(6);
+            RepositorySinkJobStore.StoredJob claimedEpoch2 = sharedStore
+                    .tryClaimExpiredOrUnresolved(
+                            "acct-1",
+                            "op-fence-1",
+                            1L,
+                            "owner-B",
+                            expiredNow,
+                            expiredNow.plusSeconds(5))
+                    .orElseThrow();
+            assertThat(claimedEpoch2.lease().ownerId()).isEqualTo("owner-B");
+            assertThat(claimedEpoch2.lease().leaseEpoch()).isEqualTo(2L);
+
+            assertThat(sharedStore.renewLease(
+                            "acct-1", "op-fence-1", "owner-A", 1L, expiredNow.plusSeconds(10)))
+                    .isEmpty();
+            assertThat(sharedStore
+                            .prepareCommit(epoch1Record, "owner-A", 1L)
+                            .status())
+                    .isEqualTo(RepositorySinkJobStore.PreCommitStatus.LEASE_LOST);
+            assertThat(sharedStore.transitionOwned(epoch1Record, "owner-A", 1L)).isFalse();
+        }
+    }
+
     private static PublishRepositorySinkRequest samplePublishRequest(String accountId) {
         SearchMetadata state = SearchMetadata.newBuilder().setTitle("Summary").build();
         return PublishRepositorySinkRequest.newBuilder()
@@ -426,6 +600,60 @@ class RepositorySinkTest {
                     Message input, Message options, OutputStream output, Cancellation cancellation)
                     throws java.io.IOException {
                 output.write("doc".getBytes(StandardCharsets.UTF_8));
+            }
+        };
+    }
+
+    private static RendererProvider blockingMarkdownProvider(
+            String providerId, CountDownLatch started, CountDownLatch release) {
+        RendererCapability capability = RendererCapability.newBuilder()
+                .setProviderId(providerId)
+                .setProviderVersion("1.0.0")
+                .setSourceProfile("search-metadata")
+                .setMediaType("text/markdown")
+                .setExtension("md")
+                .setOptionsType(Empty.getDescriptor().getFullName())
+                .setOptionsFingerprint(DescriptorFingerprints.fingerprintOf(Empty.getDescriptor()))
+                .setLossDescription("Omits non-textual search metadata fields")
+                .setMaxInputBytes(1024 * 1024)
+                .setMaxOutputBytes(1024 * 1024)
+                .build();
+        return new RendererProvider() {
+            @Override
+            public RendererCapability capability() {
+                return capability;
+            }
+
+            @Override
+            public Descriptor optionsDescriptor() {
+                return Empty.getDescriptor();
+            }
+
+            @Override
+            public void check(Message input, Message options) throws RenderFailure {
+                if (!SearchMetadata.getDescriptor().getFullName()
+                        .equals(input.getDescriptorForType().getFullName())) {
+                    throw new RenderFailure(
+                            RenderFailure.Kind.UNSUPPORTED, "Requires SearchMetadata");
+                }
+            }
+
+            @Override
+            public void render(
+                    Message input, Message options, OutputStream output, Cancellation cancellation)
+                    throws java.io.IOException, RenderFailure {
+                started.countDown();
+                try {
+                    if (!release.await(10, TimeUnit.SECONDS)) {
+                        throw new RenderFailure(RenderFailure.Kind.LIMIT, "Render latch timed out");
+                    }
+                } catch (InterruptedException interrupted) {
+                    Thread.currentThread().interrupt();
+                    throw new RenderFailure(
+                            RenderFailure.Kind.CANCELLED, "Interrupted", interrupted);
+                }
+                cancellation.check();
+                output.write("# live\n".getBytes(StandardCharsets.UTF_8));
             }
         };
     }

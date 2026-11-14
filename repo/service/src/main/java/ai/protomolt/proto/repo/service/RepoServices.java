@@ -522,6 +522,7 @@ public final class RepoServices implements AutoCloseable {
                         () -> sinkRenderers,
                         sinkJobStore,
                         sinkAuth,
+                        () -> sinkLeaseConfig,
                         java.time.Clock.systemUTC()));
                 configuredServices.add(new DriveGrpcService(driveOperations, callerBindings));
                 configuredServices.add(() -> io.grpc.ServerInterceptors.intercept(
@@ -621,6 +622,15 @@ public final class RepoServices implements AutoCloseable {
         requireOpen();
         requireFullProfile();
         return v2Archive;
+    }
+
+    private volatile ai.protomolt.proto.repo.archive.RepositorySink.LeaseConfig sinkLeaseConfig =
+            ai.protomolt.proto.repo.archive.RepositorySink.LeaseConfig.DEFAULT;
+
+    RepoServices withSinkLeaseConfig(
+            ai.protomolt.proto.repo.archive.RepositorySink.LeaseConfig leaseConfig) {
+        this.sinkLeaseConfig = java.util.Objects.requireNonNull(leaseConfig, "leaseConfig");
+        return this;
     }
 
     /**

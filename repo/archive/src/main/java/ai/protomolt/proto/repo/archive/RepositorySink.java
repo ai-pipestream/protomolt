@@ -87,25 +87,25 @@ import io.grpc.stub.StreamObserver;
 import java.io.IOException;
 import java.io.InputStream;
 import java.time.Clock;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.Iterator;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.UUID;
 import java.util.concurrent.CancellationException;
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
-import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Supplier;
 
 /**
@@ -120,6 +120,42 @@ import java.util.function.Supplier;
 public final class RepositorySink implements AutoCloseable {
     /** Default protobuf media type stamped on direct protobuf publications with no explicit MIME. */
     public static final String PROTOBUF_MEDIA_TYPE = "application/x-protobuf";
+
+    /**
+     * Durable ownership lease, background renewal, and cross-instance cancellation wait parameters
+     * for {@link RepositorySink} publication jobs.
+     *
+     * @param leaseDuration validity window of an acquired or renewed job lease
+     * @param heartbeatInterval interval between background lease renewals while a job executes
+     * @param cancelSettleWait bounded wait for an active owner to settle after cancellation is
+     *     requested
+     */
+    public record LeaseConfig(
+            Duration leaseDuration,
+            Duration heartbeatInterval,
+            Duration cancelSettleWait) {
+        /** Production default lease configuration. */
+        public static final LeaseConfig DEFAULT = new LeaseConfig(
+                Duration.ofSeconds(15),
+                Duration.ofMillis(250),
+                Duration.ofSeconds(2));
+
+        /** Validates lease timing parameters. */
+        public LeaseConfig {
+            Objects.requireNonNull(leaseDuration, "leaseDuration");
+            Objects.requireNonNull(heartbeatInterval, "heartbeatInterval");
+            Objects.requireNonNull(cancelSettleWait, "cancelSettleWait");
+            if (leaseDuration.isZero() || leaseDuration.isNegative()) {
+                throw new IllegalArgumentException("leaseDuration must be > 0");
+            }
+            if (heartbeatInterval.isZero() || heartbeatInterval.isNegative()) {
+                throw new IllegalArgumentException("heartbeatInterval must be > 0");
+            }
+            if (cancelSettleWait.isNegative()) {
+                throw new IllegalArgumentException("cancelSettleWait must be >= 0");
+            }
+        }
+    }
 
     private static final int MAX_DESCRIPTOR_BYTES = 16 * 1024 * 1024;
     private static final int MAX_DESCRIPTOR_FILES = 512;
@@ -138,7 +174,6 @@ public final class RepositorySink implements AutoCloseable {
     private static final int MAX_OCCURRENCE_STEPS = 128;
     private static final int STREAM_READ_BUFFER_BYTES = 8192;
     private static final long UPLOAD_READY_WAIT_NANOS = TimeUnit.SECONDS.toNanos(30);
-    private static final long CANCEL_SETTLE_WAIT_MILLIS = 2000L;
     private static final int MAX_FAILURE_MESSAGE_CHARS = 2000;
     private static final int MAX_INCOMPATIBILITY_REASON_CHARS = 1000;
     private static final String ANY_FULL_NAME = "google.protobuf.Any";
@@ -148,11 +183,10 @@ public final class RepositorySink implements AutoCloseable {
     private final RenditionUploads uploads;
     private final RenditionReads reads;
     private final Supplier<RepositorySinkRenderers> renderers;
-    private final RepositorySinkJobStore jobStore;
     private final RepositorySinkAuthorizer authorizer;
     private final Clock clock;
+    private final RepositorySinkLeaseCoordinator leases;
     private final ExecutorService asyncExecutor;
-    private final ConcurrentHashMap<JobKey, InFlightJob> inFlight = new ConcurrentHashMap<>();
 
     /**
      * Constructs a {@link RepositorySink} with an in-memory job store and pass-through authorizer.
@@ -230,14 +264,75 @@ public final class RepositorySink implements AutoCloseable {
             RepositorySinkJobStore jobStore,
             RepositorySinkAuthorizer authorizer,
             Clock clock) {
+        this(
+                archive,
+                uploads,
+                reads,
+                renderers,
+                jobStore,
+                authorizer,
+                () -> LeaseConfig.DEFAULT,
+                clock);
+    }
+
+    /**
+     * Constructs a {@link RepositorySink} resolving enabled renderer capabilities and lease timing
+     * dynamically on each operation, with explicit durable job storage and authorization hooks.
+     *
+     * @param archive the archive over v2 documents
+     * @param uploads flow-controlled rendition upload translator
+     * @param reads rendition read planner and verifier
+     * @param renderers supplier of the host's enabled bounded renderer capabilities
+     * @param jobStore durable job persistence store
+     * @param authorizer caller account and pre-commit writer authorization hooks
+     * @param leaseConfig supplier of durable lease duration, heartbeat, and settle parameters
+     * @param clock server clock stamping job and provenance timestamps
+     */
+    public RepositorySink(
+            DocumentArchive archive,
+            RenditionUploads uploads,
+            RenditionReads reads,
+            Supplier<RepositorySinkRenderers> renderers,
+            RepositorySinkJobStore jobStore,
+            RepositorySinkAuthorizer authorizer,
+            Supplier<LeaseConfig> leaseConfig,
+            Clock clock) {
+        this(
+                UUID.randomUUID().toString(),
+                archive,
+                uploads,
+                reads,
+                renderers,
+                jobStore,
+                authorizer,
+                leaseConfig,
+                clock);
+    }
+
+    RepositorySink(
+            String instanceId,
+            DocumentArchive archive,
+            RenditionUploads uploads,
+            RenditionReads reads,
+            Supplier<RepositorySinkRenderers> renderers,
+            RepositorySinkJobStore jobStore,
+            RepositorySinkAuthorizer authorizer,
+            Supplier<LeaseConfig> leaseConfig,
+            Clock clock) {
         this.archive = Objects.requireNonNull(archive, "archive");
         this.uploads = Objects.requireNonNull(uploads, "uploads");
         this.reads = Objects.requireNonNull(reads, "reads");
         this.renderers = Objects.requireNonNull(renderers, "renderers");
-        this.jobStore = Objects.requireNonNull(jobStore, "jobStore");
+        Objects.requireNonNull(jobStore, "jobStore");
         this.authorizer = Objects.requireNonNull(authorizer, "authorizer");
+        Objects.requireNonNull(leaseConfig, "leaseConfig");
         this.clock = Objects.requireNonNull(clock, "clock");
+        this.leases = new RepositorySinkLeaseCoordinator(instanceId, jobStore, leaseConfig, clock);
         this.asyncExecutor = Executors.newVirtualThreadPerTaskExecutor();
+    }
+
+    String instanceId() {
+        return leases.instanceId();
     }
 
     /**
@@ -334,10 +429,11 @@ public final class RepositorySink implements AutoCloseable {
         String intentSha256 = RepositorySinkKeys.intentSha256(request);
         boolean explicitOperationId = !request.getOperationId().isEmpty();
         String operationId = RepositorySinkKeys.resolveOperationId(request, accountId, intentSha256);
-        JobKey jobKey = new JobKey(accountId, operationId);
+        RepositorySinkLeaseCoordinator.JobKey jobKey =
+                new RepositorySinkLeaseCoordinator.JobKey(accountId, operationId);
 
         Optional<RepositorySinkJobStore.StoredJob> existingOpt =
-                jobStore.find(accountId, operationId);
+                leases.find(accountId, operationId);
         if (existingOpt.isPresent()) {
             return handleExistingPublish(
                     existingOpt.get(),
@@ -377,9 +473,9 @@ public final class RepositorySink implements AutoCloseable {
 
         PublishRepositorySinkRequest pinnedRequest =
                 pinRequestSourceRevision(request, operationId, admittedSource.frozenSourceRevision());
-        RepositorySinkJobStore.StoredJob candidate =
-                new RepositorySinkJobStore.StoredJob(initialJob, pinnedRequest, null);
-        RepositorySinkJobStore.StoredJob persisted = jobStore.insertOrGet(candidate);
+        RepositorySinkJobStore.StoredJob candidate = new RepositorySinkJobStore.StoredJob(
+                initialJob, pinnedRequest, null, leases.newInitialLease(), false, "");
+        RepositorySinkJobStore.StoredJob persisted = leases.insertOrGet(candidate);
         if (persisted != candidate) {
             return handleExistingPublish(
                     persisted,
@@ -398,7 +494,8 @@ public final class RepositorySink implements AutoCloseable {
 
     /**
      * Retrieves the durable state of a repository sink publication job, reconciling any uncertain
-     * commit outcome against v2 {@code GetOperationOutcome} first.
+     * commit outcome or expired owner lease against v2 {@code GetOperationOutcome} while leaving
+     * active remote leases undisturbed.
      *
      * @param request job lookup request
      * @return current job state and receipt
@@ -410,19 +507,21 @@ public final class RepositorySink implements AutoCloseable {
         authorizer.checkAccountAccess(accountId);
         RepositorySinkAuthorizer.CapturedCaller caller = authorizer.captureCaller();
 
-        RepositorySinkJobStore.StoredJob stored = jobStore.find(accountId, operationId)
+        RepositorySinkJobStore.StoredJob stored = leases.find(accountId, operationId)
                 .orElseThrow(() -> ArchiveErrors.notFound(
                         "Repository sink job " + operationId + " does not exist"));
-        JobKey key = new JobKey(accountId, operationId);
-        RepositorySinkJob settled = reconcileIfNeeded(stored, key, caller, true);
+        RepositorySinkLeaseCoordinator.JobKey key =
+                new RepositorySinkLeaseCoordinator.JobKey(accountId, operationId);
+        RepositorySinkJobStore.StoredJob settled = reconcileIfNeeded(stored, key, caller, true);
         GetRepositorySinkJobResponse response =
-                GetRepositorySinkJobResponse.newBuilder().setJob(settled).build();
+                GetRepositorySinkJobResponse.newBuilder().setJob(settled.job()).build();
         DocumentArchive.requireValidView(response);
         return response;
     }
 
     /**
-     * Signals cancellation of a queued or running repository sink publication job.
+     * Signals cooperative cancellation of a queued or running repository sink publication job
+     * across both local and peer repository host instances.
      *
      * @param request job cancellation request
      * @return resulting job state
@@ -434,40 +533,32 @@ public final class RepositorySink implements AutoCloseable {
         authorizer.checkAccountAccess(accountId);
         RepositorySinkAuthorizer.CapturedCaller caller = authorizer.captureCaller();
 
-        RepositorySinkJobStore.StoredJob stored = jobStore.find(accountId, operationId)
+        RepositorySinkJobStore.StoredJob stored = leases.find(accountId, operationId)
                 .orElseThrow(() -> ArchiveErrors.notFound(
                         "Repository sink job " + operationId + " does not exist"));
-        JobKey key = new JobKey(accountId, operationId);
-        if (stored.job().getState()
-                == RepositorySinkJobState.REPOSITORY_SINK_JOB_STATE_UNRESOLVED) {
-            RepositorySinkJob reconciled = reconcileIfNeeded(stored, key, caller, true);
-            if (isTerminalState(reconciled.getState())) {
-                return validCancelResponse(reconciled);
-            }
-            stored = jobStore.find(accountId, operationId).orElse(stored);
-        }
         if (isTerminalState(stored.job().getState())) {
             return validCancelResponse(stored.job());
         }
 
+        RepositorySinkLeaseCoordinator.JobKey key =
+                new RepositorySinkLeaseCoordinator.JobKey(accountId, operationId);
         String reason = request.getReason().isBlank()
                 ? "Cancelled by CancelRepositorySinkJob"
                 : request.getReason().trim();
-        InFlightJob active = inFlight.get(key);
+
+        RepositorySinkLeaseCoordinator.InFlightJob active = leases.getInFlight(key);
         if (active != null) {
+            leases.requestCancel(accountId, operationId, reason);
             active.cancel(reason);
+            long settleWaitMillis = leases.config().cancelSettleWait().toMillis();
             try {
                 RepositorySinkJob finished =
-                        active.completion.get(CANCEL_SETTLE_WAIT_MILLIS, TimeUnit.MILLISECONDS);
+                        active.completion.get(settleWaitMillis, TimeUnit.MILLISECONDS);
                 return validCancelResponse(finished);
-            } catch (TimeoutException stillStopping) {
-                RepositorySinkJob latest =
-                        jobStore.find(accountId, operationId).map(RepositorySinkJobStore.StoredJob::job)
-                                .orElse(stored.job());
-                if (!active.enteringCommit.get() && !isTerminalState(latest.getState())) {
-                    RepositorySinkJob cancelled = markCancelled(stored, reason);
-                    return validCancelResponse(cancelled);
-                }
+            } catch (TimeoutException | ExecutionException unsettled) {
+                RepositorySinkJob latest = leases.find(accountId, operationId)
+                        .map(RepositorySinkJobStore.StoredJob::job)
+                        .orElse(stored.job());
                 return validCancelResponse(latest);
             } catch (InterruptedException interrupted) {
                 Thread.currentThread().interrupt();
@@ -475,21 +566,37 @@ public final class RepositorySink implements AutoCloseable {
                         .withDescription("Interrupted while awaiting sink job cancellation")
                         .withCause(interrupted)
                         .asRuntimeException();
-            } catch (ExecutionException failed) {
-                RepositorySinkJob latest =
-                        jobStore.find(accountId, operationId).map(RepositorySinkJobStore.StoredJob::job)
-                                .orElse(stored.job());
-                return validCancelResponse(latest);
             }
         }
 
-        // No active worker in this process: reconcile against v2 before marking CANCELLED.
-        RepositorySinkJob reconciled = reconcileOrphanedJob(stored, caller, false);
-        if (isTerminalState(reconciled.getState())) {
-            return validCancelResponse(reconciled);
+        if (stored.job().getState() != RepositorySinkJobState.REPOSITORY_SINK_JOB_STATE_UNRESOLVED
+                && stored.lease().isActiveAt(clock.instant())) {
+            RepositorySinkJobStore.StoredJob requested =
+                    leases.requestCancel(accountId, operationId, reason).orElse(stored);
+            RepositorySinkJobStore.StoredJob progressed =
+                    leases.awaitRemoteOwnerProgress(requested, leases.config().cancelSettleWait());
+            if (isTerminalState(progressed.job().getState())) {
+                return validCancelResponse(progressed.job());
+            }
+            if (progressed.job().getState()
+                            != RepositorySinkJobState.REPOSITORY_SINK_JOB_STATE_UNRESOLVED
+                    && progressed.lease().isActiveAt(clock.instant())) {
+                return validCancelResponse(progressed.job());
+            }
+            stored = progressed;
         }
-        RepositorySinkJob cancelled = markCancelled(stored, reason);
-        return validCancelResponse(cancelled);
+
+        RepositorySinkJobStore.StoredJob reconciled =
+                reconcileIfNeeded(stored, key, caller, false);
+        if (isTerminalState(reconciled.job().getState())) {
+            return validCancelResponse(reconciled.job());
+        }
+        if (reconciled.lease().ownerId().equals(leases.instanceId())) {
+            return validCancelResponse(markCancelled(reconciled, reason));
+        }
+        RepositorySinkJobStore.StoredJob latest =
+                leases.requestCancel(accountId, operationId, reason).orElse(reconciled);
+        return validCancelResponse(latest.job());
     }
 
     /**
@@ -572,9 +679,7 @@ public final class RepositorySink implements AutoCloseable {
 
     @Override
     public void close() {
-        for (InFlightJob active : inFlight.values()) {
-            active.cancel("RepositorySink shutting down");
-        }
+        leases.close();
         asyncExecutor.shutdownNow();
     }
 
@@ -587,7 +692,7 @@ public final class RepositorySink implements AutoCloseable {
             String operationId,
             String intentSha256,
             boolean explicitOperationId,
-            JobKey jobKey,
+            RepositorySinkLeaseCoordinator.JobKey jobKey,
             RepositorySinkAuthorizer.CapturedCaller caller) {
         if (!existing.job().getIntentSha256().equals(intentSha256)) {
             throw ArchiveErrors.alreadyExists(
@@ -600,70 +705,92 @@ public final class RepositorySink implements AutoCloseable {
                             + ")");
         }
 
-        InFlightJob active = inFlight.get(jobKey);
-        if (active != null) {
-            if (incomingRequest.getAsync()) {
-                return validPublishResponse(existing.job());
-            }
-            RepositorySinkJob awaited = awaitInFlight(active);
-            return finishSyncPublish(awaited);
-        }
-
-        RepositorySinkJob reconciled = reconcileIfNeeded(existing, jobKey, caller, false);
-        RepositorySinkJobStore.StoredJob currentStored =
-                jobStore.find(accountId, operationId).orElse(existing);
-
-        return switch (reconciled.getState()) {
-            case REPOSITORY_SINK_JOB_STATE_SUCCEEDED -> {
-                if (!explicitOperationId
-                        && incomingRequest.getDestination().getExpectedDestinationVersion() == 0
-                        && !incomingRequest.getDestination().getCreateOnly()) {
-                    requireDestinationStillAtVersion(
-                            caller,
-                            accountId,
-                            incomingRequest.getDestination().getAddress(),
-                            operationId,
-                            reconciled.getDestinationVersion());
-                }
-                RepositorySinkJob replayed = markReplayedReceipt(reconciled);
-                yield validPublishResponse(replayed);
-            }
-            case REPOSITORY_SINK_JOB_STATE_CANCELLED -> {
+        RepositorySinkJobStore.StoredJob cursor = existing;
+        while (true) {
+            RepositorySinkLeaseCoordinator.InFlightJob active = leases.getInFlight(jobKey);
+            if (active != null) {
                 if (incomingRequest.getAsync()) {
-                    yield validPublishResponse(reconciled);
+                    return validPublishResponse(cursor.job());
                 }
-                throw toStatusException(reconciled.getFailure());
+                RepositorySinkJob awaited = awaitInFlight(active);
+                return finishSyncPublish(awaited);
             }
-            case REPOSITORY_SINK_JOB_STATE_FAILED -> {
-                if (!reconciled.getFailure().getRetryable()) {
-                    if (incomingRequest.getAsync()) {
-                        yield validPublishResponse(reconciled);
+
+            RepositorySinkJobStore.StoredJob reconciled =
+                    reconcileIfNeeded(cursor, jobKey, caller, false);
+            RepositorySinkJob reconciledJob = reconciled.job();
+
+            switch (reconciledJob.getState()) {
+                case REPOSITORY_SINK_JOB_STATE_SUCCEEDED -> {
+                    if (!explicitOperationId
+                            && incomingRequest.getDestination().getExpectedDestinationVersion() == 0
+                            && !incomingRequest.getDestination().getCreateOnly()) {
+                        requireDestinationStillAtVersion(
+                                caller,
+                                accountId,
+                                incomingRequest.getDestination().getAddress(),
+                                operationId,
+                                reconciledJob.getDestinationVersion());
                     }
-                    throw toStatusException(reconciled.getFailure());
+                    RepositorySinkJob replayed = markReplayedReceipt(reconciledJob);
+                    return validPublishResponse(replayed);
                 }
-                yield retryFromFrozenRevision(
-                        currentStored, incomingRequest, accountId, jobKey, caller);
-            }
-            case REPOSITORY_SINK_JOB_STATE_UNRESOLVED -> {
-                if (incomingRequest.getAsync()) {
-                    yield validPublishResponse(reconciled);
+                case REPOSITORY_SINK_JOB_STATE_CANCELLED, REPOSITORY_SINK_JOB_STATE_UNRESOLVED -> {
+                    if (incomingRequest.getAsync()) {
+                        return validPublishResponse(reconciledJob);
+                    }
+                    throw toStatusException(reconciledJob.getFailure());
                 }
-                throw toStatusException(reconciled.getFailure());
+                case REPOSITORY_SINK_JOB_STATE_FAILED -> {
+                    if (!reconciledJob.getFailure().getRetryable()) {
+                        if (incomingRequest.getAsync()) {
+                            return validPublishResponse(reconciledJob);
+                        }
+                        throw toStatusException(reconciledJob.getFailure());
+                    }
+                    RepositorySinkJob requeuedJob = reconciledJob.toBuilder()
+                            .setState(RepositorySinkJobState.REPOSITORY_SINK_JOB_STATE_QUEUED)
+                            .setBytesRendered(0L)
+                            .setBytesCommitted(0L)
+                            .clearFailure()
+                            .setUpdatedAt(now())
+                            .build();
+                    DocumentArchive.requireValidView(requeuedJob);
+                    Optional<RepositorySinkJobStore.StoredJob> claimedRetry =
+                            leases.tryClaimRetryableFailure(
+                                    accountId,
+                                    operationId,
+                                    reconciled.lease().leaseEpoch(),
+                                    requeuedJob);
+                    if (claimedRetry.isPresent()) {
+                        return retryFromFrozenRevision(
+                                claimedRetry.get(), incomingRequest, accountId, jobKey, caller);
+                    }
+                    cursor = leases.find(accountId, operationId).orElse(reconciled);
+                }
+                case REPOSITORY_SINK_JOB_STATE_QUEUED, REPOSITORY_SINK_JOB_STATE_RUNNING -> {
+                    if (reconciled.lease().ownerId().equals(leases.instanceId())) {
+                        return retryFromFrozenRevision(
+                                reconciled, incomingRequest, accountId, jobKey, caller);
+                    }
+                    if (incomingRequest.getAsync()) {
+                        return validPublishResponse(reconciledJob);
+                    }
+                    cursor = leases.awaitRemoteOwnerProgress(
+                            reconciled, leases.config().leaseDuration());
+                }
+                case REPOSITORY_SINK_JOB_STATE_UNSPECIFIED, UNRECOGNIZED ->
+                        throw ArchiveErrors.dataLoss(
+                                "Stored sink job " + operationId + " has invalid state", null);
             }
-            case REPOSITORY_SINK_JOB_STATE_QUEUED, REPOSITORY_SINK_JOB_STATE_RUNNING ->
-                    retryFromFrozenRevision(
-                            currentStored, incomingRequest, accountId, jobKey, caller);
-            case REPOSITORY_SINK_JOB_STATE_UNSPECIFIED, UNRECOGNIZED ->
-                    throw ArchiveErrors.dataLoss(
-                            "Stored sink job " + operationId + " has invalid state", null);
-        };
+        }
     }
 
     private PublishRepositorySinkResponse retryFromFrozenRevision(
             RepositorySinkJobStore.StoredJob stored,
             PublishRepositorySinkRequest incomingRequest,
             String accountId,
-            JobKey jobKey,
+            RepositorySinkLeaseCoordinator.JobKey jobKey,
             RepositorySinkAuthorizer.CapturedCaller caller) {
         SinkDestination dest = stored.request().getDestination();
         ArchiveBinding destBinding =
@@ -683,23 +810,25 @@ public final class RepositorySink implements AutoCloseable {
             RepositorySinkJobStore.StoredJob stored,
             ResolvedSource source,
             ArchiveBinding destBinding,
-            JobKey jobKey,
+            RepositorySinkLeaseCoordinator.JobKey jobKey,
             RepositorySinkAuthorizer.CapturedCaller caller,
             boolean async) {
-        InFlightJob created = new InFlightJob();
-        InFlightJob raced = inFlight.putIfAbsent(jobKey, created);
-        if (raced != null) {
+        RepositorySinkLeaseCoordinator.InFlightRegistration registration =
+                leases.registerInFlight(jobKey);
+        if (!registration.newlyRegistered()) {
             if (async) {
-                RepositorySinkJob latest = jobStore.find(jobKey.accountId(), jobKey.operationId())
+                RepositorySinkJob latest = leases.find(jobKey.accountId(), jobKey.operationId())
                         .map(RepositorySinkJobStore.StoredJob::job)
                         .orElse(stored.job());
                 return validPublishResponse(latest);
             }
-            return finishSyncPublish(awaitInFlight(raced));
+            return finishSyncPublish(awaitInFlight(registration.tracker()));
         }
 
+        RepositorySinkLeaseCoordinator.InFlightJob created = registration.tracker();
         if (async) {
-            asyncExecutor.execute(() -> runGuarded(stored, source, destBinding, jobKey, caller, created));
+            asyncExecutor.execute(
+                    () -> runGuarded(stored, source, destBinding, jobKey, caller, created));
             return validPublishResponse(stored.job());
         }
 
@@ -715,7 +844,8 @@ public final class RepositorySink implements AutoCloseable {
         throw toStatusException(settled.getFailure());
     }
 
-    private static RepositorySinkJob awaitInFlight(InFlightJob active) {
+    private static RepositorySinkJob awaitInFlight(
+            RepositorySinkLeaseCoordinator.InFlightJob active) {
         try {
             return active.completion.get();
         } catch (InterruptedException interrupted) {
@@ -738,16 +868,43 @@ public final class RepositorySink implements AutoCloseable {
             RepositorySinkJobStore.StoredJob stored,
             ResolvedSource source,
             ArchiveBinding destBinding,
-            JobKey jobKey,
+            RepositorySinkLeaseCoordinator.JobKey jobKey,
             RepositorySinkAuthorizer.CapturedCaller caller,
-            InFlightJob tracker) {
+            RepositorySinkLeaseCoordinator.InFlightJob tracker) {
         tracker.runnerThread = Thread.currentThread();
+        long leaseEpoch = stored.lease().leaseEpoch();
+        ScheduledFuture<?> heartbeat = leases.startHeartbeat(jobKey, leaseEpoch, tracker);
         try {
             RepositorySinkJob settled =
-                    executeJob(stored, source, destBinding, jobKey, caller, tracker);
+                    executeJob(stored, source, destBinding, jobKey, caller, tracker, leaseEpoch);
             tracker.completion.complete(settled);
             return settled;
         } catch (RuntimeException | Error unexpected) {
+            Thread.interrupted();
+            if (tracker.leaseLost.get()) {
+                RepositorySinkJob latest = latestJobOr(jobKey, stored.job());
+                tracker.completion.complete(latest);
+                if (unexpected instanceof Error err) {
+                    throw err;
+                }
+                return latest;
+            }
+            if (tracker.cancelled.get() && !tracker.enteringCommit.get()) {
+                RepositorySinkJob cancelledJob = markCancelled(stored, tracker.reasonOrDefault());
+                tracker.completion.complete(cancelledJob);
+                if (unexpected instanceof Error err) {
+                    throw err;
+                }
+                return cancelledJob;
+            }
+            if (tracker.shuttingDown.get() && !tracker.enteringCommit.get()) {
+                RepositorySinkJob shutdownJob = persistShutdownInterruption(stored, 0L);
+                tracker.completion.complete(shutdownJob);
+                if (unexpected instanceof Error err) {
+                    throw err;
+                }
+                return shutdownJob;
+            }
             Status status = Status.fromThrowable(unexpected);
             RepositorySinkFailure failure = failureOf(
                     status.getCode(),
@@ -767,7 +924,7 @@ public final class RepositorySink implements AutoCloseable {
             }
             return failedJob;
         } finally {
-            inFlight.remove(jobKey, tracker);
+            leases.unregisterInFlight(jobKey, tracker, heartbeat);
             Thread.interrupted();
         }
     }
@@ -776,11 +933,21 @@ public final class RepositorySink implements AutoCloseable {
             RepositorySinkJobStore.StoredJob initialStored,
             ResolvedSource source,
             ArchiveBinding destBinding,
-            JobKey jobKey,
+            RepositorySinkLeaseCoordinator.JobKey jobKey,
             RepositorySinkAuthorizer.CapturedCaller caller,
-            InFlightJob tracker) {
-        if (tracker.cancelled.get()) {
-            return markCancelled(initialStored, tracker.reasonOrDefault());
+            RepositorySinkLeaseCoordinator.InFlightJob tracker,
+            long leaseEpoch) {
+        if (tracker.cancelled.get() || initialStored.cancelRequested()) {
+            String reason = !initialStored.cancelReason().isBlank()
+                    ? initialStored.cancelReason()
+                    : tracker.reasonOrDefault();
+            return markCancelled(initialStored, reason);
+        }
+        if (tracker.shuttingDown.get()) {
+            return persistShutdownInterruption(initialStored, 0L);
+        }
+        if (tracker.leaseLost.get()) {
+            return latestJobOr(jobKey, initialStored.job());
         }
 
         RepositorySinkJob runningJob = initialStored.job().toBuilder()
@@ -789,10 +956,12 @@ public final class RepositorySink implements AutoCloseable {
                 .setUpdatedAt(now())
                 .build();
         DocumentArchive.requireValidView(runningJob);
-        RepositorySinkJobStore.StoredJob stored =
-                new RepositorySinkJobStore.StoredJob(
-                        runningJob, initialStored.request(), initialStored.pendingProvenance());
-        jobStore.save(stored);
+        RepositorySinkJobStore.StoredJob stored = initialStored.withTransition(
+                runningJob, initialStored.pendingProvenance(), leases.nextExpiration());
+        if (!leases.transitionOwned(stored, leaseEpoch)) {
+            tracker.markLeaseLost();
+            return latestJobOr(jobKey, runningJob);
+        }
 
         PublishRepositorySinkRequest request = stored.request();
         SinkDestination dest = request.getDestination();
@@ -801,7 +970,7 @@ public final class RepositorySink implements AutoCloseable {
                 effectiveRendition.getName().equals(ArchiveCoordinates.PARSED);
 
         RendererProvider.Cancellation cancellation = () ->
-                tracker.cancelled.get()
+                tracker.shouldAbortWork()
                         || Context.current().isCancelled()
                         || Thread.currentThread().isInterrupted();
 
@@ -877,7 +1046,7 @@ public final class RepositorySink implements AutoCloseable {
                         (cap, in, opts) -> {},
                         cancellation);
             } catch (RenderFailure renderFailure) {
-                return persistRenderFailure(stored, renderFailure, tracker);
+                return persistRenderFailure(stored, renderFailure, jobKey, tracker);
             } catch (IOException ioFailure) {
                 return persistFailure(
                         stored,
@@ -896,7 +1065,7 @@ public final class RepositorySink implements AutoCloseable {
             try {
                 cancellation.check();
             } catch (RenderFailure cancelled) {
-                return markCancelled(stored, tracker.reasonOrDefault());
+                return persistRenderFailure(stored, cancelled, jobKey, tracker);
             }
             outputBytes = source.rawPayload();
             retainedDescriptorsForOutput = source.descriptorSetBytes();
@@ -919,11 +1088,16 @@ public final class RepositorySink implements AutoCloseable {
                 false,
                 provisionalCommittedAt);
 
-        if (tracker.cancelled.get() || Thread.currentThread().isInterrupted()) {
+        if (tracker.leaseLost.get()) {
+            return latestJobOr(jobKey, stored.job());
+        }
+        if (tracker.cancelled.get()) {
             return markCancelledWithRendered(stored, tracker.reasonOrDefault(), bytesRendered);
         }
-        tracker.enteringCommit.set(true);
-        if (tracker.cancelled.get()) {
+        if (tracker.shuttingDown.get()) {
+            return persistShutdownInterruption(stored, bytesRendered);
+        }
+        if (Thread.currentThread().isInterrupted()) {
             return markCancelledWithRendered(stored, tracker.reasonOrDefault(), bytesRendered);
         }
 
@@ -933,9 +1107,31 @@ public final class RepositorySink implements AutoCloseable {
                 .setUpdatedAt(provisionalCommittedAt)
                 .build();
         DocumentArchive.requireValidView(preCommitJob);
-        stored = new RepositorySinkJobStore.StoredJob(
-                preCommitJob, request, provisionalProvenance);
-        jobStore.save(stored);
+        RepositorySinkJobStore.StoredJob preCommitCandidate = stored.withTransition(
+                preCommitJob, provisionalProvenance, leases.nextExpiration());
+        RepositorySinkJobStore.PreCommitDecision preCommitFence =
+                leases.prepareCommit(preCommitCandidate, leaseEpoch);
+        switch (preCommitFence.status()) {
+            case CANCEL_REQUESTED -> {
+                String reason = preCommitFence.stored().cancelReason().isBlank()
+                        ? tracker.reasonOrDefault()
+                        : preCommitFence.stored().cancelReason();
+                return markCancelledWithRendered(preCommitFence.stored(), reason, bytesRendered);
+            }
+            case LEASE_LOST -> {
+                tracker.markLeaseLost();
+                return preCommitFence.stored().job();
+            }
+            case READY -> stored = preCommitFence.stored();
+        }
+
+        tracker.enteringCommit.set(true);
+        if (tracker.cancelled.get()) {
+            return markCancelledWithRendered(stored, tracker.reasonOrDefault(), bytesRendered);
+        }
+        if (tracker.leaseLost.get()) {
+            return latestJobOr(jobKey, stored.job());
+        }
 
         String commitOperationId = RepositorySinkKeys.downstreamUploadOperationId(
                 jobKey.accountId(), jobKey.operationId());
@@ -949,6 +1145,9 @@ public final class RepositorySink implements AutoCloseable {
                     destBinding.datasourceId(),
                     dest.getWrittenBy(),
                     () -> streamUpload(
+                            jobKey,
+                            leaseEpoch,
+                            tracker,
                             commitOperationId,
                             storedJobIntentSha(preCommitJob),
                             dest,
@@ -960,7 +1159,7 @@ public final class RepositorySink implements AutoCloseable {
                             descriptorsToAttach));
         } catch (StatusRuntimeException uploadFailure) {
             return handleUploadFailure(
-                    stored, jobKey, commitOperationId, bytesRendered, caller, uploadFailure);
+                    stored, jobKey, commitOperationId, bytesRendered, caller, tracker, uploadFailure);
         }
 
         Timestamp committedAt = now();
@@ -985,7 +1184,11 @@ public final class RepositorySink implements AutoCloseable {
                 .setUpdatedAt(committedAt)
                 .build();
         DocumentArchive.requireValidView(succeeded);
-        jobStore.save(new RepositorySinkJobStore.StoredJob(succeeded, request, finalProvenance));
+        RepositorySinkJobStore.StoredJob succeededStored =
+                stored.withTransition(succeeded, finalProvenance, clock.instant());
+        if (!leases.transitionOwned(succeededStored, leaseEpoch)) {
+            return latestJobOr(jobKey, succeeded);
+        }
         return succeeded;
     }
 
@@ -994,6 +1197,9 @@ public final class RepositorySink implements AutoCloseable {
     }
 
     private UploadRenditionResponse streamUpload(
+            RepositorySinkLeaseCoordinator.JobKey jobKey,
+            long leaseEpoch,
+            RepositorySinkLeaseCoordinator.InFlightJob tracker,
             String commitOperationId,
             String intentSha256,
             SinkDestination dest,
@@ -1072,6 +1278,7 @@ public final class RepositorySink implements AutoCloseable {
             for (int offset = 0;
                     offset < payload.size() && !responseFuture.isDone();
                     offset += RenditionReads.MAX_FRAME_BYTES) {
+                abortStreamIfInvalidated(call, tracker);
                 awaitUploadReady(call, responseFuture);
                 if (responseFuture.isDone()) {
                     break;
@@ -1082,6 +1289,7 @@ public final class RepositorySink implements AutoCloseable {
                         .build());
             }
             if (!responseFuture.isDone()) {
+                verifyDurableLeaseBeforeFinalCommit(call, jobKey, leaseEpoch, tracker);
                 call.onCompleted();
             }
             return responseFuture.get();
@@ -1098,6 +1306,58 @@ public final class RepositorySink implements AutoCloseable {
                 throw sre;
             }
             throw Status.INTERNAL.withCause(failed.getCause()).asRuntimeException();
+        }
+    }
+
+    private void verifyDurableLeaseBeforeFinalCommit(
+            RenditionUploads.FlowControlledUpload call,
+            RepositorySinkLeaseCoordinator.JobKey jobKey,
+            long leaseEpoch,
+            RepositorySinkLeaseCoordinator.InFlightJob tracker) {
+        abortStreamIfInvalidated(call, tracker);
+        Optional<RepositorySinkJobStore.LeaseRenewal> renewal =
+                leases.renewLease(jobKey.accountId(), jobKey.operationId(), leaseEpoch);
+        if (renewal.isEmpty()) {
+            tracker.markLeaseLost();
+            StatusRuntimeException fenced = Status.ABORTED
+                    .withDescription("Repository sink job lease lost prior to repository commit")
+                    .asRuntimeException();
+            call.onError(fenced);
+            throw fenced;
+        }
+        if (renewal.get().cancelRequested()) {
+            tracker.cancel(renewal.get().cancelReason());
+            StatusRuntimeException cancelled = Status.CANCELLED
+                    .withDescription(tracker.reasonOrDefault())
+                    .asRuntimeException();
+            call.onError(cancelled);
+            throw cancelled;
+        }
+    }
+
+    private static void abortStreamIfInvalidated(
+            RenditionUploads.FlowControlledUpload call,
+            RepositorySinkLeaseCoordinator.InFlightJob tracker) {
+        if (tracker.leaseLost.get()) {
+            StatusRuntimeException fenced = Status.ABORTED
+                    .withDescription("Repository sink job lease lost during upload")
+                    .asRuntimeException();
+            call.onError(fenced);
+            throw fenced;
+        }
+        if (tracker.cancelled.get()) {
+            StatusRuntimeException cancelled = Status.CANCELLED
+                    .withDescription(tracker.reasonOrDefault())
+                    .asRuntimeException();
+            call.onError(cancelled);
+            throw cancelled;
+        }
+        if (tracker.shuttingDown.get()) {
+            StatusRuntimeException shutdown = Status.UNAVAILABLE
+                    .withDescription("RepositorySink shutting down before commit")
+                    .asRuntimeException();
+            call.onError(shutdown);
+            throw shutdown;
         }
     }
 
@@ -1118,11 +1378,15 @@ public final class RepositorySink implements AutoCloseable {
 
     private RepositorySinkJob handleUploadFailure(
             RepositorySinkJobStore.StoredJob stored,
-            JobKey jobKey,
+            RepositorySinkLeaseCoordinator.JobKey jobKey,
             String commitOperationId,
             long bytesRendered,
             RepositorySinkAuthorizer.CapturedCaller caller,
+            RepositorySinkLeaseCoordinator.InFlightJob tracker,
             StatusRuntimeException uploadFailure) {
+        if (tracker.leaseLost.get()) {
+            return latestJobOr(jobKey, stored.job());
+        }
         Status.Code code = uploadFailure.getStatus().getCode();
         if (isUncertainCommitFailure(code)) {
             return reconcileAfterUncertainCommit(
@@ -1142,7 +1406,7 @@ public final class RepositorySink implements AutoCloseable {
 
     private RepositorySinkJob reconcileAfterUncertainCommit(
             RepositorySinkJobStore.StoredJob stored,
-            JobKey jobKey,
+            RepositorySinkLeaseCoordinator.JobKey jobKey,
             String commitOperationId,
             long bytesRendered,
             RepositorySinkAuthorizer.CapturedCaller caller,
@@ -1194,29 +1458,42 @@ public final class RepositorySink implements AutoCloseable {
                 stored.pendingProvenance());
     }
 
-    private RepositorySinkJob reconcileIfNeeded(
+    private RepositorySinkJobStore.StoredJob reconcileIfNeeded(
             RepositorySinkJobStore.StoredJob stored,
-            JobKey jobKey,
+            RepositorySinkLeaseCoordinator.JobKey jobKey,
             RepositorySinkAuthorizer.CapturedCaller caller,
             boolean settleUncommittedAsFailed) {
         RepositorySinkJobState state = stored.job().getState();
-        if (state == RepositorySinkJobState.REPOSITORY_SINK_JOB_STATE_UNRESOLVED) {
-            return reconcileOrphanedJob(stored, caller, settleUncommittedAsFailed);
+        if (isTerminalState(state)) {
+            return stored;
         }
         if ((state == RepositorySinkJobState.REPOSITORY_SINK_JOB_STATE_QUEUED
                         || state == RepositorySinkJobState.REPOSITORY_SINK_JOB_STATE_RUNNING)
-                && !inFlight.containsKey(jobKey)) {
-            return reconcileOrphanedJob(stored, caller, settleUncommittedAsFailed);
+                && (leases.isInFlight(jobKey) || stored.lease().isActiveAt(clock.instant()))) {
+            return stored;
         }
-        return stored.job();
-    }
+        if (state == RepositorySinkJobState.REPOSITORY_SINK_JOB_STATE_UNRESOLVED
+                && stored.lease().isActiveAt(clock.instant())) {
+            return stored;
+        }
 
-    private RepositorySinkJob reconcileOrphanedJob(
-            RepositorySinkJobStore.StoredJob stored,
-            RepositorySinkAuthorizer.CapturedCaller caller,
-            boolean settleUncommittedAsFailed) {
         String accountId = stored.job().getAccountId();
         String operationId = stored.job().getOperationId();
+        Optional<RepositorySinkJobStore.StoredJob> claimedOpt =
+                leases.tryClaimExpiredOrUnresolved(
+                        accountId, operationId, stored.lease().leaseEpoch());
+        if (claimedOpt.isEmpty()) {
+            return leases.find(accountId, operationId).orElse(stored);
+        }
+        return reconcileClaimedOrphan(claimedOpt.get(), caller, settleUncommittedAsFailed);
+    }
+
+    private RepositorySinkJobStore.StoredJob reconcileClaimedOrphan(
+            RepositorySinkJobStore.StoredJob claimed,
+            RepositorySinkAuthorizer.CapturedCaller caller,
+            boolean settleUncommittedAsFailed) {
+        String accountId = claimed.job().getAccountId();
+        String operationId = claimed.job().getOperationId();
         String commitOpId = RepositorySinkKeys.downstreamUploadOperationId(accountId, operationId);
         GetOperationOutcomeResponse outcome;
         try {
@@ -1237,21 +1514,35 @@ public final class RepositorySink implements AutoCloseable {
                                 "Repository outcome lookup is unavailable"),
                         true,
                         false);
-                return persistFailure(
-                        stored,
+                RepositorySinkJob unresolvedJob = persistFailure(
+                        claimed,
                         RepositorySinkJobState.REPOSITORY_SINK_JOB_STATE_UNRESOLVED,
                         unresolved,
-                        stored.job().getBytesRendered(),
-                        stored.pendingProvenance());
+                        claimed.job().getBytesRendered(),
+                        claimed.pendingProvenance());
+                return leases.find(accountId, operationId)
+                        .orElseGet(() -> claimed.withTransition(
+                                unresolvedJob, claimed.pendingProvenance(), clock.instant()));
             }
             throw lookupFailure;
         }
 
         if (outcome.hasCommitted()) {
-            return settleFromRecordedOutcome(stored, outcome.getCommitted());
+            RepositorySinkJob settled = settleFromRecordedOutcome(claimed, outcome.getCommitted());
+            return leases.find(accountId, operationId)
+                    .orElseGet(() -> claimed.withTransition(
+                            settled, settled.getProvenance(), clock.instant()));
+        }
+        if (claimed.cancelRequested()) {
+            String reason = claimed.cancelReason().isBlank()
+                    ? "Cancelled by CancelRepositorySinkJob"
+                    : claimed.cancelReason();
+            RepositorySinkJob cancelled = markCancelled(claimed, reason);
+            return leases.find(accountId, operationId)
+                    .orElseGet(() -> claimed.withTransition(cancelled, null, clock.instant()));
         }
         if (!settleUncommittedAsFailed) {
-            return stored.job();
+            return claimed;
         }
         RepositorySinkFailure abandoned = failureOf(
                 Status.Code.UNAVAILABLE,
@@ -1259,12 +1550,15 @@ public final class RepositorySink implements AutoCloseable {
                 "Sink publication did not commit before interruption and may be retried with the same operation_id",
                 true,
                 false);
-        return persistFailure(
-                stored,
+        RepositorySinkJob failed = persistFailure(
+                claimed,
                 RepositorySinkJobState.REPOSITORY_SINK_JOB_STATE_FAILED,
                 abandoned,
-                stored.job().getBytesRendered(),
-                stored.pendingProvenance());
+                claimed.job().getBytesRendered(),
+                claimed.pendingProvenance());
+        return leases.find(accountId, operationId)
+                .orElseGet(() -> claimed.withTransition(
+                        failed, claimed.pendingProvenance(), clock.instant()));
     }
 
     private RepositorySinkJob settleFromRecordedOutcome(
@@ -1323,9 +1617,13 @@ public final class RepositorySink implements AutoCloseable {
                 .setUpdatedAt(now())
                 .build();
         DocumentArchive.requireValidView(settledJob);
-        jobStore.save(
-                new RepositorySinkJobStore.StoredJob(
-                        settledJob, stored.request(), settledProvenance));
+        RepositorySinkJobStore.StoredJob updated =
+                stored.withTransition(settledJob, settledProvenance, clock.instant());
+        if (!leases.transitionOwned(updated, stored.lease().leaseEpoch())) {
+            return leases.find(stored.job().getAccountId(), stored.job().getOperationId())
+                    .map(RepositorySinkJobStore.StoredJob::job)
+                    .orElse(settledJob);
+        }
         return settledJob;
     }
 
@@ -1357,7 +1655,14 @@ public final class RepositorySink implements AutoCloseable {
     private RepositorySinkJob persistRenderFailure(
             RepositorySinkJobStore.StoredJob stored,
             RenderFailure failure,
-            InFlightJob tracker) {
+            RepositorySinkLeaseCoordinator.JobKey jobKey,
+            RepositorySinkLeaseCoordinator.InFlightJob tracker) {
+        if (tracker.leaseLost.get()) {
+            return latestJobOr(jobKey, stored.job());
+        }
+        if (tracker.shuttingDown.get() && !tracker.cancelled.get()) {
+            return persistShutdownInterruption(stored, 0L);
+        }
         if (failure.kind() == RenderFailure.Kind.CANCELLED || tracker.cancelled.get()) {
             String message = tracker.cancelled.get()
                     ? tracker.reasonOrDefault()
@@ -1415,6 +1720,22 @@ public final class RepositorySink implements AutoCloseable {
                 pendingProvenance);
     }
 
+    private RepositorySinkJob persistShutdownInterruption(
+            RepositorySinkJobStore.StoredJob stored, long bytesRendered) {
+        RepositorySinkFailure failure = failureOf(
+                Status.Code.UNAVAILABLE,
+                "HOST_SHUTDOWN",
+                "RepositorySink host shut down before commit; retry with the same operation_id",
+                true,
+                false);
+        return persistFailure(
+                stored,
+                RepositorySinkJobState.REPOSITORY_SINK_JOB_STATE_FAILED,
+                failure,
+                bytesRendered,
+                null);
+    }
+
     private RepositorySinkJob markCancelled(
             RepositorySinkJobStore.StoredJob stored, String reason) {
         return markCancelledWithRendered(stored, reason, stored.job().getBytesRendered());
@@ -1450,9 +1771,21 @@ public final class RepositorySink implements AutoCloseable {
                 .setUpdatedAt(now())
                 .build();
         DocumentArchive.requireValidView(updated);
-        jobStore.save(new RepositorySinkJobStore.StoredJob(
-                updated, stored.request(), pendingProvenance));
+        RepositorySinkJobStore.StoredJob next =
+                stored.withTransition(updated, pendingProvenance, clock.instant());
+        if (!leases.transitionOwned(next, stored.lease().leaseEpoch())) {
+            return leases.find(stored.job().getAccountId(), stored.job().getOperationId())
+                    .map(RepositorySinkJobStore.StoredJob::job)
+                    .orElse(updated);
+        }
         return updated;
+    }
+
+    private RepositorySinkJob latestJobOr(
+            RepositorySinkLeaseCoordinator.JobKey key, RepositorySinkJob fallback) {
+        return leases.find(key.accountId(), key.operationId())
+                .map(RepositorySinkJobStore.StoredJob::job)
+                .orElse(fallback);
     }
 
     private RepositorySinkJob markReplayedReceipt(RepositorySinkJob succeeded) {
@@ -2820,33 +3153,6 @@ public final class RepositorySink implements AutoCloseable {
                 .setSeconds(instant.getEpochSecond())
                 .setNanos(instant.getNano())
                 .build();
-    }
-
-    private record JobKey(String accountId, String operationId) {}
-
-    private static final class InFlightJob {
-        final CompletableFuture<RepositorySinkJob> completion = new CompletableFuture<>();
-        final AtomicBoolean cancelled = new AtomicBoolean();
-        final AtomicBoolean enteringCommit = new AtomicBoolean();
-        volatile String cancelReason = "";
-        volatile Thread runnerThread;
-
-        void cancel(String reason) {
-            if (reason != null && !reason.isBlank()) {
-                this.cancelReason = reason.trim();
-            }
-            cancelled.set(true);
-            if (!enteringCommit.get()) {
-                Thread thread = runnerThread;
-                if (thread != null) {
-                    thread.interrupt();
-                }
-            }
-        }
-
-        String reasonOrDefault() {
-            return cancelReason.isBlank() ? "Cancelled" : cancelReason;
-        }
     }
 
     private record ResolvedSource(
