@@ -1,6 +1,8 @@
 package ai.protomolt.proto.emit.parquet;
 
 import ai.protomolt.proto.emit.Bundle;
+import ai.protomolt.proto.emit.renderer.RenderFailure;
+import ai.protomolt.proto.emit.renderer.RendererProvider;
 import ai.protomolt.proto.meta.SensitivityMasker;
 import ai.protomolt.proto.validate.ProtoValidator;
 import ai.protomolt.proto.validate.ValidationResult;
@@ -15,6 +17,7 @@ import org.apache.parquet.io.PositionOutputStream;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.io.OutputStream;
 import java.util.Objects;
 
 /**
@@ -140,6 +143,128 @@ public final class ParquetEmitter {
         return Bundle.builder().add(path, toBytes(descriptor, messages, ids, options)).build();
     }
 
+    /**
+     * Bounded rendition write path shared by {@link ParquetRendererProvider}: validates every
+     * row (unless {@code options.skipValidation()} is set, which rendition rendering never
+     * enables), applies sensitivity masking failing closed on any unresolved packed payload,
+     * checks {@code cancellation} before each row and on every output write, and enforces
+     * {@code maxOutputBytes} before writing bytes to {@code target}.
+     */
+    static void writeBounded(Descriptor descriptor,
+                             Iterable<? extends Message> messages,
+                             ProtoParquetSchemas.FieldIdResolver ids,
+                             ParquetExportOptions options,
+                             OutputStream target,
+                             long maxOutputBytes,
+                             long maxUncompressedRowBytes,
+                             RendererProvider.Cancellation cancellation) throws IOException {
+        Objects.requireNonNull(descriptor, "descriptor");
+        Objects.requireNonNull(messages, "messages");
+        Objects.requireNonNull(ids, "ids");
+        Objects.requireNonNull(options, "options");
+        Objects.requireNonNull(target, "target");
+        Objects.requireNonNull(cancellation, "cancellation");
+        if (maxOutputBytes <= 0) {
+            throw new RenderFailure(RenderFailure.Kind.INVALID,
+                    "maxOutputBytes must be positive, got " + maxOutputBytes);
+        }
+        cancellation.check();
+        ProtoValidator validator = options.skipValidation()
+                ? null : ProtoValidator.forMessageType(descriptor);
+        BoundedStreamOutputFile output =
+                new BoundedStreamOutputFile(target, maxOutputBytes, cancellation);
+        ParquetWriter<Message> writer = new Builder(output,
+                new ProtoParquetWriteSupport(descriptor, ids, options.columns()))
+                .withCompressionCodec(CompressionCodecName.SNAPPY)
+                .withCodecFactory(new HadoopFreeCodecs())
+                .withConf(new org.apache.parquet.conf.PlainParquetConfiguration())
+                .build();
+        Throwable primaryFailure = null;
+        try {
+            int index = 0;
+            long cumulativeRowBytes = 0L;
+            for (Message message : messages) {
+                cancellation.check();
+                if (!message.getDescriptorForType().getFullName()
+                        .equals(descriptor.getFullName())) {
+                    throw new RenderFailure(RenderFailure.Kind.UNSUPPORTED,
+                            "Expected " + descriptor.getFullName() + " but got "
+                                    + message.getDescriptorForType().getFullName());
+                }
+                int rowSize = message.getSerializedSize();
+                if (maxUncompressedRowBytes > 0
+                        && rowSize > maxUncompressedRowBytes - cumulativeRowBytes) {
+                    throw new RenderFailure(RenderFailure.Kind.LIMIT,
+                            "Cumulative uncompressed row payload exceeded bounded budget ("
+                                    + maxUncompressedRowBytes + " bytes)");
+                }
+                cumulativeRowBytes += rowSize;
+                if (validator != null) {
+                    ValidationResult result = validator.validate(message);
+                    if (!result.valid()) {
+                        throw new RenderFailure(RenderFailure.Kind.INVALID,
+                                validationFailure(descriptor, index, result).getMessage());
+                    }
+                }
+                Message rowToWrite = maskedFailClosed(message, options);
+                cancellation.check();
+                writer.write(rowToWrite);
+                if (output.failure() != null) {
+                    throw output.failure();
+                }
+                index++;
+            }
+        } catch (Throwable failure) {
+            primaryFailure = failure;
+            output.abort();
+            throw failure;
+        } finally {
+            try {
+                writer.close();
+            } catch (Throwable closeFailure) {
+                if (primaryFailure == null) {
+                    if (output.failure() != null) {
+                        throw output.failure();
+                    }
+                    if (closeFailure instanceof IOException io) {
+                        throw io;
+                    }
+                    if (closeFailure instanceof RuntimeException re) {
+                        throw re;
+                    }
+                    if (closeFailure instanceof Error err) {
+                        throw err;
+                    }
+                    throw new IOException(closeFailure);
+                }
+            }
+        }
+        if (output.failure() != null) {
+            throw output.failure();
+        }
+        cancellation.check();
+    }
+
+    private static Message maskedFailClosed(Message message, ParquetExportOptions options)
+            throws RenderFailure {
+        if (!options.masks()) {
+            return message;
+        }
+        SensitivityMasker.Strategy strategy = options.maskStrategy();
+        boolean keyed = strategy == SensitivityMasker.Strategy.ENCRYPT
+                || strategy == SensitivityMasker.Strategy.DECRYPT;
+        SensitivityMasker.MaskResult result = keyed
+                ? SensitivityMasker.mask(message, options.maskClasses(), strategy,
+                        options.maskKey())
+                : SensitivityMasker.mask(message, options.maskClasses(), strategy);
+        if (!result.unresolvedPaths().isEmpty()) {
+            throw new RenderFailure(RenderFailure.Kind.UNSUPPORTED,
+                    "Sensitivity masking could not inspect opaque payload paths: "
+                            + result.unresolvedPaths());
+        }
+        return result.message();
+    }
+
     private static final class Builder extends ParquetWriter.Builder<Message, Builder> {
         private final WriteSupport<Message> writeSupport;
 
@@ -200,6 +325,113 @@ public final class ParquetEmitter {
         @Override
         public PositionOutputStream createOrOverwrite(long blockSizeHint) {
             buffer.reset();
+            return create(blockSizeHint);
+        }
+
+        @Override
+        public boolean supportsBlockSize() {
+            return false;
+        }
+
+        @Override
+        public long defaultBlockSize() {
+            return 0;
+        }
+    }
+
+    /**
+     * Bounded {@link OutputFile} streaming directly to a caller {@link OutputStream} while
+     * enforcing cooperative cancellation and {@code maxOutputBytes} before writing bytes.
+     */
+    private static final class BoundedStreamOutputFile implements OutputFile {
+        private final OutputStream target;
+        private final long maxOutputBytes;
+        private final RendererProvider.Cancellation cancellation;
+        private boolean streamOpened;
+        private boolean aborted;
+        private RenderFailure failure;
+
+        private BoundedStreamOutputFile(OutputStream target,
+                                        long maxOutputBytes,
+                                        RendererProvider.Cancellation cancellation) {
+            this.target = target;
+            this.maxOutputBytes = maxOutputBytes;
+            this.cancellation = cancellation;
+        }
+
+        void abort() {
+            this.aborted = true;
+        }
+
+        RenderFailure failure() {
+            return failure;
+        }
+
+        @Override
+        public PositionOutputStream create(long blockSizeHint) throws IOException {
+            if (streamOpened) {
+                throw new IOException("Bounded Parquet output stream can only be opened once");
+            }
+            streamOpened = true;
+            return new PositionOutputStream() {
+                private long position;
+
+                @Override
+                public long getPos() {
+                    return position;
+                }
+
+                @Override
+                public void write(int b) throws IOException {
+                    if (aborted) {
+                        return;
+                    }
+                    reserve(1);
+                    target.write(b);
+                    position++;
+                }
+
+                @Override
+                public void write(byte[] bytes, int offset, int length) throws IOException {
+                    Objects.checkFromIndexSize(offset, length, bytes.length);
+                    if (aborted || length == 0) {
+                        return;
+                    }
+                    reserve(length);
+                    target.write(bytes, offset, length);
+                    position += length;
+                }
+
+                @Override
+                public void flush() throws IOException {
+                    if (!aborted) {
+                        cancellation.check();
+                        target.flush();
+                    }
+                }
+
+                private void reserve(int length) throws RenderFailure {
+                    try {
+                        cancellation.check();
+                    } catch (RenderFailure cancelled) {
+                        aborted = true;
+                        failure = cancelled;
+                        throw cancelled;
+                    }
+                    if (length > maxOutputBytes - position) {
+                        aborted = true;
+                        failure = new RenderFailure(
+                                RenderFailure.Kind.LIMIT,
+                                "Rendered Parquet artifact exceeded max_output_bytes ("
+                                        + maxOutputBytes + " bytes)");
+                        throw failure;
+                    }
+                }
+            };
+        }
+
+        @Override
+        public PositionOutputStream createOrOverwrite(long blockSizeHint) throws IOException {
             return create(blockSizeHint);
         }
 

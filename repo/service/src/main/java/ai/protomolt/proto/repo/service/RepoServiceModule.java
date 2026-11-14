@@ -78,7 +78,9 @@ public final class RepoServiceModule implements ServiceModule {
         ConsoleSignIn signIn = config.httpPort() > 0
                 ? ConsoleSignIn.fromEnvironment(context.environment())
                 : ConsoleSignIn.none();
-        services = RepoServices.build(config).withAccountBindings(accounts);
+        services = RepoServices.build(config)
+                .withAccountBindings(accounts)
+                .withRenderers(RepoServices.defaultSaveAsRenderers());
         if (config.conceptSchemePaths().isEmpty()) {
             var envConceptPaths = RepoServiceConfig.parseConceptSchemePaths(context.environment());
             if (!envConceptPaths.isEmpty()) {
@@ -112,6 +114,11 @@ public final class RepoServiceModule implements ServiceModule {
                         context.contributions().all(ai.protomolt.proto.config.ConceptSchemeMounts.class);
                 if (!contributedSchemes.isEmpty()) {
                     services.withConceptSchemes(contributedSchemes.getFirst());
+                }
+                List<ai.protomolt.proto.repo.archive.RepositorySinkRenderers> contributedRenderers =
+                        context.contributions().all(ai.protomolt.proto.repo.archive.RepositorySinkRenderers.class);
+                if (!contributedRenderers.isEmpty()) {
+                    services.withRenderers(contributedRenderers.getFirst());
                 }
                 netty = services.startNetty(config.grpcPort(), credential, callers);
                 // Same rule as RepoServiceMain: 0 or "off" leaves the HTTP port, and

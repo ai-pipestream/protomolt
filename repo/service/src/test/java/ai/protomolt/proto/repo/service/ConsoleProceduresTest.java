@@ -2,6 +2,7 @@ package ai.protomolt.proto.repo.service;
 
 import ai.protomolt.proto.repo.archive.v1.ArchiveServiceGrpc;
 import ai.protomolt.proto.repo.archive.v1.ArchiveMutationServiceGrpc;
+import ai.protomolt.proto.repo.sink.v1.RepositorySinkServiceGrpc;
 import ai.protomolt.proto.repo.v1.DriveServiceGrpc;
 import ai.protomolt.proto.repo.v2.DocumentServiceGrpc;
 import io.grpc.MethodDescriptor;
@@ -44,7 +45,12 @@ class ConsoleProceduresTest {
                 "ai.protomolt.proto.repo.archive.v1.ArchiveService/ListEntries",
                 "ai.protomolt.proto.repo.archive.v1.ArchiveService/GetEntryManifest",
                 "ai.protomolt.proto.repo.archive.v1.ArchiveService/ListVersions",
-                "ai.protomolt.proto.repo.archive.v1.ArchiveService/ReadRendition");
+                "ai.protomolt.proto.repo.archive.v1.ArchiveService/ReadRendition",
+                "ai.protomolt.proto.repo.sink.v1.RepositorySinkService/ListSaveAsCapabilities",
+                "ai.protomolt.proto.repo.sink.v1.RepositorySinkService/PublishRepositorySink",
+                "ai.protomolt.proto.repo.sink.v1.RepositorySinkService/GetRepositorySinkJob",
+                "ai.protomolt.proto.repo.sink.v1.RepositorySinkService/CancelRepositorySinkJob",
+                "ai.protomolt.proto.repo.sink.v1.RepositorySinkService/ListRenditionProvenance");
     }
 
     @Test
@@ -52,7 +58,8 @@ class ConsoleProceduresTest {
         Map<String, MethodDescriptor.MethodType> types = new HashMap<>();
         for (ServiceDescriptor service : List.of(DocumentServiceGrpc.getServiceDescriptor(),
                 DriveServiceGrpc.getServiceDescriptor(), ArchiveServiceGrpc.getServiceDescriptor(),
-                ArchiveMutationServiceGrpc.getServiceDescriptor())) {
+                ArchiveMutationServiceGrpc.getServiceDescriptor(),
+                RepositorySinkServiceGrpc.getServiceDescriptor())) {
             for (MethodDescriptor<?, ?> method : service.getMethods()) {
                 types.put(method.getFullMethodName(), method.getType());
             }
