@@ -304,6 +304,31 @@ class RepoConnectGatewayIT {
         requests.put(ai.protomolt.proto.repo.archive.v1.ArchiveMutationServiceGrpc.getGetArchiveMutationMethod().getFullMethodName(),
                 ai.protomolt.proto.repo.archive.v1.GetArchiveMutationRequest.newBuilder().setAccountId(ACCOUNT)
                         .setOperationId(java.util.UUID.randomUUID().toString()).build());
+        var sinkSource = ai.protomolt.proto.repo.sink.v1.SinkSource.newBuilder()
+                .setRepositoryRevision(ai.protomolt.proto.repo.sink.v1.RepositoryRevisionSource.newBuilder()
+                        .setArchiveRendition(ai.protomolt.proto.repo.sink.v1.ArchiveRenditionSource.newBuilder()
+                                .setAddress(entry())
+                                .setRendition(RenditionDescriptor.newBuilder().setName("original"))))
+                .build();
+        requests.put(ai.protomolt.proto.repo.sink.v1.RepositorySinkServiceGrpc.getListSaveAsCapabilitiesMethod().getFullMethodName(),
+                ai.protomolt.proto.repo.sink.v1.ListSaveAsCapabilitiesRequest.newBuilder()
+                        .setSource(sinkSource).build());
+        requests.put(ai.protomolt.proto.repo.sink.v1.RepositorySinkServiceGrpc.getPublishRepositorySinkMethod().getFullMethodName(),
+                ai.protomolt.proto.repo.sink.v1.PublishRepositorySinkRequest.newBuilder()
+                        .setSource(sinkSource)
+                        .setDestination(ai.protomolt.proto.repo.sink.v1.SinkDestination.newBuilder()
+                                .setAddress(entry())
+                                .setRendition(RenditionDescriptor.newBuilder().setName("derived")))
+                        .build());
+        requests.put(ai.protomolt.proto.repo.sink.v1.RepositorySinkServiceGrpc.getGetRepositorySinkJobMethod().getFullMethodName(),
+                ai.protomolt.proto.repo.sink.v1.GetRepositorySinkJobRequest.newBuilder()
+                        .setAccountId(ACCOUNT).setOperationId("op-sink-" + DOC).build());
+        requests.put(ai.protomolt.proto.repo.sink.v1.RepositorySinkServiceGrpc.getCancelRepositorySinkJobMethod().getFullMethodName(),
+                ai.protomolt.proto.repo.sink.v1.CancelRepositorySinkJobRequest.newBuilder()
+                        .setAccountId(ACCOUNT).setOperationId("op-sink-" + DOC).build());
+        requests.put(ai.protomolt.proto.repo.sink.v1.RepositorySinkServiceGrpc.getListRenditionProvenanceMethod().getFullMethodName(),
+                ai.protomolt.proto.repo.sink.v1.ListRenditionProvenanceRequest.newBuilder()
+                        .setAddress(entry()).build());
         return requests;
     }
 
