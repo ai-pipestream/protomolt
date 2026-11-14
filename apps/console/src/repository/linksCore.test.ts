@@ -2,6 +2,18 @@ import { create } from '@bufbuild/protobuf'
 import { describe, expect, it } from 'vitest'
 import { ConceptExpansionSchema, ConceptRefSchema } from '@/gen/ai/protomolt/proto/types/v1/concepts_pb'
 import {
+  ExternalBindingLifecycle,
+  ExternalEndpointSummarySchema,
+  ExternalLinkSchema,
+  ExternalProjectionLifecycle,
+  ExternalProviderEvidenceSchema,
+  ExternalProviderSettlement,
+  ExternalRetentionPolicy,
+  ExternalServingVisibility,
+  ExternalSystemBindingSchema,
+  ManagedSearchIdentitySchema,
+} from '@/gen/ai/protomolt/proto/repo/external/v1/external_publication_pb'
+import {
   BacklinkSchema,
   ConceptFilterEvidenceSchema,
   ConceptFilterSchema,
@@ -21,6 +33,8 @@ import {
   buildLinkNeighborhoodGraph,
   documentRoute,
   evidenceView,
+  externalLinkRow,
+  externalLinkRows,
   filterConditions,
   linkRow,
   linkRows,
@@ -50,18 +64,28 @@ function staticLink(state: { tombstoned?: boolean; unavailable?: boolean; pinned
 }
 
 describe('safeExternalHref', () => {
-  it('keeps only absolute http and https URLs', () => {
+  it('keeps only absolute http and https URLs without credentials or bearer tokens', () => {
     expect(safeExternalHref('https://example.org/rel/reviews')).toBe('https://example.org/rel/reviews')
     expect(safeExternalHref('http://purl.org/dc/terms/references')).toBe('http://purl.org/dc/terms/references')
+    expect(safeExternalHref('https://console.example.org/search?collection=claims&page=2')).toBe(
+      'https://console.example.org/search?collection=claims&page=2',
+    )
   })
 
   it.each([
     'javascript:alert(1)',
     'JavaScript:alert(document.cookie)',
     ' javascript:alert(1)',
+    ' https://example.org/padded ',
     'data:text/html,<script>alert(1)</script>',
     'vbscript:msgbox(1)',
     'file:///etc/passwd',
+    'https://user:secret@example.org/items/1',
+    'https://bearer-token@example.org/items/1',
+    'https://example.org/items/1?access_token=eyJ0eXAi',
+    'https://example.org/items/1?view=full&Bearer=secret',
+    'https://example.org/items/1?api_key=12345',
+    'https://example.org/items/1?X-Amz-Signature=deadbeef',
     'references',
     '/relative/path',
     '//example.org/scheme-relative',
@@ -262,5 +286,116 @@ describe('buildLinkNeighborhoodGraph (#695)', () => {
       column: 'outbound',
       status: 'RESOLVED',
     })
+  })
+})
+
+describe('externalLinkRow (#814)', () => {
+  function sampleExternalLink(overrides: { displayUrl?: string; externalVersion?: string; retired?: boolean } = {}) {
+    const retired = overrides.retired ?? false
+    return create(ExternalLinkSchema, {
+      bindingId: 'search-primary',
+      bindingRevision: 2n,
+      bindingSnapshot: create(ExternalSystemBindingSchema, {
+        bindingId: 'search-primary',
+        accountId: 'acct-a',
+        bindingRevision: 2n,
+        provider: 'protomolt-search',
+        serviceProfileId: 'search-profile',
+        serviceEndpointId: 'grpc-1',
+        dataset: 'claims-index',
+        namespace: 'prod-us',
+        contractVersion: 'managed-search/v1',
+        endpointSummary: create(ExternalEndpointSummarySchema, {
+          host: 'search.internal.example.org',
+          port: 8443,
+          tlsEnabled: true,
+        }),
+        lifecycle: retired ? ExternalBindingLifecycle.RETIRED : ExternalBindingLifecycle.ACTIVE,
+        retentionPolicy: ExternalRetentionPolicy.RETAIN_HISTORY,
+        createdAt: at('2026-10-01T00:00:00Z'),
+        retiredReason: retired ? 'rotated to v3' : undefined,
+        retiredAt: retired ? at('2026-10-02T00:00:00Z') : undefined,
+      }),
+      externalObjectId: 'claims-index:doc-1',
+      externalVersion: overrides.externalVersion,
+      sourceAddress: testAddress({ docId: 'doc-1' }),
+      sourceRevision: 7n,
+      managedSearch: create(ManagedSearchIdentitySchema, {
+        historyId: new Uint8Array(16),
+        documentKey: new Uint8Array([1, 2, 3]),
+        indexKey: new Uint8Array([4, 5]),
+        acceptedVersion: 3n,
+        acceptedSequence: 42n,
+        publishedCatalogEpoch: 9n,
+        afterManifestSha256: 'a'.repeat(64),
+        servingVisibility: ExternalServingVisibility.CURRENT_ROWS,
+      }),
+      displayUrl: overrides.displayUrl,
+      confirmedByOperationId: 'op-ext-7',
+      confirmationEvidence: create(ExternalProviderEvidenceSchema, {
+        provider: 'protomolt-search',
+        contractVersion: 'managed-search/v1',
+        verifiedServiceProfileId: 'search-profile',
+        verifiedServiceEndpointId: 'grpc-1',
+        credentialBindingSha256: 'a'.repeat(64),
+        externalObjectId: 'claims-index:doc-1',
+        externalVersion: overrides.externalVersion,
+        requestIntentSha256: 'b'.repeat(64),
+        receiptSha256: 'c'.repeat(64),
+        providerReceiptId: 'decision-42',
+        settlement: ExternalProviderSettlement.PUBLISHED,
+        verifiedAt: at('2026-10-03T12:00:00Z'),
+      }),
+      projectionLifecycle: ExternalProjectionLifecycle.ACTIVE,
+      confirmedAt: at('2026-10-03T12:00:00Z'),
+    })
+  }
+
+  it('projects canonical external identity, historical binding snapshot, and guarded displayHref', () => {
+    const row = externalLinkRow(
+      sampleExternalLink({
+        displayUrl: 'https://console.example.org/search/claims-index/doc-1',
+        externalVersion: 'v3-epoch9',
+        retired: true,
+      }),
+    )
+    expect(row).toEqual({
+      key: 'search-primary\u00002\u0000intake:acct-a\u0000ds-files\u0000doc-1\u00007',
+      bindingId: 'search-primary',
+      bindingRevision: 2n,
+      provider: 'protomolt-search',
+      dataset: 'claims-index',
+      namespace: 'prod-us',
+      contractVersion: 'managed-search/v1',
+      endpointSummary: 'tls://search.internal.example.org:8443',
+      bindingLifecycle: 'RETIRED',
+      externalObjectId: 'claims-index:doc-1',
+      externalVersion: 'v3-epoch9',
+      sourceCall: { accountId: 'acct-a', graphId: 'intake:acct-a', graphAddressId: 'ds-files', docId: 'doc-1' },
+      sourceRevision: 7n,
+      projectionLifecycle: 'ACTIVE',
+      confirmedByOperationId: 'op-ext-7',
+      confirmedAt: '2026-10-03T12:00:00.000Z',
+      providerReceiptId: 'decision-42',
+      servingVisibility: 'CURRENT_ROWS',
+      displayHref: 'https://console.example.org/search/claims-index/doc-1',
+    })
+  })
+
+  it('preserves explicit absence of externalVersion and strips unsafe or bearer displayUrl without altering canonical identity', () => {
+    const rows = externalLinkRows([
+      sampleExternalLink({ displayUrl: 'https://token@console.example.org/doc-1' }),
+      sampleExternalLink({ displayUrl: 'https://console.example.org/doc-1?access_token=secret' }),
+      sampleExternalLink({ displayUrl: 'javascript:alert(1)' }),
+    ])
+    for (const row of rows) {
+      expect(row.externalObjectId).toBe('claims-index:doc-1')
+      expect(row.externalVersion).toBeNull()
+      expect(row.displayHref).toBeNull()
+    }
+  })
+
+  it('rejects incomplete wire ExternalLink records', () => {
+    expect(() => externalLinkRow(create(ExternalLinkSchema, { bindingId: 'b1' }))).toThrow('missing sourceAddress')
   })
 })
