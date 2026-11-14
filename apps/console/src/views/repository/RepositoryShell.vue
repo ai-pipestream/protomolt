@@ -1,4 +1,5 @@
 <template>
+  <ArchiveDeleteReceiptBanner v-if="showBanner" />
   <router-view />
 </template>
 
@@ -9,9 +10,12 @@
 // UNAUTHENTICATED (no session, or an expired one) starts sign-in and comes back
 // to the page that was open.
 import { provide } from 'vue'
+import ArchiveDeleteReceiptBanner from '@/components/repository/ArchiveDeleteReceiptBanner.vue'
+import { useArchiveDeleteReceiptHost } from '@/repository/archiveDeleteReceipts'
 import { REPOSITORY_CLIENTS, REPOSITORY_SIGN_IN, repositoryClients } from '@/repository/clients'
 import { repositoryTransport, signInLocation } from '@/repository/transport'
 
+const { showBanner } = useArchiveDeleteReceiptHost()
 const signIn = () => window.location.assign(signInLocation(window.location.pathname + window.location.search))
 provide(REPOSITORY_SIGN_IN, signIn)
 provide(REPOSITORY_CLIENTS, repositoryClients(repositoryTransport(signIn)))

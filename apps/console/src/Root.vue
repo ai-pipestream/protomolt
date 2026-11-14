@@ -44,6 +44,7 @@
 
     <v-main>
       <v-container fluid style="max-width: 1400px">
+        <ArchiveDeleteReceiptBanner v-if="showBanner" />
         <router-view />
       </v-container>
     </v-main>
@@ -56,8 +57,12 @@
 import { computed, onMounted, ref } from 'vue'
 import { useRoute } from 'vue-router'
 import { useTheme } from 'vuetify'
+import ArchiveDeleteReceiptBanner from './components/repository/ArchiveDeleteReceiptBanner.vue'
 import ToastHost from './components/ToastHost.vue'
+import { useArchiveDeleteReceiptHost } from './repository/archiveDeleteReceipts'
 import { registryApi } from './services/api'
+
+const { showBanner } = useArchiveDeleteReceiptHost()
 
 /** The console's sections; each one is a top-level route the rail links to. */
 const sections = [

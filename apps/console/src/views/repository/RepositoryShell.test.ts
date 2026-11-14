@@ -3,9 +3,29 @@ import { flushPromises, mount } from '@vue/test-utils'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { defineComponent, h, onMounted } from 'vue'
 import { createMemoryHistory, createRouter } from 'vue-router'
-import { create, toBinary } from '@bufbuild/protobuf'
+import { create, fromBinary, toBinary } from '@bufbuild/protobuf'
 import { ListDrivesResponseSchema, DriveSchema } from '@/gen/ai/protomolt/proto/repo/v1/drive_pb'
-import { installDomStubs } from '@/componentTestKit'
+import {
+  ArchiveMutationKind,
+  ArchiveMutationReceiptSchema,
+  ArchiveMutationRequestSchema,
+  ArchiveMutationState,
+} from '@/gen/ai/protomolt/proto/repo/archive/v1/archive_mutation_pb'
+import { ArchiveMutationResponseSchema } from '@/gen/ai/protomolt/proto/repo/archive/v1/archive_mutation_service_pb'
+import { ArchiveSchema, ArchiveStatsSchema } from '@/gen/ai/protomolt/proto/repo/archive/v1/archive_pb'
+import {
+  GetArchiveResponseSchema,
+  GetArchiveStatsResponseSchema,
+  GetEntryManifestResponseSchema,
+  ListEntriesResponseSchema,
+  ListVersionsResponseSchema,
+} from '@/gen/ai/protomolt/proto/repo/archive/v1/archive_service_pb'
+import { EntryAddressSchema, EntryInfoSchema, VersionManifestSchema } from '@/gen/ai/protomolt/proto/repo/archive/v1/entry_pb'
+import { installDomStubs, vuetifyForTests } from '@/componentTestKit'
+import { archiveDeleteDigest } from '@/repository/archiveDeleteCore'
+import { settle } from '@/repository/repositoryViewKit'
+import RepositoryArchiveEntryView from '@/views/repository/RepositoryArchiveEntryView.vue'
+import RepositoryArchiveView from '@/views/repository/RepositoryArchiveView.vue'
 import RepositoryShell from '@/views/repository/RepositoryShell.vue'
 import { useRepositoryClients } from '@/repository/clients'
 
@@ -76,5 +96,112 @@ describe('RepositoryShell', () => {
     expect(assign).toHaveBeenCalledWith('/console/sign-in?return=%2Fconsole%2Frepository%2Faccounts%2Facct-a%3Fx%3D1')
     expect(result.error).toBeDefined()
     wrapper.unmount()
+  })
+
+  it('retains and displays an arrived archive delete receipt across RepositoryShell route navigation (#871)', async () => {
+    installDomStubs()
+    const addr = create(EntryAddressSchema, { accountId: 'acct-a', archive: 'papers', entryId: 'e-1' })
+    const stub = { template: '<div />' }
+    const router = createRouter({
+      history: createMemoryHistory(),
+      routes: [
+        {
+          path: '/repository',
+          component: RepositoryShell,
+          children: [
+            { path: '', name: 'repository', component: stub },
+            { path: 'accounts/:accountId', name: 'repository-account', component: stub },
+            { path: 'document', name: 'repository-document', component: stub },
+            { path: 'upload', name: 'repository-upload', component: stub },
+            { path: 'archive', name: 'repository-archive', component: RepositoryArchiveView },
+            { path: 'archive-entry', name: 'repository-archive-entry', component: RepositoryArchiveEntryView },
+            { path: 'lookup', name: 'repository-lookup', component: stub },
+          ],
+        },
+      ],
+    })
+    let recordedOp = ''
+    let recordedDigest = ''
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      const protoResponse = (bytes: Uint8Array) =>
+        new Response(bytes as Uint8Array<ArrayBuffer>, { status: 200, headers: { 'content-type': 'application/proto' } })
+      if (url.endsWith('/GetEntryManifest')) {
+        return protoResponse(
+          toBinary(
+            GetEntryManifestResponseSchema,
+            create(GetEntryManifestResponseSchema, {
+              info: create(EntryInfoSchema, { address: addr, currentVersion: 3n, title: 'Paper 1' }),
+              manifest: create(VersionManifestSchema, { address: addr, version: 3n }),
+            }),
+          ),
+        )
+      }
+      if (url.endsWith('/ListVersions')) {
+        return protoResponse(toBinary(ListVersionsResponseSchema, create(ListVersionsResponseSchema)))
+      }
+      if (url.endsWith('/GetArchive')) {
+        return protoResponse(
+          toBinary(GetArchiveResponseSchema, create(GetArchiveResponseSchema, { archive: create(ArchiveSchema, { name: 'papers', accountId: 'acct-a' }) })),
+        )
+      }
+      if (url.endsWith('/GetArchiveStats')) {
+        return protoResponse(
+          toBinary(GetArchiveStatsResponseSchema, create(GetArchiveStatsResponseSchema, { stats: create(ArchiveStatsSchema, { archive: 'papers' }) })),
+        )
+      }
+      if (url.endsWith('/ListEntries')) {
+        return protoResponse(toBinary(ListEntriesResponseSchema, create(ListEntriesResponseSchema)))
+      }
+      if (url.endsWith('/ArchiveMutation')) {
+        const bodyBytes = init?.body instanceof Uint8Array ? init.body : new Uint8Array(await new Response(init?.body).arrayBuffer())
+        const req = fromBinary(ArchiveMutationRequestSchema, bodyBytes)
+        recordedOp = req.operationId
+        recordedDigest = archiveDeleteDigest(req)
+        const res = protoResponse(
+          toBinary(
+            ArchiveMutationResponseSchema,
+            create(ArchiveMutationResponseSchema, {
+              receipt: create(ArchiveMutationReceiptSchema, {
+                operationId: req.operationId,
+                address: addr,
+                kind: ArchiveMutationKind.DELETE_ENTRY,
+                state: ArchiveMutationState.COMPLETED,
+                entryDeleted: true,
+                commandSha256: recordedDigest,
+              }),
+            }),
+          ),
+        )
+        void router.push({ name: 'repository-archive', query: { account: 'acct-a', archive: 'papers' } })
+        return res
+      }
+      throw new Error(`Unexpected RPC URL: ${url}`)
+    }))
+
+    await router.push({ name: 'repository-archive-entry', query: { account: 'acct-a', archive: 'papers', entry: 'e-1' } })
+    await router.isReady()
+    const wrapper = mount({ template: '<router-view />' }, {
+      global: { plugins: [vuetifyForTests(), router] },
+      attachTo: document.body,
+    })
+    try {
+      await settle()
+      await wrapper.get('[data-testid="delete-archive-entry"]').trigger('click')
+      await settle()
+      ;(document.body.querySelector('[data-testid="delete-archive-confirm"]') as HTMLElement).click()
+      await settle()
+
+      expect(router.currentRoute.value.name).toBe('repository-archive')
+      const banners = wrapper.findAll('[data-testid="archive-delete-receipt-banner"]')
+      expect(banners).toHaveLength(1)
+      expect(banners[0].text()).toContain('acct-a / papers / e-1')
+      expect(banners[0].text()).toContain(recordedOp)
+      expect(banners[0].text()).toContain('COMPLETED')
+      expect(banners[0].text()).toContain(recordedDigest)
+    } finally {
+      wrapper.unmount()
+      document.body.innerHTML = ''
+    }
   })
 })
