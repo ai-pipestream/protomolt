@@ -246,7 +246,7 @@ unless disabled, the HTTP upload route. To embed in-JVM instead, use
 | `DOCUMENT_PLATFORM_DEFAULT_BUCKET_BASE` | `documents` | Provisioned drives without an explicit bucket get `<base>-<accountId>-<name>` |
 | `DOCUMENT_PLATFORM_BLOB_STORE` | `s3` | Blob-store selection: `s3` (default, direct object storage), `valkey` (preferred Redis-compatible byte provider), `s3-valkey-cache` (preferred S3 + cache composition), `redis` (objects live in Redis; not constructable for v2 stacks, whose streamed reads `RedisBlobStore` does not implement), `s3-redis-cache` (S3 of record behind a Redis read-through/write-through cache; supported, the cache forwards streamed reads to S3). The former `repo` / `repo-inprocess` delegation modes are retired (Step 5A) and fail construction with `Remote repository blob storage is retired` |
 | `DOCUMENT_PLATFORM_VALKEY_URI` / `DOCUMENT_PLATFORM_REDIS_URI` | `redis://localhost:6379` | Connection URI (`redis://` or `rediss://`) for all Valkey/Redis byte and cache modes; conflicting alias values fail |
-| `DOCUMENT_PLATFORM_VALKEY_TTL_SECONDS` / `DOCUMENT_PLATFORM_REDIS_TTL_SECONDS` | `3600` | Per-object TTL (0 = no expiry); cache-entry TTL in either S3 cache mode |
+| `DOCUMENT_PLATFORM_VALKEY_TTL_SECONDS` / `DOCUMENT_PLATFORM_REDIS_TTL_SECONDS` | `0` (`3600` in `s3-*-cache` modes) | Per-object TTL in seconds (`0` = no expiry, required for `valkey` and `redis` host-default storage; cache-entry TTL in `s3-valkey-cache` and `s3-redis-cache` modes) |
 | `DOCUMENT_PLATFORM_VALKEY_MAX_OBJECT_BYTES` / `DOCUMENT_PLATFORM_REDIS_MAX_OBJECT_BYTES` | `8388608` | Largest object admitted to the adapter (0 retains its ceiling); either S3 cache mode bypasses the cache for larger objects |
 | `PROTOMOLT_API_TOKEN` | _(required to open network listeners)_ | Bearer token for gRPC and HTTP (repo-service mounts no MCP surface) |
 | `DOCUMENT_PLATFORM_READ_BUDGET_BYTES` | `268435456` | Per-pool byte ceiling for verified document/blob reads (`Read buffer budget exhausted`) and for a separate v2 save-admission reservation pool of the same size (`ReadByteBudget.forSaves`, reporting `Save buffer budget exhausted`), so concurrent reads and saves can hold up to `2 * DOCUMENT_PLATFORM_READ_BUDGET_BYTES` combined. Streaming `ReadDocument` reserves each non-opaque part's catalog length while decoding and streaming it (a bounded 131,072-byte chunk buffer for opaque parts); `ReadBlob` streams in 64 KiB chunks without a catalog-length reservation; unary `GetDocument` and bulk `ReadDocuments` reserve each selected part's catalog length; unary v2 saves reserve split part fragments and extracted inline raw-blob bytes from admission until commit, and `UploadDocument` reserves per received 64 KiB encoded-part chunk |
@@ -581,7 +581,9 @@ backing and exact old recorded namespace; it does not authorize repointing a
 retained stack. Changing an endpoint or physical namespace requires a new drive
 and an explicit data migration. New Redis/Valkey endpoints normalize equivalent
 host, port, and database spellings; both provider aliases register one catalog
-stack for the same physical namespace, including concurrent registration.
+stack and share one canonical pooled store handle for matching configurations
+without serializing unrelated drive resolves, while conflicting store options
+for the same physical namespace are refused (`FAILED_PRECONDITION`).
 Indexed stack identities are bounded to 2,048 UTF-8 bytes and namespaces to
 1,024 characters before catalog writes; these are configuration bounds, not
 document payload limits, and
@@ -594,16 +596,28 @@ the durable purge pending for retry. Versioned S3 cleanup includes old versions
 and delete markers. Shared references remain readable until their final owner
 is purged.
 
-This implementation preserves keep-until-administrator-purge semantics.
-Explicit Redis/Valkey repository drives require `ttl_seconds = 0`, non-expiring
-writes, and physical reclamation. Managed streaming hosts also require streaming
-write capability; Redis/Valkey do not advertise it and cannot replace qualified
-S3 archival backing there. Redis object limits still apply. A non-expiring Redis
-configuration alone is not a durability guarantee: the operator must configure
-persistence and an eviction policy consistent with retaining repository bytes.
-Host-default authoritative providers must also advertise non-expiring writes
-and physical reclamation. An expiring Valkey/Redis host default is refused at
-startup. Expiring caches over durable S3 backing remain supported.
+Durable repository drives preserve keep-until-administrator-purge semantics.
+Durable explicit Valkey/Redis drives (`RedisDriveConfig.ttl_seconds = 0`) and
+the Valkey/Redis host default (`DOCUMENT_PLATFORM_BLOB_STORE=valkey` or `redis`,
+which defaults `DOCUMENT_PLATFORM_VALKEY_TTL_SECONDS` to `0`) do not expire:
+they require `ttl_seconds = 0`, non-expiring writes, and physical reclamation,
+and an expiring Valkey/Redis host default (`DOCUMENT_PLATFORM_VALKEY_TTL_SECONDS > 0`)
+is refused at startup. Managed streaming hosts also require streaming write
+capability and S3 archival qualification; bounded create-only profiles separately
+require `ttl_seconds = 0`. Redis object limits still apply, and a non-expiring
+Valkey/Redis configuration alone is not a durability guarantee: the operator must
+configure persistence and an eviction policy consistent with retaining repository
+bytes.
+
+Positive TTL on repository storage is opted into only through explicit temporary
+drives (`RedisDriveConfig.ttl_seconds > 0` on a per-drive Valkey/Redis
+configuration), which qualify on `OBJECT_EXPIRY` and `PHYSICAL_RECLAMATION`,
+isolate keys under a reserved prefix and `redis-expiring:` catalog namespace,
+and are refused on retention-qualified managed hosts and bounded create-only
+profiles. Expiring caches over durable S3 backing (`s3-valkey-cache`,
+`s3-redis-cache`, and per-drive `DriveCacheConfig`) remain separately supported
+and default `DOCUMENT_PLATFORM_VALKEY_TTL_SECONDS` to `3600` in the S3 cache
+modes.
 
 ### Promoting a document to another durable drive
 
@@ -649,10 +663,11 @@ reclamation remains pending and the same purge ID resumes it after restart.
 Failed promotion/save attempts can leave unreferenced objects; there is no age
 sweep because in-flight writes are not fenced for safe orphan collection.
 
-Temporary TTL repository drives (`RedisDriveConfig.ttl_seconds > 0` on an explicit
-per-drive Valkey/Redis configuration) are supported for expiring staging with
-explicit promotion (`STORAGE_PLACEMENT_SELECTED_DRIVE`) to a durable drive (#809);
-revision pruning remains a later feature.
+Temporary drives (`RedisDriveConfig.ttl_seconds > 0` on an explicit per-drive
+Valkey/Redis configuration) use this explicit promotion path
+(`STORAGE_PLACEMENT_SELECTED_DRIVE`) to materialize staged candidates onto a
+durable drive (`ttl_seconds = 0` or S3) before expiry (#809); revision pruning
+remains a later feature.
 
 ### Per-drive read-through caches
 

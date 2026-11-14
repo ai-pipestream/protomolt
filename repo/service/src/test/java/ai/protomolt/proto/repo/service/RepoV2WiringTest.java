@@ -111,6 +111,87 @@ class RepoV2WiringTest {
     }
 
     @Test
+    void compatibleAliasBackingsShareCanonicalStackWhileConflictingStoreIdentityIsRefused() {
+        var registrations = new AtomicInteger();
+        var backingResolves = new AtomicInteger();
+        var opened = new AtomicInteger();
+        var stacksById = new ConcurrentHashMap<String, Stack>();
+
+        var sharedIdentity = new DriveBackingPool.BackingIdentity(
+                new DriveBackingPool.StoreIdentity(
+                        "redis",
+                        java.util.Map.of("uri", "redis://host:6379/0", "max-object-bytes", "4096")),
+                null);
+        var conflictingIdentity = new DriveBackingPool.BackingIdentity(
+                new DriveBackingPool.StoreIdentity(
+                        "redis",
+                        java.util.Map.of("uri", "redis://host:6379/0", "max-object-bytes", "8192")),
+                null);
+
+        var valkeyDrive = drive(UUID.randomUUID(), "shared", "");
+        valkeyDrive.provider = "valkey";
+        var redisDrive = drive(UUID.randomUUID(), "shared", "");
+        redisDrive.provider = "redis";
+        var conflictingDrive = drive(UUID.randomUUID(), "shared", "");
+        conflictingDrive.provider = "redis";
+
+        var resolver = RepoV2Wiring.driveStacks(
+                record -> {
+                    registrations.incrementAndGet();
+                    return "stack-canonical";
+                },
+                new RepoV2Wiring.StackOpener() {
+                    @Override
+                    public Stack open(String stackId, DriveRecord record, String prefix) {
+                        throw new AssertionError("Expected backing-aware StackOpener overload");
+                    }
+
+                    @Override
+                    public Stack open(
+                            String stackId,
+                            DriveRecord record,
+                            String prefix,
+                            DriveBackingPool.Backing backing) {
+                        opened.incrementAndGet();
+                        assertThat(backing.identity()).isEqualTo(sharedIdentity);
+                        return stack(stackId);
+                    }
+                },
+                record -> {
+                    backingResolves.incrementAndGet();
+                    var identity = record.driveId.equals(conflictingDrive.driveId)
+                            ? conflictingIdentity
+                            : sharedIdentity;
+                    return new DriveBackingPool.Backing(
+                            record.provider,
+                            "redis://host:6379/0",
+                            null,
+                            null,
+                            null,
+                            "aliases",
+                            "replace",
+                            "",
+                            false,
+                            0,
+                            identity);
+                },
+                stacksById);
+
+        var first = resolver.apply(valkeyDrive);
+        var second = resolver.apply(redisDrive);
+        assertThat(second).isSameAs(first);
+        assertThat(opened).hasValue(1);
+        assertThat(backingResolves).hasValue(2);
+
+        assertThatThrownBy(() -> resolver.apply(conflictingDrive))
+                .isInstanceOfSatisfying(ai.protomolt.proto.repo.spi.RepositoryException.class, failure ->
+                        assertThat(failure.code())
+                                .isEqualTo(ai.protomolt.proto.repo.spi.RepositoryException.Code.FAILED_PRECONDITION))
+                .hasMessageContaining("conflicts with canonical stack stack-canonical");
+        assertThat(opened).hasValue(1);
+    }
+
+    @Test
     void matchesTheReplacedRegexOnRepresentativeInputs() {
         // The oracle uses the regex the production code may no longer use.
         for (String input : new String[] {"", "/", "///", "/a", "//a/b/", "a/b", "a//", " /a", "/ /"}) {
