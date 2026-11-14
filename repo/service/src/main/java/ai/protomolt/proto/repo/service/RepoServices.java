@@ -115,6 +115,7 @@ public final class RepoServices implements AutoCloseable {
     private final ai.protomolt.proto.repo.admission.DocumentSchemaAdmission.Limits v2Limits;
     private final ai.protomolt.proto.repo.accession.OutboxRelay v2OutboxRelay;
     private final ai.protomolt.proto.repo.archive.DocumentArchive v2Archive;
+    private final ai.protomolt.proto.repo.archive.RepositorySink v2Sink;
     // One caller mapping for the document, drive and archive services; account
     // bindings are set before serving (withAccountBindings).
     private final RepoCallerBindings callerBindings = new RepoCallerBindings();
@@ -190,6 +191,36 @@ public final class RepoServices implements AutoCloseable {
     public RepoServices withConceptSchemes(ai.protomolt.proto.config.ConceptSchemeMounts mounts) {
         this.conceptSchemes = java.util.Objects.requireNonNull(mounts);
         return this;
+    }
+
+    /** Enabled bounded renderer capabilities exposed by {@link #repositorySink()}; none until set. */
+    private volatile ai.protomolt.proto.repo.archive.RepositorySinkRenderers sinkRenderers =
+            ai.protomolt.proto.repo.archive.RepositorySinkRenderers.none();
+
+    /**
+     * Mounts the bounded renderer capabilities exposed through {@code RepositorySinkService} for
+     * capability discovery and conversion before repository publication. Until a composition root
+     * calls this, direct protobuf publication works and capability discovery reports zero
+     * conversion providers.
+     *
+     * @param renderers the enabled renderer capabilities and options descriptors
+     * @return this instance, for chaining
+     */
+    public RepoServices withRenderers(ai.protomolt.proto.repo.archive.RepositorySinkRenderers renderers) {
+        this.sinkRenderers = java.util.Objects.requireNonNull(renderers, "renderers");
+        return this;
+    }
+
+    /**
+     * Loads the standard bounded {@code Save as...} renderer providers enabled on standalone and
+     * platform repository hosts ({@link ai.protomolt.proto.emit.parquet.ParquetRendererProvider#PROVIDER_ID}).
+     *
+     * @return the enabled {@link ai.protomolt.proto.repo.archive.RepositorySinkRenderers}
+     */
+    public static ai.protomolt.proto.repo.archive.RepositorySinkRenderers defaultSaveAsRenderers() {
+        return ai.protomolt.proto.repo.archive.RepositorySinkRenderers.load(
+                RepoServices.class.getClassLoader(),
+                java.util.Set.of(ai.protomolt.proto.emit.parquet.ParquetRendererProvider.PROVIDER_ID));
     }
 
     /**
@@ -494,6 +525,16 @@ public final class RepoServices implements AutoCloseable {
             configuredServices.add(() -> io.grpc.ServerInterceptors.intercept(
                     archiveGrpcService, archiveInterceptor));
             if (bounded == null) {
+                var sinkJobStore = new JdbcRepositorySinkJobStore(database.dataSource());
+                var sinkAuth = new RepoSinkAuthorization(callerBindings, this::stepGrantCatalog);
+                this.v2Sink = owned.add(new ai.protomolt.proto.repo.archive.RepositorySink(
+                        v2Archive,
+                        new ai.protomolt.proto.repo.archive.RenditionUploads(v2Archive, interceptedChannel),
+                        new ai.protomolt.proto.repo.archive.RenditionReads(v2Archive),
+                        () -> sinkRenderers,
+                        sinkJobStore,
+                        sinkAuth,
+                        java.time.Clock.systemUTC()));
                 configuredServices.add(new DriveGrpcService(driveOperations, callerBindings));
                 configuredServices.add(() -> io.grpc.ServerInterceptors.intercept(
                         accessionImpl,
@@ -502,6 +543,11 @@ public final class RepoServices implements AutoCloseable {
                 var mutationGrpc = new ai.protomolt.proto.repo.archive.DocumentArchiveMutationGrpcService(v2Archive);
                 configuredServices.add(() -> io.grpc.ServerInterceptors.intercept(
                         mutationGrpc, archiveInterceptor));
+                var sinkGrpc = new ai.protomolt.proto.repo.archive.RepositorySinkGrpcService(v2Sink);
+                configuredServices.add(() -> io.grpc.ServerInterceptors.intercept(
+                        sinkGrpc, sinkAuth.serverInterceptor()));
+            } else {
+                this.v2Sink = null;
             }
             this.services = List.copyOf(configuredServices);
         } catch (RuntimeException | Error failure) {
@@ -589,6 +635,18 @@ public final class RepoServices implements AutoCloseable {
         return v2Archive;
     }
 
+    /**
+     * The explicit {@link ai.protomolt.proto.repo.archive.RepositorySink} wired over this
+     * composition's parts-based archive, durable sink job store, and caller bindings.
+     *
+     * @return the repository sink
+     */
+    public ai.protomolt.proto.repo.archive.RepositorySink repositorySink() {
+        requireOpen();
+        requireFullProfile();
+        return v2Sink;
+    }
+
     /** Identified mutations require qualified storage and running recovery. */
     public ai.protomolt.proto.repo.spi.ArchiveMutationRepository archiveMutationRepository() {
         requireOpen();
@@ -639,7 +697,8 @@ public final class RepoServices implements AutoCloseable {
     /**
      * The wired gRPC services for hosts that register them on their own builder.
      * Mounts {@code DocumentArchiveGrpcService}, {@code DriveGrpcService},
-     * {@code AccessionGrpcService}, and {@code DocumentArchiveMutationGrpcService}.
+     * {@code AccessionGrpcService}, {@code DocumentArchiveMutationGrpcService},
+     * and {@code RepositorySinkGrpcService}.
      *
      * @return the service implementations, unmodifiable
      */

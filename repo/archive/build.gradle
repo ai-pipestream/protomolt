@@ -5,6 +5,8 @@ dependencies {
     api project(':protomolt-repo-proto')
     // BridgeEngine is part of the DocumentArchive / DocumentArchiveGrpcService constructor surface.
     api project(':protomolt-asset-bridge')
+    // RepositorySink coordinates bounded RendererCapability / RendererRegistry adapters.
+    api project(':protomolt-emit-renderer')
     // Characterization identifies and resolves format classifications on primary renditions.
     implementation project(':protomolt-asset-characterize')
     // Projections compile the view .proto's (sources) and (from) options.

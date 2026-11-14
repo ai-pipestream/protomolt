@@ -239,7 +239,9 @@
               <td class="text-mono">{{ e.entryId }}</td>
               <td>{{ e.title }}</td>
               <td>{{ e.filename }}</td>
-              <td class="text-mono text-caption">{{ e.contentType }}</td>
+              <td>
+                <FormatIcon :media-type="e.contentType" :filename="e.filename" show-media-type />
+              </td>
               <td class="text-mono">{{ e.currentVersion }}</td>
               <td class="text-caption">{{ e.classification }}</td>
               <td class="text-mono text-caption">{{ e.updatedAt ?? '' }}</td>
@@ -307,6 +309,8 @@ const archive = shallowRef<Archive | null>(null)
 const archiveFailure = ref<RpcFailure | null>(null)
 const stats = shallowRef<ArchiveStats | null>(null)
 const statsFailure = ref<RpcFailure | null>(null)
+
+import FormatIcon from '@/components/repository/FormatIcon.vue'
 
 // Every state the descriptor defines, so a state added to the proto is
 // filterable without a console change. UNSPECIFIED means no filter.
