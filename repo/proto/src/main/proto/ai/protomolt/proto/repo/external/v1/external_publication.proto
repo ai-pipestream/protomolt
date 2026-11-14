@@ -1,0 +1,1296 @@
+syntax = "proto3";
+
+package ai.protomolt.proto.repo.external.v1;
+
+import "ai/protomolt/proto/repo/v1/address.proto";
+import "ai/protomolt/proto/repo/v1/manifest.proto";
+import "ai/protomolt/proto/validate/v1/validate.proto";
+import "buf/validate/validate.proto";
+import "google/protobuf/timestamp.proto";
+
+option java_multiple_files = true;
+option java_package = "ai.protomolt.proto.repo.external.v1";
+
+// Lifecycle state of a versioned external-system binding configuration.
+enum ExternalBindingLifecycle {
+  // Unset; never valid in persisted or admitted bindings.
+  EXTERNAL_BINDING_LIFECYCLE_UNSPECIFIED = 0;
+  // Admitted for new publication, reconciliation, and deletion operations.
+  EXTERNAL_BINDING_LIFECYCLE_ACTIVE = 1;
+  // Retired for new publication requests; historical links and in-flight
+  // settlement or deletion remain interpretable.
+  EXTERNAL_BINDING_LIFECYCLE_RETIRED = 2;
+}
+
+// Retention policy governing external link history after source purge.
+enum ExternalRetentionPolicy {
+  // Unset; never valid in persisted or admitted bindings.
+  EXTERNAL_RETENTION_POLICY_UNSPECIFIED = 0;
+  // Retain historical external link and receipt records after source purge
+  // once external deletion is settled, without fabricating a source revision.
+  EXTERNAL_RETENTION_POLICY_RETAIN_HISTORY = 1;
+  // Purge the external publication ledger document after external deletion
+  // settles for a purged source document.
+  EXTERNAL_RETENTION_POLICY_PURGE_WITH_SOURCE = 2;
+}
+
+// Non-secret endpoint summary preserved on binding revisions so historical
+// links remain interpretable after service profile rotation or retirement.
+message ExternalEndpointSummary {
+  // Validated non-secret hostname or IP literal of the target service endpoint.
+  string host = 1 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      required: true
+      string: {min_len: 1, max_len: 253, hostname: true}
+    },
+    (buf.validate.field) = {
+      required: true
+      string: {min_len: 1, max_len: 253, hostname: true}
+    }
+  ];
+  // Validated TCP port in 1..65535.
+  int32 port = 2 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      required: true
+      int32: {gte: 1, lte: 65535}
+    },
+    (buf.validate.field) = {
+      required: true
+      int32: {gte: 1, lte: 65535}
+    }
+  ];
+  // Whether transport TLS was enabled on the referenced service endpoint.
+  bool tls_enabled = 3;
+}
+
+// Typed, versioned external-system binding stored in the account config lane
+// and in the dedicated external-bindings:<account_id> repository graph.
+// Never persists secret values, bearer URLs, userinfo, or raw key material.
+message ExternalSystemBinding {
+  option (ai.protomolt.proto.validate.v1.message).cel = {
+    id: "binding-retirement-consistency"
+    message: "retired bindings require retired_reason and retired_at; active bindings forbid both"
+    expression: "this.lifecycle == 2 ? (has(this.retired_reason) && has(this.retired_at)) : (!has(this.retired_reason) && !has(this.retired_at))"
+  };
+  option (buf.validate.message).cel = {
+    id: "binding-retirement-consistency"
+    message: "retired bindings require retired_reason and retired_at; active bindings forbid both"
+    expression: "this.lifecycle == 2 ? (has(this.retired_reason) && has(this.retired_at)) : (!has(this.retired_reason) && !has(this.retired_at))"
+  };
+
+  // Stable path-safe binding identifier within the owning account.
+  string binding_id = 1 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      required: true
+      string: {
+        min_len: 1
+        max_len: 128
+        path_safe_name: true
+        pattern: "^[A-Za-z0-9][A-Za-z0-9._-]*$"
+      }
+    },
+    (buf.validate.field) = {
+      required: true
+      string: {
+        min_len: 1
+        max_len: 128
+        pattern: "^[A-Za-z0-9][A-Za-z0-9._-]*$"
+      }
+    }
+  ];
+  // Tenant account owning this binding and its external publications.
+  string account_id = 2 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      required: true
+      string: {min_len: 1, max_len: 200, pattern: ".*\\S.*"}
+    },
+    (buf.validate.field) = {
+      required: true
+      string: {min_len: 1, max_len: 200, pattern: ".*\\S.*"}
+    }
+  ];
+  // Monotonic 1-based binding configuration revision.
+  int64 binding_revision = 3 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      required: true
+      int64: {gt: 0}
+    },
+    (buf.validate.field) = {
+      required: true
+      int64: {gt: 0}
+    }
+  ];
+  // Provider family identifier (for example protomolt-search, neo4j, opensearch).
+  string provider = 4 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      required: true
+      string: {
+        min_len: 1
+        max_len: 128
+        path_safe_name: true
+        pattern: "^[A-Za-z0-9][A-Za-z0-9._-]*$"
+      }
+    },
+    (buf.validate.field) = {
+      required: true
+      string: {
+        min_len: 1
+        max_len: 128
+        pattern: "^[A-Za-z0-9][A-Za-z0-9._-]*$"
+      }
+    }
+  ];
+  // Referenced ServiceProfile.profile_id resolved at execution time for live
+  // endpoint routing and ProfileCredentialResolver secret lookup.
+  string service_profile_id = 5 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      required: true
+      string: {
+        min_len: 1
+        max_len: 128
+        path_safe_name: true
+        pattern: "^[A-Za-z0-9][A-Za-z0-9._-]*$"
+      }
+    },
+    (buf.validate.field) = {
+      required: true
+      string: {
+        min_len: 1
+        max_len: 128
+        pattern: "^[A-Za-z0-9][A-Za-z0-9._-]*$"
+      }
+    }
+  ];
+  // Referenced ServiceEndpoint.endpoint_id inside the selected service profile.
+  string service_endpoint_id = 6 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      required: true
+      string: {
+        min_len: 1
+        max_len: 128
+        path_safe_name: true
+        pattern: "^[A-Za-z0-9][A-Za-z0-9._-]*$"
+      }
+    },
+    (buf.validate.field) = {
+      required: true
+      string: {
+        min_len: 1
+        max_len: 128
+        pattern: "^[A-Za-z0-9][A-Za-z0-9._-]*$"
+      }
+    }
+  ];
+  // External dataset, collection, or index family targeted by this binding.
+  string dataset = 7 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      required: true
+      string: {min_len: 1, max_len: 256, pattern: ".*\\S.*"}
+    },
+    (buf.validate.field) = {
+      required: true
+      string: {min_len: 1, max_len: 256, pattern: ".*\\S.*"}
+    }
+  ];
+  // External tenant, workspace, or logical namespace inside the dataset.
+  string namespace = 8 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      required: true
+      string: {min_len: 1, max_len: 256, pattern: ".*\\S.*"}
+    },
+    (buf.validate.field) = {
+      required: true
+      string: {min_len: 1, max_len: 256, pattern: ".*\\S.*"}
+    }
+  ];
+  // Supported external wire contract identifier and version (for example managed-search/v1).
+  string contract_version = 9 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      required: true
+      string: {min_len: 1, max_len: 128, pattern: "^[A-Za-z0-9][A-Za-z0-9._/-]*$"}
+    },
+    (buf.validate.field) = {
+      required: true
+      string: {min_len: 1, max_len: 128, pattern: "^[A-Za-z0-9][A-Za-z0-9._/-]*$"}
+    }
+  ];
+  // Non-secret endpoint summary captured when this binding revision was created.
+  ExternalEndpointSummary endpoint_summary = 10 [
+    (ai.protomolt.proto.validate.v1.field).required = true,
+    (buf.validate.field).required = true
+  ];
+  // Current lifecycle status of this binding revision.
+  ExternalBindingLifecycle lifecycle = 11 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      required: true
+      enum: {defined_only: true, not_in: [0]}
+    },
+    (buf.validate.field) = {
+      required: true
+      enum: {defined_only: true, not_in: [0]}
+    }
+  ];
+  // Retention policy for historical links when source documents are purged.
+  ExternalRetentionPolicy retention_policy = 12 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      required: true
+      enum: {defined_only: true, not_in: [0]}
+    },
+    (buf.validate.field) = {
+      required: true
+      enum: {defined_only: true, not_in: [0]}
+    }
+  ];
+  // Optional config-lane document version recorded when mirrored to ConfigDocumentStore.
+  optional int64 config_lane_version = 13 [
+    (ai.protomolt.proto.validate.v1.field).int64 = {gt: 0},
+    (buf.validate.field).int64 = {gt: 0}
+  ];
+  // Non-secret operator labels; forbidden from holding credentials or bearer tokens.
+  map<string, string> labels = 14 [
+    (ai.protomolt.proto.validate.v1.field).map = {
+      max_pairs: 64
+      keys: {string: {min_len: 1, max_len: 128, pattern: "^[A-Za-z0-9][A-Za-z0-9._-]*$"}}
+      values: {string: {max_len: 512}}
+    },
+    (buf.validate.field).map = {
+      max_pairs: 64
+      keys: {string: {min_len: 1, max_len: 128, pattern: "^[A-Za-z0-9][A-Za-z0-9._-]*$"}}
+      values: {string: {max_len: 512}}
+    }
+  ];
+  // Creation timestamp of this binding revision.
+  google.protobuf.Timestamp created_at = 15 [
+    (ai.protomolt.proto.validate.v1.field).required = true,
+    (buf.validate.field).required = true
+  ];
+  // Required when lifecycle is RETIRED; forbidden when ACTIVE.
+  optional string retired_reason = 16 [
+    (ai.protomolt.proto.validate.v1.field).string = {min_len: 1, max_len: 512, pattern: ".*\\S.*"},
+    (buf.validate.field).string = {min_len: 1, max_len: 512, pattern: ".*\\S.*"}
+  ];
+  // Timestamp when this binding revision entered RETIRED; forbidden when ACTIVE.
+  optional google.protobuf.Timestamp retired_at = 17;
+}
+
+// Verified digest of one retained source document part consumed by external publication.
+message ExternalPartDigest {
+  option (ai.protomolt.proto.validate.v1.message).cel = {
+    id: "external-part-sub-key"
+    message: "CHUNKS and EMBEDDINGS require a nonblank sub_key; other parts require an empty sub_key"
+    expression: "(this.part == 3 || this.part == 5) ? this.sub_key.matches('.*\\\\S.*') : this.sub_key == ''"
+  };
+  option (buf.validate.message).cel = {
+    id: "external-part-sub-key"
+    message: "CHUNKS and EMBEDDINGS require a nonblank sub_key; other parts require an empty sub_key"
+    expression: "(this.part == 3 || this.part == 5) ? this.sub_key.matches('.*\\\\S.*') : this.sub_key == ''"
+  };
+
+  // Selected repository part kind.
+  ai.protomolt.proto.repo.v1.DocumentPart part = 1 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      required: true
+      enum: {defined_only: true, not_in: [0]}
+    },
+    (buf.validate.field) = {
+      required: true
+      enum: {defined_only: true, not_in: [0]}
+    }
+  ];
+  // Chunk-set or embedding-set sub-key; empty for unkeyed parts.
+  string sub_key = 2 [
+    (ai.protomolt.proto.validate.v1.field).string.max_len = 1024,
+    (buf.validate.field).string.max_len = 1024
+  ];
+  // Lowercase hex SHA-256 of the retained part payload bytes.
+  string sha256 = 3 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      required: true
+      string: {len: 64, sha256_hex: true, pattern: "^[0-9a-f]{64}$"}
+    },
+    (buf.validate.field) = {
+      required: true
+      string: {len: 64, pattern: "^[0-9a-f]{64}$"}
+    }
+  ];
+  // Non-negative byte length of the retained part payload.
+  int64 size_bytes = 4 [
+    (ai.protomolt.proto.validate.v1.field).int64 = {gte: 0},
+    (buf.validate.field).int64 = {gte: 0}
+  ];
+}
+
+// Input, mapping, schema, and stateless NLP processing identities that produced
+// an external projection. Processing receipts prove stateless derivation only
+// and never establish external publication completion.
+message ExternalProcessingIdentity {
+  // Retained part digests read from the exact source revision.
+  repeated ExternalPartDigest source_part_digests = 1 [
+    (ai.protomolt.proto.validate.v1.field).repeated = {max_items: 1024},
+    (buf.validate.field).repeated = {max_items: 1024}
+  ];
+  // Retained descriptor-set SHA-256 digests verified on the source revision.
+  repeated string retained_schema_sha256s = 2 [
+    (ai.protomolt.proto.validate.v1.field).repeated = {
+      max_items: 128
+      unique: true
+      items: {string: {len: 64, sha256_hex: true, pattern: "^[0-9a-f]{64}$"}}
+    },
+    (buf.validate.field).repeated = {
+      max_items: 128
+      unique: true
+      items: {string: {len: 64, pattern: "^[0-9a-f]{64}$"}}
+    }
+  ];
+  // Optional projection or field-mapping definition identifier.
+  optional string mapping_id = 3 [
+    (ai.protomolt.proto.validate.v1.field).string = {min_len: 1, max_len: 256, pattern: ".*\\S.*"},
+    (buf.validate.field).string = {min_len: 1, max_len: 256, pattern: ".*\\S.*"}
+  ];
+  // Optional SHA-256 covering the complete generation/projection configuration
+  // (mapping definition, descriptor closure, analyzer/chunking, model manifest).
+  optional string generation_digest = 4 [
+    (ai.protomolt.proto.validate.v1.field).string = {len: 64, sha256_hex: true, pattern: "^[0-9a-f]{64}$"},
+    (buf.validate.field).string = {len: 64, pattern: "^[0-9a-f]{64}$"}
+  ];
+  // Optional SHA-256 of the stateless NLP or Turboembed processing input envelope.
+  optional string nlp_input_sha256 = 5 [
+    (ai.protomolt.proto.validate.v1.field).string = {len: 64, sha256_hex: true, pattern: "^[0-9a-f]{64}$"},
+    (buf.validate.field).string = {len: 64, pattern: "^[0-9a-f]{64}$"}
+  ];
+  // Optional SHA-256 of the stateless NLP or Turboembed processing output artifact.
+  optional string nlp_result_sha256 = 6 [
+    (ai.protomolt.proto.validate.v1.field).string = {len: 64, sha256_hex: true, pattern: "^[0-9a-f]{64}$"},
+    (buf.validate.field).string = {len: 64, pattern: "^[0-9a-f]{64}$"}
+  ];
+  // Optional SHA-256 of the stateless NLP or Turboembed processing receipt.
+  // Proves stateless model execution only, never external publication.
+  optional string nlp_receipt_sha256 = 7 [
+    (ai.protomolt.proto.validate.v1.field).string = {len: 64, sha256_hex: true, pattern: "^[0-9a-f]{64}$"},
+    (buf.validate.field).string = {len: 64, pattern: "^[0-9a-f]{64}$"}
+  ];
+}
+
+// Separate serving-layer visibility observation for managed search, distinct
+// from durable source acceptance and durable index publication.
+enum ExternalServingVisibility {
+  // Unset; never valid when an explicit observation enum is required.
+  EXTERNAL_SERVING_VISIBILITY_UNSPECIFIED = 0;
+  // No current serving observation was requested or recorded.
+  EXTERNAL_SERVING_VISIBILITY_UNKNOWN = 1;
+  // Serving snapshot is currently unavailable or quarantined.
+  EXTERNAL_SERVING_VISIBILITY_UNAVAILABLE = 2;
+  // Published historically, but superseded or not active in the current shard view.
+  EXTERNAL_SERVING_VISIBILITY_NOT_CURRENT = 3;
+  // Active live rows for this version are visible in the observed shard snapshot.
+  EXTERNAL_SERVING_VISIBILITY_CURRENT_ROWS = 4;
+  // Active zero-row projection for this version is current in the shard snapshot.
+  EXTERNAL_SERVING_VISIBILITY_CURRENT_EMPTY = 5;
+  // Active tombstone decision is current in the observed shard snapshot.
+  EXTERNAL_SERVING_VISIBILITY_CURRENT_TOMBSTONE = 6;
+}
+
+// Managed-search source, sequence, and publication coordinates aligned with
+// docs/search/managed-publication.md and docs/search/repository-rust-integration.md.
+// Neither accepted_version nor accepted_sequence equals repository source_revision.
+message ManagedSearchIdentity {
+  // Exact 16-byte managed catalog history identifier.
+  bytes history_id = 1 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      required: true
+      bytes: {len: 16}
+    },
+    (buf.validate.field) = {
+      required: true
+      bytes: {len: 16}
+    }
+  ];
+  // Versioned, length-delimited binary tuple of all four NodeAddress coordinates.
+  bytes document_key = 2 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      required: true
+      bytes: {min_len: 1, max_len: 16384}
+    },
+    (buf.validate.field) = {
+      required: true
+      bytes: {min_len: 1, max_len: 16384}
+    }
+  ];
+  // Provisioned managed index key bound to an immutable generation and shard.
+  bytes index_key = 3 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      required: true
+      bytes: {min_len: 1, max_len: 1024}
+    },
+    (buf.validate.field) = {
+      required: true
+      bytes: {min_len: 1, max_len: 1024}
+    }
+  ];
+  // Search-allocated positive per-document version (distinct from repository revision).
+  uint64 accepted_version = 4 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      required: true
+      uint64: {gt: 0}
+    },
+    (buf.validate.field) = {
+      required: true
+      uint64: {gt: 0}
+    }
+  ];
+  // Catalog-wide positive accepted sequence number.
+  uint64 accepted_sequence = 5 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      required: true
+      uint64: {gt: 0}
+    },
+    (buf.validate.field) = {
+      required: true
+      uint64: {gt: 0}
+    }
+  ];
+  // Durable catalog epoch assigned only when index publication commits.
+  // Absent while merely accepted or staged.
+  optional uint64 published_catalog_epoch = 6 [
+    (ai.protomolt.proto.validate.v1.field).uint64 = {gt: 0},
+    (buf.validate.field).uint64 = {gt: 0}
+  ];
+  // Lowercase hex SHA-256 of the durable post-publication shard manifest.
+  optional string after_manifest_sha256 = 7 [
+    (ai.protomolt.proto.validate.v1.field).string = {len: 64, sha256_hex: true, pattern: "^[0-9a-f]{64}$"},
+    (buf.validate.field).string = {len: 64, pattern: "^[0-9a-f]{64}$"}
+  ];
+  // Point-in-time serving visibility observation; advisory and separate from
+  // durable publication confirmation.
+  ExternalServingVisibility serving_visibility = 8 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      required: true
+      enum: {defined_only: true, not_in: [0]}
+    },
+    (buf.validate.field) = {
+      required: true
+      enum: {defined_only: true, not_in: [0]}
+    }
+  ];
+}
+
+// Provider settlement state attested inside a verified provider receipt.
+enum ExternalProviderSettlement {
+  // Unset; never valid in verified provider evidence.
+  EXTERNAL_PROVIDER_SETTLEMENT_UNSPECIFIED = 0;
+  // Provider accepted the source write (for example ACCEPTED_FINAL), but index
+  // or downstream publication has not yet committed. Remains PENDING in repo.
+  EXTERNAL_PROVIDER_SETTLEMENT_ACCEPTED_ONLY = 1;
+  // Provider durably committed the external object publication for the intent.
+  EXTERNAL_PROVIDER_SETTLEMENT_PUBLISHED = 2;
+  // Provider deterministically rejected or fenced the publication request.
+  EXTERNAL_PROVIDER_SETTLEMENT_REJECTED = 3;
+  // Provider accepted a deletion request that is still committing asynchronously.
+  EXTERNAL_PROVIDER_SETTLEMENT_DELETION_ACCEPTED = 4;
+  // Provider durably committed deletion or confirmed prior absence for tombstone/purge.
+  EXTERNAL_PROVIDER_SETTLEMENT_DELETED = 5;
+}
+
+// Verified provider receipt establishing external acceptance, publication,
+// rejection, or deletion. Confirmation never relies on a caller boolean flag.
+message ExternalProviderEvidence {
+  option (ai.protomolt.proto.validate.v1.message).cel = {
+    id: "evidence-managed-search-epoch"
+    message: "managed-search PUBLISHED evidence requires published_catalog_epoch and after_manifest_sha256; ACCEPTED_ONLY forbids them"
+    expression: "!has(this.managed_search) || (this.settlement == 2 ? (has(this.managed_search.published_catalog_epoch) && has(this.managed_search.after_manifest_sha256)) : (this.settlement != 1 || (!has(this.managed_search.published_catalog_epoch) && !has(this.managed_search.after_manifest_sha256))))"
+  };
+  option (buf.validate.message).cel = {
+    id: "evidence-managed-search-epoch"
+    message: "managed-search PUBLISHED evidence requires published_catalog_epoch and after_manifest_sha256; ACCEPTED_ONLY forbids them"
+    expression: "!has(this.managed_search) || (this.settlement == 2 ? (has(this.managed_search.published_catalog_epoch) && has(this.managed_search.after_manifest_sha256)) : (this.settlement != 1 || (!has(this.managed_search.published_catalog_epoch) && !has(this.managed_search.after_manifest_sha256))))"
+  };
+
+  // Provider identifier echoed by the external system adapter; must match binding.provider.
+  string provider = 1 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      required: true
+      string: {
+        min_len: 1
+        max_len: 128
+        path_safe_name: true
+        pattern: "^[A-Za-z0-9][A-Za-z0-9._-]*$"
+      }
+    },
+    (buf.validate.field) = {
+      required: true
+      string: {
+        min_len: 1
+        max_len: 128
+        pattern: "^[A-Za-z0-9][A-Za-z0-9._-]*$"
+      }
+    }
+  ];
+  // Wire contract version used to verify the receipt; must match binding.contract_version.
+  string contract_version = 2 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      required: true
+      string: {min_len: 1, max_len: 128, pattern: "^[A-Za-z0-9][A-Za-z0-9._/-]*$"}
+    },
+    (buf.validate.field) = {
+      required: true
+      string: {min_len: 1, max_len: 128, pattern: "^[A-Za-z0-9][A-Za-z0-9._/-]*$"}
+    }
+  ];
+  // Service profile identifier used for outbound transport and credential verification.
+  string verified_service_profile_id = 3 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      required: true
+      string: {
+        min_len: 1
+        max_len: 128
+        path_safe_name: true
+        pattern: "^[A-Za-z0-9][A-Za-z0-9._-]*$"
+      }
+    },
+    (buf.validate.field) = {
+      required: true
+      string: {
+        min_len: 1
+        max_len: 128
+        pattern: "^[A-Za-z0-9][A-Za-z0-9._-]*$"
+      }
+    }
+  ];
+  // Service endpoint identifier used for outbound transport verification.
+  string verified_service_endpoint_id = 4 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      required: true
+      string: {
+        min_len: 1
+        max_len: 128
+        path_safe_name: true
+        pattern: "^[A-Za-z0-9][A-Za-z0-9._-]*$"
+      }
+    },
+    (buf.validate.field) = {
+      required: true
+      string: {
+        min_len: 1
+        max_len: 128
+        pattern: "^[A-Za-z0-9][A-Za-z0-9._-]*$"
+      }
+    }
+  ];
+  // Non-secret outbound credential reference digest proving credential resolution
+  // without storing secret bytes.
+  string credential_binding_sha256 = 5 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      required: true
+      string: {len: 64, sha256_hex: true, pattern: "^[0-9a-f]{64}$"}
+    },
+    (buf.validate.field) = {
+      required: true
+      string: {len: 64, pattern: "^[0-9a-f]{64}$"}
+    }
+  ];
+  // Canonical external object identity verified by the provider.
+  string external_object_id = 6 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      required: true
+      string: {min_len: 1, max_len: 1024, pattern: ".*\\S.*"}
+    },
+    (buf.validate.field) = {
+      required: true
+      string: {min_len: 1, max_len: 1024, pattern: ".*\\S.*"}
+    }
+  ];
+  // Optional provider-assigned external version; explicitly absent when unversioned.
+  optional string external_version = 7 [
+    (ai.protomolt.proto.validate.v1.field).string = {min_len: 1, max_len: 512, pattern: ".*\\S.*"},
+    (buf.validate.field).string = {min_len: 1, max_len: 512, pattern: ".*\\S.*"}
+  ];
+  // Exact SHA-256 of the canonical ExternalPublicationIntent bound to this receipt.
+  string request_intent_sha256 = 8 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      required: true
+      string: {len: 64, sha256_hex: true, pattern: "^[0-9a-f]{64}$"}
+    },
+    (buf.validate.field) = {
+      required: true
+      string: {len: 64, pattern: "^[0-9a-f]{64}$"}
+    }
+  ];
+  // Lowercase hex SHA-256 of the raw provider receipt payload verified by the adapter.
+  string receipt_sha256 = 9 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      required: true
+      string: {len: 64, sha256_hex: true, pattern: "^[0-9a-f]{64}$"}
+    },
+    (buf.validate.field) = {
+      required: true
+      string: {len: 64, pattern: "^[0-9a-f]{64}$"}
+    }
+  ];
+  // Provider-assigned receipt or decision identifier.
+  string provider_receipt_id = 10 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      required: true
+      string: {min_len: 1, max_len: 512, pattern: ".*\\S.*"}
+    },
+    (buf.validate.field) = {
+      required: true
+      string: {min_len: 1, max_len: 512, pattern: ".*\\S.*"}
+    }
+  ];
+  // Attested provider settlement stage.
+  ExternalProviderSettlement settlement = 11 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      required: true
+      enum: {defined_only: true, not_in: [0]}
+    },
+    (buf.validate.field) = {
+      required: true
+      enum: {defined_only: true, not_in: [0]}
+    }
+  ];
+  // Optional managed-search acceptance, publication, and serving identity details.
+  optional ManagedSearchIdentity managed_search = 12;
+  // Optional serialized ai.protomolt.proto.receipt.v1.SignedWorkRecord verified
+  // against the coordinator trust snapshot.
+  optional bytes signed_work_record_bytes = 13 [
+    (ai.protomolt.proto.validate.v1.field).bytes = {min_len: 1, max_len: 65536},
+    (buf.validate.field).bytes = {min_len: 1, max_len: 65536}
+  ];
+  // Optional bounded diagnostic code when settlement is REJECTED.
+  optional string diagnostic_code = 14 [
+    (ai.protomolt.proto.validate.v1.field).string = {min_len: 1, max_len: 128, pattern: "^[A-Za-z0-9._:-]+$"},
+    (buf.validate.field).string = {min_len: 1, max_len: 128, pattern: "^[A-Za-z0-9._:-]+$"}
+  ];
+  // Timestamp when the coordinator verified this provider receipt.
+  google.protobuf.Timestamp verified_at = 15 [
+    (ai.protomolt.proto.validate.v1.field).required = true,
+    (buf.validate.field).required = true
+  ];
+}
+
+// Lifecycle status of a confirmed ExternalLink projection record.
+enum ExternalProjectionLifecycle {
+  // Unset; never valid on persisted ExternalLink records.
+  EXTERNAL_PROJECTION_LIFECYCLE_UNSPECIFIED = 0;
+  // Current confirmed projection for the binding and source document.
+  EXTERNAL_PROJECTION_LIFECYCLE_ACTIVE = 1;
+  // Historical confirmed projection superseded by a newer source or binding revision.
+  EXTERNAL_PROJECTION_LIFECYCLE_SUPERSEDED = 2;
+  // Confirmed projection with an external deletion operation currently in flight.
+  EXTERNAL_PROJECTION_LIFECYCLE_DELETION_PENDING = 3;
+  // Historical projection whose external object deletion was confirmed.
+  EXTERNAL_PROJECTION_LIFECYCLE_DELETED = 4;
+}
+
+// Confirmed association between an exact repository source revision and a
+// derived object in an external system. Distinct from repository-to-repository
+// DocumentLink and from physical repository Drive/Stack placement.
+message ExternalLink {
+  option (ai.protomolt.proto.validate.v1.message).cel = {
+    id: "external-link-address-complete"
+    message: "source_address coordinates must be nonblank and match binding_snapshot.account_id"
+    expression: "this.source_address.account_id.matches('.*\\\\S.*') && this.source_address.graph_id.matches('.*\\\\S.*') && this.source_address.graph_address_id.matches('.*\\\\S.*') && this.source_address.doc_id.matches('.*\\\\S.*') && this.source_address.account_id == this.binding_snapshot.account_id && this.binding_id == this.binding_snapshot.binding_id && this.binding_revision == this.binding_snapshot.binding_revision"
+  };
+  option (buf.validate.message).cel = {
+    id: "external-link-address-complete"
+    message: "source_address coordinates must be nonblank and match binding_snapshot.account_id"
+    expression: "this.source_address.account_id.matches('.*\\\\S.*') && this.source_address.graph_id.matches('.*\\\\S.*') && this.source_address.graph_address_id.matches('.*\\\\S.*') && this.source_address.doc_id.matches('.*\\\\S.*') && this.source_address.account_id == this.binding_snapshot.account_id && this.binding_id == this.binding_snapshot.binding_id && this.binding_revision == this.binding_snapshot.binding_revision"
+  };
+  option (ai.protomolt.proto.validate.v1.message).cel = {
+    id: "external-link-verified-evidence"
+    message: "ExternalLink requires verified PUBLISHED provider evidence matching external_object_id and external_version"
+    expression: "this.confirmation_evidence.settlement == 2 && this.confirmation_evidence.external_object_id == this.external_object_id && has(this.external_version) == has(this.confirmation_evidence.external_version) && (!has(this.external_version) || this.external_version == this.confirmation_evidence.external_version)"
+  };
+  option (buf.validate.message).cel = {
+    id: "external-link-verified-evidence"
+    message: "ExternalLink requires verified PUBLISHED provider evidence matching external_object_id and external_version"
+    expression: "this.confirmation_evidence.settlement == 2 && this.confirmation_evidence.external_object_id == this.external_object_id && has(this.external_version) == has(this.confirmation_evidence.external_version) && (!has(this.external_version) || this.external_version == this.confirmation_evidence.external_version)"
+  };
+  option (ai.protomolt.proto.validate.v1.message).cel = {
+    id: "external-link-safe-display-url"
+    message: "display_url must be an http or https URL with no embedded userinfo or secret query parameters"
+    expression: "!has(this.display_url) || (this.display_url.matches('^https?://[A-Za-z0-9._\\\\-:\\\\[\\\\]]+([/?#].*)?$') && !this.display_url.contains('@') && !this.display_url.lowerAscii().matches('[?&](access_token|bearer|token|id_token|api_key|apikey|client_secret|password|secret|sig|x-amz-signature|x-amz-credential|x-goog-signature)='))"
+  };
+  option (buf.validate.message).cel = {
+    id: "external-link-safe-display-url"
+    message: "display_url must be an http or https URL with no embedded userinfo or secret query parameters"
+    expression: "!has(this.display_url) || (this.display_url.matches('^https?://[A-Za-z0-9._\\\\-:\\\\[\\\\]]+([/?#].*)?$') && !this.display_url.contains('@') && !this.display_url.lowerAscii().matches('[?&](access_token|bearer|token|id_token|api_key|apikey|client_secret|password|secret|sig|x-amz-signature|x-amz-credential|x-goog-signature)='))"
+  };
+
+  // Stable binding identifier within the source document's account.
+  string binding_id = 1 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      required: true
+      string: {
+        min_len: 1
+        max_len: 128
+        path_safe_name: true
+        pattern: "^[A-Za-z0-9][A-Za-z0-9._-]*$"
+      }
+    },
+    (buf.validate.field) = {
+      required: true
+      string: {
+        min_len: 1
+        max_len: 128
+        pattern: "^[A-Za-z0-9][A-Za-z0-9._-]*$"
+      }
+    }
+  ];
+  // Exact 1-based binding configuration revision used when publishing this link.
+  int64 binding_revision = 2 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      required: true
+      int64: {gt: 0}
+    },
+    (buf.validate.field) = {
+      required: true
+      int64: {gt: 0}
+    }
+  ];
+  // Retained non-secret binding snapshot preserving endpoint summary, dataset,
+  // namespace, and contract version across later binding rotation or retirement.
+  ExternalSystemBinding binding_snapshot = 3 [
+    (ai.protomolt.proto.validate.v1.field).required = true,
+    (buf.validate.field).required = true
+  ];
+  // Canonical external object identity within the binding's dataset and namespace.
+  string external_object_id = 4 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      required: true
+      string: {min_len: 1, max_len: 1024, pattern: ".*\\S.*"}
+    },
+    (buf.validate.field) = {
+      required: true
+      string: {min_len: 1, max_len: 1024, pattern: ".*\\S.*"}
+    }
+  ];
+  // Optional external object version; explicitly absent when the provider has none.
+  optional string external_version = 5 [
+    (ai.protomolt.proto.validate.v1.field).string = {min_len: 1, max_len: 512, pattern: ".*\\S.*"},
+    (buf.validate.field).string = {min_len: 1, max_len: 512, pattern: ".*\\S.*"}
+  ];
+  // Full canonical repository address of the source document.
+  ai.protomolt.proto.repo.v1.NodeAddress source_address = 6 [
+    (ai.protomolt.proto.validate.v1.field).required = true,
+    (buf.validate.field).required = true
+  ];
+  // Exact positive repository revision represented by this external object.
+  int64 source_revision = 7 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      required: true
+      int64: {gt: 0}
+    },
+    (buf.validate.field) = {
+      required: true
+      int64: {gt: 0}
+    }
+  ];
+  // Optional processing, schema, mapping, and stateless NLP receipt identities.
+  optional ExternalProcessingIdentity processing = 8;
+  // Optional managed-search history, sequence, and publication epoch identity.
+  optional ManagedSearchIdentity managed_search = 9;
+  // Optional strictly validated http/https display URL for guarded UI navigation.
+  // Never acts as canonical object identity or authorization.
+  optional string display_url = 10 [
+    (ai.protomolt.proto.validate.v1.field).string = {min_len: 8, max_len: 2048, uri: true},
+    (buf.validate.field).string = {min_len: 8, max_len: 2048, uri: true}
+  ];
+  // Stable publication operation ID whose verified evidence confirmed this link.
+  string confirmed_by_operation_id = 11 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      required: true
+      string: {min_len: 1, max_len: 200, pattern: ".*\\S.*"}
+    },
+    (buf.validate.field) = {
+      required: true
+      string: {min_len: 1, max_len: 200, pattern: ".*\\S.*"}
+    }
+  ];
+  // Verified provider receipt that confirmed publication of this ExternalLink.
+  ExternalProviderEvidence confirmation_evidence = 12 [
+    (ai.protomolt.proto.validate.v1.field).required = true,
+    (buf.validate.field).required = true
+  ];
+  // Current lifecycle state of this projection record.
+  ExternalProjectionLifecycle projection_lifecycle = 13 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      required: true
+      enum: {defined_only: true, not_in: [0]}
+    },
+    (buf.validate.field) = {
+      required: true
+      enum: {defined_only: true, not_in: [0]}
+    }
+  ];
+  // Timestamp when publication confirmation was recorded.
+  google.protobuf.Timestamp confirmed_at = 14 [
+    (ai.protomolt.proto.validate.v1.field).required = true,
+    (buf.validate.field).required = true
+  ];
+  // Optional operation ID that superseded or deleted this projection.
+  optional string retired_by_operation_id = 15 [
+    (ai.protomolt.proto.validate.v1.field).string = {min_len: 1, max_len: 200, pattern: ".*\\S.*"},
+    (buf.validate.field).string = {min_len: 1, max_len: 200, pattern: ".*\\S.*"}
+  ];
+  // Optional verified provider deletion evidence when projection_lifecycle is DELETED.
+  optional ExternalProviderEvidence deletion_evidence = 16;
+}
+
+// Kind of external publication mutation bound into an operation's immutable intent.
+enum ExternalPublicationAction {
+  // Unset; never valid in publication intents.
+  EXTERNAL_PUBLICATION_ACTION_UNSPECIFIED = 0;
+  // Publish or replace the external projection for an exact positive source revision.
+  EXTERNAL_PUBLICATION_ACTION_PUBLISH = 1;
+  // Delete/retire the external projection due to tombstone or source purge.
+  EXTERNAL_PUBLICATION_ACTION_DELETE = 2;
+}
+
+// High-level lifecycle outcome of an external publication or deletion operation.
+enum ExternalPublicationOutcome {
+  // Unset; never valid on persisted operation or attempt records.
+  EXTERNAL_PUBLICATION_OUTCOME_UNSPECIFIED = 0;
+  // Publication is in flight, unresolved after a lost reply, or accepted awaiting
+  // downstream index commit.
+  EXTERNAL_PUBLICATION_OUTCOME_PENDING = 1;
+  // Publication completed and was verified against provider PUBLISHED evidence.
+  EXTERNAL_PUBLICATION_OUTCOME_CONFIRMED = 2;
+  // Publication or deletion failed or was fenced by a newer revision/deletion.
+  EXTERNAL_PUBLICATION_OUTCOME_FAILED = 3;
+  // External deletion is in flight or unresolved after a lost reply.
+  EXTERNAL_PUBLICATION_OUTCOME_DELETION_PENDING = 4;
+  // External deletion completed and was verified against provider DELETED evidence.
+  EXTERNAL_PUBLICATION_OUTCOME_DELETED = 5;
+}
+
+// Sub-phase distinguishing why an operation is in PENDING or DELETION_PENDING.
+enum ExternalPendingPhase {
+  // Unset; used when outcome is terminal (CONFIRMED, FAILED, or DELETED).
+  EXTERNAL_PENDING_PHASE_UNSPECIFIED = 0;
+  // Durable intent recorded before outbound provider call completed.
+  EXTERNAL_PENDING_PHASE_DISPATCHING = 1;
+  // Outbound call timed out, lost its reply, or encountered endpoint unavailability;
+  // requires provider status reconciliation before assuming rollback or success.
+  EXTERNAL_PENDING_PHASE_UNRESOLVED_LOST_REPLY = 2;
+  // Provider durably accepted the write (for example ACCEPTED_FINAL), but index
+  // publication has not yet committed.
+  EXTERNAL_PENDING_PHASE_ACCEPTED_AWAITING_PUBLICATION = 3;
+  // Deletion intent dispatched or accepted, awaiting terminal provider deletion receipt.
+  EXTERNAL_PENDING_PHASE_DELETION_IN_FLIGHT = 4;
+}
+
+// How an individual attempt entry was initiated.
+enum ExternalAttemptTrigger {
+  // Unset; never valid on persisted attempt records.
+  EXTERNAL_ATTEMPT_TRIGGER_UNSPECIFIED = 0;
+  // Initial execution of a newly registered operation intent.
+  EXTERNAL_ATTEMPT_TRIGGER_INITIAL = 1;
+  // Caller retry supplying the identical operation_id and canonical intent.
+  EXTERNAL_ATTEMPT_TRIGGER_RETRY = 2;
+  // Coordinator or recovery status reconciliation against the external provider.
+  EXTERNAL_ATTEMPT_TRIGGER_RECONCILIATION = 3;
+}
+
+// Immutable semantic intent bound to a stable operation_id. Any retry reusing
+// the same operation_id with a different canonical intent is refused as a conflict.
+message ExternalPublicationIntent {
+  option (ai.protomolt.proto.validate.v1.message).cel = {
+    id: "intent-address-match"
+    message: "source_address coordinates must be nonblank and belong to account_id"
+    expression: "this.source_address.account_id == this.account_id && this.source_address.account_id.matches('.*\\\\S.*') && this.source_address.graph_id.matches('.*\\\\S.*') && this.source_address.graph_address_id.matches('.*\\\\S.*') && this.source_address.doc_id.matches('.*\\\\S.*')"
+  };
+  option (buf.validate.message).cel = {
+    id: "intent-address-match"
+    message: "source_address coordinates must be nonblank and belong to account_id"
+    expression: "this.source_address.account_id == this.account_id && this.source_address.account_id.matches('.*\\\\S.*') && this.source_address.graph_id.matches('.*\\\\S.*') && this.source_address.graph_address_id.matches('.*\\\\S.*') && this.source_address.doc_id.matches('.*\\\\S.*')"
+  };
+  option (ai.protomolt.proto.validate.v1.message).cel = {
+    id: "intent-revision-or-purge"
+    message: "PUBLISH requires source_revision > 0 and no purge_id; DELETE requires source_revision > 0 for tombstones or source_revision == 0 with purge_id for purges"
+    expression: "this.action == 1 ? (this.source_revision > 0 && !has(this.purge_id)) : ((this.source_revision > 0 && !has(this.purge_id)) || (this.source_revision == 0 && has(this.purge_id)))"
+  };
+  option (buf.validate.message).cel = {
+    id: "intent-revision-or-purge"
+    message: "PUBLISH requires source_revision > 0 and no purge_id; DELETE requires source_revision > 0 for tombstones or source_revision == 0 with purge_id for purges"
+    expression: "this.action == 1 ? (this.source_revision > 0 && !has(this.purge_id)) : ((this.source_revision > 0 && !has(this.purge_id)) || (this.source_revision == 0 && has(this.purge_id)))"
+  };
+  option (ai.protomolt.proto.validate.v1.message).cel = {
+    id: "intent-safe-display-url"
+    message: "display_url is valid only on PUBLISH and must be an http/https URL without userinfo or secret query parameters"
+    expression: "!has(this.display_url) || (this.action == 1 && this.display_url.matches('^https?://[A-Za-z0-9._\\\\-:\\\\[\\\\]]+([/?#].*)?$') && !this.display_url.contains('@') && !this.display_url.lowerAscii().matches('[?&](access_token|bearer|token|id_token|api_key|apikey|client_secret|password|secret|sig|x-amz-signature|x-amz-credential|x-goog-signature)='))"
+  };
+  option (buf.validate.message).cel = {
+    id: "intent-safe-display-url"
+    message: "display_url is valid only on PUBLISH and must be an http/https URL without userinfo or secret query parameters"
+    expression: "!has(this.display_url) || (this.action == 1 && this.display_url.matches('^https?://[A-Za-z0-9._\\\\-:\\\\[\\\\]]+([/?#].*)?$') && !this.display_url.contains('@') && !this.display_url.lowerAscii().matches('[?&](access_token|bearer|token|id_token|api_key|apikey|client_secret|password|secret|sig|x-amz-signature|x-amz-credential|x-goog-signature)='))"
+  };
+
+  // Canonicalization version for deterministic intent hashing; fixed at 1.
+  uint32 encoding_version = 1 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      required: true
+      uint32: {const: 1}
+    },
+    (buf.validate.field) = {
+      required: true
+      uint32: {const: 1}
+    }
+  ];
+  // Owning repository account ID.
+  string account_id = 2 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      required: true
+      string: {min_len: 1, max_len: 200, pattern: ".*\\S.*"}
+    },
+    (buf.validate.field) = {
+      required: true
+      string: {min_len: 1, max_len: 200, pattern: ".*\\S.*"}
+    }
+  ];
+  // Full source document address.
+  ai.protomolt.proto.repo.v1.NodeAddress source_address = 3 [
+    (ai.protomolt.proto.validate.v1.field).required = true,
+    (buf.validate.field).required = true
+  ];
+  // Exact positive source revision for PUBLISH and tombstone DELETE, or 0 for
+  // administrative purge DELETE where purge_id is set.
+  int64 source_revision = 4 [
+    (ai.protomolt.proto.validate.v1.field).int64 = {gte: 0},
+    (buf.validate.field).int64 = {gte: 0}
+  ];
+  // Administrative purge correlation ID when action is DELETE for a revision-0 purge.
+  optional string purge_id = 5 [
+    (ai.protomolt.proto.validate.v1.field).string = {min_len: 1, max_len: 200, pattern: ".*\\S.*"},
+    (buf.validate.field).string = {min_len: 1, max_len: 200, pattern: ".*\\S.*"}
+  ];
+  // Target external-system binding ID.
+  string binding_id = 6 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      required: true
+      string: {
+        min_len: 1
+        max_len: 128
+        path_safe_name: true
+        pattern: "^[A-Za-z0-9][A-Za-z0-9._-]*$"
+      }
+    },
+    (buf.validate.field) = {
+      required: true
+      string: {
+        min_len: 1
+        max_len: 128
+        pattern: "^[A-Za-z0-9][A-Za-z0-9._-]*$"
+      }
+    }
+  ];
+  // Exact 1-based binding configuration revision bound into this operation.
+  int64 binding_revision = 7 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      required: true
+      int64: {gt: 0}
+    },
+    (buf.validate.field) = {
+      required: true
+      int64: {gt: 0}
+    }
+  ];
+  // Mutation kind (PUBLISH or DELETE).
+  ExternalPublicationAction action = 8 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      required: true
+      enum: {defined_only: true, not_in: [0]}
+    },
+    (buf.validate.field) = {
+      required: true
+      enum: {defined_only: true, not_in: [0]}
+    }
+  ];
+  // Canonical external object identity targeted by this operation.
+  string external_object_id = 9 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      required: true
+      string: {min_len: 1, max_len: 1024, pattern: ".*\\S.*"}
+    },
+    (buf.validate.field) = {
+      required: true
+      string: {min_len: 1, max_len: 1024, pattern: ".*\\S.*"}
+    }
+  ];
+  // Optional processing, mapping, schema, and stateless NLP receipt digests.
+  optional ExternalProcessingIdentity processing = 10;
+  // Optional non-authoritative http/https display URL for PUBLISH intents.
+  optional string display_url = 11 [
+    (ai.protomolt.proto.validate.v1.field).string = {min_len: 8, max_len: 2048, uri: true},
+    (buf.validate.field).string = {min_len: 8, max_len: 2048, uri: true}
+  ];
+}
+
+// Record of one execution or reconciliation attempt for an operation.
+message ExternalPublicationAttempt {
+  option (ai.protomolt.proto.validate.v1.message).cel = {
+    id: "attempt-evidence-and-phase"
+    message: "CONFIRMED and DELETED attempts require verified provider evidence and no pending_phase; PENDING and DELETION_PENDING require a pending_phase"
+    expression: "(this.outcome == 2 ? (has(this.evidence) && this.evidence.settlement == 2 && this.pending_phase == 0) : true) && (this.outcome == 5 ? (has(this.evidence) && this.evidence.settlement == 5 && this.pending_phase == 0) : true) && ((this.outcome == 1 || this.outcome == 4) ? this.pending_phase != 0 : this.pending_phase == 0)"
+  };
+  option (buf.validate.message).cel = {
+    id: "attempt-evidence-and-phase"
+    message: "CONFIRMED and DELETED attempts require verified provider evidence and no pending_phase; PENDING and DELETION_PENDING require a pending_phase"
+    expression: "(this.outcome == 2 ? (has(this.evidence) && this.evidence.settlement == 2 && this.pending_phase == 0) : true) && (this.outcome == 5 ? (has(this.evidence) && this.evidence.settlement == 5 && this.pending_phase == 0) : true) && ((this.outcome == 1 || this.outcome == 4) ? this.pending_phase != 0 : this.pending_phase == 0)"
+  };
+
+  // Monotonic 1-based attempt ordinal within the enclosing operation.
+  int32 attempt_number = 1 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      required: true
+      int32: {gt: 0}
+    },
+    (buf.validate.field) = {
+      required: true
+      int32: {gt: 0}
+    }
+  ];
+  // How this attempt was initiated.
+  ExternalAttemptTrigger trigger = 2 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      required: true
+      enum: {defined_only: true, not_in: [0]}
+    },
+    (buf.validate.field) = {
+      required: true
+      enum: {defined_only: true, not_in: [0]}
+    }
+  ];
+  // Outcome observed at the conclusion of this attempt.
+  ExternalPublicationOutcome outcome = 3 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      required: true
+      enum: {defined_only: true, not_in: [0]}
+    },
+    (buf.validate.field) = {
+      required: true
+      enum: {defined_only: true, not_in: [0]}
+    }
+  ];
+  // Sub-phase when outcome is PENDING or DELETION_PENDING; UNSPECIFIED otherwise.
+  ExternalPendingPhase pending_phase = 4 [
+    (ai.protomolt.proto.validate.v1.field).enum = {defined_only: true},
+    (buf.validate.field).enum = {defined_only: true}
+  ];
+  // Timestamp when this attempt started.
+  google.protobuf.Timestamp started_at = 5 [
+    (ai.protomolt.proto.validate.v1.field).required = true,
+    (buf.validate.field).required = true
+  ];
+  // Optional completion timestamp of this attempt.
+  optional google.protobuf.Timestamp finished_at = 6;
+  // Optional bounded diagnostic code (for example ENDPOINT_UNAVAILABLE, STALE_FENCED).
+  optional string diagnostic_code = 7 [
+    (ai.protomolt.proto.validate.v1.field).string = {min_len: 1, max_len: 128, pattern: "^[A-Za-z0-9._:-]+$"},
+    (buf.validate.field).string = {min_len: 1, max_len: 128, pattern: "^[A-Za-z0-9._:-]+$"}
+  ];
+  // Optional sanitized diagnostic detail; never carries credentials or endpoint URLs.
+  optional string diagnostic_message = 8 [
+    (ai.protomolt.proto.validate.v1.field).string = {min_len: 1, max_len: 1024, pattern: ".*\\S.*"},
+    (buf.validate.field).string = {min_len: 1, max_len: 1024, pattern: ".*\\S.*"}
+  ];
+  // Verified provider receipt when the provider returned a verifiable response.
+  optional ExternalProviderEvidence evidence = 9;
+}
+
+// Durable operation record binding a stable operation_id to its immutable
+// intent digest, attempt log, and verified terminal or pending outcome.
+message ExternalPublicationOperationRecord {
+  option (ai.protomolt.proto.validate.v1.message).cel = {
+    id: "operation-confirmation-requires-evidence"
+    message: "CONFIRMED and DELETED operations require matching terminal provider evidence; pending outcomes require pending_phase"
+    expression: "(this.outcome == 2 ? (has(this.terminal_evidence) && this.terminal_evidence.settlement == 2 && this.terminal_evidence.request_intent_sha256 == this.intent_sha256 && this.pending_phase == 0) : true) && (this.outcome == 5 ? (has(this.terminal_evidence) && this.terminal_evidence.settlement == 5 && this.terminal_evidence.request_intent_sha256 == this.intent_sha256 && this.pending_phase == 0) : true) && ((this.outcome == 1 || this.outcome == 4) ? this.pending_phase != 0 : this.pending_phase == 0)"
+  };
+  option (buf.validate.message).cel = {
+    id: "operation-confirmation-requires-evidence"
+    message: "CONFIRMED and DELETED operations require matching terminal provider evidence; pending outcomes require pending_phase"
+    expression: "(this.outcome == 2 ? (has(this.terminal_evidence) && this.terminal_evidence.settlement == 2 && this.terminal_evidence.request_intent_sha256 == this.intent_sha256 && this.pending_phase == 0) : true) && (this.outcome == 5 ? (has(this.terminal_evidence) && this.terminal_evidence.settlement == 5 && this.terminal_evidence.request_intent_sha256 == this.intent_sha256 && this.pending_phase == 0) : true) && ((this.outcome == 1 || this.outcome == 4) ? this.pending_phase != 0 : this.pending_phase == 0)"
+  };
+
+  // Stable operation identifier unique per ledger.
+  string operation_id = 1 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      required: true
+      string: {min_len: 1, max_len: 200, pattern: ".*\\S.*"}
+    },
+    (buf.validate.field) = {
+      required: true
+      string: {min_len: 1, max_len: 200, pattern: ".*\\S.*"}
+    }
+  ];
+  // Lowercase hex SHA-256 of the canonical ExternalPublicationIntent bytes.
+  string intent_sha256 = 2 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      required: true
+      string: {len: 64, sha256_hex: true, pattern: "^[0-9a-f]{64}$"}
+    },
+    (buf.validate.field) = {
+      required: true
+      string: {len: 64, pattern: "^[0-9a-f]{64}$"}
+    }
+  ];
+  // Immutable semantic intent bound at operation registration.
+  ExternalPublicationIntent intent = 3 [
+    (ai.protomolt.proto.validate.v1.field).required = true,
+    (buf.validate.field).required = true
+  ];
+  // Non-secret snapshot of the referenced ExternalSystemBinding revision.
+  ExternalSystemBinding binding_snapshot = 4 [
+    (ai.protomolt.proto.validate.v1.field).required = true,
+    (buf.validate.field).required = true
+  ];
+  // Current lifecycle outcome of this operation.
+  ExternalPublicationOutcome outcome = 5 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      required: true
+      enum: {defined_only: true, not_in: [0]}
+    },
+    (buf.validate.field) = {
+      required: true
+      enum: {defined_only: true, not_in: [0]}
+    }
+  ];
+  // Sub-phase when outcome is PENDING or DELETION_PENDING; UNSPECIFIED otherwise.
+  ExternalPendingPhase pending_phase = 6 [
+    (ai.protomolt.proto.validate.v1.field).enum = {defined_only: true},
+    (buf.validate.field).enum = {defined_only: true}
+  ];
+  // Ordered log of initial, retry, and reconciliation attempts.
+  repeated ExternalPublicationAttempt attempts = 7 [
+    (ai.protomolt.proto.validate.v1.field).repeated = {min_items: 1, max_items: 256},
+    (buf.validate.field).repeated = {min_items: 1, max_items: 256}
+  ];
+  // Verified terminal provider receipt when outcome is CONFIRMED or DELETED.
+  optional ExternalProviderEvidence terminal_evidence = 8;
+  // Optional bounded failure code when outcome is FAILED.
+  optional string failure_code = 9 [
+    (ai.protomolt.proto.validate.v1.field).string = {min_len: 1, max_len: 128, pattern: "^[A-Za-z0-9._:-]+$"},
+    (buf.validate.field).string = {min_len: 1, max_len: 128, pattern: "^[A-Za-z0-9._:-]+$"}
+  ];
+  // Optional sanitized failure message when outcome is FAILED.
+  optional string failure_message = 10 [
+    (ai.protomolt.proto.validate.v1.field).string = {min_len: 1, max_len: 1024, pattern: ".*\\S.*"},
+    (buf.validate.field).string = {min_len: 1, max_len: 1024, pattern: ".*\\S.*"}
+  ];
+  // Timestamp when this operation was first durably registered.
+  google.protobuf.Timestamp created_at = 11 [
+    (ai.protomolt.proto.validate.v1.field).required = true,
+    (buf.validate.field).required = true
+  ];
+  // Timestamp of the latest state transition on this operation.
+  google.protobuf.Timestamp updated_at = 12 [
+    (ai.protomolt.proto.validate.v1.field).required = true,
+    (buf.validate.field).required = true
+  ];
+}
+
+// Per-(account, binding, source_address) ledger persisted as typed structured_data
+// inside external-publications:<account_id> via the selected-part DocumentService API.
+// Storing this ledger outside the source document avoids mutating the source
+// document's CORE part or revision counter and prevents circular publication loops.
+message ExternalPublicationLedger {
+  option (ai.protomolt.proto.validate.v1.message).cel = {
+    id: "ledger-account-and-source"
+    message: "source_address coordinates must be nonblank and match account_id"
+    expression: "this.source_address.account_id == this.account_id && this.source_address.account_id.matches('.*\\\\S.*') && this.source_address.graph_id.matches('.*\\\\S.*') && this.source_address.graph_address_id.matches('.*\\\\S.*') && this.source_address.doc_id.matches('.*\\\\S.*')"
+  };
+  option (buf.validate.message).cel = {
+    id: "ledger-account-and-source"
+    message: "source_address coordinates must be nonblank and match account_id"
+    expression: "this.source_address.account_id == this.account_id && this.source_address.account_id.matches('.*\\\\S.*') && this.source_address.graph_id.matches('.*\\\\S.*') && this.source_address.graph_address_id.matches('.*\\\\S.*') && this.source_address.doc_id.matches('.*\\\\S.*')"
+  };
+  option (ai.protomolt.proto.validate.v1.message).cel = {
+    id: "ledger-purge-consistency"
+    message: "source_purged requires last_purge_id and forbids an ACTIVE current_link"
+    expression: "!this.source_purged || (has(this.last_purge_id) && (!has(this.current_link) || this.current_link.projection_lifecycle == 3))"
+  };
+  option (buf.validate.message).cel = {
+    id: "ledger-purge-consistency"
+    message: "source_purged requires last_purge_id and forbids an ACTIVE current_link"
+    expression: "!this.source_purged || (has(this.last_purge_id) && (!has(this.current_link) || this.current_link.projection_lifecycle == 3))"
+  };
+
+  // Owning repository account ID.
+  string account_id = 1 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      required: true
+      string: {min_len: 1, max_len: 200, pattern: ".*\\S.*"}
+    },
+    (buf.validate.field) = {
+      required: true
+      string: {min_len: 1, max_len: 200, pattern: ".*\\S.*"}
+    }
+  ];
+  // Stable external-system binding ID within account_id.
+  string binding_id = 2 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      required: true
+      string: {
+        min_len: 1
+        max_len: 128
+        path_safe_name: true
+        pattern: "^[A-Za-z0-9][A-Za-z0-9._-]*$"
+      }
+    },
+    (buf.validate.field) = {
+      required: true
+      string: {
+        min_len: 1
+        max_len: 128
+        pattern: "^[A-Za-z0-9][A-Za-z0-9._-]*$"
+      }
+    }
+  ];
+  // Full canonical repository address of the source document.
+  ai.protomolt.proto.repo.v1.NodeAddress source_address = 3 [
+    (ai.protomolt.proto.validate.v1.field).required = true,
+    (buf.validate.field).required = true
+  ];
+  // Versioned, length-delimited binary tuple of source_address coordinates.
+  bytes logical_source_key = 4 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      required: true
+      bytes: {min_len: 1, max_len: 16384}
+    },
+    (buf.validate.field) = {
+      required: true
+      bytes: {min_len: 1, max_len: 16384}
+    }
+  ];
+  // Highest source document revision admitted or fenced on this ledger.
+  // Delayed attempts for older revisions cannot overwrite or resurrect current_link.
+  int64 highest_fenced_source_revision = 5 [
+    (ai.protomolt.proto.validate.v1.field).int64 = {gte: 0},
+    (buf.validate.field).int64 = {gte: 0}
+  ];
+  // Tombstone fence revision; any PUBLISH with source_revision <= this value is fenced.
+  optional int64 tombstoned_at_source_revision = 6 [
+    (ai.protomolt.proto.validate.v1.field).int64 = {gt: 0},
+    (buf.validate.field).int64 = {gt: 0}
+  ];
+  // True once a revision-0 purge event has fenced all source revisions on this ledger.
+  bool source_purged = 7;
+  // Correlation ID of the last processed source purge command/event when source_purged is true.
+  optional string last_purge_id = 8 [
+    (ai.protomolt.proto.validate.v1.field).string = {min_len: 1, max_len: 200, pattern: ".*\\S.*"},
+    (buf.validate.field).string = {min_len: 1, max_len: 200, pattern: ".*\\S.*"}
+  ];
+  // Current confirmed projection (ACTIVE or DELETION_PENDING); absent when none is live.
+  optional ExternalLink current_link = 9;
+  // Retained superseded or deleted projections under RETAIN_HISTORY policy.
+  repeated ExternalLink historical_links = 10 [
+    (ai.protomolt.proto.validate.v1.field).repeated = {max_items: 512},
+    (buf.validate.field).repeated = {max_items: 512}
+  ];
+  // Durable operation records ordered by registration for replay, conflict detection,
+  // and provider status reconciliation across restarts.
+  repeated ExternalPublicationOperationRecord operations = 11 [
+    (ai.protomolt.proto.validate.v1.field).repeated = {max_items: 1024},
+    (buf.validate.field).repeated = {max_items: 1024}
+  ];
+}
