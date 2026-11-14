@@ -51,12 +51,13 @@ import java.util.concurrent.locks.ReentrantLock;
  * absent working-tree files change nothing. All writes insert blobs, trees and one commit
  * with {@code ObjectInserter} and advance HEAD only through a {@code RefUpdate}
  * compare-and-swap against the exact commit HEAD named when the write started. On non-bare
- * repositories, {@code .git/index} ({@code DirCache}) is aligned with the newly committed root
- * tree alongside HEAD so subsequent porcelain commits preserve registered files; bare
- * repositories have no index and skip {@code DirCache}. The working tree itself is never
- * written: a non-bare repository stays usable for {@code git log}, review and porcelain commits,
- * and its working tree simply does not reflect registry state (a manual {@code git reset --hard}
- * materializes HEAD into the working tree without affecting the store).</p>
+ * repositories, {@code .git/index} ({@code DirCache}) is updated alongside HEAD for only the
+ * touched registry paths while preserving unrelated staged entries, so subsequent porcelain
+ * commits preserve both registered files and staged user work; bare repositories have no index
+ * and skip {@code DirCache}. The working tree itself is never written: a non-bare repository
+ * stays usable for {@code git log}, review and porcelain commits, and its working tree simply
+ * does not reflect registry state (a manual {@code git reset --hard} materializes HEAD into
+ * the working tree without affecting the store).</p>
  *
  * <h2>Layout</h2>
  * <pre>
@@ -727,20 +728,36 @@ public final class GitSchemaRegistryStore implements ConfigDocumentStore, Workfl
     /**
      * Serializes a write with the shared JVM lock plus a {@code registry.lock} file lock,
      * mirroring {@code GitCloneCache}: the JVM lock covers stores inside this process, the
-     * file lock covers other processes on the same repository.
+     * file lock covers other processes on the same repository. Reentrant entry on the thread
+     * already holding {@code jvmLock} reuses the outer frame's JVM lock and {@link FileLock}
+     * rather than opening a second channel (which would fail with
+     * {@code OverlappingFileLockException}).
      */
     private <T> T locked(WriteAction<T> action) {
+        if (jvmLock.isHeldByCurrentThread()) {
+            return runUnderHeldLock(action);
+        }
         jvmLock.lock();
         try (FileChannel channel = FileChannel.open(lockFile,
                 StandardOpenOption.CREATE, StandardOpenOption.WRITE);
                 FileLock ignored = channel.lock()) {
-            return action.run();
+            return runUnderHeldLock(action);
         } catch (RegistryStoreException | IllegalArgumentException e) {
             throw e;
         } catch (Exception e) {
             throw new RegistryStoreException("Registry write failed at " + repoDir, e);
         } finally {
             jvmLock.unlock();
+        }
+    }
+
+    private <T> T runUnderHeldLock(WriteAction<T> action) {
+        try {
+            return action.run();
+        } catch (RegistryStoreException | IllegalArgumentException e) {
+            throw e;
+        } catch (Exception e) {
+            throw new RegistryStoreException("Registry write failed at " + repoDir, e);
         }
     }
 

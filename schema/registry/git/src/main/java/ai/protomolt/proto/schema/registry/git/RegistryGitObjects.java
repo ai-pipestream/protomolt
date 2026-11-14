@@ -6,8 +6,10 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.NavigableMap;
+import java.util.NavigableSet;
 import java.util.Optional;
 import java.util.TreeMap;
+import java.util.TreeSet;
 
 import org.eclipse.jgit.dircache.DirCache;
 import org.eclipse.jgit.dircache.DirCacheBuilder;
@@ -18,7 +20,6 @@ import org.eclipse.jgit.lib.FileMode;
 import org.eclipse.jgit.lib.ObjectId;
 import org.eclipse.jgit.lib.ObjectInserter;
 import org.eclipse.jgit.lib.ObjectLoader;
-import org.eclipse.jgit.lib.ObjectReader;
 import org.eclipse.jgit.lib.PersonIdent;
 import org.eclipse.jgit.lib.Ref;
 import org.eclipse.jgit.lib.RefUpdate;
@@ -35,8 +36,9 @@ import org.eclipse.jgit.treewalk.TreeWalk;
  * every write inserts blobs, trees and one commit with {@link ObjectInserter}, then advances
  * {@code HEAD} only through a {@link RefUpdate} compare-and-swap against the exact commit
  * {@code HEAD} named when the write started. On non-bare repositories, {@code .git/index}
- * ({@link DirCache}) is aligned with the newly committed root tree alongside the ref update so
- * subsequent porcelain commits preserve all registered files; bare repositories have no index
+ * ({@link DirCache}) is updated alongside the ref advance for only the registry paths in
+ * {@code changes}, preserving any unrelated staged entries (and refusing file/directory boundary
+ * collisions with staged entries before advancing {@code HEAD}); bare repositories have no index
  * and skip {@link DirCache}. A checked-out working tree itself is never read or rewritten, so
  * bare and non-bare repositories behave identically on registry reads and writes and the
  * working tree of a non-bare repository stays untouched (see the store's class documentation
@@ -299,9 +301,9 @@ final class RegistryGitObjects {
      * <p>Stages run in {@link WriteStage} order; objects are flushed before the ref update,
      * so a failure before the compare-and-swap leaves HEAD untouched and only leaks
      * unreachable objects. On non-bare repositories, {@code .git/index} ({@link DirCache}) is
-     * updated alongside HEAD to match the newly committed root tree. A failure after the ref
-     * update means the commit may or may not have landed; the caller must re-read HEAD before
-     * retrying.
+     * updated alongside HEAD for the paths in {@code changes} while preserving unrelated staged
+     * entries. A failure after the ref update means the commit may or may not have landed; the
+     * caller must re-read HEAD before retrying.
      *
      * @return the new commit id
      * @throws HeadChangedException when HEAD advanced after {@code expectedHead} was read:
@@ -343,12 +345,7 @@ final class RegistryGitObjects {
             DirCache dirCache = repo.isBare() ? null : repo.lockDirCache();
             try {
                 if (dirCache != null) {
-                    DirCacheBuilder cacheBuilder = dirCache.builder();
-                    try (ObjectReader reader = repo.newObjectReader()) {
-                        cacheBuilder.addTree(new byte[0], DirCacheEntry.STAGE_0, reader, newTree);
-                    }
-                    cacheBuilder.finish();
-                    dirCache.write();
+                    synchronizeDirCache(dirCache, changes, objectChanges);
                 }
                 advanceHead(repo, author, message, expectedHead, newCommit);
                 if (dirCache != null && !dirCache.commit()) {
@@ -362,6 +359,66 @@ final class RegistryGitObjects {
             hook.at(WriteStage.AFTER_REF_UPDATE);
             return newCommit.getName();
         }
+    }
+
+    /**
+     * Updates {@code dirCache} for only the paths in {@code changes}, preserving every existing
+     * {@link DirCacheEntry} (stage, mode, length, modification timestamp, and {@link ObjectId})
+     * outside {@code changes.keySet()} and refusing file/directory boundary collisions before
+     * {@code HEAD} is advanced.
+     */
+    private static void synchronizeDirCache(
+            DirCache dirCache,
+            Map<String, Optional<byte[]>> changes,
+            NavigableMap<String, Optional<ObjectId>> objectChanges) throws IOException {
+        NavigableSet<String> changePaths = new TreeSet<>(changes.keySet());
+        DirCacheBuilder cacheBuilder = dirCache.builder();
+        for (int i = 0; i < dirCache.getEntryCount(); i++) {
+            DirCacheEntry existing = dirCache.getEntry(i);
+            String existingPath = existing.getPathString();
+            if (changePaths.contains(existingPath)) {
+                continue;
+            }
+            String conflictingPath = findConflictingChangePath(existingPath, changePaths);
+            if (conflictingPath != null) {
+                throw new IOException("staged git index entry '" + existingPath
+                        + "' conflicts with registry path '" + conflictingPath + "'");
+            }
+            cacheBuilder.add(existing);
+        }
+        for (Map.Entry<String, Optional<byte[]>> change : changes.entrySet()) {
+            Optional<byte[]> content = change.getValue();
+            if (content.isEmpty()) {
+                continue;
+            }
+            ObjectId blobId = objectChanges.get(change.getKey()).orElseThrow();
+            DirCacheEntry entry = new DirCacheEntry(change.getKey(), DirCacheEntry.STAGE_0);
+            entry.setFileMode(FileMode.REGULAR_FILE);
+            entry.setObjectId(blobId);
+            entry.setLength(content.get().length);
+            cacheBuilder.add(entry);
+        }
+        cacheBuilder.finish();
+        dirCache.write();
+    }
+
+    private static String findConflictingChangePath(
+            String existingPath, NavigableSet<String> changePaths) {
+        int start = 0;
+        int slash;
+        while ((slash = existingPath.indexOf('/', start)) >= 0) {
+            String ancestor = existingPath.substring(0, slash);
+            if (changePaths.contains(ancestor)) {
+                return ancestor;
+            }
+            start = slash + 1;
+        }
+        String descendantPrefix = existingPath + "/";
+        String descendant = changePaths.ceiling(descendantPrefix);
+        if (descendant != null && descendant.startsWith(descendantPrefix)) {
+            return descendant;
+        }
+        return null;
     }
 
     private static void validateChanges(Map<String, Optional<byte[]>> changes) {

@@ -7,14 +7,17 @@ import ai.protomolt.proto.grpc.workflow.v1.VersionedWorkflow;
 import ai.protomolt.proto.grpc.workflow.v1.Workflow;
 import ai.protomolt.proto.grpc.workflow.v1.WorkflowStep;
 import ai.protomolt.proto.registry.CompatibilityWriteGate;
+import ai.protomolt.proto.registry.IncompatibleRegistrationException;
 import ai.protomolt.proto.registry.RegistryStoreException;
 import ai.protomolt.proto.registry.SchemaReference;
+import ai.protomolt.proto.registry.SchemaRegistryStore;
 import ai.protomolt.proto.registry.SchemaRegistryStoreContractTest;
 import ai.protomolt.proto.registry.StoredSchema;
 import com.google.protobuf.ByteString;
 import com.google.protobuf.Duration;
 import com.google.protobuf.Timestamp;
 import org.eclipse.jgit.api.Git;
+import org.eclipse.jgit.dircache.DirCacheEntry;
 import org.eclipse.jgit.lib.ObjectId;
 import org.eclipse.jgit.lib.Repository;
 import org.junit.jupiter.api.Test;
@@ -543,6 +546,187 @@ class GitSchemaRegistryConcurrencyAndPorcelainTest {
             assertThat(RegistryGitTestSupport.commitMessages(dir)).hasSize(commitsBefore);
             assertThat(store.subjects()).containsExactly(CORE_SUBJECT);
             assertThat(store.latest(CORE_SUBJECT)).contains(v1);
+        }
+    }
+
+    @Test
+    void unrelatedStagedEntriesSurviveRegistryWritesAndCommitCleanly() throws Exception {
+        Path dir = tempDir.resolve("preserve-staged-entries");
+        byte[] noteBytes = "staged operator note\n".getBytes(StandardCharsets.UTF_8);
+        try (GitSchemaRegistryStore store = GitSchemaRegistryStore.builder()
+                .repositoryDir(dir).build()) {
+            Repository repo = store.git().getRepository();
+            Git git = Git.wrap(repo);
+
+            StoredSchema coreV1 = store.register(CORE_SUBJECT, CORE_V1, List.of());
+            Path notesPath = dir.resolve("notes.txt");
+            Files.write(notesPath, noteBytes);
+            // Avoid JGit's same-tick racy-git smudge (length -> 0) on fast filesystems so every
+            // stat field on DirCacheEntry is deterministic before and after registry writes.
+            Files.setLastModifiedTime(
+                    notesPath,
+                    java.nio.file.attribute.FileTime.from(java.time.Instant.now().minusSeconds(5)));
+            git.add().addFilepattern("notes.txt").call();
+
+            DirCacheEntry stagedBefore = repo.readDirCache().getEntry("notes.txt");
+            assertThat(stagedBefore).isNotNull();
+            assertThat(stagedBefore.getLength()).isEqualTo(noteBytes.length);
+
+            // Exact Codex reproduction sequence plus additional schema/mode/config writes:
+            store.setGlobalCompatibilityMode("FORWARD");
+            StoredSchema userV1 = store.register(
+                    USER_SUBJECT,
+                    USER_V1,
+                    List.of(new SchemaReference(CORE_SUBJECT, CORE_SUBJECT, coreV1.version())));
+            store.setCompatibilityMode(USER_SUBJECT, "FULL");
+            store.putConfig("limits", "{\"maxBatch\":16}");
+
+            DirCacheEntry stagedAfter = repo.readDirCache().getEntry("notes.txt");
+            assertThat(stagedAfter).isNotNull();
+            assertThat(stagedAfter.getStage()).isEqualTo(stagedBefore.getStage());
+            assertThat(stagedAfter.getFileMode()).isEqualTo(stagedBefore.getFileMode());
+            assertThat(stagedAfter.getLength()).isEqualTo(stagedBefore.getLength());
+            assertThat(stagedAfter.getLastModifiedInstant())
+                    .isEqualTo(stagedBefore.getLastModifiedInstant());
+            assertThat(stagedAfter.getObjectId()).isEqualTo(stagedBefore.getObjectId());
+            assertThat(repo.open(stagedAfter.getObjectId()).getBytes()).isEqualTo(noteBytes);
+
+            // Committing the index directly (without re-staging notes.txt) records both
+            // notes.txt and every registered artifact on HEAD.
+            git.commit().setMessage("commit staged notes").call();
+            store.refresh();
+
+            assertThat(RegistryGitTestSupport.headBlob(dir, "notes.txt")).isEqualTo(noteBytes);
+            assertThat(store.subjects()).containsExactly(CORE_SUBJECT, USER_SUBJECT);
+            assertThat(store.latest(CORE_SUBJECT)).contains(coreV1);
+            assertThat(store.latest(USER_SUBJECT)).contains(userV1);
+            assertThat(store.globalCompatibilityMode()).isEqualTo("FORWARD");
+            assertThat(store.compatibilityMode(USER_SUBJECT)).contains("FULL");
+            assertThat(store.config("limits")).contains("{\"maxBatch\":16}");
+        }
+    }
+
+    @Test
+    void stagedFileCollidingWithRegistryPathIsRefusedBeforeAdvancingHead() throws Exception {
+        Path dir = tempDir.resolve("staged-path-collision");
+        byte[] stagedBytes = "file blocking configs directory\n".getBytes(StandardCharsets.UTF_8);
+        try (GitSchemaRegistryStore store = GitSchemaRegistryStore.builder()
+                .repositoryDir(dir).build()) {
+            Repository repo = store.git().getRepository();
+            Git git = Git.wrap(repo);
+
+            store.register(CORE_SUBJECT, CORE_V1, List.of());
+            String headBefore = RegistryGitTestSupport.head(dir);
+
+            Files.write(dir.resolve("configs"), stagedBytes);
+            git.add().addFilepattern("configs").call();
+            ObjectId stagedBlobId = repo.readDirCache().getEntry("configs").getObjectId();
+
+            assertThatThrownBy(() -> store.putConfig("limits", "{}"))
+                    .isInstanceOf(RegistryStoreException.class)
+                    .hasRootCauseMessage(
+                            "staged git index entry 'configs' conflicts with registry path 'configs/limits.json'");
+
+            assertThat(RegistryGitTestSupport.head(dir)).isEqualTo(headBefore);
+            assertThat(Files.exists(dir.resolve(".git/index.lock"))).isFalse();
+            DirCacheEntry preserved = repo.readDirCache().getEntry("configs");
+            assertThat(preserved).isNotNull();
+            assertThat(preserved.getObjectId()).isEqualTo(stagedBlobId);
+        }
+    }
+
+    @Test
+    void reentrantLockingAndEightThreadGateRacesNeverThrowOverlappingFileLock() throws Exception {
+        // Part 1: Deterministic nested locked() re-entry on the same thread (both same store and
+        // sibling store sharing the repository lock file) while index is null.
+        Path reentrantDir = tempDir.resolve("reentrant-lock");
+        try (GitSchemaRegistryStore sibling = GitSchemaRegistryStore.builder()
+                .repositoryDir(reentrantDir).build()) {
+            final GitSchemaRegistryStore[] primaryHolder = new GitSchemaRegistryStore[1];
+            SchemaRegistryStore.WriteGate reentrantGate =
+                    (subject, mode, history, schemaText, references, view) -> {
+                        GitSchemaRegistryStore primary = primaryHolder[0];
+                        primary.refresh();
+                        sibling.refresh();
+                        // Both calls miss the cleared cache and enter locked() reentrantly on
+                        // the thread that already holds jvmLock + FileLock on registry.lock.
+                        assertThat(primary.subjects()).hasSize(history.isEmpty() ? 0 : 1);
+                        assertThat(sibling.subjects()).hasSize(history.isEmpty() ? 0 : 1);
+                        return List.of();
+                    };
+            try (GitSchemaRegistryStore primary = GitSchemaRegistryStore.builder()
+                    .repositoryDir(reentrantDir)
+                    .writeGate(reentrantGate)
+                    .build()) {
+                primaryHolder[0] = primary;
+                StoredSchema v1 = primary.register(CORE_SUBJECT, CORE_V1, List.of());
+                StoredSchema v2 = primary.register(CORE_SUBJECT, CORE_V2, List.of());
+                assertThat(v1.version()).isEqualTo(1);
+                assertThat(v2.version()).isEqualTo(2);
+                assertThat(primary.versions(CORE_SUBJECT)).containsExactly(1, 2);
+            }
+        }
+
+        // Part 2: 8-thread compatible/incompatible write-gate race alongside continuous refresh().
+        for (int round = 0; round < 6; round++) {
+            Path raceDir = tempDir.resolve("gate-race-" + round);
+            try (GitSchemaRegistryStore store = GitSchemaRegistryStore.builder()
+                    .repositoryDir(raceDir)
+                    .writeGate(new CompatibilityWriteGate())
+                    .build();
+                    ExecutorService pool = Executors.newFixedThreadPool(9)) {
+                String base = """
+                        syntax = "proto3";
+                        package race.v1;
+                        message Doc {
+                          int32 value = 1;
+                        }
+                        """;
+                store.register("race/v1/doc.proto", base, List.of());
+
+                CountDownLatch start = new CountDownLatch(1);
+                AtomicBoolean done = new AtomicBoolean(false);
+                Future<?> refresher = pool.submit(() -> {
+                    assertThat(start.await(TIMEOUT_SECONDS, TimeUnit.SECONDS)).isTrue();
+                    while (!done.get()) {
+                        store.refresh();
+                        Thread.onSpinWait();
+                    }
+                    return null;
+                });
+
+                List<Future<Boolean>> workers = new ArrayList<>();
+                for (int worker = 0; worker < 8; worker++) {
+                    final boolean compatible = (worker % 2 == 0);
+                    final String candidate = compatible
+                            ? base.replace("int32 value = 1;",
+                                    "int32 value = 1;\n  int64 extra_" + worker + " = " + (10 + worker) + ";")
+                            : base.replace("int32 value = 1;", "string value = 1;");
+                    workers.add(pool.submit(() -> {
+                        assertThat(start.await(TIMEOUT_SECONDS, TimeUnit.SECONDS)).isTrue();
+                        if (compatible) {
+                            StoredSchema stored = store.register("race/v1/doc.proto", candidate, List.of());
+                            assertThat(stored.version()).isBetween(2, 5);
+                            return true;
+                        }
+                        assertThatThrownBy(() -> store.register("race/v1/doc.proto", candidate, List.of()))
+                                .isInstanceOf(IncompatibleRegistrationException.class);
+                        return false;
+                    }));
+                }
+
+                start.countDown();
+                int accepted = 0;
+                for (Future<Boolean> worker : workers) {
+                    if (worker.get(TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
+                        accepted++;
+                    }
+                }
+                done.set(true);
+                refresher.get(TIMEOUT_SECONDS, TimeUnit.SECONDS);
+                assertThat(accepted).isEqualTo(4);
+                assertThat(store.versions("race/v1/doc.proto")).containsExactly(1, 2, 3, 4, 5);
+            }
         }
     }
 }
