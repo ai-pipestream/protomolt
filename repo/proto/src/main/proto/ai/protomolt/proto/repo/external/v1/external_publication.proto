@@ -651,7 +651,9 @@ message ExternalProviderEvidence {
   // Optional managed-search acceptance, publication, and serving identity details.
   optional ManagedSearchIdentity managed_search = 12;
   // Optional serialized ai.protomolt.proto.receipt.v1.SignedWorkRecord verified
-  // against the coordinator trust snapshot.
+  // against the coordinator trust snapshot, with subject.workflow_fingerprint
+  // bound to request_intent_sha256 and an unredacted settlement-claim artifact
+  // binding the exact binding revision, external object/version, and settlement.
   optional bytes signed_work_record_bytes = 13 [
     (ai.protomolt.proto.validate.v1.field).bytes = {min_len: 1, max_len: 65536},
     (buf.validate.field).bytes = {min_len: 1, max_len: 65536}

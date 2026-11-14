@@ -39,7 +39,8 @@ import org.junit.jupiter.api.Test;
 
 /**
  * Unit tests for {@link ExternalProviderVerifier}: binding, profile, credential-ref,
- * intent-digest, managed-search epoch, and Ed25519 {@link SignedWorkRecord} verification.
+ * intent-digest, managed-search epoch, and Ed25519 {@link SignedWorkRecord} manifest
+ * binding verification.
  */
 class ExternalProviderVerifierTest {
 
@@ -137,11 +138,28 @@ class ExternalProviderVerifierTest {
                 .build();
     }
 
-    @Test
-    void verifiesPublishedEvidenceWithSignedWorkRecordAndRefusesUntrustedSignatures() {
-        KeyPair trustedPair = RecordKeys.generate();
-        RecordSigner trustedSigner = new RecordSigner("search-key-1", trustedPair.getPrivate());
-        TrustSnapshot trust = TrustSnapshot.newBuilder()
+    private static Completeness completeCoverage() {
+        return Completeness.newBuilder()
+                .setStatus(CompletenessStatus.COMPLETENESS_STATUS_COMPLETE)
+                .setPolicyId("external-publication-policy")
+                .setPolicyVersion("1.0")
+                .setPolicySha256("4".repeat(64))
+                .build();
+    }
+
+    private static ExternalProviderVerifier.WorkRecordIssuance defaultIssuance(String keyId) {
+        return new ExternalProviderVerifier.WorkRecordIssuance(
+                "pub-rcpt-9001",
+                "search-coordinator",
+                keyId,
+                "external-search-publish",
+                "run-9001",
+                FIXED_TIME,
+                completeCoverage());
+    }
+
+    private static TrustSnapshot trustSnapshotFor(KeyPair trustedPair) {
+        return TrustSnapshot.newBuilder()
                 .addIssuers(TrustedIssuer.newBuilder()
                         .setIssuer("search-coordinator")
                         .addSubjectKinds("workflow-run")
@@ -152,33 +170,25 @@ class ExternalProviderVerifierTest {
                                         RecordKeys.rawPublicKey(trustedPair.getPublic())))
                                 .setState(KeyState.KEY_STATE_ACTIVE)))
                 .build();
+    }
 
-        WorkRecord workRecord = WorkRecord.newBuilder()
-                .setManifestVersion(WorkRecords.MANIFEST_VERSION)
-                .setRecordId("pub-rcpt-9001")
-                .setIssuer("search-coordinator")
-                .setKeyId("search-key-1")
-                .setIssuedAt(FIXED_TIME)
-                .setSubject(RecordSubject.newBuilder()
-                        .setKind("workflow-run")
-                        .setWorkflowName("external-search-publish")
-                        .setWorkflowFingerprint("3".repeat(64))
-                        .setRunId("run-9001"))
-                .setCompleteness(Completeness.newBuilder()
-                        .setStatus(CompletenessStatus.COMPLETENESS_STATUS_COMPLETE)
-                        .setPolicyId("external-publication-policy")
-                        .setPolicyVersion("1.0")
-                        .setPolicySha256("4".repeat(64)))
-                .build();
-        SignedWorkRecord signed = trustedSigner.sign(workRecord);
+    @Test
+    void verifiesPublishedEvidenceWithSignedWorkRecordAndRefusesUntrustedSignatures() {
+        KeyPair trustedPair = RecordKeys.generate();
+        RecordSigner trustedSigner = new RecordSigner("search-key-1", trustedPair.getPrivate());
+        TrustSnapshot trust = trustSnapshotFor(trustedPair);
 
         ExternalSystemBinding binding = binding();
         ExternalProviderGateway.OutboundAuthContext auth = authContext(binding);
         ExternalPublicationIntent intent = publishIntent();
         String intentSha = ExternalOperationKeys.intentSha256(intent);
+        ExternalProviderEvidence unsignedEvidence = validPublishedEvidence(intent, intentSha);
+
+        WorkRecord workRecord = ExternalProviderVerifier.buildBoundWorkRecord(
+                defaultIssuance("search-key-1"), unsignedEvidence, binding, intentSha);
+        SignedWorkRecord signed = trustedSigner.sign(workRecord);
 
         ExternalProviderVerifier strictVerifier = new ExternalProviderVerifier(trust, true);
-        ExternalProviderEvidence unsignedEvidence = validPublishedEvidence(intent, intentSha);
         assertThatThrownBy(() -> strictVerifier.verifyEvidence(
                         unsignedEvidence, binding, auth, intent, intentSha))
                 .isInstanceOfSatisfying(
@@ -192,6 +202,16 @@ class ExternalProviderVerifierTest {
                         signedEvidence, binding, auth, intent, intentSha))
                 .doesNotThrowAnyException();
 
+        // Advisory serving-visibility observation does not invalidate a durable signed publication receipt.
+        ExternalProviderEvidence withServingVisible = signedEvidence.toBuilder()
+                .setManagedSearch(signedEvidence.getManagedSearch().toBuilder()
+                        .setServingVisibility(
+                                ExternalServingVisibility.EXTERNAL_SERVING_VISIBILITY_CURRENT_ROWS))
+                .build();
+        assertThatCode(() -> strictVerifier.verifyEvidence(
+                        withServingVisible, binding, auth, intent, intentSha))
+                .doesNotThrowAnyException();
+
         KeyPair roguePair = RecordKeys.generate();
         SignedWorkRecord rogueSigned = new RecordSigner("rogue-key", roguePair.getPrivate())
                 .sign(workRecord.toBuilder().setKeyId("rogue-key").build());
@@ -203,6 +223,230 @@ class ExternalProviderVerifierTest {
                 .isInstanceOfSatisfying(
                         ExternalProviderVerifier.ProviderVerificationException.class,
                         ex -> assertThat(ex.diagnosticCode()).isEqualTo("SIGNED_WORK_RECORD_INVALID"));
+    }
+
+    @Test
+    void refusesTransplantedOrReboundSignedWorkRecordsAcrossIntentObjectBindingAndSettlement() {
+        KeyPair trustedPair = RecordKeys.generate();
+        RecordSigner trustedSigner = new RecordSigner("search-key-1", trustedPair.getPrivate());
+        TrustSnapshot trust = trustSnapshotFor(trustedPair);
+        ExternalProviderVerifier strictVerifier = new ExternalProviderVerifier(trust, true);
+
+        ExternalSystemBinding binding = binding();
+        ExternalProviderGateway.OutboundAuthContext auth = authContext(binding);
+        ExternalPublicationIntent intentA = publishIntent();
+        String intentShaA = ExternalOperationKeys.intentSha256(intentA);
+        ExternalProviderEvidence unsignedA = validPublishedEvidence(intentA, intentShaA);
+        SignedWorkRecord signedForA = trustedSigner.sign(ExternalProviderVerifier.buildBoundWorkRecord(
+                defaultIssuance("search-key-1"), unsignedA, binding, intentShaA));
+
+        // 1. Codex reproduction: reuse valid signed_work_record_bytes from A on a new unsigned
+        // evidence envelope for a different externalObjectId with a freshly recomputed intentShaB.
+        ExternalPublicationIntent intentDifferentObject = intentA.toBuilder()
+                .setExternalObjectId("search-doc-999")
+                .build();
+        String intentShaDifferentObject = ExternalOperationKeys.intentSha256(intentDifferentObject);
+        ExternalProviderEvidence transplantedObjectEvidence =
+                validPublishedEvidence(intentDifferentObject, intentShaDifferentObject).toBuilder()
+                        .setSignedWorkRecordBytes(signedForA.toByteString())
+                        .build();
+        assertRefusal(
+                strictVerifier,
+                transplantedObjectEvidence,
+                binding,
+                auth,
+                intentDifferentObject,
+                intentShaDifferentObject,
+                "SIGNED_WORK_RECORD_INTENT_MISMATCH");
+
+        // 2. Reuse valid signed_work_record_bytes from A on a different source revision intent.
+        ExternalPublicationIntent intentNextRev = intentA.toBuilder()
+                .setSourceRevision(6L)
+                .build();
+        String intentShaNextRev = ExternalOperationKeys.intentSha256(intentNextRev);
+        ExternalProviderEvidence transplantedRevEvidence =
+                validPublishedEvidence(intentNextRev, intentShaNextRev).toBuilder()
+                        .setSignedWorkRecordBytes(signedForA.toByteString())
+                        .build();
+        assertRefusal(
+                strictVerifier,
+                transplantedRevEvidence,
+                binding,
+                auth,
+                intentNextRev,
+                intentShaNextRev,
+                "SIGNED_WORK_RECORD_INTENT_MISMATCH");
+
+        // 3. Even if subject.workflow_fingerprint matches intentShaDifferentObject, a signed claim
+        // artifact bound to "search-doc-7" cannot be transplanted onto "search-doc-999".
+        WorkRecord mismatchedClaimRecord = WorkRecord.newBuilder()
+                .setManifestVersion(WorkRecords.MANIFEST_VERSION)
+                .setRecordId("pub-rcpt-9002")
+                .setIssuer("search-coordinator")
+                .setKeyId("search-key-1")
+                .setIssuedAt(FIXED_TIME)
+                .setSubject(RecordSubject.newBuilder()
+                        .setKind("workflow-run")
+                        .setWorkflowName("external-search-publish")
+                        .setWorkflowFingerprint(intentShaDifferentObject)
+                        .setRunId("run-9002"))
+                .addArtifacts(ExternalProviderVerifier.settlementClaimArtifact(
+                        unsignedA, binding, intentShaA))
+                .setCompleteness(completeCoverage())
+                .build();
+        ExternalProviderEvidence mismatchedObjectClaimEvidence =
+                validPublishedEvidence(intentDifferentObject, intentShaDifferentObject).toBuilder()
+                        .setSignedWorkRecordBytes(trustedSigner.sign(mismatchedClaimRecord).toByteString())
+                        .build();
+        assertRefusal(
+                strictVerifier,
+                mismatchedObjectClaimEvidence,
+                binding,
+                auth,
+                intentDifferentObject,
+                intentShaDifferentObject,
+                "SIGNED_WORK_RECORD_CLAIM_MISMATCH");
+
+        // 4. Same intentShaA, swapped settlement: provider signed ACCEPTED_ONLY (or REJECTED),
+        // and outer unsigned envelope is promoted to PUBLISHED without a new provider signature.
+        ExternalProviderEvidence acceptedUnsigned = unsignedA.toBuilder()
+                .setSettlement(ExternalProviderSettlement.EXTERNAL_PROVIDER_SETTLEMENT_ACCEPTED_ONLY)
+                .clearExternalVersion()
+                .setManagedSearch(unsignedA.getManagedSearch().toBuilder()
+                        .clearPublishedCatalogEpoch()
+                        .clearAfterManifestSha256())
+                .build();
+        SignedWorkRecord signedAcceptedOnly = trustedSigner.sign(
+                ExternalProviderVerifier.buildBoundWorkRecord(
+                        defaultIssuance("search-key-1"), acceptedUnsigned, binding, intentShaA));
+        ExternalProviderEvidence forgedPublishedFromAccepted = unsignedA.toBuilder()
+                .setSignedWorkRecordBytes(signedAcceptedOnly.toByteString())
+                .build();
+        assertRefusal(
+                strictVerifier,
+                forgedPublishedFromAccepted,
+                binding,
+                auth,
+                intentA,
+                intentShaA,
+                "SIGNED_WORK_RECORD_CLAIM_MISMATCH");
+
+        // 5. Same intentShaA and PUBLISHED settlement, swapped external_version or catalog epoch.
+        ExternalProviderEvidence forgedExternalVersion = unsignedA.toBuilder()
+                .setExternalVersion("epoch-999")
+                .setSignedWorkRecordBytes(signedForA.toByteString())
+                .build();
+        assertRefusal(
+                strictVerifier,
+                forgedExternalVersion,
+                binding,
+                auth,
+                intentA,
+                intentShaA,
+                "SIGNED_WORK_RECORD_CLAIM_MISMATCH");
+
+        ExternalProviderEvidence forgedCatalogEpoch = unsignedA.toBuilder()
+                .setManagedSearch(unsignedA.getManagedSearch().toBuilder()
+                        .setPublishedCatalogEpoch(999L))
+                .setSignedWorkRecordBytes(signedForA.toByteString())
+                .build();
+        assertRefusal(
+                strictVerifier,
+                forgedCatalogEpoch,
+                binding,
+                auth,
+                intentA,
+                intentShaA,
+                "SIGNED_WORK_RECORD_CLAIM_MISMATCH");
+
+        // 6. Swapped bindingRevision or system dataset/namespace.
+        ExternalSystemBinding rotatedBinding = binding.toBuilder().setBindingRevision(2L).build();
+        ExternalProviderGateway.OutboundAuthContext rotatedAuth = authContext(rotatedBinding);
+        ExternalPublicationIntent rotatedIntent = intentA.toBuilder().setBindingRevision(2L).build();
+        String rotatedIntentSha = ExternalOperationKeys.intentSha256(rotatedIntent);
+        ExternalProviderEvidence transplantedAcrossBindingRev =
+                validPublishedEvidence(rotatedIntent, rotatedIntentSha).toBuilder()
+                        .setSignedWorkRecordBytes(signedForA.toByteString())
+                        .build();
+        assertRefusal(
+                strictVerifier,
+                transplantedAcrossBindingRev,
+                rotatedBinding,
+                rotatedAuth,
+                rotatedIntent,
+                rotatedIntentSha,
+                "SIGNED_WORK_RECORD_INTENT_MISMATCH");
+
+        ExternalSystemBinding otherDatasetBinding = binding.toBuilder()
+                .setDataset("corpus-staging")
+                .build();
+        ExternalProviderGateway.OutboundAuthContext otherDatasetAuth = authContext(otherDatasetBinding);
+        ExternalProviderEvidence signedForMainVerifiedAgainstStaging = unsignedA.toBuilder()
+                .setSignedWorkRecordBytes(signedForA.toByteString())
+                .build();
+        assertRefusal(
+                strictVerifier,
+                signedForMainVerifiedAgainstStaging,
+                otherDatasetBinding,
+                otherDatasetAuth,
+                intentA,
+                intentShaA,
+                "SIGNED_WORK_RECORD_CLAIM_MISMATCH");
+
+        // 7. Generic workflow-run SignedWorkRecord omitting the settlement claim artifact refuses.
+        WorkRecord unboundGenericRecord = WorkRecord.newBuilder()
+                .setManifestVersion(WorkRecords.MANIFEST_VERSION)
+                .setRecordId("pub-rcpt-generic")
+                .setIssuer("search-coordinator")
+                .setKeyId("search-key-1")
+                .setIssuedAt(FIXED_TIME)
+                .setSubject(RecordSubject.newBuilder()
+                        .setKind("workflow-run")
+                        .setWorkflowName("external-search-publish")
+                        .setWorkflowFingerprint(intentShaA)
+                        .setRunId("run-generic"))
+                .setCompleteness(completeCoverage())
+                .build();
+        ExternalProviderEvidence unboundGenericEvidence = unsignedA.toBuilder()
+                .setSignedWorkRecordBytes(trustedSigner.sign(unboundGenericRecord).toByteString())
+                .build();
+        assertRefusal(
+                strictVerifier,
+                unboundGenericEvidence,
+                binding,
+                auth,
+                intentA,
+                intentShaA,
+                "SIGNED_WORK_RECORD_CLAIM_MISSING");
+
+        // 8. PARTIAL completeness SignedWorkRecord refuses even if otherwise validly signed.
+        Completeness partialCompleteness = completeCoverage().toBuilder()
+                .setStatus(CompletenessStatus.COMPLETENESS_STATUS_PARTIAL)
+                .addMissingReasons("provider skipped durable commit check")
+                .build();
+        WorkRecord partialRecord = ExternalProviderVerifier.buildBoundWorkRecord(
+                new ExternalProviderVerifier.WorkRecordIssuance(
+                        "pub-rcpt-partial",
+                        "search-coordinator",
+                        "search-key-1",
+                        "external-search-publish",
+                        "run-partial",
+                        FIXED_TIME,
+                        partialCompleteness),
+                unsignedA,
+                binding,
+                intentShaA);
+        ExternalProviderEvidence partialEvidence = unsignedA.toBuilder()
+                .setSignedWorkRecordBytes(trustedSigner.sign(partialRecord).toByteString())
+                .build();
+        assertRefusal(
+                strictVerifier,
+                partialEvidence,
+                binding,
+                auth,
+                intentA,
+                intentShaA,
+                "SIGNED_WORK_RECORD_INCOMPLETE");
     }
 
     @Test

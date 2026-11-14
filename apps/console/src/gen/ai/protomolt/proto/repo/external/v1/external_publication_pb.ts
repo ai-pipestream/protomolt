@@ -469,7 +469,9 @@ export type ExternalProviderEvidence = Message<"ai.protomolt.proto.repo.external
 
   /**
    * Optional serialized ai.protomolt.proto.receipt.v1.SignedWorkRecord verified
-   * against the coordinator trust snapshot.
+   * against the coordinator trust snapshot, with subject.workflow_fingerprint
+   * bound to request_intent_sha256 and an unredacted settlement-claim artifact
+   * binding the exact binding revision, external object/version, and settlement.
    *
    * @generated from field: optional bytes signed_work_record_bytes = 13;
    */

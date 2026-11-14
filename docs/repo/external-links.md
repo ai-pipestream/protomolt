@@ -174,6 +174,15 @@ validate the provider receipt against the binding snapshot (`provider`,
 `source_address`, `source_revision` (or `purge_id`), non-empty `receipt_sha256`,
 managed-search catalog epoch invariants, and, when present or required by
 policy, cryptographic `SignedWorkRecord` verification against `TrustSnapshot`.
+After `RecordVerifier.verify` authenticates the Ed25519 signature,
+`ExternalProviderVerifier` verifies that the signed `WorkRecord` manifest has
+`COMPLETENESS_STATUS_COMPLETE`, binds `subject.workflow_fingerprint` to the
+expected `intent_sha256`, and carries an unredacted
+`application/vnd.protomolt.external-settlement-claim.v1+octet-stream`
+`RecordArtifact` matching `ExternalProviderVerifier.canonicalSettlementClaimBytes`
+over the binding identity/revision, provider/dataset/namespace/contract version,
+service profile/endpoint/credential-ref digest, external object ID and version,
+provider receipt ID, settlement stage, and durable managed-search identities.
 
 When a reply is lost (`UNRESOLVED_LOST_REPLY`) or the coordinator restarts,
 `reconcileOperation` and `reconcilePendingForSource` reload durable ledgers from

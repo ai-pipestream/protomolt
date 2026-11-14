@@ -23,14 +23,12 @@ import ai.protomolt.proto.receipt.CompletenessStatus;
 import ai.protomolt.proto.receipt.KeyState;
 import ai.protomolt.proto.receipt.RecordKeys;
 import ai.protomolt.proto.receipt.RecordSigner;
-import ai.protomolt.proto.receipt.RecordSubject;
 import ai.protomolt.proto.receipt.SignatureAlgorithm;
 import ai.protomolt.proto.receipt.SignedWorkRecord;
 import ai.protomolt.proto.receipt.TrustSnapshot;
 import ai.protomolt.proto.receipt.TrustedIssuer;
 import ai.protomolt.proto.receipt.TrustedKey;
 import ai.protomolt.proto.receipt.WorkRecord;
-import ai.protomolt.proto.receipt.WorkRecords;
 import ai.protomolt.proto.repo.accession.AccessionGrpcService;
 import ai.protomolt.proto.repo.accession.DocumentDeletes;
 import ai.protomolt.proto.repo.accession.DocumentLists;
@@ -974,6 +972,114 @@ class ExternalPublicationIT {
         }
     }
 
+    @Test
+    void transplantedOrUnboundSignedWorkRecordIsRefusedWithoutConfirmingExternalLink(
+            @TempDir Path tempDir) throws Exception {
+        SimulatedManagedSearchProvider provider = new SimulatedManagedSearchProvider();
+        try (Harness h = Harness.boot(tempDir, provider)) {
+            h.saveActiveBinding(
+                    "tenant-alpha",
+                    "rust-search",
+                    "search-profile-v1",
+                    "ingest",
+                    "corpus-main",
+                    "ns-alpha",
+                    ExternalRetentionPolicy.EXTERNAL_RETENTION_POLICY_RETAIN_HISTORY,
+                    "op-bind-signed-check");
+
+            NodeAddress legitAddr = sourceAddress("tenant-alpha", "doc-legit");
+            h.saveSourceDocument("save-doc-legit", legitAddr, 0L, "Legit Source", "alice");
+            ExternalPublicationCoordinator.OperationResult legitPublished = h.coordinator.publish(
+                    new ExternalPublicationCoordinator.PublishRequest(
+                            "op-legit-publish",
+                            legitAddr,
+                            1L,
+                            "rust-search",
+                            1L,
+                            "ext-legit",
+                            null,
+                            "https://search.example.com/items/ext-legit"));
+            assertThat(legitPublished.operation().getOutcome())
+                    .isEqualTo(ExternalPublicationOutcome.EXTERNAL_PUBLICATION_OUTCOME_CONFIRMED);
+            ByteString legitSignedBytes = legitPublished
+                    .currentLink()
+                    .orElseThrow()
+                    .getConfirmationEvidence()
+                    .getSignedWorkRecordBytes();
+
+            // 1. Transplant legitSignedBytes onto a new unsigned PUBLISHED envelope for a different
+            // externalObjectId/source document with its own freshly computed request_intent_sha256.
+            NodeAddress victimAddr = sourceAddress("tenant-alpha", "doc-victim");
+            h.saveSourceDocument("save-doc-victim", victimAddr, 0L, "Victim Source", "alice");
+            provider.nextExecuteBehavior = ctx -> {
+                ExternalProviderEvidence forged = provider.unsignedPublishedEvidence(
+                                ctx, 1L, 501L, 88L, SHA_MANIFEST)
+                        .toBuilder()
+                        .setSignedWorkRecordBytes(legitSignedBytes)
+                        .setReceiptSha256(ExternalOperationKeys.sha256Hex(legitSignedBytes.toByteArray()))
+                        .build();
+                return new ExternalProviderGateway.ProviderCallResult.Receipt(forged);
+            };
+
+            ExternalPublicationCoordinator.OperationResult forgedObjectResult = h.coordinator.publish(
+                    new ExternalPublicationCoordinator.PublishRequest(
+                            "op-forged-object",
+                            victimAddr,
+                            1L,
+                            "rust-search",
+                            1L,
+                            "ext-victim",
+                            null,
+                            "https://search.example.com/items/ext-victim"));
+            assertThat(forgedObjectResult.operation().getOutcome())
+                    .isEqualTo(ExternalPublicationOutcome.EXTERNAL_PUBLICATION_OUTCOME_FAILED);
+            assertThat(forgedObjectResult.operation().getFailureCode())
+                    .isEqualTo("SIGNED_WORK_RECORD_INTENT_MISMATCH");
+            assertThat(forgedObjectResult.currentLink()).isEmpty();
+
+            // 2. Same intentSha256, forged settlement promotion: provider legitimately signs ACCEPTED_ONLY,
+            // then mutates the outer envelope to PUBLISHED without signing the PUBLISHED settlement claim.
+            provider.nextExecuteBehavior = ctx -> provider.acceptOnly(ctx, 2L, 502L);
+            ExternalPublicationCoordinator.OperationResult acceptedPending = h.coordinator.publish(
+                    new ExternalPublicationCoordinator.PublishRequest(
+                            "op-forged-settlement",
+                            victimAddr,
+                            1L,
+                            "rust-search",
+                            1L,
+                            "ext-victim",
+                            null,
+                            "https://search.example.com/items/ext-victim"));
+            assertThat(acceptedPending.operation().getOutcome())
+                    .isEqualTo(ExternalPublicationOutcome.EXTERNAL_PUBLICATION_OUTCOME_PENDING);
+
+            ExternalProviderEvidence acceptedEvidence =
+                    provider.recordedByOperation.get("op-forged-settlement");
+            ExternalProviderEvidence unsignedPromotion = acceptedEvidence.toBuilder()
+                    .setSettlement(ExternalProviderSettlement.EXTERNAL_PROVIDER_SETTLEMENT_PUBLISHED)
+                    .setExternalVersion("epoch-99")
+                    .setManagedSearch(acceptedEvidence.getManagedSearch().toBuilder()
+                            .setPublishedCatalogEpoch(99L)
+                            .setAfterManifestSha256(SHA_MANIFEST))
+                    .build();
+            provider.recordedByOperation.put("op-forged-settlement", unsignedPromotion);
+
+            ExternalPublicationCoordinator.OperationResult forgedSettlementResult = h.coordinator
+                    .reconcileOperation(victimAddr, "rust-search", "op-forged-settlement", false);
+            assertThat(forgedSettlementResult.operation().getOutcome())
+                    .isEqualTo(ExternalPublicationOutcome.EXTERNAL_PUBLICATION_OUTCOME_FAILED);
+            assertThat(forgedSettlementResult.operation().getFailureCode())
+                    .isEqualTo("SIGNED_WORK_RECORD_CLAIM_MISMATCH");
+            assertThat(forgedSettlementResult.currentLink()).isEmpty();
+
+            List<ExternalLink> activeLinks =
+                    h.coordinator.listActiveExternalLinks("tenant-alpha", "rust-search");
+            assertThat(activeLinks)
+                    .extracting(ExternalLink::getExternalObjectId)
+                    .containsExactly("ext-legit");
+        }
+    }
+
     private static NodeAddress sourceAddress(String accountId, String docId) {
         return NodeAddress.newBuilder()
                 .setAccountId(accountId)
@@ -1515,6 +1621,7 @@ class ExternalPublicationIT {
         final AtomicInteger executeCalls = new AtomicInteger();
         final AtomicReference<String> lastAuthorizationHeader = new AtomicReference<>();
         final Map<String, ExternalProviderEvidence> recordedByOperation = new ConcurrentHashMap<>();
+        final Map<String, ProviderCallRequest> requestByOperation = new ConcurrentHashMap<>();
         volatile Function<ProviderCallRequest, ProviderCallResult> nextExecuteBehavior;
 
         SimulatedManagedSearchProvider() {
@@ -1536,6 +1643,7 @@ class ExternalPublicationIT {
         @Override
         public ProviderCallResult execute(ProviderCallRequest context) {
             executeCalls.incrementAndGet();
+            requestByOperation.put(context.operationId(), context);
             String authHeader = context.auth().resolvedHeaders().get(AUTHORIZATION_KEY);
             if (authHeader == null || !authHeader.startsWith("Bearer ")) {
                 throw Status.UNAUTHENTICATED
@@ -1587,9 +1695,10 @@ class ExternalPublicationIT {
 
         ProviderCallResult acceptOnly(
                 ProviderCallRequest ctx, long acceptedVer, long acceptedSeq) {
+            requestByOperation.put(ctx.operationId(), ctx);
             ByteString docKey = ByteString.copyFrom(ExternalPublicationCoordinates.logicalSourceKey(
                     ctx.intent().getSourceAddress()));
-            ExternalProviderEvidence evidence = baseEvidenceBuilder(ctx)
+            ExternalProviderEvidence unsigned = unsignedBaseBuilder(ctx)
                     .setSettlement(ExternalProviderSettlement.EXTERNAL_PROVIDER_SETTLEMENT_ACCEPTED_ONLY)
                     .setManagedSearch(ManagedSearchIdentity.newBuilder()
                             .setHistoryId(ByteString.copyFrom(new byte[16]))
@@ -1600,21 +1709,24 @@ class ExternalPublicationIT {
                             .setServingVisibility(
                                     ExternalServingVisibility.EXTERNAL_SERVING_VISIBILITY_UNKNOWN))
                     .build();
+            ExternalProviderEvidence evidence = signEvidence(ctx, unsigned);
             recordedByOperation.put(ctx.operationId(), evidence);
             return new ProviderCallResult.Receipt(evidence);
         }
 
         void commitCatalogPublication(
                 String operationId, long catalogEpoch, String afterManifestSha256) {
+            ProviderCallRequest ctx = requestByOperation.get(operationId);
             ExternalProviderEvidence current = recordedByOperation.get(operationId);
-            ExternalProviderEvidence promoted = current.toBuilder()
+            ExternalProviderEvidence promotedUnsigned = current.toBuilder()
+                    .setProviderReceiptId("rcpt-" + UUID.randomUUID())
                     .setSettlement(ExternalProviderSettlement.EXTERNAL_PROVIDER_SETTLEMENT_PUBLISHED)
                     .setExternalVersion("epoch-" + catalogEpoch)
                     .setManagedSearch(current.getManagedSearch().toBuilder()
                             .setPublishedCatalogEpoch(catalogEpoch)
                             .setAfterManifestSha256(afterManifestSha256))
                     .build();
-            recordedByOperation.put(operationId, promoted);
+            recordedByOperation.put(operationId, signEvidence(ctx, promotedUnsigned));
         }
 
         void markServingVisible(String operationId, ExternalServingVisibility visibility) {
@@ -1632,6 +1744,7 @@ class ExternalPublicationIT {
                 long acceptedSeq,
                 long epoch,
                 String manifestSha) {
+            requestByOperation.put(ctx.operationId(), ctx);
             recordedByOperation.put(
                     ctx.operationId(),
                     buildPublishedEvidence(
@@ -1644,21 +1757,48 @@ class ExternalPublicationIT {
         }
 
         void recordRejectedSilently(ProviderCallRequest ctx, String code) {
-            ExternalProviderEvidence rej = baseEvidenceBuilder(ctx)
+            requestByOperation.put(ctx.operationId(), ctx);
+            ExternalProviderEvidence unsigned = unsignedBaseBuilder(ctx)
                     .setSettlement(ExternalProviderSettlement.EXTERNAL_PROVIDER_SETTLEMENT_REJECTED)
                     .setDiagnosticCode(code)
                     .build();
-            recordedByOperation.put(ctx.operationId(), rej);
+            recordedByOperation.put(ctx.operationId(), signEvidence(ctx, unsigned));
         }
 
         ProviderCallResult rejected(
                 ProviderCallRequest ctx, String code, String reason) {
-            ExternalProviderEvidence rej = baseEvidenceBuilder(ctx)
+            requestByOperation.put(ctx.operationId(), ctx);
+            ExternalProviderEvidence unsigned = unsignedBaseBuilder(ctx)
                     .setSettlement(ExternalProviderSettlement.EXTERNAL_PROVIDER_SETTLEMENT_REJECTED)
                     .setDiagnosticCode(code)
                     .build();
+            ExternalProviderEvidence rej = signEvidence(ctx, unsigned);
             recordedByOperation.put(ctx.operationId(), rej);
             return new ProviderCallResult.Receipt(rej);
+        }
+
+        ExternalProviderEvidence unsignedPublishedEvidence(
+                ProviderCallRequest ctx,
+                long acceptedVer,
+                long acceptedSeq,
+                long epoch,
+                String manifestSha) {
+            ByteString docKey = ByteString.copyFrom(ExternalPublicationCoordinates.logicalSourceKey(
+                    ctx.intent().getSourceAddress()));
+            return unsignedBaseBuilder(ctx)
+                    .setSettlement(ExternalProviderSettlement.EXTERNAL_PROVIDER_SETTLEMENT_PUBLISHED)
+                    .setExternalVersion("epoch-" + epoch)
+                    .setManagedSearch(ManagedSearchIdentity.newBuilder()
+                            .setHistoryId(ByteString.copyFrom(new byte[16]))
+                            .setDocumentKey(docKey)
+                            .setIndexKey(ByteString.copyFromUtf8(ctx.auth().binding().getDataset()))
+                            .setAcceptedVersion(acceptedVer)
+                            .setAcceptedSequence(acceptedSeq)
+                            .setPublishedCatalogEpoch(epoch)
+                            .setAfterManifestSha256(manifestSha)
+                            .setServingVisibility(
+                                    ExternalServingVisibility.EXTERNAL_SERVING_VISIBILITY_UNKNOWN))
+                    .build();
         }
 
         private ExternalProviderEvidence buildPublishedEvidence(
@@ -1670,7 +1810,7 @@ class ExternalPublicationIT {
                 ExternalServingVisibility visibility) {
             ByteString docKey = ByteString.copyFrom(ExternalPublicationCoordinates.logicalSourceKey(
                     ctx.intent().getSourceAddress()));
-            return baseEvidenceBuilder(ctx)
+            ExternalProviderEvidence unsigned = unsignedBaseBuilder(ctx)
                     .setSettlement(ExternalProviderSettlement.EXTERNAL_PROVIDER_SETTLEMENT_PUBLISHED)
                     .setExternalVersion("epoch-" + epoch)
                     .setManagedSearch(ManagedSearchIdentity.newBuilder()
@@ -1683,38 +1823,18 @@ class ExternalPublicationIT {
                             .setAfterManifestSha256(manifestSha)
                             .setServingVisibility(visibility))
                     .build();
+            return signEvidence(ctx, unsigned);
         }
 
         private ExternalProviderEvidence buildDeletedEvidence(ProviderCallRequest ctx) {
-            return baseEvidenceBuilder(ctx)
+            ExternalProviderEvidence unsigned = unsignedBaseBuilder(ctx)
                     .setSettlement(ExternalProviderSettlement.EXTERNAL_PROVIDER_SETTLEMENT_DELETED)
                     .build();
+            return signEvidence(ctx, unsigned);
         }
 
-        private ExternalProviderEvidence.Builder baseEvidenceBuilder(
-                ProviderCallRequest ctx) {
-            String slugId = "rcpt-" + UUID.randomUUID().toString();
-            WorkRecord manifest = WorkRecord.newBuilder()
-                    .setManifestVersion(WorkRecords.MANIFEST_VERSION)
-                    .setRecordId(slugId)
-                    .setIssuer("managed-search-provider")
-                    .setKeyId("provider-key-1")
-                    .setIssuedAt(VERIFIED_TIME)
-                    .setSubject(RecordSubject.newBuilder()
-                            .setKind("workflow-run")
-                            .setWorkflowName("managed-search-publication")
-                            .setWorkflowFingerprint(ctx.intentSha256())
-                            .setRunId(slugId))
-                    .setCompleteness(Completeness.newBuilder()
-                            .setStatus(CompletenessStatus.COMPLETENESS_STATUS_COMPLETE)
-                            .setPolicyId("external-publication-receipt")
-                            .setPolicyVersion("1.0")
-                            .setPolicySha256("66".repeat(32)))
-                    .build();
-            SignedWorkRecord signed = receiptSigner.sign(manifest);
-            ByteString signedBytes = signed.toByteString();
-            String receiptSha = ExternalOperationKeys.sha256Hex(signedBytes.toByteArray());
-
+        private ExternalProviderEvidence.Builder unsignedBaseBuilder(ProviderCallRequest ctx) {
+            String slugId = "rcpt-" + UUID.randomUUID();
             return ExternalProviderEvidence.newBuilder()
                     .setProvider(ctx.auth().binding().getProvider())
                     .setContractVersion(ctx.auth().binding().getContractVersion())
@@ -1723,10 +1843,39 @@ class ExternalPublicationIT {
                     .setCredentialBindingSha256(ctx.auth().credentialBindingSha256())
                     .setExternalObjectId(ctx.intent().getExternalObjectId())
                     .setRequestIntentSha256(ctx.intentSha256())
-                    .setReceiptSha256(receiptSha)
+                    .setReceiptSha256("0".repeat(64))
                     .setProviderReceiptId(slugId)
-                    .setSignedWorkRecordBytes(signedBytes)
                     .setVerifiedAt(VERIFIED_TIME);
+        }
+
+        private ExternalProviderEvidence signEvidence(
+                ProviderCallRequest ctx, ExternalProviderEvidence unsigned) {
+            String slugId = unsigned.getProviderReceiptId();
+            Completeness completeness = Completeness.newBuilder()
+                    .setStatus(CompletenessStatus.COMPLETENESS_STATUS_COMPLETE)
+                    .setPolicyId("external-publication-receipt")
+                    .setPolicyVersion("1.0")
+                    .setPolicySha256("66".repeat(32))
+                    .build();
+            WorkRecord manifest = ExternalProviderVerifier.buildBoundWorkRecord(
+                    new ExternalProviderVerifier.WorkRecordIssuance(
+                            slugId,
+                            "managed-search-provider",
+                            "provider-key-1",
+                            "managed-search-publication",
+                            slugId,
+                            VERIFIED_TIME,
+                            completeness),
+                    unsigned,
+                    ctx.auth().binding(),
+                    ctx.intentSha256());
+            SignedWorkRecord signed = receiptSigner.sign(manifest);
+            ByteString signedBytes = signed.toByteString();
+            String receiptSha = ExternalOperationKeys.sha256Hex(signedBytes.toByteArray());
+            return unsigned.toBuilder()
+                    .setReceiptSha256(receiptSha)
+                    .setSignedWorkRecordBytes(signedBytes)
+                    .build();
         }
     }
 }
