@@ -12,7 +12,7 @@ say()  { printf '== %s\n' "$*"; }
 fail() { printf 'FAIL: %s\n' "$*" >&2; exit 1; }
 
 say "shell syntax: bash -n on every script"
-for script in scripts/*.sh; do
+for script in scripts/*.sh core/codegen/provenance/*.sh; do
   bash -n "$script" || fail "bash -n $script"
 done
 for script in deploy/*/*.sh; do
@@ -21,7 +21,7 @@ done
 echo "bash -n OK for repository deployment scripts"
 
 if command -v shellcheck >/dev/null; then
-  shellcheck -S warning scripts/*.sh || fail "shellcheck findings"
+  shellcheck -S warning scripts/*.sh core/codegen/provenance/*.sh || fail "shellcheck findings"
   echo "shellcheck OK"
 else
   echo "SKIP: shellcheck not installed"
@@ -52,6 +52,80 @@ for path in [
     with open(path) as handle:
         yaml.safe_load(handle)
     print("yaml OK", path)
+PYEOF
+
+say "wasm provenance patch: apt TLS and Release validity checks remain enabled"
+python3 - <<'PYEOF'
+import re, sys
+
+patch_path = "core/codegen/provenance/pin-generator-inputs.patch"
+lines = open(patch_path, encoding="utf-8").read().splitlines()
+
+# Verify every unified-diff hunk header matches its line counts.
+i = 0
+hunks = 0
+while i < len(lines):
+    line = lines[i]
+    match = re.match(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@", line)
+    if not match:
+        i += 1
+        continue
+    hunks += 1
+    expected_old = int(match.group(2) or "1")
+    expected_new = int(match.group(4) or "1")
+    actual_old = 0
+    actual_new = 0
+    i += 1
+    while i < len(lines):
+        body = lines[i]
+        if body.startswith("diff --git ") or body.startswith("@@ "):
+            break
+        if body.startswith("\\ No newline at end of file"):
+            i += 1
+            continue
+        if body.startswith("-"):
+            actual_old += 1
+        elif body.startswith("+"):
+            actual_new += 1
+        elif body.startswith(" "):
+            actual_old += 1
+            actual_new += 1
+        else:
+            print(f"{patch_path}:{i + 1}: unexpected line in hunk: {body}")
+            sys.exit(1)
+        i += 1
+    if (actual_old, actual_new) != (expected_old, expected_new):
+        print(f"{patch_path}: hunk count mismatch for '{line}': got -,{actual_old} +,{actual_new}")
+        sys.exit(1)
+if hunks == 0:
+    print(f"{patch_path}: found no unified-diff hunks")
+    sys.exit(1)
+
+added = "\n".join(line[1:] for line in lines if line.startswith("+") and not line.startswith("+++ "))
+forbidden_patterns = [
+    (r"(?i)verify-peer\s*(?:=|\s)\s*[\"']?(?:false|0)\b", "disables apt Verify-Peer"),
+    (r"(?i)verify-host\s*(?:=|\s)\s*[\"']?(?:false|0)\b", "disables apt Verify-Host"),
+    (r"(?i)check-valid-until\s*(?:=|\s)\s*[\"']?(?:false|0)\b", "disables apt Check-Valid-Until"),
+    (r"--allow-insecure-repositories|--allow-unauthenticated|\[[^\]]*trusted\s*=\s*yes", "weakens apt signature verification"),
+    (r"http://snapshot\.ubuntu\.com/", "uses plain HTTP instead of HTTPS for snapshot.ubuntu.com"),
+]
+for pattern, reason in forbidden_patterns:
+    if re.search(pattern, added):
+        print(f"{patch_path}: {reason}")
+        sys.exit(1)
+
+required_snippets = [
+    "ADD --checksum=sha256:",
+    "ca-certificates_",
+    "test -s /etc/ssl/certs/ca-certificates.crt",
+    "https://snapshot.ubuntu.com/ubuntu/",
+    "apt-get --error-on=any update",
+]
+for snippet in required_snippets:
+    if snippet not in added:
+        print(f"{patch_path}: missing required provenance step: {snippet}")
+        sys.exit(1)
+print(f"wasm provenance patch OK ({hunks} hunks, CA bundle pinned, apt TLS and Check-Valid-Until intact)")
 PYEOF
 
 say "nano1 workflow: trusted manual dispatch only"
@@ -279,7 +353,7 @@ python3 - <<'PYEOF'
 import glob, sys
 paths = []
 for pattern in ["deploy/krick/*", "deploy/portainer/*", "deploy/nano1/*",
-                "deploy/workers/*",
+                "deploy/workers/*", "core/codegen/provenance/*",
                 "scripts/agent-host-live.sh", "scripts/check-deployment-statics.sh",
                 "scripts/nano1-worker-build-smoke.sh",
                 "repo/service/Dockerfile", "apps/agent-host/Dockerfile",

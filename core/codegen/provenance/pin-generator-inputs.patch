@@ -168,40 +168,51 @@ index 6a740a6..58a7302 100755
          -DCMAKE_C_FLAGS="$CFLAGS" \
          -DCMAKE_CXX_FLAGS="$CXXFLAGS" \
 diff --git a/buildtools-v4/Dockerfile b/buildtools-v4/Dockerfile
-index 9268af1..c222d1b 100644
+index 9268af1..1a335cb 100644
 --- a/buildtools-v4/Dockerfile
 +++ b/buildtools-v4/Dockerfile
-@@ -1,7 +1,29 @@
+@@ -1,7 +1,41 @@
 -FROM ubuntu:24.04
--
--# Install dependencies
--RUN apt-get update && apt-get install -y git patch curl wget cmake && rm -rf /var/lib/apt/lists/*
 +# The build runs on linux/amd64 only. The Ubuntu snapshot service serves
 +# the amd64 archive but not ubuntu-ports, so an arm64 image could not pin
 +# its packages; an arm64 host runs this amd64 image under emulation. The
 +# WASM output does not depend on the build architecture.
 +FROM --platform=linux/amd64 ubuntu:24.04@sha256:fe81560990fae86dc4743202b2cb4d3df98d0bcf949173cecef15ce1127ef852
-+
+ 
+-# Install dependencies
+-RUN apt-get update && apt-get install -y git patch curl wget cmake && rm -rf /var/lib/apt/lists/*
 +# Install dependencies from a fixed Ubuntu archive snapshot so package
 +# versions cannot drift between rebuilds (see
 +# core/codegen/provenance/README.md in the protomolt repository).
-+# The snapshot host redirects to HTTPS and the base image ships no CA
-+# bundle, so TLS peer verification is off for that one host only; package
-+# integrity and origin authentication come from apt's signed Release
-+# files, as with the plain-HTTP archive this recipe used before. The
-+# source rewrite is checked, so an image whose sources do not match fails
-+# here instead of installing unpinned packages.
-+RUN sed -i \
-+      -e 's|http://archive.ubuntu.com/ubuntu/|http://snapshot.ubuntu.com/ubuntu/20261024T120000Z/|' \
-+      -e 's|http://security.ubuntu.com/ubuntu/|http://snapshot.ubuntu.com/ubuntu/20261024T120000Z/|' \
++# The minimal base image ships no CA bundle, so BuildKit fetches the
++# exact openssl and ca-certificates .debs from that same snapshot over
++# host-verified HTTPS and checks their SHA-256 digests before dpkg
++# populates /etc/ssl/certs/ca-certificates.crt. With the CA bundle in
++# place, apt talks to https://snapshot.ubuntu.com directly with its
++# default TLS peer/host verification and Release validity checks intact,
++# and --error-on=any refuses any index fetch failure.
++ADD --checksum=sha256:675b84971ffd4467707008c25ef7520f90ea7c23ef27b7a76b0dccf1d7c4dc3f \
++    https://snapshot.ubuntu.com/ubuntu/20261024T120000Z/pool/main/o/openssl/openssl_3.0.13-0ubuntu3.16_amd64.deb \
++    /tmp/bootstrap-debs/openssl.deb
++ADD --checksum=sha256:8a0a754aaafed72cc8efb8c1731808133284a84fbfc76a4fcc73fce9e01b4187 \
++    https://snapshot.ubuntu.com/ubuntu/20261024T120000Z/pool/main/c/ca-certificates/ca-certificates_20260816ubuntu0.24.04.1_all.deb \
++    /tmp/bootstrap-debs/ca-certificates.deb
++
++RUN DEBIAN_FRONTEND=noninteractive dpkg -i \
++      /tmp/bootstrap-debs/openssl.deb \
++      /tmp/bootstrap-debs/ca-certificates.deb \
++ && rm -rf /tmp/bootstrap-debs \
++ && test -s /etc/ssl/certs/ca-certificates.crt \
++ && sed -i \
++      -e 's|http://archive.ubuntu.com/ubuntu/|https://snapshot.ubuntu.com/ubuntu/20261024T120000Z/|' \
++      -e 's|http://security.ubuntu.com/ubuntu/|https://snapshot.ubuntu.com/ubuntu/20261024T120000Z/|' \
 +      /etc/apt/sources.list.d/ubuntu.sources \
-+ && grep -q 'snapshot.ubuntu.com/ubuntu/20261024T120000Z/' /etc/apt/sources.list.d/ubuntu.sources \
-+ && ! grep -q -e 'archive.ubuntu.com' -e 'security.ubuntu.com' -e 'ports.ubuntu.com' \
++ && grep -q '^URIs: https://snapshot.ubuntu.com/ubuntu/20261024T120000Z/$' /etc/apt/sources.list.d/ubuntu.sources \
++ && ! grep -q -e 'archive.ubuntu.com' -e 'security.ubuntu.com' -e 'ports.ubuntu.com' -e '^URIs:.*http://' \
 +      /etc/apt/sources.list.d/ubuntu.sources \
-+ && printf 'Acquire::https::snapshot.ubuntu.com::Verify-Peer "false";\nAcquire::https::snapshot.ubuntu.com::Verify-Host "false";\n' \
-+      > /etc/apt/apt.conf.d/99snapshot-tls \
-+ && apt-get -o Acquire::Check-Valid-Until=false update \
-+ && apt-get install -y git patch curl wget cmake && rm -rf /var/lib/apt/lists/*
++ && apt-get --error-on=any update \
++ && DEBIAN_FRONTEND=noninteractive apt-get install -y ca-certificates git patch curl wget cmake \
++ && rm -rf /var/lib/apt/lists/*
  
  WORKDIR /workspace
  
