@@ -50114,6 +50114,481 @@
       ]
     },
     {
+      "className" : "ai.protomolt.proto.jobs.service.PipelineJobCoordinator",
+      "kind" : "CLASS",
+      "visibility" : "PUBLIC",
+      "finalType" : true,
+      "abstractType" : false,
+      "superclass" : "",
+      "interfaces" : [ ],
+      "stability" : "STABLE",
+      "constructors" : [
+        {
+          "parameterTypes" : [
+            "ai.protomolt.proto.jobs.service.store.WorkflowRunStore"
+          ],
+          "visibility" : "PUBLIC",
+          "stability" : "STABLE"
+        },
+        {
+          "parameterTypes" : [
+            "ai.protomolt.proto.jobs.service.store.WorkflowRunStore",
+            "int"
+          ],
+          "visibility" : "PUBLIC",
+          "stability" : "STABLE"
+        }
+      ],
+      "methods" : [
+        {
+          "name" : "checkpoints",
+          "parameterTypes" : [
+            "java.util.UUID"
+          ],
+          "returnType" : "java.util.List",
+          "visibility" : "PUBLIC",
+          "staticMethod" : false,
+          "finalMethod" : false,
+          "abstractMethod" : false,
+          "defaultMethod" : false,
+          "stability" : "STABLE"
+        },
+        {
+          "name" : "completeStep",
+          "parameterTypes" : [
+            "java.util.UUID",
+            "java.lang.String",
+            "java.lang.String",
+            "java.lang.String",
+            "java.util.List"
+          ],
+          "returnType" : "ai.protomolt.proto.jobs.service.store.ParkedCompletion",
+          "visibility" : "PUBLIC",
+          "staticMethod" : false,
+          "finalMethod" : false,
+          "abstractMethod" : false,
+          "defaultMethod" : false,
+          "stability" : "STABLE"
+        },
+        {
+          "name" : "completeStep",
+          "parameterTypes" : [
+            "java.util.UUID",
+            "java.lang.String",
+            "java.util.List"
+          ],
+          "returnType" : "ai.protomolt.proto.jobs.service.store.ParkedCompletion",
+          "visibility" : "PUBLIC",
+          "staticMethod" : false,
+          "finalMethod" : false,
+          "abstractMethod" : false,
+          "defaultMethod" : false,
+          "stability" : "STABLE"
+        },
+        {
+          "name" : "completeStepJson",
+          "parameterTypes" : [
+            "java.util.UUID",
+            "java.lang.String",
+            "com.fasterxml.jackson.databind.node.ObjectNode",
+            "ai.protomolt.proto.descriptors.DescriptorRegistry"
+          ],
+          "returnType" : "ai.protomolt.proto.jobs.service.store.ParkedCompletion",
+          "visibility" : "PUBLIC",
+          "staticMethod" : false,
+          "finalMethod" : false,
+          "abstractMethod" : false,
+          "defaultMethod" : false,
+          "stability" : "STABLE"
+        },
+        {
+          "name" : "isPipelineJob",
+          "parameterTypes" : [
+            "ai.protomolt.proto.jobs.service.store.WorkflowRunRecord"
+          ],
+          "returnType" : "boolean",
+          "visibility" : "PUBLIC",
+          "staticMethod" : true,
+          "finalMethod" : false,
+          "abstractMethod" : false,
+          "defaultMethod" : false,
+          "stability" : "STABLE"
+        },
+        {
+          "name" : "parkedStep",
+          "parameterTypes" : [
+            "java.util.UUID"
+          ],
+          "returnType" : "java.util.Optional",
+          "visibility" : "PUBLIC",
+          "staticMethod" : false,
+          "finalMethod" : false,
+          "abstractMethod" : false,
+          "defaultMethod" : false,
+          "stability" : "STABLE"
+        },
+        {
+          "name" : "readCheckpoints",
+          "parameterTypes" : [
+            "ai.protomolt.proto.jobs.service.store.WorkflowRunRecord",
+            "ai.protomolt.proto.jobs.service.PipelineJobCoordinator.Definition"
+          ],
+          "returnType" : "java.util.List",
+          "visibility" : "PUBLIC",
+          "staticMethod" : true,
+          "finalMethod" : false,
+          "abstractMethod" : false,
+          "defaultMethod" : false,
+          "stability" : "STABLE"
+        },
+        {
+          "name" : "readDefinition",
+          "parameterTypes" : [
+            "ai.protomolt.proto.jobs.service.store.WorkflowRunRecord"
+          ],
+          "returnType" : "ai.protomolt.proto.jobs.service.PipelineJobCoordinator.Definition",
+          "visibility" : "PUBLIC",
+          "staticMethod" : true,
+          "finalMethod" : false,
+          "abstractMethod" : false,
+          "defaultMethod" : false,
+          "stability" : "STABLE"
+        },
+        {
+          "name" : "submit",
+          "parameterTypes" : [
+            "ai.protomolt.proto.pipeline.v1.Pipeline",
+            "java.util.List",
+            "com.google.protobuf.Message",
+            "java.lang.String"
+          ],
+          "returnType" : "ai.protomolt.proto.jobs.service.WorkflowRunSubmitter.Outcome",
+          "visibility" : "PUBLIC",
+          "staticMethod" : false,
+          "finalMethod" : false,
+          "abstractMethod" : false,
+          "defaultMethod" : false,
+          "stability" : "STABLE"
+        },
+        {
+          "name" : "writeCheckpoints",
+          "parameterTypes" : [
+            "java.util.List",
+            "java.util.List"
+          ],
+          "returnType" : "java.lang.String",
+          "visibility" : "PUBLIC",
+          "staticMethod" : true,
+          "finalMethod" : false,
+          "abstractMethod" : false,
+          "defaultMethod" : false,
+          "stability" : "STABLE"
+        },
+        {
+          "name" : "writeResult",
+          "parameterTypes" : [
+            "ai.protomolt.proto.pipeline.PipelineExecutor.Result",
+            "java.util.List"
+          ],
+          "returnType" : "java.lang.String",
+          "visibility" : "PUBLIC",
+          "staticMethod" : true,
+          "finalMethod" : false,
+          "abstractMethod" : false,
+          "defaultMethod" : false,
+          "stability" : "STABLE"
+        }
+      ],
+      "fields" : [ ]
+    },
+    {
+      "className" : "ai.protomolt.proto.jobs.service.PipelineJobCoordinator$Definition",
+      "kind" : "RECORD",
+      "visibility" : "PUBLIC",
+      "finalType" : false,
+      "abstractType" : false,
+      "superclass" : "",
+      "interfaces" : [ ],
+      "stability" : "STABLE",
+      "constructors" : [
+        {
+          "parameterTypes" : [
+            "ai.protomolt.proto.pipeline.v1.Pipeline",
+            "java.util.List",
+            "com.google.protobuf.DynamicMessage",
+            "java.lang.String",
+            "java.lang.String"
+          ],
+          "visibility" : "PUBLIC",
+          "stability" : "STABLE"
+        }
+      ],
+      "methods" : [
+        {
+          "name" : "equals",
+          "parameterTypes" : [
+            "java.lang.Object"
+          ],
+          "returnType" : "boolean",
+          "visibility" : "PUBLIC",
+          "staticMethod" : false,
+          "finalMethod" : true,
+          "abstractMethod" : false,
+          "defaultMethod" : false,
+          "stability" : "STABLE"
+        },
+        {
+          "name" : "files",
+          "parameterTypes" : [ ],
+          "returnType" : "java.util.List",
+          "visibility" : "PUBLIC",
+          "staticMethod" : false,
+          "finalMethod" : false,
+          "abstractMethod" : false,
+          "defaultMethod" : false,
+          "stability" : "STABLE"
+        },
+        {
+          "name" : "hashCode",
+          "parameterTypes" : [ ],
+          "returnType" : "int",
+          "visibility" : "PUBLIC",
+          "staticMethod" : false,
+          "finalMethod" : true,
+          "abstractMethod" : false,
+          "defaultMethod" : false,
+          "stability" : "STABLE"
+        },
+        {
+          "name" : "input",
+          "parameterTypes" : [ ],
+          "returnType" : "com.google.protobuf.DynamicMessage",
+          "visibility" : "PUBLIC",
+          "staticMethod" : false,
+          "finalMethod" : false,
+          "abstractMethod" : false,
+          "defaultMethod" : false,
+          "stability" : "STABLE"
+        },
+        {
+          "name" : "inputFingerprint",
+          "parameterTypes" : [ ],
+          "returnType" : "java.lang.String",
+          "visibility" : "PUBLIC",
+          "staticMethod" : false,
+          "finalMethod" : false,
+          "abstractMethod" : false,
+          "defaultMethod" : false,
+          "stability" : "STABLE"
+        },
+        {
+          "name" : "pipeline",
+          "parameterTypes" : [ ],
+          "returnType" : "ai.protomolt.proto.pipeline.v1.Pipeline",
+          "visibility" : "PUBLIC",
+          "staticMethod" : false,
+          "finalMethod" : false,
+          "abstractMethod" : false,
+          "defaultMethod" : false,
+          "stability" : "STABLE"
+        },
+        {
+          "name" : "pipelineFingerprint",
+          "parameterTypes" : [ ],
+          "returnType" : "java.lang.String",
+          "visibility" : "PUBLIC",
+          "staticMethod" : false,
+          "finalMethod" : false,
+          "abstractMethod" : false,
+          "defaultMethod" : false,
+          "stability" : "STABLE"
+        },
+        {
+          "name" : "toString",
+          "parameterTypes" : [ ],
+          "returnType" : "java.lang.String",
+          "visibility" : "PUBLIC",
+          "staticMethod" : false,
+          "finalMethod" : true,
+          "abstractMethod" : false,
+          "defaultMethod" : false,
+          "stability" : "STABLE"
+        }
+      ],
+      "fields" : [ ]
+    },
+    {
+      "className" : "ai.protomolt.proto.jobs.service.PipelineJobCoordinator$ParkedStep",
+      "kind" : "RECORD",
+      "visibility" : "PUBLIC",
+      "finalType" : false,
+      "abstractType" : false,
+      "superclass" : "",
+      "interfaces" : [ ],
+      "stability" : "STABLE",
+      "constructors" : [
+        {
+          "parameterTypes" : [
+            "java.util.UUID",
+            "java.lang.String",
+            "java.lang.String",
+            "java.lang.String",
+            "ai.protomolt.proto.pipeline.v1.EdgeCardinality",
+            "java.util.List"
+          ],
+          "visibility" : "PUBLIC",
+          "stability" : "STABLE"
+        }
+      ],
+      "methods" : [
+        {
+          "name" : "cardinality",
+          "parameterTypes" : [ ],
+          "returnType" : "ai.protomolt.proto.pipeline.v1.EdgeCardinality",
+          "visibility" : "PUBLIC",
+          "staticMethod" : false,
+          "finalMethod" : false,
+          "abstractMethod" : false,
+          "defaultMethod" : false,
+          "stability" : "STABLE"
+        },
+        {
+          "name" : "checkpoints",
+          "parameterTypes" : [ ],
+          "returnType" : "java.util.List",
+          "visibility" : "PUBLIC",
+          "staticMethod" : false,
+          "finalMethod" : false,
+          "abstractMethod" : false,
+          "defaultMethod" : false,
+          "stability" : "STABLE"
+        },
+        {
+          "name" : "equals",
+          "parameterTypes" : [
+            "java.lang.Object"
+          ],
+          "returnType" : "boolean",
+          "visibility" : "PUBLIC",
+          "staticMethod" : false,
+          "finalMethod" : true,
+          "abstractMethod" : false,
+          "defaultMethod" : false,
+          "stability" : "STABLE"
+        },
+        {
+          "name" : "hashCode",
+          "parameterTypes" : [ ],
+          "returnType" : "int",
+          "visibility" : "PUBLIC",
+          "staticMethod" : false,
+          "finalMethod" : true,
+          "abstractMethod" : false,
+          "defaultMethod" : false,
+          "stability" : "STABLE"
+        },
+        {
+          "name" : "inputFingerprint",
+          "parameterTypes" : [ ],
+          "returnType" : "java.lang.String",
+          "visibility" : "PUBLIC",
+          "staticMethod" : false,
+          "finalMethod" : false,
+          "abstractMethod" : false,
+          "defaultMethod" : false,
+          "stability" : "STABLE"
+        },
+        {
+          "name" : "jobId",
+          "parameterTypes" : [ ],
+          "returnType" : "java.util.UUID",
+          "visibility" : "PUBLIC",
+          "staticMethod" : false,
+          "finalMethod" : false,
+          "abstractMethod" : false,
+          "defaultMethod" : false,
+          "stability" : "STABLE"
+        },
+        {
+          "name" : "pipelineFingerprint",
+          "parameterTypes" : [ ],
+          "returnType" : "java.lang.String",
+          "visibility" : "PUBLIC",
+          "staticMethod" : false,
+          "finalMethod" : false,
+          "abstractMethod" : false,
+          "defaultMethod" : false,
+          "stability" : "STABLE"
+        },
+        {
+          "name" : "stepName",
+          "parameterTypes" : [ ],
+          "returnType" : "java.lang.String",
+          "visibility" : "PUBLIC",
+          "staticMethod" : false,
+          "finalMethod" : false,
+          "abstractMethod" : false,
+          "defaultMethod" : false,
+          "stability" : "STABLE"
+        },
+        {
+          "name" : "toString",
+          "parameterTypes" : [ ],
+          "returnType" : "java.lang.String",
+          "visibility" : "PUBLIC",
+          "staticMethod" : false,
+          "finalMethod" : true,
+          "abstractMethod" : false,
+          "defaultMethod" : false,
+          "stability" : "STABLE"
+        }
+      ],
+      "fields" : [ ]
+    },
+    {
+      "className" : "ai.protomolt.proto.jobs.service.PipelineJobCoordinator$PipelineDefinitionException",
+      "kind" : "CLASS",
+      "visibility" : "PUBLIC",
+      "finalType" : true,
+      "abstractType" : false,
+      "superclass" : "java.lang.RuntimeException",
+      "interfaces" : [ ],
+      "stability" : "STABLE",
+      "constructors" : [
+        {
+          "parameterTypes" : [
+            "java.lang.String",
+            "java.lang.String"
+          ],
+          "visibility" : "PUBLIC",
+          "stability" : "STABLE"
+        },
+        {
+          "parameterTypes" : [
+            "java.lang.String",
+            "java.lang.String",
+            "java.lang.Throwable"
+          ],
+          "visibility" : "PUBLIC",
+          "stability" : "STABLE"
+        }
+      ],
+      "methods" : [
+        {
+          "name" : "step",
+          "parameterTypes" : [ ],
+          "returnType" : "java.lang.String",
+          "visibility" : "PUBLIC",
+          "staticMethod" : false,
+          "finalMethod" : false,
+          "abstractMethod" : false,
+          "defaultMethod" : false,
+          "stability" : "STABLE"
+        }
+      ],
+      "fields" : [ ]
+    },
+    {
       "className" : "ai.protomolt.proto.jobs.service.WorkflowRunSubmitter",
       "kind" : "CLASS",
       "visibility" : "PUBLIC",
@@ -50142,6 +50617,22 @@
             "com.fasterxml.jackson.databind.JsonNode",
             "java.lang.String",
             "ai.protomolt.proto.actions.ActionContext"
+          ],
+          "returnType" : "ai.protomolt.proto.jobs.service.WorkflowRunSubmitter.Outcome",
+          "visibility" : "PUBLIC",
+          "staticMethod" : false,
+          "finalMethod" : false,
+          "abstractMethod" : false,
+          "defaultMethod" : false,
+          "stability" : "STABLE"
+        },
+        {
+          "name" : "submitPipeline",
+          "parameterTypes" : [
+            "ai.protomolt.proto.pipeline.v1.Pipeline",
+            "java.util.List",
+            "com.google.protobuf.Message",
+            "java.lang.String"
           ],
           "returnType" : "ai.protomolt.proto.jobs.service.WorkflowRunSubmitter.Outcome",
           "visibility" : "PUBLIC",
@@ -52892,6 +53383,18 @@
             "ai.protomolt.proto.actions.ActionContext",
             "ai.protomolt.proto.workflow.WorkflowRepository",
             "ai.protomolt.proto.workflow.WorkflowRunner",
+            "ai.protomolt.proto.jobs.service.WorkflowRunsConfig"
+          ],
+          "visibility" : "PUBLIC",
+          "stability" : "STABLE"
+        },
+        {
+          "parameterTypes" : [
+            "ai.protomolt.proto.jobs.service.store.WorkflowRunStore",
+            "ai.protomolt.proto.actions.ActionContext",
+            "ai.protomolt.proto.workflow.WorkflowRepository",
+            "ai.protomolt.proto.workflow.WorkflowRunner",
+            "ai.protomolt.proto.pipeline.PipelineExecutor",
             "ai.protomolt.proto.jobs.service.WorkflowRunsConfig"
           ],
           "visibility" : "PUBLIC",
@@ -69804,9 +70307,60 @@
           "abstractMethod" : false,
           "defaultMethod" : false,
           "stability" : "STABLE"
+        },
+        {
+          "name" : "invoke",
+          "parameterTypes" : [
+            "ai.protomolt.proto.pipeline.PipelineTransport.CallContext",
+            "ai.protomolt.proto.grpc.workflow.v1.ServiceDependency",
+            "com.google.protobuf.Descriptors.MethodDescriptor",
+            "java.util.List",
+            "long",
+            "int"
+          ],
+          "returnType" : "java.util.List",
+          "visibility" : "PUBLIC",
+          "staticMethod" : false,
+          "finalMethod" : false,
+          "abstractMethod" : false,
+          "defaultMethod" : false,
+          "stability" : "STABLE"
         }
       ],
-      "fields" : [ ]
+      "fields" : [
+        {
+          "name" : "BRANCH_ID_HEADER",
+          "fieldType" : "io.grpc.Metadata.Key",
+          "visibility" : "PUBLIC",
+          "staticField" : true,
+          "finalField" : true,
+          "stability" : "STABLE"
+        },
+        {
+          "name" : "JOB_ID_HEADER",
+          "fieldType" : "io.grpc.Metadata.Key",
+          "visibility" : "PUBLIC",
+          "staticField" : true,
+          "finalField" : true,
+          "stability" : "STABLE"
+        },
+        {
+          "name" : "OPERATION_ID_HEADER",
+          "fieldType" : "io.grpc.Metadata.Key",
+          "visibility" : "PUBLIC",
+          "staticField" : true,
+          "finalField" : true,
+          "stability" : "STABLE"
+        },
+        {
+          "name" : "STEP_NAME_HEADER",
+          "fieldType" : "io.grpc.Metadata.Key",
+          "visibility" : "PUBLIC",
+          "staticField" : true,
+          "finalField" : true,
+          "stability" : "STABLE"
+        }
+      ]
     },
     {
       "className" : "ai.protomolt.proto.pipeline.DynamicPipelineTransport$ChannelResolver",
@@ -70016,6 +70570,33 @@
       ],
       "methods" : [
         {
+          "name" : "inputFingerprint",
+          "parameterTypes" : [
+            "com.google.protobuf.Message"
+          ],
+          "returnType" : "java.lang.String",
+          "visibility" : "PUBLIC",
+          "staticMethod" : true,
+          "finalMethod" : false,
+          "abstractMethod" : false,
+          "defaultMethod" : false,
+          "stability" : "STABLE"
+        },
+        {
+          "name" : "pipelineFingerprint",
+          "parameterTypes" : [
+            "ai.protomolt.proto.pipeline.v1.Pipeline",
+            "java.util.List"
+          ],
+          "returnType" : "java.lang.String",
+          "visibility" : "PUBLIC",
+          "staticMethod" : true,
+          "finalMethod" : false,
+          "abstractMethod" : false,
+          "defaultMethod" : false,
+          "stability" : "STABLE"
+        },
+        {
           "name" : "run",
           "parameterTypes" : [
             "ai.protomolt.proto.pipeline.v1.Pipeline",
@@ -70023,6 +70604,41 @@
             "com.google.protobuf.DynamicMessage"
           ],
           "returnType" : "ai.protomolt.proto.pipeline.PipelineExecutor.Result",
+          "visibility" : "PUBLIC",
+          "staticMethod" : false,
+          "finalMethod" : false,
+          "abstractMethod" : false,
+          "defaultMethod" : false,
+          "stability" : "STABLE"
+        },
+        {
+          "name" : "runSegment",
+          "parameterTypes" : [
+            "ai.protomolt.proto.pipeline.v1.Pipeline",
+            "java.util.List",
+            "com.google.protobuf.DynamicMessage",
+            "java.util.List",
+            "ai.protomolt.proto.pipeline.PipelineExecutor.ExecutionIdentity",
+            "java.util.function.Consumer"
+          ],
+          "returnType" : "ai.protomolt.proto.pipeline.PipelineExecutor.Segment",
+          "visibility" : "PUBLIC",
+          "staticMethod" : false,
+          "finalMethod" : false,
+          "abstractMethod" : false,
+          "defaultMethod" : false,
+          "stability" : "STABLE"
+        },
+        {
+          "name" : "runSegment",
+          "parameterTypes" : [
+            "ai.protomolt.proto.pipeline.v1.Pipeline",
+            "java.util.List",
+            "com.google.protobuf.DynamicMessage",
+            "java.util.List",
+            "java.util.function.Consumer"
+          ],
+          "returnType" : "ai.protomolt.proto.pipeline.PipelineExecutor.Segment",
           "visibility" : "PUBLIC",
           "staticMethod" : false,
           "finalMethod" : false,
@@ -70148,6 +70764,223 @@
         }
       ],
       "fields" : [ ]
+    },
+    {
+      "className" : "ai.protomolt.proto.pipeline.PipelineExecutor$Checkpoint",
+      "kind" : "RECORD",
+      "visibility" : "PUBLIC",
+      "finalType" : false,
+      "abstractType" : false,
+      "superclass" : "",
+      "interfaces" : [ ],
+      "stability" : "STABLE",
+      "constructors" : [
+        {
+          "parameterTypes" : [
+            "java.lang.String",
+            "java.lang.String",
+            "ai.protomolt.proto.pipeline.PipelineExecutor.StepOutcome",
+            "ai.protomolt.proto.pipeline.v1.EdgeCardinality",
+            "java.util.List",
+            "java.util.List"
+          ],
+          "visibility" : "PUBLIC",
+          "stability" : "STABLE"
+        }
+      ],
+      "methods" : [
+        {
+          "name" : "branches",
+          "parameterTypes" : [ ],
+          "returnType" : "java.util.List",
+          "visibility" : "PUBLIC",
+          "staticMethod" : false,
+          "finalMethod" : false,
+          "abstractMethod" : false,
+          "defaultMethod" : false,
+          "stability" : "STABLE"
+        },
+        {
+          "name" : "cardinality",
+          "parameterTypes" : [ ],
+          "returnType" : "ai.protomolt.proto.pipeline.v1.EdgeCardinality",
+          "visibility" : "PUBLIC",
+          "staticMethod" : false,
+          "finalMethod" : false,
+          "abstractMethod" : false,
+          "defaultMethod" : false,
+          "stability" : "STABLE"
+        },
+        {
+          "name" : "equals",
+          "parameterTypes" : [
+            "java.lang.Object"
+          ],
+          "returnType" : "boolean",
+          "visibility" : "PUBLIC",
+          "staticMethod" : false,
+          "finalMethod" : true,
+          "abstractMethod" : false,
+          "defaultMethod" : false,
+          "stability" : "STABLE"
+        },
+        {
+          "name" : "hashCode",
+          "parameterTypes" : [ ],
+          "returnType" : "int",
+          "visibility" : "PUBLIC",
+          "staticMethod" : false,
+          "finalMethod" : true,
+          "abstractMethod" : false,
+          "defaultMethod" : false,
+          "stability" : "STABLE"
+        },
+        {
+          "name" : "inputFingerprint",
+          "parameterTypes" : [ ],
+          "returnType" : "java.lang.String",
+          "visibility" : "PUBLIC",
+          "staticMethod" : false,
+          "finalMethod" : false,
+          "abstractMethod" : false,
+          "defaultMethod" : false,
+          "stability" : "STABLE"
+        },
+        {
+          "name" : "messages",
+          "parameterTypes" : [ ],
+          "returnType" : "java.util.List",
+          "visibility" : "PUBLIC",
+          "staticMethod" : false,
+          "finalMethod" : false,
+          "abstractMethod" : false,
+          "defaultMethod" : false,
+          "stability" : "STABLE"
+        },
+        {
+          "name" : "outcome",
+          "parameterTypes" : [ ],
+          "returnType" : "ai.protomolt.proto.pipeline.PipelineExecutor.StepOutcome",
+          "visibility" : "PUBLIC",
+          "staticMethod" : false,
+          "finalMethod" : false,
+          "abstractMethod" : false,
+          "defaultMethod" : false,
+          "stability" : "STABLE"
+        },
+        {
+          "name" : "pipelineFingerprint",
+          "parameterTypes" : [ ],
+          "returnType" : "java.lang.String",
+          "visibility" : "PUBLIC",
+          "staticMethod" : false,
+          "finalMethod" : false,
+          "abstractMethod" : false,
+          "defaultMethod" : false,
+          "stability" : "STABLE"
+        },
+        {
+          "name" : "toString",
+          "parameterTypes" : [ ],
+          "returnType" : "java.lang.String",
+          "visibility" : "PUBLIC",
+          "staticMethod" : false,
+          "finalMethod" : true,
+          "abstractMethod" : false,
+          "defaultMethod" : false,
+          "stability" : "STABLE"
+        }
+      ],
+      "fields" : [ ]
+    },
+    {
+      "className" : "ai.protomolt.proto.pipeline.PipelineExecutor$ExecutionIdentity",
+      "kind" : "RECORD",
+      "visibility" : "PUBLIC",
+      "finalType" : false,
+      "abstractType" : false,
+      "superclass" : "",
+      "interfaces" : [ ],
+      "stability" : "STABLE",
+      "constructors" : [
+        {
+          "parameterTypes" : [
+            "java.lang.String",
+            "int"
+          ],
+          "visibility" : "PUBLIC",
+          "stability" : "STABLE"
+        }
+      ],
+      "methods" : [
+        {
+          "name" : "attempt",
+          "parameterTypes" : [ ],
+          "returnType" : "int",
+          "visibility" : "PUBLIC",
+          "staticMethod" : false,
+          "finalMethod" : false,
+          "abstractMethod" : false,
+          "defaultMethod" : false,
+          "stability" : "STABLE"
+        },
+        {
+          "name" : "equals",
+          "parameterTypes" : [
+            "java.lang.Object"
+          ],
+          "returnType" : "boolean",
+          "visibility" : "PUBLIC",
+          "staticMethod" : false,
+          "finalMethod" : true,
+          "abstractMethod" : false,
+          "defaultMethod" : false,
+          "stability" : "STABLE"
+        },
+        {
+          "name" : "hashCode",
+          "parameterTypes" : [ ],
+          "returnType" : "int",
+          "visibility" : "PUBLIC",
+          "staticMethod" : false,
+          "finalMethod" : true,
+          "abstractMethod" : false,
+          "defaultMethod" : false,
+          "stability" : "STABLE"
+        },
+        {
+          "name" : "jobId",
+          "parameterTypes" : [ ],
+          "returnType" : "java.lang.String",
+          "visibility" : "PUBLIC",
+          "staticMethod" : false,
+          "finalMethod" : false,
+          "abstractMethod" : false,
+          "defaultMethod" : false,
+          "stability" : "STABLE"
+        },
+        {
+          "name" : "toString",
+          "parameterTypes" : [ ],
+          "returnType" : "java.lang.String",
+          "visibility" : "PUBLIC",
+          "staticMethod" : false,
+          "finalMethod" : true,
+          "abstractMethod" : false,
+          "defaultMethod" : false,
+          "stability" : "STABLE"
+        }
+      ],
+      "fields" : [
+        {
+          "name" : "IN_PROCESS",
+          "fieldType" : "ai.protomolt.proto.pipeline.PipelineExecutor.ExecutionIdentity",
+          "visibility" : "PUBLIC",
+          "staticField" : true,
+          "finalField" : true,
+          "stability" : "STABLE"
+        }
+      ]
     },
     {
       "className" : "ai.protomolt.proto.pipeline.PipelineExecutor$FailureKind",
@@ -70439,6 +71272,232 @@
       "fields" : [ ]
     },
     {
+      "className" : "ai.protomolt.proto.pipeline.PipelineExecutor$Segment",
+      "kind" : "INTERFACE",
+      "visibility" : "PUBLIC",
+      "finalType" : false,
+      "abstractType" : false,
+      "superclass" : "",
+      "interfaces" : [ ],
+      "stability" : "STABLE",
+      "constructors" : [ ],
+      "methods" : [ ],
+      "fields" : [ ]
+    },
+    {
+      "className" : "ai.protomolt.proto.pipeline.PipelineExecutor$Segment$Completed",
+      "kind" : "RECORD",
+      "visibility" : "PUBLIC",
+      "finalType" : false,
+      "abstractType" : false,
+      "superclass" : "",
+      "interfaces" : [
+        "ai.protomolt.proto.pipeline.PipelineExecutor.Segment"
+      ],
+      "stability" : "STABLE",
+      "constructors" : [
+        {
+          "parameterTypes" : [
+            "ai.protomolt.proto.pipeline.PipelineExecutor.Result",
+            "java.util.List"
+          ],
+          "visibility" : "PUBLIC",
+          "stability" : "STABLE"
+        }
+      ],
+      "methods" : [
+        {
+          "name" : "checkpoints",
+          "parameterTypes" : [ ],
+          "returnType" : "java.util.List",
+          "visibility" : "PUBLIC",
+          "staticMethod" : false,
+          "finalMethod" : false,
+          "abstractMethod" : false,
+          "defaultMethod" : false,
+          "stability" : "STABLE"
+        },
+        {
+          "name" : "equals",
+          "parameterTypes" : [
+            "java.lang.Object"
+          ],
+          "returnType" : "boolean",
+          "visibility" : "PUBLIC",
+          "staticMethod" : false,
+          "finalMethod" : true,
+          "abstractMethod" : false,
+          "defaultMethod" : false,
+          "stability" : "STABLE"
+        },
+        {
+          "name" : "hashCode",
+          "parameterTypes" : [ ],
+          "returnType" : "int",
+          "visibility" : "PUBLIC",
+          "staticMethod" : false,
+          "finalMethod" : true,
+          "abstractMethod" : false,
+          "defaultMethod" : false,
+          "stability" : "STABLE"
+        },
+        {
+          "name" : "result",
+          "parameterTypes" : [ ],
+          "returnType" : "ai.protomolt.proto.pipeline.PipelineExecutor.Result",
+          "visibility" : "PUBLIC",
+          "staticMethod" : false,
+          "finalMethod" : false,
+          "abstractMethod" : false,
+          "defaultMethod" : false,
+          "stability" : "STABLE"
+        },
+        {
+          "name" : "toString",
+          "parameterTypes" : [ ],
+          "returnType" : "java.lang.String",
+          "visibility" : "PUBLIC",
+          "staticMethod" : false,
+          "finalMethod" : true,
+          "abstractMethod" : false,
+          "defaultMethod" : false,
+          "stability" : "STABLE"
+        }
+      ],
+      "fields" : [ ]
+    },
+    {
+      "className" : "ai.protomolt.proto.pipeline.PipelineExecutor$Segment$Parked",
+      "kind" : "RECORD",
+      "visibility" : "PUBLIC",
+      "finalType" : false,
+      "abstractType" : false,
+      "superclass" : "",
+      "interfaces" : [
+        "ai.protomolt.proto.pipeline.PipelineExecutor.Segment"
+      ],
+      "stability" : "STABLE",
+      "constructors" : [
+        {
+          "parameterTypes" : [
+            "java.lang.String",
+            "java.lang.String",
+            "java.lang.String",
+            "ai.protomolt.proto.pipeline.v1.EdgeCardinality",
+            "java.util.List"
+          ],
+          "visibility" : "PUBLIC",
+          "stability" : "STABLE"
+        }
+      ],
+      "methods" : [
+        {
+          "name" : "cardinality",
+          "parameterTypes" : [ ],
+          "returnType" : "ai.protomolt.proto.pipeline.v1.EdgeCardinality",
+          "visibility" : "PUBLIC",
+          "staticMethod" : false,
+          "finalMethod" : false,
+          "abstractMethod" : false,
+          "defaultMethod" : false,
+          "stability" : "STABLE"
+        },
+        {
+          "name" : "checkpoints",
+          "parameterTypes" : [ ],
+          "returnType" : "java.util.List",
+          "visibility" : "PUBLIC",
+          "staticMethod" : false,
+          "finalMethod" : false,
+          "abstractMethod" : false,
+          "defaultMethod" : false,
+          "stability" : "STABLE"
+        },
+        {
+          "name" : "completion",
+          "parameterTypes" : [
+            "java.util.List"
+          ],
+          "returnType" : "ai.protomolt.proto.pipeline.PipelineExecutor.Checkpoint",
+          "visibility" : "PUBLIC",
+          "staticMethod" : false,
+          "finalMethod" : false,
+          "abstractMethod" : false,
+          "defaultMethod" : false,
+          "stability" : "STABLE"
+        },
+        {
+          "name" : "equals",
+          "parameterTypes" : [
+            "java.lang.Object"
+          ],
+          "returnType" : "boolean",
+          "visibility" : "PUBLIC",
+          "staticMethod" : false,
+          "finalMethod" : true,
+          "abstractMethod" : false,
+          "defaultMethod" : false,
+          "stability" : "STABLE"
+        },
+        {
+          "name" : "hashCode",
+          "parameterTypes" : [ ],
+          "returnType" : "int",
+          "visibility" : "PUBLIC",
+          "staticMethod" : false,
+          "finalMethod" : true,
+          "abstractMethod" : false,
+          "defaultMethod" : false,
+          "stability" : "STABLE"
+        },
+        {
+          "name" : "inputFingerprint",
+          "parameterTypes" : [ ],
+          "returnType" : "java.lang.String",
+          "visibility" : "PUBLIC",
+          "staticMethod" : false,
+          "finalMethod" : false,
+          "abstractMethod" : false,
+          "defaultMethod" : false,
+          "stability" : "STABLE"
+        },
+        {
+          "name" : "pipelineFingerprint",
+          "parameterTypes" : [ ],
+          "returnType" : "java.lang.String",
+          "visibility" : "PUBLIC",
+          "staticMethod" : false,
+          "finalMethod" : false,
+          "abstractMethod" : false,
+          "defaultMethod" : false,
+          "stability" : "STABLE"
+        },
+        {
+          "name" : "step",
+          "parameterTypes" : [ ],
+          "returnType" : "java.lang.String",
+          "visibility" : "PUBLIC",
+          "staticMethod" : false,
+          "finalMethod" : false,
+          "abstractMethod" : false,
+          "defaultMethod" : false,
+          "stability" : "STABLE"
+        },
+        {
+          "name" : "toString",
+          "parameterTypes" : [ ],
+          "returnType" : "java.lang.String",
+          "visibility" : "PUBLIC",
+          "staticMethod" : false,
+          "finalMethod" : true,
+          "abstractMethod" : false,
+          "defaultMethod" : false,
+          "stability" : "STABLE"
+        }
+      ],
+      "fields" : [ ]
+    },
+    {
       "className" : "ai.protomolt.proto.pipeline.PipelineExecutor$StepOutcome",
       "kind" : "RECORD",
       "visibility" : "PUBLIC",
@@ -70566,6 +71625,153 @@
           "visibility" : "PUBLIC",
           "staticMethod" : false,
           "finalMethod" : false,
+          "abstractMethod" : false,
+          "defaultMethod" : false,
+          "stability" : "STABLE"
+        },
+        {
+          "name" : "invoke",
+          "parameterTypes" : [
+            "ai.protomolt.proto.pipeline.PipelineTransport.CallContext",
+            "ai.protomolt.proto.grpc.workflow.v1.ServiceDependency",
+            "com.google.protobuf.Descriptors.MethodDescriptor",
+            "java.util.List",
+            "long",
+            "int"
+          ],
+          "returnType" : "java.util.List",
+          "visibility" : "PUBLIC",
+          "staticMethod" : false,
+          "finalMethod" : false,
+          "abstractMethod" : false,
+          "defaultMethod" : true,
+          "stability" : "STABLE"
+        }
+      ],
+      "fields" : [ ]
+    },
+    {
+      "className" : "ai.protomolt.proto.pipeline.PipelineTransport$CallContext",
+      "kind" : "RECORD",
+      "visibility" : "PUBLIC",
+      "finalType" : false,
+      "abstractType" : false,
+      "superclass" : "",
+      "interfaces" : [ ],
+      "stability" : "STABLE",
+      "constructors" : [
+        {
+          "parameterTypes" : [
+            "java.lang.String",
+            "java.lang.String",
+            "java.lang.String",
+            "int"
+          ],
+          "visibility" : "PUBLIC",
+          "stability" : "STABLE"
+        }
+      ],
+      "methods" : [
+        {
+          "name" : "attempt",
+          "parameterTypes" : [ ],
+          "returnType" : "int",
+          "visibility" : "PUBLIC",
+          "staticMethod" : false,
+          "finalMethod" : false,
+          "abstractMethod" : false,
+          "defaultMethod" : false,
+          "stability" : "STABLE"
+        },
+        {
+          "name" : "branchId",
+          "parameterTypes" : [ ],
+          "returnType" : "java.lang.String",
+          "visibility" : "PUBLIC",
+          "staticMethod" : false,
+          "finalMethod" : false,
+          "abstractMethod" : false,
+          "defaultMethod" : false,
+          "stability" : "STABLE"
+        },
+        {
+          "name" : "equals",
+          "parameterTypes" : [
+            "java.lang.Object"
+          ],
+          "returnType" : "boolean",
+          "visibility" : "PUBLIC",
+          "staticMethod" : false,
+          "finalMethod" : true,
+          "abstractMethod" : false,
+          "defaultMethod" : false,
+          "stability" : "STABLE"
+        },
+        {
+          "name" : "hashCode",
+          "parameterTypes" : [ ],
+          "returnType" : "int",
+          "visibility" : "PUBLIC",
+          "staticMethod" : false,
+          "finalMethod" : true,
+          "abstractMethod" : false,
+          "defaultMethod" : false,
+          "stability" : "STABLE"
+        },
+        {
+          "name" : "inProcess",
+          "parameterTypes" : [
+            "java.lang.String",
+            "java.lang.String"
+          ],
+          "returnType" : "ai.protomolt.proto.pipeline.PipelineTransport.CallContext",
+          "visibility" : "PUBLIC",
+          "staticMethod" : true,
+          "finalMethod" : false,
+          "abstractMethod" : false,
+          "defaultMethod" : false,
+          "stability" : "STABLE"
+        },
+        {
+          "name" : "jobId",
+          "parameterTypes" : [ ],
+          "returnType" : "java.lang.String",
+          "visibility" : "PUBLIC",
+          "staticMethod" : false,
+          "finalMethod" : false,
+          "abstractMethod" : false,
+          "defaultMethod" : false,
+          "stability" : "STABLE"
+        },
+        {
+          "name" : "operationId",
+          "parameterTypes" : [ ],
+          "returnType" : "java.lang.String",
+          "visibility" : "PUBLIC",
+          "staticMethod" : false,
+          "finalMethod" : false,
+          "abstractMethod" : false,
+          "defaultMethod" : false,
+          "stability" : "STABLE"
+        },
+        {
+          "name" : "stepName",
+          "parameterTypes" : [ ],
+          "returnType" : "java.lang.String",
+          "visibility" : "PUBLIC",
+          "staticMethod" : false,
+          "finalMethod" : false,
+          "abstractMethod" : false,
+          "defaultMethod" : false,
+          "stability" : "STABLE"
+        },
+        {
+          "name" : "toString",
+          "parameterTypes" : [ ],
+          "returnType" : "java.lang.String",
+          "visibility" : "PUBLIC",
+          "staticMethod" : false,
+          "finalMethod" : true,
           "abstractMethod" : false,
           "defaultMethod" : false,
           "stability" : "STABLE"
@@ -85670,6 +86876,20 @@
           "stability" : "STABLE"
         },
         {
+          "name" : "openSnapshot",
+          "parameterTypes" : [
+            "java.lang.String",
+            "java.lang.String"
+          ],
+          "returnType" : "ai.protomolt.proto.repo.blob.spi.BlobStore.ObjectRead",
+          "visibility" : "PUBLIC",
+          "staticMethod" : false,
+          "finalMethod" : false,
+          "abstractMethod" : false,
+          "defaultMethod" : false,
+          "stability" : "STABLE"
+        },
+        {
           "name" : "openStream",
           "parameterTypes" : [
             "java.lang.String",
@@ -85768,6 +86988,20 @@
             "ai.protomolt.proto.repo.blob.spi.ObjectReclaimer"
           ],
           "returnType" : "ai.protomolt.proto.repo.blob.spi.ObjectReclaimer",
+          "visibility" : "PUBLIC",
+          "staticMethod" : false,
+          "finalMethod" : false,
+          "abstractMethod" : false,
+          "defaultMethod" : false,
+          "stability" : "STABLE"
+        },
+        {
+          "name" : "statObject",
+          "parameterTypes" : [
+            "java.lang.String",
+            "java.lang.String"
+          ],
+          "returnType" : "ai.protomolt.proto.repo.blob.spi.BlobStore.ObjectMetadata",
           "visibility" : "PUBLIC",
           "staticMethod" : false,
           "finalMethod" : false,
@@ -86000,6 +87234,50 @@
           "stability" : "STABLE"
         },
         {
+          "name" : "objectLength",
+          "parameterTypes" : [
+            "java.lang.String",
+            "java.lang.String"
+          ],
+          "returnType" : "long",
+          "visibility" : "PUBLIC",
+          "staticMethod" : false,
+          "finalMethod" : false,
+          "abstractMethod" : false,
+          "defaultMethod" : false,
+          "stability" : "STABLE"
+        },
+        {
+          "name" : "openSnapshot",
+          "parameterTypes" : [
+            "java.lang.String",
+            "java.lang.String"
+          ],
+          "returnType" : "ai.protomolt.proto.repo.blob.spi.BlobStore.ObjectRead",
+          "visibility" : "PUBLIC",
+          "staticMethod" : false,
+          "finalMethod" : false,
+          "abstractMethod" : false,
+          "defaultMethod" : false,
+          "stability" : "STABLE"
+        },
+        {
+          "name" : "openStream",
+          "parameterTypes" : [
+            "java.lang.String",
+            "java.lang.String",
+            "long",
+            "long"
+          ],
+          "returnType" : "java.io.InputStream",
+          "visibility" : "PUBLIC",
+          "staticMethod" : false,
+          "finalMethod" : false,
+          "abstractMethod" : false,
+          "defaultMethod" : false,
+          "stability" : "STABLE"
+        },
+        {
           "name" : "put",
           "parameterTypes" : [
             "ai.protomolt.proto.repo.blob.spi.BlobStore.PutSpec",
@@ -86044,12 +87322,42 @@
           "stability" : "STABLE"
         },
         {
+          "name" : "put",
+          "parameterTypes" : [
+            "ai.protomolt.proto.repo.blob.spi.BlobStore.PutSpec",
+            "java.io.InputStream",
+            "long",
+            "int"
+          ],
+          "returnType" : "ai.protomolt.proto.repo.blob.spi.BlobStore.PutResult",
+          "visibility" : "PUBLIC",
+          "staticMethod" : false,
+          "finalMethod" : false,
+          "abstractMethod" : false,
+          "defaultMethod" : false,
+          "stability" : "STABLE"
+        },
+        {
           "name" : "reclaim",
           "parameterTypes" : [
             "java.lang.String",
             "java.lang.String"
           ],
           "returnType" : "boolean",
+          "visibility" : "PUBLIC",
+          "staticMethod" : false,
+          "finalMethod" : false,
+          "abstractMethod" : false,
+          "defaultMethod" : false,
+          "stability" : "STABLE"
+        },
+        {
+          "name" : "statObject",
+          "parameterTypes" : [
+            "java.lang.String",
+            "java.lang.String"
+          ],
+          "returnType" : "ai.protomolt.proto.repo.blob.spi.BlobStore.ObjectMetadata",
           "visibility" : "PUBLIC",
           "staticMethod" : false,
           "finalMethod" : false,
@@ -86606,6 +87914,20 @@
           "stability" : "STABLE"
         },
         {
+          "name" : "openSnapshot",
+          "parameterTypes" : [
+            "java.lang.String",
+            "java.lang.String"
+          ],
+          "returnType" : "ai.protomolt.proto.repo.blob.spi.BlobStore.ObjectRead",
+          "visibility" : "PUBLIC",
+          "staticMethod" : false,
+          "finalMethod" : false,
+          "abstractMethod" : false,
+          "defaultMethod" : false,
+          "stability" : "STABLE"
+        },
+        {
           "name" : "openStream",
           "parameterTypes" : [
             "java.lang.String",
@@ -86675,6 +87997,20 @@
             "int"
           ],
           "returnType" : "ai.protomolt.proto.repo.blob.spi.BlobStore.PutResult",
+          "visibility" : "PUBLIC",
+          "staticMethod" : false,
+          "finalMethod" : false,
+          "abstractMethod" : false,
+          "defaultMethod" : false,
+          "stability" : "STABLE"
+        },
+        {
+          "name" : "statObject",
+          "parameterTypes" : [
+            "java.lang.String",
+            "java.lang.String"
+          ],
+          "returnType" : "ai.protomolt.proto.repo.blob.spi.BlobStore.ObjectMetadata",
           "visibility" : "PUBLIC",
           "staticMethod" : false,
           "finalMethod" : false,
@@ -87254,6 +88590,20 @@
           "stability" : "STABLE"
         },
         {
+          "name" : "openSnapshot",
+          "parameterTypes" : [
+            "java.lang.String",
+            "java.lang.String"
+          ],
+          "returnType" : "ai.protomolt.proto.repo.blob.spi.BlobStore.ObjectRead",
+          "visibility" : "PUBLIC",
+          "staticMethod" : false,
+          "finalMethod" : false,
+          "abstractMethod" : false,
+          "defaultMethod" : true,
+          "stability" : "STABLE"
+        },
+        {
           "name" : "openStream",
           "parameterTypes" : [
             "java.lang.String",
@@ -87357,6 +88707,20 @@
           "finalMethod" : false,
           "abstractMethod" : false,
           "defaultMethod" : false,
+          "stability" : "STABLE"
+        },
+        {
+          "name" : "statObject",
+          "parameterTypes" : [
+            "java.lang.String",
+            "java.lang.String"
+          ],
+          "returnType" : "ai.protomolt.proto.repo.blob.spi.BlobStore.ObjectMetadata",
+          "visibility" : "PUBLIC",
+          "staticMethod" : false,
+          "finalMethod" : false,
+          "abstractMethod" : false,
+          "defaultMethod" : true,
           "stability" : "STABLE"
         }
       ],
@@ -87704,6 +89068,215 @@
           "name" : "sizeBytes",
           "parameterTypes" : [ ],
           "returnType" : "long",
+          "visibility" : "PUBLIC",
+          "staticMethod" : false,
+          "finalMethod" : false,
+          "abstractMethod" : false,
+          "defaultMethod" : false,
+          "stability" : "STABLE"
+        },
+        {
+          "name" : "toString",
+          "parameterTypes" : [ ],
+          "returnType" : "java.lang.String",
+          "visibility" : "PUBLIC",
+          "staticMethod" : false,
+          "finalMethod" : true,
+          "abstractMethod" : false,
+          "defaultMethod" : false,
+          "stability" : "STABLE"
+        }
+      ],
+      "fields" : [ ]
+    },
+    {
+      "className" : "ai.protomolt.proto.repo.blob.spi.BlobStore$ObjectMetadata",
+      "kind" : "RECORD",
+      "visibility" : "PUBLIC",
+      "finalType" : false,
+      "abstractType" : false,
+      "superclass" : "",
+      "interfaces" : [ ],
+      "stability" : "STABLE",
+      "constructors" : [
+        {
+          "parameterTypes" : [
+            "long",
+            "java.lang.String",
+            "java.lang.String",
+            "java.lang.String",
+            "java.util.Map"
+          ],
+          "visibility" : "PUBLIC",
+          "stability" : "STABLE"
+        }
+      ],
+      "methods" : [
+        {
+          "name" : "attributes",
+          "parameterTypes" : [ ],
+          "returnType" : "java.util.Map",
+          "visibility" : "PUBLIC",
+          "staticMethod" : false,
+          "finalMethod" : false,
+          "abstractMethod" : false,
+          "defaultMethod" : false,
+          "stability" : "STABLE"
+        },
+        {
+          "name" : "contentType",
+          "parameterTypes" : [ ],
+          "returnType" : "java.lang.String",
+          "visibility" : "PUBLIC",
+          "staticMethod" : false,
+          "finalMethod" : false,
+          "abstractMethod" : false,
+          "defaultMethod" : false,
+          "stability" : "STABLE"
+        },
+        {
+          "name" : "eTag",
+          "parameterTypes" : [ ],
+          "returnType" : "java.lang.String",
+          "visibility" : "PUBLIC",
+          "staticMethod" : false,
+          "finalMethod" : false,
+          "abstractMethod" : false,
+          "defaultMethod" : false,
+          "stability" : "STABLE"
+        },
+        {
+          "name" : "equals",
+          "parameterTypes" : [
+            "java.lang.Object"
+          ],
+          "returnType" : "boolean",
+          "visibility" : "PUBLIC",
+          "staticMethod" : false,
+          "finalMethod" : true,
+          "abstractMethod" : false,
+          "defaultMethod" : false,
+          "stability" : "STABLE"
+        },
+        {
+          "name" : "hashCode",
+          "parameterTypes" : [ ],
+          "returnType" : "int",
+          "visibility" : "PUBLIC",
+          "staticMethod" : false,
+          "finalMethod" : true,
+          "abstractMethod" : false,
+          "defaultMethod" : false,
+          "stability" : "STABLE"
+        },
+        {
+          "name" : "length",
+          "parameterTypes" : [ ],
+          "returnType" : "long",
+          "visibility" : "PUBLIC",
+          "staticMethod" : false,
+          "finalMethod" : false,
+          "abstractMethod" : false,
+          "defaultMethod" : false,
+          "stability" : "STABLE"
+        },
+        {
+          "name" : "toString",
+          "parameterTypes" : [ ],
+          "returnType" : "java.lang.String",
+          "visibility" : "PUBLIC",
+          "staticMethod" : false,
+          "finalMethod" : true,
+          "abstractMethod" : false,
+          "defaultMethod" : false,
+          "stability" : "STABLE"
+        },
+        {
+          "name" : "versionId",
+          "parameterTypes" : [ ],
+          "returnType" : "java.lang.String",
+          "visibility" : "PUBLIC",
+          "staticMethod" : false,
+          "finalMethod" : false,
+          "abstractMethod" : false,
+          "defaultMethod" : false,
+          "stability" : "STABLE"
+        }
+      ],
+      "fields" : [ ]
+    },
+    {
+      "className" : "ai.protomolt.proto.repo.blob.spi.BlobStore$ObjectRead",
+      "kind" : "RECORD",
+      "visibility" : "PUBLIC",
+      "finalType" : false,
+      "abstractType" : false,
+      "superclass" : "",
+      "interfaces" : [
+        "java.lang.AutoCloseable"
+      ],
+      "stability" : "STABLE",
+      "constructors" : [
+        {
+          "parameterTypes" : [
+            "ai.protomolt.proto.repo.blob.spi.BlobStore.ObjectMetadata",
+            "java.io.InputStream"
+          ],
+          "visibility" : "PUBLIC",
+          "stability" : "STABLE"
+        }
+      ],
+      "methods" : [
+        {
+          "name" : "close",
+          "parameterTypes" : [ ],
+          "returnType" : "void",
+          "visibility" : "PUBLIC",
+          "staticMethod" : false,
+          "finalMethod" : false,
+          "abstractMethod" : false,
+          "defaultMethod" : false,
+          "stability" : "STABLE"
+        },
+        {
+          "name" : "equals",
+          "parameterTypes" : [
+            "java.lang.Object"
+          ],
+          "returnType" : "boolean",
+          "visibility" : "PUBLIC",
+          "staticMethod" : false,
+          "finalMethod" : true,
+          "abstractMethod" : false,
+          "defaultMethod" : false,
+          "stability" : "STABLE"
+        },
+        {
+          "name" : "hashCode",
+          "parameterTypes" : [ ],
+          "returnType" : "int",
+          "visibility" : "PUBLIC",
+          "staticMethod" : false,
+          "finalMethod" : true,
+          "abstractMethod" : false,
+          "defaultMethod" : false,
+          "stability" : "STABLE"
+        },
+        {
+          "name" : "metadata",
+          "parameterTypes" : [ ],
+          "returnType" : "ai.protomolt.proto.repo.blob.spi.BlobStore.ObjectMetadata",
+          "visibility" : "PUBLIC",
+          "staticMethod" : false,
+          "finalMethod" : false,
+          "abstractMethod" : false,
+          "defaultMethod" : false,
+          "stability" : "STABLE"
+        },
+        {
+          "name" : "stream",
+          "parameterTypes" : [ ],
+          "returnType" : "java.io.InputStream",
           "visibility" : "PUBLIC",
           "staticMethod" : false,
           "finalMethod" : false,
@@ -88693,6 +90266,22 @@
           "finalMethod" : false,
           "abstractMethod" : false,
           "defaultMethod" : false,
+          "stability" : "STABLE"
+        },
+        {
+          "name" : "put",
+          "parameterTypes" : [
+            "ai.protomolt.proto.repo.blob.spi.BlobStore.PutSpec",
+            "java.io.InputStream",
+            "long",
+            "int"
+          ],
+          "returnType" : "ai.protomolt.proto.repo.blob.spi.BlobStore.PutResult",
+          "visibility" : "PUBLIC",
+          "staticMethod" : false,
+          "finalMethod" : false,
+          "abstractMethod" : false,
+          "defaultMethod" : true,
           "stability" : "STABLE"
         }
       ],

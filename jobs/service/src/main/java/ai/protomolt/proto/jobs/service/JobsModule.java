@@ -7,6 +7,7 @@ import ai.protomolt.proto.composer.ComposerException;
 import ai.protomolt.proto.composer.NodeContext;
 import ai.protomolt.proto.composer.ServiceModule;
 import ai.protomolt.proto.composer.ServiceMount;
+import ai.protomolt.proto.jobs.service.actions.CompleteStepAction;
 import ai.protomolt.proto.jobs.service.actions.GetJobAction;
 import ai.protomolt.proto.jobs.service.actions.ListJobsAction;
 import ai.protomolt.proto.jobs.service.actions.SubmitWorkflowAction;
@@ -86,6 +87,7 @@ public final class JobsModule implements ServiceModule {
                 new SubmitWorkflowAction(store, workflows, runsConfig.maxAttemptsDefault()));
         context.contributions().contribute(ProtoAction.class, new GetJobAction(store));
         context.contributions().contribute(ProtoAction.class, new ListJobsAction(store));
+        context.contributions().contribute(ProtoAction.class, new CompleteStepAction(store));
         return new ServiceMount() {
             @Override
             public void start() {

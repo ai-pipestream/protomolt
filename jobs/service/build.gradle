@@ -5,11 +5,13 @@ dependencies {
     api project(':protomolt-composer')
     api project(':protomolt-jobs-proto')
 
-    // The workflow engine the worker executes with (WorkflowJson/WorkflowVerifier/
-    // WorkflowRunner/WorkflowRepository); the actions implement ProtoAction.
+    // The workflow and pipeline engines the worker executes with; the actions
+    // implement ProtoAction.
     api project(':protomolt-workflow')
+    api project(':protomolt-pipeline')
     api project(':protomolt-actions')
 
+    implementation project(':protomolt-descriptors')
     // complete-step runs the parked step's declared validation rules as a
     // verdict before accepting the response.
     implementation project(':protomolt-protobuf-validation')
