@@ -331,19 +331,11 @@ public final class WorkflowRunWorker implements AutoCloseable {
                         + "'; the workflow definition changed under the job");
             }
             boolean skipped = entry.path("skipped").asBoolean(false);
-            JsonNode response = entry.get("response");
-            if (skipped || response == null || response.isNull()) {
-                prior.add(new WorkflowRunner.Checkpoint(name, skipped, null));
-                continue;
-            }
             try {
-                prior.add(new WorkflowRunner.Checkpoint(name, false,
-                        context.transcoder().fromJsonDynamic(response.toString(),
-                                step.method().getOutputType())));
-            } catch (MalformedProtobufJsonException e) {
-                throw new CorruptJobException("checkpoint '" + name + "' response is not "
-                        + "valid proto3 JSON for " + step.method().getOutputType().getFullName()
-                        + ": " + e.getMessage());
+                prior.add(WorkflowCheckpointCodec.readCheckpoint(
+                        name, skipped, entry, step.method().getOutputType(), context));
+            } catch (WorkflowCheckpointCodec.CorruptCheckpointException e) {
+                throw new CorruptJobException(e.getMessage());
             }
         }
         return prior;
@@ -429,18 +421,7 @@ public final class WorkflowRunWorker implements AutoCloseable {
             ObjectNode entry = array.addObject();
             entry.put("name", checkpoint.name());
             entry.put("skipped", checkpoint.skipped());
-            if (checkpoint.response() != null) {
-                try {
-                    entry.set("response", context.objectMapper()
-                            .readTree(context.transcoder().toJson(checkpoint.response())));
-                } catch (Exception e) {
-                    // A response the transcoder just produced must re-parse;
-                    // reaching here is a serialization bug — fail loud via
-                    // the runner's WORKFLOW-kind wrap.
-                    throw new IllegalStateException("could not render the checkpoint for '"
-                            + checkpoint.name() + "' as JSON", e);
-                }
-            }
+            WorkflowCheckpointCodec.writeResponse(entry, checkpoint, context);
         }
         return array.toString();
     }

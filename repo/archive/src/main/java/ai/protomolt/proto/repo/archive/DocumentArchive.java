@@ -65,6 +65,7 @@ import ai.protomolt.proto.repo.v1.Blob;
 import ai.protomolt.proto.repo.v1.BlobBag;
 import ai.protomolt.proto.repo.v1.Blobs;
 import ai.protomolt.proto.repo.v1.Document;
+import ai.protomolt.proto.repo.v1.DocumentSecurity;
 import ai.protomolt.proto.repo.v1.NodeAddress;
 import ai.protomolt.proto.repo.v1.OwnershipContext;
 import ai.protomolt.proto.repo.v1.SearchMetadata;
@@ -117,6 +118,7 @@ import com.google.protobuf.InvalidProtocolBufferException;
 import com.google.protobuf.Message;
 import com.google.protobuf.Struct;
 import com.google.protobuf.Timestamp;
+import com.google.protobuf.Value;
 import com.google.rpc.Code;
 import io.grpc.Channel;
 import io.grpc.Context;
@@ -815,6 +817,10 @@ public final class DocumentArchive {
         if (parsed != null) {
             document.putAllParserResults(parsedFragment(parsed, request.getAddress().getEntryId())
                     .getParserResultsMap());
+            document.getSearchMetadataBuilder()
+                    .removeMetadata(RepositorySinkProvenanceCodec.PARSED_PROVENANCE_METADATA_KEY)
+                    .removeMetadata(RepositorySinkProvenanceCodec.PARSED_RETAINED_DESCRIPTORS_METADATA_KEY)
+                    .removeMetadata(RepositorySinkProvenanceCodec.PARSED_RETAINED_MESSAGE_TYPE_METADATA_KEY);
         }
 
         SaveDocumentRequest.Builder save = SaveDocumentRequest.newBuilder()
@@ -1353,11 +1359,14 @@ public final class DocumentArchive {
             Map<String, String> metadata,
             FactsSource facts,
             Classification classification) {
+        OwnershipContext.Builder ownership = OwnershipContext.newBuilder()
+                .setAccountId(binding.accountId())
+                .setDatasourceId(binding.datasourceId());
+        current.filter(read -> read.getDocument().getOwnership().hasSecurity())
+                .ifPresent(read -> ownership.setSecurity(read.getDocument().getOwnership().getSecurity()));
         Document.Builder document = Document.newBuilder()
                 .setDocId(entry.getEntryId())
-                .setOwnership(OwnershipContext.newBuilder()
-                        .setAccountId(binding.accountId())
-                        .setDatasourceId(binding.datasourceId()));
+                .setOwnership(ownership);
         SearchMetadata.Builder search = current
                 .map(read -> read.getDocument().getSearchMetadata().toBuilder())
                 .orElseGet(() -> SearchMetadata.newBuilder().setCreationDate(now()));
@@ -1374,7 +1383,11 @@ public final class DocumentArchive {
             search.setLastModifiedDate(sourceModifiedAt);
         }
         if (!metadata.isEmpty()) {
+            Map<String, String> previousMeta = current
+                    .map(read -> read.getDocument().getSearchMetadata().getMetadataMap())
+                    .orElse(Map.of());
             search.clearMetadata().putAllMetadata(metadata);
+            RepositorySinkProvenanceCodec.preserveSystemSearchMetadata(previousMeta, search, false);
         }
         if (classification != null) {
             search.putMetadata(
@@ -1920,13 +1933,47 @@ public final class DocumentArchive {
         }
     }
 
+    /** Package-private customization for {@link RepositorySink} streamed uploads. */
+    record SinkUploadCustomization(
+            boolean createOnly,
+            String contentSha256Override,
+            String title,
+            String contentType,
+            String sourceUri,
+            Map<String, String> metadata,
+            DocumentSecurity explicitSecurity,
+            Map<String, Value> blobMetadataFields,
+            Map<String, String> systemSearchMetadata) {}
+
+    /** Package-private read result bundling the archive binding, current doc, and served version doc. */
+    record ServedEntry(
+            ArchiveBinding binding,
+            NodeAddress address,
+            GetDocumentResponse current,
+            GetDocumentResponse served) {}
+
+    ServedEntry readEntryDocument(EntryAddress entryAddress, long version) {
+        ArchiveBinding binding = binding(entryAddress);
+        NodeAddress address = ArchiveCoordinates.address(entryAddress);
+        GetDocumentResponse current = read(address, current(), CORE_AND_BLOBS);
+        GetDocumentResponse served = served(binding, address, current, version);
+        return new ServedEntry(binding, address, current, served);
+    }
+
     /**
      * Resolves an {@code UploadRendition} header frame: the outcome lookup first,
      * then the current revision and the one {@code UploadDocument} header whose
      * save lists every other current blob by ID for carry-forward.
      */
     UploadStart startUpload(UploadRenditionHeader header) {
+        return startUpload(header, null);
+    }
+
+    UploadStart startUpload(UploadRenditionHeader header, SinkUploadCustomization sink) {
         requireValid(header);
+        if (sink != null && !sink.metadata().isEmpty()) {
+            ArchiveClassifications.requireUserMetadataKeys(sink.metadata());
+        }
         FormatFact declared = ArchiveClassifications.declared(header.hasDeclared(), header.getDeclared());
         ObjectStoreOrigin origin = ArchiveClassifications.origin(header.hasOrigin(), header.getOrigin());
         ArchiveBinding binding = binding(header.getAddress());
@@ -1940,9 +1987,13 @@ public final class DocumentArchive {
             throw ArchiveErrors.invalid("rendition.sub_key",
                     "the parsed rendition is the document's PARSED part and takes no sub-key");
         }
-        String contentSha256 = ArchiveOperationKeys.uploadContentSha256(header);
+        String contentSha256 = sink != null && !sink.contentSha256Override().isEmpty()
+                ? sink.contentSha256Override()
+                : ArchiveOperationKeys.uploadContentSha256(header);
         String operationId = ArchiveOperationKeys.operationId(header, contentSha256);
-        boolean derivedLastWriteWins = header.getOperationId().isEmpty() && header.getExpectedVersion() == 0;
+        boolean derivedLastWriteWins = header.getOperationId().isEmpty()
+                && header.getExpectedVersion() == 0
+                && (sink == null || !sink.createOnly());
         Optional<Recorded> recorded = recordedOutcome(address, operationId, contentSha256, derivedLastWriteWins);
         boolean checkBytes = header.getExpectedSha256().isEmpty();
         if (recorded.isPresent()) {
@@ -1954,9 +2005,11 @@ public final class DocumentArchive {
         List<Blob> currentBlobs = current.map(read -> read.getDocument().getBlobBag().getBlobs().getBlobList())
                 .orElse(List.of());
         boolean primaryUpload = !parsed && ArchiveClassifications.isPrimaryUpload(currentBlobs, rendition);
-        ExpectedRevision expected = header.getExpectedVersion() > 0
-                ? ExpectedRevision.newBuilder().setRevision(header.getExpectedVersion()).build()
-                : lastWriteWins(address, current);
+        ExpectedRevision expected = sink != null && sink.createOnly()
+                ? ExpectedRevision.newBuilder().setNone(true).build()
+                : header.getExpectedVersion() > 0
+                        ? ExpectedRevision.newBuilder().setRevision(header.getExpectedVersion()).build()
+                        : lastWriteWins(address, current);
         BiFunction<ByteWindows, String, UploadHeader> headerBuilder = (windows, uploadedSha256) -> {
             Classification classification = resolveUploadClassification(
                     address, current, currentBlobs, header, declared, origin, primaryUpload, windows, uploadedSha256);
@@ -1964,13 +2017,28 @@ public final class DocumentArchive {
                     binding,
                     header.getAddress(),
                     current,
-                    "",
-                    "",
-                    "",
+                    sink != null ? sink.title() : "",
+                    sink != null ? sink.contentType() : "",
+                    sink != null ? sink.sourceUri() : "",
                     null,
-                    Map.of(),
+                    sink != null ? sink.metadata() : Map.of(),
                     facts(declared, origin),
                     classification);
+            if (sink != null && sink.explicitSecurity() != null) {
+                document.getOwnershipBuilder().setSecurity(sink.explicitSecurity());
+            }
+            if (parsed) {
+                if (sink == null || sink.systemSearchMetadata().isEmpty()) {
+                    document.getSearchMetadataBuilder()
+                            .removeMetadata(RepositorySinkProvenanceCodec.PARSED_PROVENANCE_METADATA_KEY)
+                            .removeMetadata(RepositorySinkProvenanceCodec.PARSED_RETAINED_DESCRIPTORS_METADATA_KEY)
+                            .removeMetadata(RepositorySinkProvenanceCodec.PARSED_RETAINED_MESSAGE_TYPE_METADATA_KEY);
+                } else {
+                    document.getSearchMetadataBuilder().putAllMetadata(sink.systemSearchMetadata());
+                }
+            } else if (sink != null && !sink.systemSearchMetadata().isEmpty()) {
+                document.getSearchMetadataBuilder().putAllMetadata(sink.systemSearchMetadata());
+            }
             SaveDocumentRequest.Builder save = SaveDocumentRequest.newBuilder()
                     .setOperationId(operationId)
                     .setTarget(DocumentTarget.newBuilder().setAddress(address))
@@ -1999,6 +2067,9 @@ public final class DocumentArchive {
                 }
                 if (!header.getFilename().isEmpty()) {
                     streamed.setFilename(header.getFilename());
+                }
+                if (sink != null && !sink.blobMetadataFields().isEmpty()) {
+                    streamed.setMetadata(Struct.newBuilder().putAllFields(sink.blobMetadataFields()));
                 }
                 boolean placed = false;
                 for (Blob blob : currentBlobs) {

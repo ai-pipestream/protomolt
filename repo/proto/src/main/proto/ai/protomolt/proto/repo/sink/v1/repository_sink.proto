@@ -1,0 +1,1139 @@
+syntax = "proto3";
+
+package ai.protomolt.proto.repo.sink.v1;
+
+import "ai/protomolt/proto/emit/v1/renderer.proto";
+import "ai/protomolt/proto/repo/archive/v1/entry.proto";
+import "ai/protomolt/proto/repo/v1/address.proto";
+import "ai/protomolt/proto/repo/v1/security.proto";
+import "ai/protomolt/proto/repo/v2/manifest.proto";
+import "ai/protomolt/proto/validate/v1/validate.proto";
+import "buf/validate/validate.proto";
+import "google/protobuf/timestamp.proto";
+
+option java_multiple_files = true;
+option java_package = "ai.protomolt.proto.repo.sink.v1";
+
+// ============================================================================
+// RepositorySinkService - explicit asset and rendition publication sink.
+//
+// Processing persistence retains workflow state for checkpoints and replay;
+// RepositorySinkService explicitly publishes selected protobuf processing state
+// or an authorized repository-backed revision as a digital asset or rendition
+// through the canonical archive and v2 DocumentService upload/save boundary.
+// ============================================================================
+
+// Exact identity, byte size, and SHA-256 digest of a source part or input
+// frozen into rendition provenance.
+message SourcePartDigest {
+  // Logical source part, rendition, or processing input identifier.
+  string identity = 1 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      required: true
+      string: {min_len: 1, max_len: 512, pattern: ".*\\S.*"}
+    },
+    (buf.validate.field) = {
+      required: true
+      string: {min_len: 1, max_len: 512, pattern: ".*\\S.*"}
+    }
+  ];
+  // Lowercase hex SHA-256 digest of the source bytes.
+  string sha256 = 2 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      required: true
+      string: {sha256_hex: true}
+    },
+    (buf.validate.field) = {
+      required: true
+      string: {len: 64, pattern: "^[0-9a-f]{64}$"}
+    }
+  ];
+  // Byte length of the digested source content.
+  int64 size_bytes = 3 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      int64: {gte: 0}
+    },
+    (buf.validate.field).int64.gte = 0
+  ];
+}
+
+// Direct processing protobuf state published as a first asset or rendition
+// without fabricating a prior repository revision.
+message ProcessingStateSource {
+  // Tenant account owning the processing state.
+  string account_id = 1 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      required: true
+      string: {min_len: 1, max_len: 200, pattern: ".*\\S.*"}
+    },
+    (buf.validate.field) = {
+      required: true
+      string: {min_len: 1, max_len: 200, pattern: ".*\\S.*"}
+    }
+  ];
+  // Durable workflow or processing run identifier, when produced by a run.
+  string run_id = 2 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      string: {max_len: 200}
+      ignore_if_zero: true
+    },
+    (buf.validate.field).string.max_len = 200
+  ];
+  // Workflow or pipeline step name that produced the selected protobuf state.
+  string step_name = 3 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      string: {max_len: 200}
+      ignore_if_zero: true
+    },
+    (buf.validate.field).string.max_len = 200
+  ];
+  // Immutable processing input identifier, when applicable.
+  string input_id = 4 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      string: {max_len: 200}
+      ignore_if_zero: true
+    },
+    (buf.validate.field).string.max_len = 200
+  ];
+  // Full protobuf message name of the root payload in descriptors.
+  string message_type = 5 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      required: true
+      string: {min_len: 1, max_len: 256, pattern: ".*\\S.*"}
+    },
+    (buf.validate.field) = {
+      required: true
+      string: {min_len: 1, max_len: 256, pattern: ".*\\S.*"}
+    }
+  ];
+  // Canonical descriptor closure fingerprint of descriptors for message_type.
+  string schema_fingerprint = 6 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      required: true
+      string: {min_len: 1, max_len: 128, pattern: ".*\\S.*"}
+    },
+    (buf.validate.field) = {
+      required: true
+      string: {min_len: 1, max_len: 128, pattern: ".*\\S.*"}
+    }
+  ];
+  // Closed binary google.protobuf.FileDescriptorSet defining message_type and all imports.
+  bytes descriptors = 7 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      required: true
+      bytes: {min_len: 1, max_len: 16777216}
+    },
+    (buf.validate.field) = {
+      required: true
+      bytes: {min_len: 1, max_len: 16777216}
+    }
+  ];
+  // Canonical binary protobuf payload of message_type; empty bytes represent an empty message.
+  bytes payload = 8 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      bytes: {max_len: 67108864}
+    },
+    (buf.validate.field).bytes.max_len = 67108864
+  ];
+  // Optional upstream processing input digests frozen alongside the selected output.
+  repeated SourcePartDigest input_digests = 9 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      repeated: {max_items: 128}
+    },
+    (buf.validate.field).repeated.max_items = 128
+  ];
+}
+
+// Repository-backed source selecting a protobuf rendition of an archive entry.
+message ArchiveRenditionSource {
+  // Logical address of the source archive entry.
+  ai.protomolt.proto.repo.archive.v1.EntryAddress address = 1 [
+    (ai.protomolt.proto.validate.v1.field).required = true,
+    (buf.validate.field).required = true
+  ];
+  // Exact source version or current convenience selector resolved once at admission.
+  ai.protomolt.proto.repo.v2.RevisionSelector revision = 2;
+  // Selected protobuf rendition on the source entry.
+  ai.protomolt.proto.repo.archive.v1.RenditionDescriptor rendition = 3 [
+    (ai.protomolt.proto.validate.v1.field).required = true,
+    (buf.validate.field).required = true
+  ];
+  // Optional expected retained schema fingerprint; mismatched revisions are refused.
+  string expected_schema_fingerprint = 4 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      string: {max_len: 128}
+      ignore_if_zero: true
+    },
+    (buf.validate.field).string.max_len = 128
+  ];
+}
+
+// Repository-backed source selecting a retained-schema protobuf part or Any occurrence
+// of a v2 document revision.
+message DocumentPartSource {
+  // Address of the source v2 document.
+  ai.protomolt.proto.repo.v1.NodeAddress address = 1 [
+    (ai.protomolt.proto.validate.v1.field).required = true,
+    (buf.validate.field).required = true
+  ];
+  // Exact source revision or current convenience selector resolved once at admission.
+  ai.protomolt.proto.repo.v2.RevisionSelector revision = 2;
+  // Selected v2 document part.
+  ai.protomolt.proto.repo.v2.PartSelector selector = 3 [
+    (ai.protomolt.proto.validate.v1.field).required = true,
+    (buf.validate.field).required = true
+  ];
+  // Optional Any occurrence field path inside the selected part (for example "structured_data").
+  string occurrence_field_path = 4 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      string: {max_len: 1024}
+      ignore_if_zero: true
+    },
+    (buf.validate.field).string.max_len = 1024
+  ];
+  // Optional expected retained schema fingerprint; mismatched revisions are refused.
+  string expected_schema_fingerprint = 5 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      string: {max_len: 128}
+      ignore_if_zero: true
+    },
+    (buf.validate.field).string.max_len = 128
+  ];
+}
+
+// Repository-backed source naming an authorized archive rendition or v2 document part.
+message RepositoryRevisionSource {
+  option (ai.protomolt.proto.validate.v1.message).cel = {
+    id: "repository_sink.source.target_required"
+    message: "exactly one repository source target is required"
+    expression: "has(this.archive_rendition) || has(this.document_part)"
+  };
+  // Target repository entity and part or rendition.
+  oneof target {
+    option (buf.validate.oneof).required = true;
+    // Source protobuf rendition on an archive entry.
+    ArchiveRenditionSource archive_rendition = 1;
+    // Source protobuf part or Any occurrence on a v2 document.
+    DocumentPartSource document_part = 2;
+  }
+}
+
+// Input source for capability discovery or repository sink publication.
+message SinkSource {
+  option (ai.protomolt.proto.validate.v1.message).cel = {
+    id: "repository_sink.source.kind_required"
+    message: "a sink source must select processing_state or repository_revision"
+    expression: "has(this.processing_state) || has(this.repository_revision)"
+  };
+  // Selected source arm.
+  oneof kind {
+    option (buf.validate.oneof).required = true;
+    // Direct processing protobuf state with no prior repository revision.
+    ProcessingStateSource processing_state = 1;
+    // Existing repository-backed archive rendition or document part.
+    RepositoryRevisionSource repository_revision = 2;
+  }
+}
+
+// Optional bounded conversion specification executed before repository publication.
+// Carries exact renderer coordinates and typed protobuf options, never filesystem
+// paths or raw credentials.
+message ConversionSpec {
+  // Enabled renderer provider identifier matching RendererCapability.provider_id.
+  string provider_id = 1 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      required: true
+      string: {min_len: 1, max_len: 256, pattern: ".*\\S.*"}
+    },
+    (buf.validate.field) = {
+      required: true
+      string: {min_len: 1, max_len: 256, pattern: ".*\\S.*"}
+    }
+  ];
+  // Exact provider version bound into publication intent.
+  string provider_version = 2 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      required: true
+      string: {min_len: 1, max_len: 256, pattern: ".*\\S.*"}
+    },
+    (buf.validate.field) = {
+      required: true
+      string: {min_len: 1, max_len: 256, pattern: ".*\\S.*"}
+    }
+  ];
+  // Declared semantic input profile matching RendererCapability.source_profile.
+  string source_profile = 3 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      required: true
+      string: {min_len: 1, max_len: 256, pattern: ".*\\S.*"}
+    },
+    (buf.validate.field) = {
+      required: true
+      string: {min_len: 1, max_len: 256, pattern: ".*\\S.*"}
+    }
+  ];
+  // Target artifact IANA media type matching RendererCapability.media_type.
+  string media_type = 4 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      required: true
+      string: {mime_type: true, max_len: 256}
+    },
+    (buf.validate.field) = {
+      required: true
+      string: {min_len: 1, max_len: 256, pattern: "^[^\\s/]+/[^\\s/]+.*$"}
+    }
+  ];
+  // Suggested filename suffix without a leading dot or path separator.
+  string extension = 5 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      required: true
+      string: {path_safe_name: true, max_len: 256}
+    },
+    (buf.validate.field) = {
+      required: true
+      string: {min_len: 1, max_len: 256, pattern: "^[A-Za-z0-9][A-Za-z0-9._-]*$"}
+    }
+  ];
+  // Full protobuf message name of the renderer options type.
+  string options_type = 6 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      required: true
+      string: {min_len: 1, max_len: 256, pattern: ".*\\S.*"}
+    },
+    (buf.validate.field) = {
+      required: true
+      string: {min_len: 1, max_len: 256, pattern: ".*\\S.*"}
+    }
+  ];
+  // Canonical descriptor closure fingerprint of options_type.
+  string options_fingerprint = 7 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      required: true
+      string: {min_len: 1, max_len: 256, pattern: ".*\\S.*"}
+    },
+    (buf.validate.field) = {
+      required: true
+      string: {min_len: 1, max_len: 256, pattern: ".*\\S.*"}
+    }
+  ];
+  // Serialized binary protobuf options of options_type; empty bytes select defaults.
+  bytes options = 8 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      bytes: {max_len: 1048576}
+    },
+    (buf.validate.field).bytes.max_len = 1048576
+  ];
+  // Optional projection or column-mapping identifier recorded in provenance.
+  string mapping_id = 9 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      string: {max_len: 256}
+      ignore_if_zero: true
+    },
+    (buf.validate.field).string.max_len = 256
+  ];
+  // Optional disclosure or masking policy identifier recorded in provenance.
+  string policy_id = 10 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      string: {max_len: 256}
+      ignore_if_zero: true
+    },
+    (buf.validate.field).string.max_len = 256
+  ];
+}
+
+// Destination entry, rendition slot, and independent destination version precondition.
+message SinkDestination {
+  option (ai.protomolt.proto.validate.v1.message).cel = {
+    id: "repository_sink.destination.precondition_consistent"
+    message: "create_only cannot be combined with a positive expected_destination_version"
+    expression: "!(this.create_only && this.expected_destination_version > 0)"
+  };
+  option (buf.validate.message).cel = {
+    id: "repository_sink.destination.precondition_consistent"
+    message: "create_only cannot be combined with a positive expected_destination_version"
+    expression: "!(this.create_only && this.expected_destination_version > 0)"
+  };
+  // Destination archive entry address.
+  ai.protomolt.proto.repo.archive.v1.EntryAddress address = 1 [
+    (ai.protomolt.proto.validate.v1.field).required = true,
+    (buf.validate.field).required = true
+  ];
+  // Destination rendition descriptor written on the target entry.
+  ai.protomolt.proto.repo.archive.v1.RenditionDescriptor rendition = 2 [
+    (ai.protomolt.proto.validate.v1.field).required = true,
+    (buf.validate.field).required = true
+  ];
+  // Optimistic concurrency precondition on the destination entry, independent of
+  // source_revision: when > 0, publication commits only if the destination entry's
+  // current version equals this value (ABORTED otherwise).
+  int64 expected_destination_version = 3 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      int64: {gte: 0}
+    },
+    (buf.validate.field).int64.gte = 0
+  ];
+  // When true, publication commits only if the destination entry does not yet exist
+  // (ABORTED if any revision already exists).
+  bool create_only = 4;
+  // Write attribution stamped on the saved rendition.
+  ai.protomolt.proto.repo.archive.v1.WriteAttribution written_by = 5;
+  // Optional display title set or updated on the destination entry.
+  string title = 6 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      string: {max_len: 500}
+      ignore_if_zero: true
+    },
+    (buf.validate.field).string.max_len = 500
+  ];
+  // Optional original filename, allowed only when writing the "original" rendition.
+  string filename = 7 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      string: {max_len: 500}
+      ignore_if_zero: true
+    },
+    (buf.validate.field).string.max_len = 500
+  ];
+  // Optional primary content media type set on the destination entry.
+  string content_type = 8 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      string: {mime_type: true, max_len: 200}
+      ignore_if_zero: true
+    },
+    (buf.validate.field).string = {max_len: 200, pattern: "^(|[^\\s/]+/[^\\s/]+.*)$"}
+  ];
+  // Optional source URI recorded on the destination entry.
+  string source_uri = 9 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      string: {max_len: 2000}
+      ignore_if_zero: true
+    },
+    (buf.validate.field).string.max_len = 2000
+  ];
+  // Optional explicit disclosure ACLs for the destination entry; when unset on an
+  // existing entry, the entry's current DocumentSecurity policy is preserved.
+  ai.protomolt.proto.repo.v1.DocumentSecurity security = 10;
+  // Optional user metadata labels (keys starting with "archive." are reserved).
+  map<string, string> metadata = 11;
+}
+
+// Immutable provenance persisted with a published asset or derived rendition.
+message RenditionProvenance {
+  option (ai.protomolt.proto.validate.v1.message).cel = {
+    id: "repository_sink.provenance.derived_not_authoritative"
+    message: "a converted rendition cannot be marked authoritative_protobuf and must record loss_description"
+    expression: "(this.provider_id == '' && this.authoritative_protobuf) || (this.provider_id != '' && !this.authoritative_protobuf && this.loss_description != '')"
+  };
+  option (buf.validate.message).cel = {
+    id: "repository_sink.provenance.derived_not_authoritative"
+    message: "a converted rendition cannot be marked authoritative_protobuf and must record loss_description"
+    expression: "(this.provider_id == '' && this.authoritative_protobuf) || (this.provider_id != '' && !this.authoritative_protobuf && this.loss_description != '')"
+  };
+  // Operation identifier that committed this rendition.
+  string operation_id = 1 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      required: true
+      string: {min_len: 1, max_len: 200, pattern: ".*\\S.*"}
+    },
+    (buf.validate.field) = {
+      required: true
+      string: {min_len: 1, max_len: 200, pattern: ".*\\S.*"}
+    }
+  ];
+  // Exact repository revision of the source entity; 0 when published directly from
+  // processing state with no prior repository revision.
+  int64 source_revision = 2 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      int64: {gte: 0}
+    },
+    (buf.validate.field).int64.gte = 0
+  ];
+  // Source archive entry address when derived from an archive entry.
+  ai.protomolt.proto.repo.archive.v1.EntryAddress source_entry = 3;
+  // Source rendition descriptor when derived from an archive rendition.
+  ai.protomolt.proto.repo.archive.v1.RenditionDescriptor source_rendition = 4;
+  // Source v2 document address when derived from a v2 document part.
+  ai.protomolt.proto.repo.v1.NodeAddress source_document = 5;
+  // Source v2 document part selector when derived from a v2 document part.
+  ai.protomolt.proto.repo.v2.PartSelector source_part = 6;
+  // Optional Any occurrence field path within source_part.
+  string source_occurrence_field_path = 7 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      string: {max_len: 1024}
+      ignore_if_zero: true
+    },
+    (buf.validate.field).string.max_len = 1024
+  ];
+  // Processing run identifier when produced from processing state.
+  string processing_run_id = 8 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      string: {max_len: 200}
+      ignore_if_zero: true
+    },
+    (buf.validate.field).string.max_len = 200
+  ];
+  // Processing step name when produced from processing state.
+  string processing_step_name = 9 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      string: {max_len: 200}
+      ignore_if_zero: true
+    },
+    (buf.validate.field).string.max_len = 200
+  ];
+  // Processing input identifier when produced from processing state.
+  string processing_input_id = 10 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      string: {max_len: 200}
+      ignore_if_zero: true
+    },
+    (buf.validate.field).string.max_len = 200
+  ];
+  // Exact source part, rendition, and input byte digests frozen at admission.
+  repeated SourcePartDigest source_digests = 11 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      repeated: {min_items: 1, max_items: 128}
+    },
+    (buf.validate.field).repeated = {min_items: 1, max_items: 128}
+  ];
+  // Full protobuf message name of the source schema.
+  string schema_type = 12 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      required: true
+      string: {min_len: 1, max_len: 256, pattern: ".*\\S.*"}
+    },
+    (buf.validate.field) = {
+      required: true
+      string: {min_len: 1, max_len: 256, pattern: ".*\\S.*"}
+    }
+  ];
+  // Canonical descriptor closure fingerprint of the source schema.
+  string schema_fingerprint = 13 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      required: true
+      string: {min_len: 1, max_len: 128, pattern: ".*\\S.*"}
+    },
+    (buf.validate.field) = {
+      required: true
+      string: {min_len: 1, max_len: 128, pattern: ".*\\S.*"}
+    }
+  ];
+  // SHA-256 of the retained FileDescriptorSet bytes bound to the source schema.
+  string retained_descriptor_sha256 = 14 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      string: {sha256_hex: true}
+      ignore_if_zero: true
+    },
+    (buf.validate.field).string = {max_len: 64, pattern: "^(|[0-9a-f]{64})$"}
+  ];
+  // True only when raw protobuf state was saved directly without conversion; always
+  // false for derived formats such as PDF, Markdown, or Parquet.
+  bool authoritative_protobuf = 15;
+  // Renderer provider identifier when converted; empty for direct protobuf saves.
+  string provider_id = 16 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      string: {max_len: 256}
+      ignore_if_zero: true
+    },
+    (buf.validate.field).string.max_len = 256
+  ];
+  // Renderer provider version when converted; empty for direct protobuf saves.
+  string provider_version = 17 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      string: {max_len: 256}
+      ignore_if_zero: true
+    },
+    (buf.validate.field).string.max_len = 256
+  ];
+  // Renderer semantic source profile when converted.
+  string source_profile = 18 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      string: {max_len: 256}
+      ignore_if_zero: true
+    },
+    (buf.validate.field).string.max_len = 256
+  ];
+  // Renderer protobuf options type when converted.
+  string options_type = 19 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      string: {max_len: 256}
+      ignore_if_zero: true
+    },
+    (buf.validate.field).string.max_len = 256
+  ];
+  // Renderer options descriptor closure fingerprint when converted.
+  string options_fingerprint = 20 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      string: {max_len: 256}
+      ignore_if_zero: true
+    },
+    (buf.validate.field).string.max_len = 256
+  ];
+  // Lowercase hex SHA-256 of the canonical serialized renderer options when converted.
+  string options_sha256 = 21 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      string: {sha256_hex: true}
+      ignore_if_zero: true
+    },
+    (buf.validate.field).string = {max_len: 64, pattern: "^(|[0-9a-f]{64})$"}
+  ];
+  // Projection or mapping identifier recorded with conversion, when supplied.
+  string mapping_id = 22 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      string: {max_len: 256}
+      ignore_if_zero: true
+    },
+    (buf.validate.field).string.max_len = 256
+  ];
+  // Disclosure or masking policy identifier recorded with conversion, when supplied.
+  string policy_id = 23 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      string: {max_len: 256}
+      ignore_if_zero: true
+    },
+    (buf.validate.field).string.max_len = 256
+  ];
+  // Explicit statement of representation loss or omission for converted outputs.
+  string loss_description = 24 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      string: {max_len: 1024}
+      ignore_if_zero: true
+    },
+    (buf.validate.field).string.max_len = 1024
+  ];
+  // Media type of the committed rendition bytes.
+  string output_media_type = 25 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      required: true
+      string: {mime_type: true, max_len: 256}
+    },
+    (buf.validate.field) = {
+      required: true
+      string: {min_len: 1, max_len: 256, pattern: "^[^\\s/]+/[^\\s/]+.*$"}
+    }
+  ];
+  // Number of artifact bytes produced by the source or renderer prior to repository commit.
+  int64 bytes_rendered = 26 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      int64: {gte: 0}
+    },
+    (buf.validate.field).int64.gte = 0
+  ];
+  // Number of artifact bytes durably committed in the destination repository version.
+  int64 bytes_committed = 27 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      int64: {gte: 0}
+    },
+    (buf.validate.field).int64.gte = 0
+  ];
+  // Lowercase hex SHA-256 of the committed rendition bytes.
+  string output_sha256 = 28 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      required: true
+      string: {sha256_hex: true}
+    },
+    (buf.validate.field) = {
+      required: true
+      string: {len: 64, pattern: "^[0-9a-f]{64}$"}
+    }
+  ];
+  // Destination archive entry where this rendition landed.
+  ai.protomolt.proto.repo.archive.v1.EntryAddress destination_address = 29 [
+    (ai.protomolt.proto.validate.v1.field).required = true,
+    (buf.validate.field).required = true
+  ];
+  // Destination rendition descriptor written by this publication.
+  ai.protomolt.proto.repo.archive.v1.RenditionDescriptor destination_rendition = 30 [
+    (ai.protomolt.proto.validate.v1.field).required = true,
+    (buf.validate.field).required = true
+  ];
+  // New immutable version of destination_address created by attaching this rendition.
+  int64 destination_version = 31 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      required: true
+      int64: {gt: 0}
+    },
+    (buf.validate.field).int64.gt = 0
+  ];
+  // True when the receipt was returned from an earlier identical operation replay.
+  bool replayed = 32;
+  // Server timestamp when the rendition committed.
+  google.protobuf.Timestamp committed_at = 33 [
+    (ai.protomolt.proto.validate.v1.field).required = true,
+    (buf.validate.field).required = true
+  ];
+}
+
+// Compatibility verdict for an installed renderer capability against a specific source.
+enum SaveAsCompatibilityStatus {
+  // Unset; never returned on a valid SaveAsCapability.
+  SAVE_AS_COMPATIBILITY_STATUS_UNSPECIFIED = 0;
+  // The capability accepts the source descriptor, payload, and input byte budget.
+  SAVE_AS_COMPATIBILITY_STATUS_COMPATIBLE = 1;
+  // The capability rejects the source descriptor, payload, or input byte budget.
+  SAVE_AS_COMPATIBILITY_STATUS_INCOMPATIBLE = 2;
+}
+
+// One enabled renderer capability evaluated against an authorized source.
+message SaveAsCapability {
+  // Advertised bounded renderer capability contract.
+  ai.protomolt.proto.emit.v1.RendererCapability capability = 1 [
+    (ai.protomolt.proto.validate.v1.field).required = true,
+    (buf.validate.field).required = true
+  ];
+  // Compatibility verdict for the inspected source.
+  SaveAsCompatibilityStatus status = 2 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      required: true
+      enum: {defined_only: true}
+    },
+    (buf.validate.field) = {
+      enum: {defined_only: true, not_in: [0]}
+    }
+  ];
+  // Diagnostic reason populated when status is SAVE_AS_COMPATIBILITY_STATUS_INCOMPATIBLE.
+  string incompatibility_reason = 3 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      string: {max_len: 1024}
+      ignore_if_zero: true
+    },
+    (buf.validate.field).string.max_len = 1024
+  ];
+  // Optional closed FileDescriptorSet for capability.options_type so dynamic clients
+  // can inspect and encode typed renderer options without precompiled stubs.
+  bytes options_descriptors = 4 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      bytes: {max_len: 4194304}
+    },
+    (buf.validate.field).bytes.max_len = 4194304
+  ];
+}
+
+// Request to list enabled renderer capabilities compatible with an authorized source.
+message ListSaveAsCapabilitiesRequest {
+  // Source protobuf state or repository-backed part/rendition to inspect.
+  SinkSource source = 1 [
+    (ai.protomolt.proto.validate.v1.field).required = true,
+    (buf.validate.field).required = true
+  ];
+}
+
+// Response carrying renderer capability verdicts for the inspected source.
+message ListSaveAsCapabilitiesResponse {
+  // Resolved repository revision inspected; 0 for direct processing state.
+  int64 resolved_source_revision = 1 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      int64: {gte: 0}
+    },
+    (buf.validate.field).int64.gte = 0
+  ];
+  // Full protobuf message name of the inspected source schema.
+  string source_schema_type = 2 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      required: true
+      string: {min_len: 1, max_len: 256, pattern: ".*\\S.*"}
+    },
+    (buf.validate.field) = {
+      required: true
+      string: {min_len: 1, max_len: 256, pattern: ".*\\S.*"}
+    }
+  ];
+  // Canonical descriptor closure fingerprint of the inspected source schema.
+  string source_schema_fingerprint = 3 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      required: true
+      string: {min_len: 1, max_len: 128, pattern: ".*\\S.*"}
+    },
+    (buf.validate.field) = {
+      required: true
+      string: {min_len: 1, max_len: 128, pattern: ".*\\S.*"}
+    }
+  ];
+  // Serialized protobuf byte length of the inspected source message.
+  int64 source_size_bytes = 4 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      int64: {gte: 0}
+    },
+    (buf.validate.field).int64.gte = 0
+  ];
+  // Enabled capabilities evaluated in deterministic provider order.
+  repeated SaveAsCapability capabilities = 5;
+}
+
+// Lifecycle state of a durable repository sink publication job.
+enum RepositorySinkJobState {
+  // Unset; never persisted on a valid job record.
+  REPOSITORY_SINK_JOB_STATE_UNSPECIFIED = 0;
+  // Admitted with frozen source revision, awaiting execution.
+  REPOSITORY_SINK_JOB_STATE_QUEUED = 1;
+  // Conversion or streamed repository upload is actively executing.
+  REPOSITORY_SINK_JOB_STATE_RUNNING = 2;
+  // Rendition bytes and provenance committed durably to the destination entry.
+  REPOSITORY_SINK_JOB_STATE_SUCCEEDED = 3;
+  // Execution terminated with an explicit refusal, conflict, or renderer/save failure.
+  REPOSITORY_SINK_JOB_STATE_FAILED = 4;
+  // Execution was cancelled before committing a destination revision.
+  REPOSITORY_SINK_JOB_STATE_CANCELLED = 5;
+  // Commit reply was lost; reconciles against v2 GetOperationOutcome before re-running.
+  REPOSITORY_SINK_JOB_STATE_UNRESOLVED = 6;
+}
+
+// Structured failure recorded on a FAILED, CANCELLED, or UNRESOLVED sink job.
+message RepositorySinkFailure {
+  // Canonical gRPC status code number (1..16).
+  int32 grpc_code = 1 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      required: true
+      int32: {gte: 1, lte: 16}
+    },
+    (buf.validate.field).int32 = {gte: 1, lte: 16}
+  ];
+  // Stable machine-readable failure reason code.
+  string reason_code = 2 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      required: true
+      string: {min_len: 1, max_len: 128, pattern: ".*\\S.*"}
+    },
+    (buf.validate.field) = {
+      required: true
+      string: {min_len: 1, max_len: 128, pattern: ".*\\S.*"}
+    }
+  ];
+  // Human-readable diagnostic message.
+  string message = 3 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      required: true
+      string: {min_len: 1, max_len: 2048, pattern: ".*\\S.*"}
+    },
+    (buf.validate.field) = {
+      required: true
+      string: {min_len: 1, max_len: 2048, pattern: ".*\\S.*"}
+    }
+  ];
+  // True when retrying the same operation_id and intent may succeed without edits.
+  bool retryable = 4;
+  // True when the failure was caused by a destination optimistic concurrency conflict.
+  bool conflict = 5;
+}
+
+// Durable publication job and outcome receipt for a repository sink operation.
+message RepositorySinkJob {
+  // Owning account identifier.
+  string account_id = 1 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      required: true
+      string: {min_len: 1, max_len: 200, pattern: ".*\\S.*"}
+    },
+    (buf.validate.field) = {
+      required: true
+      string: {min_len: 1, max_len: 200, pattern: ".*\\S.*"}
+    }
+  ];
+  // Caller-supplied or deterministically derived operation identifier.
+  string operation_id = 2 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      required: true
+      string: {min_len: 1, max_len: 200, pattern: ".*\\S.*"}
+    },
+    (buf.validate.field) = {
+      required: true
+      string: {min_len: 1, max_len: 200, pattern: ".*\\S.*"}
+    }
+  ];
+  // Lowercase hex SHA-256 of the canonical (source + conversion + destination) intent.
+  string intent_sha256 = 3 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      required: true
+      string: {sha256_hex: true}
+    },
+    (buf.validate.field) = {
+      required: true
+      string: {len: 64, pattern: "^[0-9a-f]{64}$"}
+    }
+  ];
+  // Current lifecycle state of the job.
+  RepositorySinkJobState state = 4 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      required: true
+      enum: {defined_only: true}
+    },
+    (buf.validate.field) = {
+      enum: {defined_only: true, not_in: [0]}
+    }
+  ];
+  // Source revision frozen at admission; 0 when published from direct processing state.
+  int64 frozen_source_revision = 5 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      int64: {gte: 0}
+    },
+    (buf.validate.field).int64.gte = 0
+  ];
+  // Target archive entry address.
+  ai.protomolt.proto.repo.archive.v1.EntryAddress destination_address = 6 [
+    (ai.protomolt.proto.validate.v1.field).required = true,
+    (buf.validate.field).required = true
+  ];
+  // Target rendition descriptor.
+  ai.protomolt.proto.repo.archive.v1.RenditionDescriptor destination_rendition = 7 [
+    (ai.protomolt.proto.validate.v1.field).required = true,
+    (buf.validate.field).required = true
+  ];
+  // Requested optimistic concurrency precondition on the destination entry.
+  int64 expected_destination_version = 8 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      int64: {gte: 0}
+    },
+    (buf.validate.field).int64.gte = 0
+  ];
+  // Whether create_only was requested on the destination entry.
+  bool create_only = 9;
+  // Bytes produced by the source or renderer; tracked separately from bytes_committed.
+  int64 bytes_rendered = 10 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      int64: {gte: 0}
+    },
+    (buf.validate.field).int64.gte = 0
+  ];
+  // Bytes confirmed committed in the destination repository version (0 until committed).
+  int64 bytes_committed = 11 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      int64: {gte: 0}
+    },
+    (buf.validate.field).int64.gte = 0
+  ];
+  // Landed destination entry version (0 until SUCCEEDED).
+  int64 destination_version = 12 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      int64: {gte: 0}
+    },
+    (buf.validate.field).int64.gte = 0
+  ];
+  // Deterministic destination entry UUID populated when SUCCEEDED.
+  string entry_uuid = 13 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      string: {max_len: 64}
+      ignore_if_zero: true
+    },
+    (buf.validate.field).string.max_len = 64
+  ];
+  // Root checksum of the committed destination version populated when SUCCEEDED.
+  string root_checksum = 14 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      string: {sha256_hex: true}
+      ignore_if_zero: true
+    },
+    (buf.validate.field).string = {max_len: 64, pattern: "^(|[0-9a-f]{64})$"}
+  ];
+  // True when this response replayed or reconciled an already-committed operation.
+  bool replayed = 15;
+  // Committed rendition provenance populated when state is REPOSITORY_SINK_JOB_STATE_SUCCEEDED.
+  RenditionProvenance provenance = 16;
+  // Structured failure details populated when state is FAILED, CANCELLED, or UNRESOLVED.
+  RepositorySinkFailure failure = 17;
+  // Timestamp when the job was first admitted.
+  google.protobuf.Timestamp created_at = 18 [
+    (ai.protomolt.proto.validate.v1.field).required = true,
+    (buf.validate.field).required = true
+  ];
+  // Timestamp when the job state was last updated.
+  google.protobuf.Timestamp updated_at = 19 [
+    (ai.protomolt.proto.validate.v1.field).required = true,
+    (buf.validate.field).required = true
+  ];
+}
+
+// Request to publish selected processing state or a repository-backed revision as an
+// asset or rendition, optionally converting through an enabled renderer capability.
+message PublishRepositorySinkRequest {
+  // Selected processing state or repository-backed source.
+  SinkSource source = 1 [
+    (ai.protomolt.proto.validate.v1.field).required = true,
+    (buf.validate.field).required = true
+  ];
+  // Optional conversion specification; absent saves raw protobuf state directly.
+  ConversionSpec conversion = 2;
+  // Target entry, rendition slot, and destination precondition.
+  SinkDestination destination = 3 [
+    (ai.protomolt.proto.validate.v1.field).required = true,
+    (buf.validate.field).required = true
+  ];
+  // Retry and idempotency key bound to (source + conversion + destination) intent;
+  // blank derives a deterministic UUIDv5 from the canonical intent.
+  string operation_id = 4 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      string: {min_len: 1, max_len: 200, pattern: ".*\\S.*"}
+      ignore_if_zero: true
+    },
+    (buf.validate.field).string = {max_len: 200, pattern: "^(|.*\\S.*)$"}
+  ];
+  // When true, admits and enqueues background execution returning the QUEUED/RUNNING
+  // job immediately; when false, executes synchronously to settlement.
+  bool async = 5;
+}
+
+// Response carrying the settled or queued repository sink publication job.
+message PublishRepositorySinkResponse {
+  // Publication job state and receipt.
+  RepositorySinkJob job = 1 [
+    (ai.protomolt.proto.validate.v1.field).required = true,
+    (buf.validate.field).required = true
+  ];
+}
+
+// Request to inspect a durable repository sink publication job by operation ID.
+message GetRepositorySinkJobRequest {
+  // Owning account identifier.
+  string account_id = 1 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      required: true
+      string: {min_len: 1, max_len: 200, pattern: ".*\\S.*"}
+    },
+    (buf.validate.field) = {
+      required: true
+      string: {min_len: 1, max_len: 200, pattern: ".*\\S.*"}
+    }
+  ];
+  // Operation identifier of the sink job.
+  string operation_id = 2 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      required: true
+      string: {min_len: 1, max_len: 200, pattern: ".*\\S.*"}
+    },
+    (buf.validate.field) = {
+      required: true
+      string: {min_len: 1, max_len: 200, pattern: ".*\\S.*"}
+    }
+  ];
+}
+
+// Response carrying the requested repository sink publication job.
+message GetRepositorySinkJobResponse {
+  // Current durable job state, reconciling any UNRESOLVED outcome first.
+  RepositorySinkJob job = 1 [
+    (ai.protomolt.proto.validate.v1.field).required = true,
+    (buf.validate.field).required = true
+  ];
+}
+
+// Request to cancel an in-flight or queued repository sink publication job.
+message CancelRepositorySinkJobRequest {
+  // Owning account identifier.
+  string account_id = 1 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      required: true
+      string: {min_len: 1, max_len: 200, pattern: ".*\\S.*"}
+    },
+    (buf.validate.field) = {
+      required: true
+      string: {min_len: 1, max_len: 200, pattern: ".*\\S.*"}
+    }
+  ];
+  // Operation identifier of the sink job to cancel.
+  string operation_id = 2 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      required: true
+      string: {min_len: 1, max_len: 200, pattern: ".*\\S.*"}
+    },
+    (buf.validate.field) = {
+      required: true
+      string: {min_len: 1, max_len: 200, pattern: ".*\\S.*"}
+    }
+  ];
+  // Optional diagnostic reason recorded if cancellation wins before commit.
+  string reason = 3 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      string: {max_len: 500}
+      ignore_if_zero: true
+    },
+    (buf.validate.field).string.max_len = 500
+  ];
+}
+
+// Response carrying the job state after applying cancellation.
+message CancelRepositorySinkJobResponse {
+  // Resulting job state (CANCELLED if interrupted before commit, or terminal state if already settled).
+  RepositorySinkJob job = 1 [
+    (ai.protomolt.proto.validate.v1.field).required = true,
+    (buf.validate.field).required = true
+  ];
+}
+
+// Provenance record for one rendition of an archive entry version, enriched with
+// live source currency metadata for inspection UIs.
+message RenditionProvenanceEntry {
+  // Rendition descriptor on the inspected archive entry version.
+  ai.protomolt.proto.repo.archive.v1.RenditionDescriptor rendition = 1 [
+    (ai.protomolt.proto.validate.v1.field).required = true,
+    (buf.validate.field).required = true
+  ];
+  // Immutable provenance recorded when the rendition was published.
+  RenditionProvenance provenance = 2 [
+    (ai.protomolt.proto.validate.v1.field).required = true,
+    (buf.validate.field).required = true
+  ];
+  // Current head revision of the source entity when repository-backed and readable; 0 otherwise.
+  int64 current_source_revision = 3 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      int64: {gte: 0}
+    },
+    (buf.validate.field).int64.gte = 0
+  ];
+  // True when provenance.source_revision > 0 and the source entity has advanced or been deleted.
+  bool source_stale = 4;
+}
+
+// Request to list rendition provenance records for an archive entry version.
+message ListRenditionProvenanceRequest {
+  // Archive entry address to inspect.
+  ai.protomolt.proto.repo.archive.v1.EntryAddress address = 1 [
+    (ai.protomolt.proto.validate.v1.field).required = true,
+    (buf.validate.field).required = true
+  ];
+  // Entry version to inspect; 0 selects the current version.
+  int64 version = 2 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      int64: {gte: 0}
+    },
+    (buf.validate.field).int64.gte = 0
+  ];
+}
+
+// Response carrying rendition provenance records for the requested entry version.
+message ListRenditionProvenanceResponse {
+  // Inspected archive entry address.
+  ai.protomolt.proto.repo.archive.v1.EntryAddress address = 1 [
+    (ai.protomolt.proto.validate.v1.field).required = true,
+    (buf.validate.field).required = true
+  ];
+  // Resolved entry version whose renditions were inspected.
+  int64 version = 2 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      required: true
+      int64: {gt: 0}
+    },
+    (buf.validate.field).int64.gt = 0
+  ];
+  // Current latest version of the archive entry.
+  int64 current_entry_version = 3 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      required: true
+      int64: {gt: 0}
+    },
+    (buf.validate.field).int64.gt = 0
+  ];
+  // Provenance entries in deterministic rendition order.
+  repeated RenditionProvenanceEntry entries = 4;
+}
+
+// Explicit repository sink coordinating capability discovery, optional bounded
+// rendering, streamed rendition publication, provenance inspection, and job control.
+service RepositorySinkService {
+  // Inspect an authorized source against enabled renderer capabilities without side effects.
+  rpc ListSaveAsCapabilities(ListSaveAsCapabilitiesRequest) returns (ListSaveAsCapabilitiesResponse);
+  // Publish selected protobuf processing state or an authorized repository source as an asset or rendition.
+  rpc PublishRepositorySink(PublishRepositorySinkRequest) returns (PublishRepositorySinkResponse);
+  // Retrieve the current state and receipt of a repository sink publication job.
+  rpc GetRepositorySinkJob(GetRepositorySinkJobRequest) returns (GetRepositorySinkJobResponse);
+  // Request cancellation of a queued or running repository sink publication job.
+  rpc CancelRepositorySinkJob(CancelRepositorySinkJobRequest) returns (CancelRepositorySinkJobResponse);
+  // List persisted rendition provenance records for a current or historical archive entry version.
+  rpc ListRenditionProvenance(ListRenditionProvenanceRequest) returns (ListRenditionProvenanceResponse);
+}

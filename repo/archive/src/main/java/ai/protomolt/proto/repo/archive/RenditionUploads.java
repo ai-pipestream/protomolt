@@ -123,7 +123,7 @@ public final class RenditionUploads {
 
     /** Starts one upload call; the returned observer receives the client's frames. */
     public StreamObserver<UploadRenditionRequest> upload(StreamObserver<UploadRenditionResponse> responses) {
-        return new Call(responses);
+        return new Call(responses, null);
     }
 
     /**
@@ -133,11 +133,18 @@ public final class RenditionUploads {
      * @return the flow-controlled request observer
      */
     public FlowControlledUpload uploadFlowControlled(StreamObserver<UploadRenditionResponse> responses) {
-        return new Call(responses);
+        return new Call(responses, null);
+    }
+
+    FlowControlledUpload uploadFlowControlled(
+            DocumentArchive.SinkUploadCustomization sink,
+            StreamObserver<UploadRenditionResponse> responses) {
+        return new Call(responses, sink);
     }
 
     private final class Call implements FlowControlledUpload {
         private final StreamObserver<UploadRenditionResponse> responses;
+        private final DocumentArchive.SinkUploadCustomization sink;
         private final ServerCallStreamObserver<UploadRenditionResponse> server;
         private final ReentrantLock lock = new ReentrantLock();
         private final Condition readyChanged = lock.newCondition();
@@ -159,8 +166,11 @@ public final class RenditionUploads {
         /** The outcome has reached {@link #responses}, or the client ended the upload itself. */
         private boolean settled;
 
-        Call(StreamObserver<UploadRenditionResponse> responses) {
+        Call(
+                StreamObserver<UploadRenditionResponse> responses,
+                DocumentArchive.SinkUploadCustomization sink) {
             this.responses = responses;
+            this.sink = sink;
             this.server = responses instanceof ServerCallStreamObserver<UploadRenditionResponse> call ? call : null;
             if (server != null) {
                 server.disableAutoRequest();
@@ -261,7 +271,7 @@ public final class RenditionUploads {
         }
 
         private void start(UploadRenditionRequest frame) {
-            DocumentArchive.UploadStart start = archive.startUpload(frame.getHeader());
+            DocumentArchive.UploadStart start = archive.startUpload(frame.getHeader(), sink);
             if (start instanceof DocumentArchive.Replay replay) {
                 finished = true;
                 responses.onNext(replay.response());
