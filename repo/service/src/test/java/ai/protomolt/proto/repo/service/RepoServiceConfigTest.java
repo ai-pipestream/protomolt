@@ -182,8 +182,81 @@ class RepoServiceConfigTest {
         assertThat(config.httpPort()).isEqualTo(8080);
         assertThat(config.blobStore()).isEqualTo("s3");
         assertThat(config.redisUri()).isEqualTo("redis://localhost:6379");
-        assertThat(config.redisTtlSeconds()).isEqualTo(3600);
+        assertThat(config.redisTtlSeconds()).isZero();
         assertThat(config.redisMaxObjectBytes()).isEqualTo(8388608L);
+    }
+
+    @Test
+    void valkeyAndRedisTtlDefaultsAreNonExpiringForDurableHostModesAndPositiveForCacheModes() {
+        for (String durableMode : java.util.List.of("s3", "valkey", "redis")) {
+            assertThat(config(0, durableMode).redisTtlSeconds())
+                    .as("constructor default for %s", durableMode)
+                    .isZero();
+            RepoServiceConfig fromEnv = RepoServiceConfig.fromEnvironment(java.util.Map.of(
+                    RepoServiceConfig.ENV_BLOB_STORE, durableMode));
+            assertThat(fromEnv.redisTtlSeconds())
+                    .as("environment default for %s", durableMode)
+                    .isZero();
+        }
+
+        for (String cacheMode : java.util.List.of("s3-valkey-cache", "s3-redis-cache")) {
+            assertThat(config(0, cacheMode).redisTtlSeconds())
+                    .as("constructor default for %s", cacheMode)
+                    .isEqualTo(3600);
+            RepoServiceConfig fromEnv = RepoServiceConfig.fromEnvironment(java.util.Map.of(
+                    RepoServiceConfig.ENV_BLOB_STORE, cacheMode));
+            assertThat(fromEnv.redisTtlSeconds())
+                    .as("environment default for %s", cacheMode)
+                    .isEqualTo(3600);
+        }
+
+        // Verify startup wiring honors the non-expiring host default and refuses an expiring override
+        for (String hostMode : java.util.List.of("valkey", "redis")) {
+            var seenTtls = new java.util.ArrayList<String>();
+            var closed = new java.util.concurrent.atomic.AtomicInteger();
+            var stubProvider = new ai.protomolt.proto.repo.blob.spi.BlobStoreProvider() {
+                @Override public String id() { return hostMode; }
+                @Override public ai.protomolt.proto.repo.blob.spi.OpenedBlobStore open(
+                        java.util.Map<String, String> options) {
+                    String ttl = options.get("ttl-seconds");
+                    seenTtls.add(ttl);
+                    var capabilities = "0".equals(ttl)
+                            ? java.util.Set.of(
+                                    ai.protomolt.proto.repo.blob.spi.BlobCapability.NON_EXPIRING_WRITES,
+                                    ai.protomolt.proto.repo.blob.spi.BlobCapability.PHYSICAL_RECLAMATION)
+                            : java.util.Set.of(
+                                    ai.protomolt.proto.repo.blob.spi.BlobCapability.OBJECT_EXPIRY,
+                                    ai.protomolt.proto.repo.blob.spi.BlobCapability.PHYSICAL_RECLAMATION);
+                    var store = (ai.protomolt.proto.repo.blob.spi.BlobStore) java.lang.reflect.Proxy.newProxyInstance(
+                            ai.protomolt.proto.repo.blob.spi.BlobStore.class.getClassLoader(),
+                            new Class<?>[]{ai.protomolt.proto.repo.blob.spi.BlobStore.class},
+                            (proxy, method, args) -> { throw new AssertionError("No byte IO expected"); });
+                    return new ai.protomolt.proto.repo.blob.spi.OpenedBlobStore(
+                            store, closed::incrementAndGet, capabilities, name -> {}, (b, k) -> true);
+                }
+            };
+            var providers = ai.protomolt.proto.repo.blob.spi.BlobStores.of(java.util.List.of(stubProvider));
+
+            var defaultHost = RepoServiceConfig.fromEnvironment(java.util.Map.of(
+                    RepoServiceConfig.ENV_BLOB_STORE, hostMode));
+            try (var owned = new OwnedResources()) {
+                var wired = RepoStorageWiring.wire(defaultHost, providers, false, owned, null, null);
+                assertThat(wired.blobStore()).isNotNull();
+                assertThat(seenTtls).containsExactly("0");
+            }
+            assertThat(closed.get()).isEqualTo(1);
+
+            var expiringHost = RepoServiceConfig.fromEnvironment(java.util.Map.of(
+                    RepoServiceConfig.ENV_BLOB_STORE, hostMode,
+                    RepoServiceConfig.ENV_VALKEY_TTL_SECONDS, "60"));
+            try (var owned = new OwnedResources()) {
+                assertThatThrownBy(() -> RepoStorageWiring.wire(expiringHost, providers, false, owned, null, null))
+                        .isInstanceOf(IllegalArgumentException.class)
+                        .hasMessageContaining("retain bytes until explicit purge");
+            }
+            assertThat(seenTtls).containsExactly("0", "60");
+            assertThat(closed.get()).isEqualTo(2);
+        }
     }
 
     @Test

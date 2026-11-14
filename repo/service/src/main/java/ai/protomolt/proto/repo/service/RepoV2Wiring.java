@@ -22,6 +22,7 @@ import ai.protomolt.proto.repo.container.ledger.DriveLedger;
 import ai.protomolt.proto.repo.container.ledger.DriveRecord;
 import ai.protomolt.proto.repo.spi.PurgeAuthorization;
 import ai.protomolt.proto.repo.spi.RepositoryCaller;
+import ai.protomolt.proto.repo.spi.RepositoryException;
 import ai.protomolt.proto.repo.stack.BlobStoreStack;
 import ai.protomolt.proto.repo.stack.Stack;
 import ai.protomolt.proto.repo.v2.StackRecord;
@@ -30,6 +31,8 @@ import java.time.Clock;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Function;
 import java.util.function.Supplier;
@@ -151,12 +154,21 @@ final class RepoV2Wiring {
     static DocumentSaves.Drives drives(PostgresCatalog catalog, DriveLedger driveLedger,
             DriveBackingPool pool) {
         var v2Stacks = new ConcurrentHashMap<String, Stack>();
+        StackOpener openStack = new StackOpener() {
+            @Override
+            public Stack open(String id, DriveRecord record, String prefix) {
+                return open(id, record, prefix, pool.resolve(record));
+            }
+
+            @Override
+            public Stack open(String id, DriveRecord record, String prefix, DriveBackingPool.Backing backing) {
+                var resolved = backing != null ? backing : pool.resolve(record);
+                return new BlobStoreStack(id, new StackBlobStore(resolved.store(), resolved.reclaimer()),
+                        record.bucket, prefix);
+            }
+        };
         Function<DriveRecord, Stack> stackForDrive = driveStacks(catalog::registerStack,
-                (id, record, prefix) -> {
-                    var backing = pool.resolve(record);
-                    return new BlobStoreStack(id, new StackBlobStore(backing.store(), backing.reclaimer()),
-                            record.bucket, prefix);
-                }, pool::resolve, v2Stacks, (drive, backing, prefix, current) -> {
+                openStack, pool::resolve, v2Stacks, (drive, backing, prefix, current) -> {
                     var legacy = pool.legacyIdentity(drive, backing, prefix);
                     if (legacy == null || legacy.equals(current)) return current;
                     // Only an exact pre-existing host-default identity qualifies. No
@@ -210,8 +222,13 @@ final class RepoV2Wiring {
     }
 
     /** Opens one stack for a resolved namespace; the composition supplies the blob store. */
+    @FunctionalInterface
     interface StackOpener {
         Stack open(String stackId, DriveRecord record, String prefix);
+
+        default Stack open(String stackId, DriveRecord record, String prefix, DriveBackingPool.Backing backing) {
+            return open(stackId, record, prefix);
+        }
     }
 
     /**
@@ -221,8 +238,11 @@ final class RepoV2Wiring {
      * by-name resolves of a cached drive make zero catalog calls. The catalog
      * stays the namespace authority: the returned stack id (which can differ
      * from {@code stack-<driveId>} when two drives name one namespace) keys
-     * the shared by-id cache exactly as before. A {@code registerStack}
-     * failure propagates unchanged and caches nothing in either map.
+     * the shared by-id cache, verified against the backing's canonical store
+     * identity so conflicting store configurations for one namespace fail
+     * explicitly rather than letting the first caller win. A
+     * {@code registerStack} or stack-open failure propagates unchanged and
+     * caches nothing.
      */
     static Function<DriveRecord, Stack> driveStacks(Function<StackRecord, String> registerStack,
             StackOpener openStack, String selectedDriveProvider, String s3Endpoint,
@@ -248,7 +268,10 @@ final class RepoV2Wiring {
             StackOpener openStack, Function<DriveRecord, DriveBackingPool.Backing> backings,
             ConcurrentHashMap<String, Stack> stacksById, StackIdentity identity) {
         var stacksByDrive = new ConcurrentHashMap<UUID, Stack>();
-        return record -> stacksByDrive.computeIfAbsent(record.driveId, driveId -> {
+        var driveFlights = new ConcurrentHashMap<UUID, CompletableFuture<Stack>>();
+        var stackFlights = new ConcurrentHashMap<String, CompletableFuture<Stack>>();
+        var stackIdentities = new ConcurrentHashMap<String, DriveBackingPool.BackingIdentity>();
+        return record -> singleFlight(stacksByDrive, driveFlights, record.driveId, () -> {
             String prefix = RepositoryNamespaces.under(
                     record.prefix == null ? "" : stripLeadingSlashes(record.prefix), "documents");
             var backing = backings.apply(record);
@@ -258,9 +281,87 @@ final class RepoV2Wiring {
                     .setEndpoint(backing.endpoint())
                     .setNamespace(backing.namespace(record.bucket, prefix))
                     .build()));
-            return stacksById.computeIfAbsent(stackId,
-                    id -> openStack.open(id, record, prefix));
+            var desiredIdentity = backing.identity();
+            if (desiredIdentity != null) {
+                var established = stackIdentities.get(stackId);
+                if (established != null && !established.equals(desiredIdentity)) {
+                    throw new RepositoryException(
+                            RepositoryException.Code.FAILED_PRECONDITION,
+                            "Drive store configuration conflicts with canonical stack " + stackId);
+                }
+            }
+            Stack resolvedStack = singleFlight(stacksById, stackFlights, stackId, () -> {
+                if (desiredIdentity != null) {
+                    var bound = stackIdentities.putIfAbsent(stackId, desiredIdentity);
+                    if (bound != null && !bound.equals(desiredIdentity)) {
+                        throw new RepositoryException(
+                                RepositoryException.Code.FAILED_PRECONDITION,
+                                "Drive store configuration conflicts with canonical stack " + stackId);
+                    }
+                }
+                try {
+                    return openStack.open(stackId, record, prefix, backing);
+                } catch (RuntimeException | Error failure) {
+                    if (desiredIdentity != null && !stacksById.containsKey(stackId)) {
+                        stackIdentities.remove(stackId, desiredIdentity);
+                    }
+                    throw failure;
+                }
+            });
+            if (desiredIdentity != null) {
+                var bound = stackIdentities.putIfAbsent(stackId, desiredIdentity);
+                if (bound != null && !bound.equals(desiredIdentity)) {
+                    throw new RepositoryException(
+                            RepositoryException.Code.FAILED_PRECONDITION,
+                            "Drive store configuration conflicts with canonical stack " + stackId);
+                }
+            }
+            return resolvedStack;
         });
+    }
+
+    private static <K, V> V singleFlight(
+            ConcurrentHashMap<K, V> resolved,
+            ConcurrentHashMap<K, CompletableFuture<V>> flights,
+            K key,
+            Supplier<V> supplier) {
+        V cached = resolved.get(key);
+        if (cached != null) {
+            return cached;
+        }
+        CompletableFuture<V> created = new CompletableFuture<>();
+        CompletableFuture<V> existing = flights.putIfAbsent(key, created);
+        if (existing != null) {
+            return awaitFlight(existing);
+        }
+        try {
+            V rechecked = resolved.get(key);
+            V value = rechecked != null ? rechecked : supplier.get();
+            resolved.putIfAbsent(key, value);
+            V canonical = resolved.get(key);
+            created.complete(canonical);
+            return canonical;
+        } catch (RuntimeException | Error failure) {
+            created.completeExceptionally(failure);
+            throw failure;
+        } finally {
+            flights.remove(key, created);
+        }
+    }
+
+    private static <V> V awaitFlight(CompletableFuture<V> flight) {
+        try {
+            return flight.join();
+        } catch (CompletionException wrapped) {
+            Throwable cause = wrapped.getCause();
+            if (cause instanceof RuntimeException runtime) {
+                throw runtime;
+            }
+            if (cause instanceof Error error) {
+                throw error;
+            }
+            throw wrapped;
+        }
     }
 
     /**

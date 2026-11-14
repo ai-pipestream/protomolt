@@ -49,9 +49,11 @@ import java.util.List;
  *        ({@code DOCUMENT_PLATFORM_VALKEY_URI}, with {@code DOCUMENT_PLATFORM_REDIS_URI} as an alias; default
  *        {@code redis://localhost:6379}) — used by the {@code redis} and
  *        {@code s3-redis-cache} blob-store modes
- * @param redisTtlSeconds per-object TTL in Redis
- *        ({@code DOCUMENT_PLATFORM_VALKEY_TTL_SECONDS}, with the REDIS spelling as an alias; default 3600; in
- *        {@code s3-redis-cache} mode this is the cache-entry TTL)
+ * @param redisTtlSeconds per-object TTL in Valkey/Redis
+ *        ({@code DOCUMENT_PLATFORM_VALKEY_TTL_SECONDS}, with the REDIS spelling as an alias;
+ *        default {@code 0} = no expiry for authoritative {@code valkey}/{@code redis} and
+ *        {@code s3} modes, and {@code 3600} for the cache-entry TTL in
+ *        {@code s3-valkey-cache} and {@code s3-redis-cache} modes)
  * @param redisMaxObjectBytes largest object admitted to Redis
  *        ({@code DOCUMENT_PLATFORM_VALKEY_MAX_OBJECT_BYTES}, with the REDIS spelling as an alias; default 8388608;
  *        0 = adapter ceiling) — in {@code s3-redis-cache} mode this is the cache
@@ -356,7 +358,8 @@ public record RepoServiceConfig(
     /** Blob-store selection value: S3 of record with a Redis cache in front. */
     public static final String BLOB_STORE_S3_REDIS_CACHE = "s3-redis-cache";
     static final String DEFAULT_REDIS_URI = "redis://localhost:6379";
-    static final int DEFAULT_REDIS_TTL_SECONDS = 3600;
+    static final int DEFAULT_REDIS_TTL_SECONDS = 0;
+    static final int DEFAULT_REDIS_CACHE_TTL_SECONDS = 3600;
     static final long DEFAULT_REDIS_MAX_OBJECT_BYTES = 8388608L;
     static final boolean DEFAULT_LIFECYCLE_ENABLED = true;
     static final long DEFAULT_PURGE_INTERVAL_MS = 5000L;
@@ -541,7 +544,7 @@ public record RepoServiceConfig(
             redisUri = DEFAULT_REDIS_URI;
         }
         if (redisTtlSeconds < 0) {
-            redisTtlSeconds = DEFAULT_REDIS_TTL_SECONDS;
+            redisTtlSeconds = defaultRedisTtlSeconds(blobStore);
         }
         if (redisMaxObjectBytes < 0) {
             redisMaxObjectBytes = DEFAULT_REDIS_MAX_OBJECT_BYTES;
@@ -613,6 +616,17 @@ public record RepoServiceConfig(
     /** Persisted drive identity remains Redis-compatible across the explicit Valkey alias. */
     String driveProvider() { return hasS3Backing() ? "s3" : "redis"; }
 
+    static int defaultRedisTtlSeconds(String blobStore) {
+        if (blobStore == null) {
+            return DEFAULT_REDIS_TTL_SECONDS;
+        }
+        String normalized = blobStore.trim().toLowerCase(java.util.Locale.ROOT);
+        return BLOB_STORE_S3_VALKEY_CACHE.equals(normalized)
+                || BLOB_STORE_S3_REDIS_CACHE.equals(normalized)
+                ? DEFAULT_REDIS_CACHE_TTL_SECONDS
+                : DEFAULT_REDIS_TTL_SECONDS;
+    }
+
     private static String alias(java.util.Map<String, String> environment, String preferred, String legacy) {
         if (environment.containsKey(preferred) && environment.containsKey(legacy)
                 && !java.util.Objects.equals(environment.get(preferred), environment.get(legacy)))
@@ -643,6 +657,8 @@ public record RepoServiceConfig(
     /** Parse one environment snapshot, refusing malformed configured limits and flags. */
     public static RepoServiceConfig fromEnvironment(java.util.Map<String, String> environment) {
         var env = new RepositoryEnvironment(environment);
+        String selectedBlobStore = env.text(ENV_BLOB_STORE, BLOB_STORE_S3);
+        int defaultRedisTtl = defaultRedisTtlSeconds(selectedBlobStore);
         return new RepoServiceConfig(
                 (int) env.number(ENV_GRPC_PORT, DEFAULT_GRPC_PORT, 0, 65535),
                 LedgerConfig.fromEnvironment(environment),
@@ -652,9 +668,9 @@ public record RepoServiceConfig(
                 environment.get(ENV_S3_SECRET_KEY),
                 env.text(ENV_DEFAULT_BUCKET_BASE, DEFAULT_BUCKET_BASE),
                 env.httpPort(ENV_HTTP_PORT, DEFAULT_HTTP_PORT),
-                env.text(ENV_BLOB_STORE, BLOB_STORE_S3),
+                selectedBlobStore,
                 env.text(alias(environment, ENV_VALKEY_URI, ENV_REDIS_URI), DEFAULT_REDIS_URI),
-                (int) env.number(alias(environment, ENV_VALKEY_TTL_SECONDS, ENV_REDIS_TTL_SECONDS), DEFAULT_REDIS_TTL_SECONDS, 0, Integer.MAX_VALUE),
+                (int) env.number(alias(environment, ENV_VALKEY_TTL_SECONDS, ENV_REDIS_TTL_SECONDS), defaultRedisTtl, 0, Integer.MAX_VALUE),
                 env.number(alias(environment, ENV_VALKEY_MAX_OBJECT_BYTES, ENV_REDIS_MAX_OBJECT_BYTES), DEFAULT_REDIS_MAX_OBJECT_BYTES, 0, Long.MAX_VALUE),
                 env.flag(ENV_LIFECYCLE_ENABLED, DEFAULT_LIFECYCLE_ENABLED),
                 env.number(ENV_PURGE_INTERVAL_MS, DEFAULT_PURGE_INTERVAL_MS, 1, Long.MAX_VALUE),
