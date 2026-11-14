@@ -826,7 +826,7 @@ describe('PutEntry draft and retry identity', () => {
 
 })
 
-describe('Archive delete receipt survival across navigation (#871)', () => {
+describe('Archive delete receipt survival across navigation', () => {
   const HarnessShell = defineComponent({
     setup() {
       const { showBanner } = useArchiveDeleteReceiptHost()

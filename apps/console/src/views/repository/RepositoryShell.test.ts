@@ -98,7 +98,7 @@ describe('RepositoryShell', () => {
     wrapper.unmount()
   })
 
-  it('retains and displays an arrived archive delete receipt across RepositoryShell route navigation (#871)', async () => {
+  it('retains and displays an arrived archive delete receipt across RepositoryShell route navigation', async () => {
     installDomStubs()
     const addr = create(EntryAddressSchema, { accountId: 'acct-a', archive: 'papers', entryId: 'e-1' })
     const stub = { template: '<div />' }

@@ -162,7 +162,7 @@ describe('archive delete confirmation', () => {
     wrapper.unmount()
   })
 
-  it('keeps and emits a COMPLETED receipt when the dialog unmounts after the response arrives (#871)', async () => {
+  it('keeps and emits a COMPLETED receipt when the dialog unmounts after the response arrives', async () => {
     installDomStubs()
     const store = createArchiveDeleteReceiptStore()
     const deleted: ArchiveMutationReceipt[] = []
@@ -210,7 +210,7 @@ describe('archive delete confirmation', () => {
     expect(store.items[0].dialogOpen).toBe(false)
   })
 
-  it('keeps and shows a COMPLETED receipt when a newer scope.next() aborts the signal before assignment (#871)', async () => {
+  it('keeps and shows a COMPLETED receipt when a newer scope.next() aborts the signal before assignment', async () => {
     installDomStubs()
     const store = createArchiveDeleteReceiptStore()
     const deleted: ArchiveMutationReceipt[] = []
@@ -266,7 +266,7 @@ describe('archive delete confirmation', () => {
     expect(deleted).toHaveLength(1)
   })
 
-  it('keeps a COMPLETED lookup receipt when the dialog unmounts before check() assigns it (#871)', async () => {
+  it('keeps a COMPLETED lookup receipt when the dialog unmounts before check() assigns it', async () => {
     installDomStubs()
     const store = createArchiveDeleteReceiptStore()
     const deleted: ArchiveMutationReceipt[] = []
