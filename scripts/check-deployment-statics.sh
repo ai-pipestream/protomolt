@@ -376,9 +376,30 @@ if lock_root_node != inspector_node:
 manifest_ver = (manifest.get("devDependencies") or {}).get(inspector_pkg)
 lock_root_ver = (lock.get("packages", {}).get("", {}).get("devDependencies") or {}).get(inspector_pkg)
 pinned_ver = inspector_meta.get("version")
-if manifest_ver != pinned_ver or lock_root_ver != pinned_ver:
-    print(f"tests/mcp-inspector version mismatch: package.json={manifest_ver!r}, lock root={lock_root_ver!r}, pinned={pinned_ver!r}")
+
+def version_gap(manifest_version, lock_root_version, pinned_version):
+    if manifest_version != pinned_version or lock_root_version != pinned_version:
+        return (
+            f"version mismatch: package.json={manifest_version!r}, "
+            f"lock root={lock_root_version!r}, pinned={pinned_version!r}"
+        )
+    return None
+
+gap = version_gap(manifest_ver, lock_root_ver, pinned_ver)
+if gap:
+    print(f"tests/mcp-inspector {gap}")
     sys.exit(1)
+
+mismatch = f"{pinned_ver}-mismatch"
+fixtures = (
+    ("package.json", mismatch, lock_root_ver, pinned_ver),
+    ("lock root", manifest_ver, mismatch, pinned_ver),
+    ("pinned inspector", manifest_ver, lock_root_ver, mismatch),
+)
+for label, fixture_manifest, fixture_lock, fixture_pinned in fixtures:
+    if version_gap(fixture_manifest, fixture_lock, fixture_pinned) is None:
+        print(f"version mismatch fixture was accepted for {label}")
+        sys.exit(1)
 print(f"mcp-inspector {pinned_ver} and lane manifests agree on engines.node: {inspector_node}")
 PYEOF
 
