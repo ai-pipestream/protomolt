@@ -114,17 +114,51 @@ for pattern, reason in forbidden_patterns:
         print(f"{patch_path}: {reason}")
         sys.exit(1)
 
-required_snippets = [
-    "ADD --checksum=sha256:",
-    "ca-certificates_",
-    "test -s /etc/ssl/certs/ca-certificates.crt",
-    "https://snapshot.ubuntu.com/ubuntu/",
-    "apt-get --error-on=any update",
-]
-for snippet in required_snippets:
-    if snippet not in added:
-        print(f"{patch_path}: missing required provenance step: {snippet}")
+SOURCES_REWRITE_SED = "sed -i"
+ARCHIVE_HOST_REWRITE = "s|http://archive.ubuntu.com/ubuntu/|https://snapshot.ubuntu.com/ubuntu/"
+SECURITY_HOST_REWRITE = "s|http://security.ubuntu.com/ubuntu/|https://snapshot.ubuntu.com/ubuntu/"
+UBUNTU_SOURCES_FILE = "/etc/apt/sources.list.d/ubuntu.sources"
+LEFTOVER_HOST_GREP = "! grep -q -e 'archive.ubuntu.com' -e 'security.ubuntu.com' -e 'ports.ubuntu.com' -e '^URIs:.*http://'"
+
+def provenance_gap(text):
+    required_snippets = [
+        "ADD --checksum=sha256:",
+        "ca-certificates_",
+        "test -s /etc/ssl/certs/ca-certificates.crt",
+        "https://snapshot.ubuntu.com/ubuntu/",
+        "apt-get --error-on=any update",
+        SOURCES_REWRITE_SED,
+        ARCHIVE_HOST_REWRITE,
+        SECURITY_HOST_REWRITE,
+        UBUNTU_SOURCES_FILE,
+        LEFTOVER_HOST_GREP,
+    ]
+    for snippet in required_snippets:
+        if snippet not in text:
+            return f"missing required provenance step: {snippet}"
+    update_at = text.find("apt-get --error-on=any update")
+    sed_at = text.find(SOURCES_REWRITE_SED)
+    archive_at = text.find(ARCHIVE_HOST_REWRITE)
+    security_at = text.find(SECURITY_HOST_REWRITE)
+    sources_at = text.find(UBUNTU_SOURCES_FILE)
+    grep_at = text.find(LEFTOVER_HOST_GREP)
+    if not (sed_at < archive_at < security_at < sources_at < grep_at < update_at):
+        return "ubuntu.sources rewrite and leftover-host grep must run before apt-get update"
+    return None
+
+gap = provenance_gap(added)
+if gap:
+    print(f"{patch_path}: {gap}")
+    sys.exit(1)
+
+def without_line(text, needle):
+    return "\n".join(line for line in text.splitlines() if needle not in line)
+
+for needle in (SOURCES_REWRITE_SED, LEFTOVER_HOST_GREP):
+    if provenance_gap(without_line(added, needle)) is None:
+        print(f"negative fixture still passed after removing the line containing {needle!r}")
         sys.exit(1)
+
 print(f"wasm provenance patch OK ({hunks} hunks, CA bundle pinned, apt TLS and Check-Valid-Until intact)")
 PYEOF
 
