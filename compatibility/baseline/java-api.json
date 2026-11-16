@@ -37168,6 +37168,19 @@
       "constructors" : [ ],
       "methods" : [
         {
+          "name" : "evict",
+          "parameterTypes" : [
+            "io.grpc.ChannelCredentials"
+          ],
+          "returnType" : "void",
+          "visibility" : "PUBLIC",
+          "staticMethod" : false,
+          "finalMethod" : false,
+          "abstractMethod" : false,
+          "defaultMethod" : true,
+          "stability" : "STABLE"
+        },
+        {
           "name" : "open",
           "parameterTypes" : [
             "java.lang.String",
@@ -37204,6 +37217,30 @@
           "finalMethod" : false,
           "abstractMethod" : false,
           "defaultMethod" : true,
+          "stability" : "STABLE"
+        },
+        {
+          "name" : "pooled",
+          "parameterTypes" : [ ],
+          "returnType" : "ai.protomolt.proto.grpc.invoke.ChannelFactory.Closeable",
+          "visibility" : "PUBLIC",
+          "staticMethod" : true,
+          "finalMethod" : false,
+          "abstractMethod" : false,
+          "defaultMethod" : false,
+          "stability" : "STABLE"
+        },
+        {
+          "name" : "pooled",
+          "parameterTypes" : [
+            "ai.protomolt.proto.grpc.policy.OutboundChannelPolicy"
+          ],
+          "returnType" : "ai.protomolt.proto.grpc.invoke.ChannelFactory.Closeable",
+          "visibility" : "PUBLIC",
+          "staticMethod" : true,
+          "finalMethod" : false,
+          "abstractMethod" : false,
+          "defaultMethod" : false,
           "stability" : "STABLE"
         },
         {
@@ -37255,6 +37292,34 @@
           "finalMethod" : false,
           "abstractMethod" : false,
           "defaultMethod" : true,
+          "stability" : "STABLE"
+        }
+      ],
+      "fields" : [ ]
+    },
+    {
+      "className" : "ai.protomolt.proto.grpc.invoke.ChannelFactory$Closeable",
+      "kind" : "INTERFACE",
+      "visibility" : "PUBLIC",
+      "finalType" : false,
+      "abstractType" : false,
+      "superclass" : "",
+      "interfaces" : [
+        "ai.protomolt.proto.grpc.invoke.ChannelFactory",
+        "java.lang.AutoCloseable"
+      ],
+      "stability" : "STABLE",
+      "constructors" : [ ],
+      "methods" : [
+        {
+          "name" : "close",
+          "parameterTypes" : [ ],
+          "returnType" : "void",
+          "visibility" : "PUBLIC",
+          "staticMethod" : false,
+          "finalMethod" : false,
+          "abstractMethod" : false,
+          "defaultMethod" : false,
           "stability" : "STABLE"
         }
       ],
@@ -39136,6 +39201,33 @@
             "ai.protomolt.proto.inference.spi.InferenceEngines",
             "ai.protomolt.proto.grpc.profile.ServiceProfileRepository",
             "ai.protomolt.proto.grpc.policy.OutboundChannelPolicy",
+            "ai.protomolt.proto.grpc.invoke.ChannelFactory",
+            "ai.protomolt.proto.grpc.workflow.ArtifactRepository",
+            "ai.protomolt.proto.grpc.workflow.RunEvidenceRepository",
+            "ai.protomolt.proto.grpc.workflow.WorkflowVersionRepository",
+            "ai.protomolt.proto.registry.SchemaRegistryStore",
+            "java.util.function.Supplier",
+            "ai.protomolt.proto.grpc.workspace.ProfileCredentialResolver"
+          ],
+          "returnType" : "ai.protomolt.proto.actions.ActionCatalog",
+          "visibility" : "PUBLIC",
+          "staticMethod" : true,
+          "finalMethod" : false,
+          "abstractMethod" : false,
+          "defaultMethod" : false,
+          "stability" : "STABLE"
+        },
+        {
+          "name" : "full",
+          "parameterTypes" : [
+            "ai.protomolt.proto.actions.ActionContext",
+            "java.nio.file.Path",
+            "ai.protomolt.proto.workflow.WorkflowRepository",
+            "ai.protomolt.proto.jobs.service.store.WorkflowRunStore",
+            "int",
+            "ai.protomolt.proto.inference.spi.InferenceEngines",
+            "ai.protomolt.proto.grpc.profile.ServiceProfileRepository",
+            "ai.protomolt.proto.grpc.policy.OutboundChannelPolicy",
             "ai.protomolt.proto.grpc.workflow.ArtifactRepository",
             "ai.protomolt.proto.grpc.workflow.RunEvidenceRepository",
             "ai.protomolt.proto.grpc.workflow.WorkflowVersionRepository"
@@ -40913,6 +41005,7 @@
       "abstractType" : false,
       "superclass" : "",
       "interfaces" : [
+        "ai.protomolt.proto.grpc.workspace.EvictableTlsResolver",
         "ai.protomolt.proto.grpc.workspace.ProfileTlsResolver"
       ],
       "stability" : "STABLE",
@@ -40941,9 +41034,31 @@
           "abstractMethod" : false,
           "defaultMethod" : false,
           "stability" : "STABLE"
+        },
+        {
+          "name" : "registerEvictionTarget",
+          "parameterTypes" : [
+            "ai.protomolt.proto.grpc.invoke.ChannelFactory"
+          ],
+          "returnType" : "void",
+          "visibility" : "PUBLIC",
+          "staticMethod" : false,
+          "finalMethod" : false,
+          "abstractMethod" : false,
+          "defaultMethod" : false,
+          "stability" : "STABLE"
         }
       ],
-      "fields" : [ ]
+      "fields" : [
+        {
+          "name" : "DEFAULT_MAX_PEM_BYTES",
+          "fieldType" : "int",
+          "visibility" : "PUBLIC",
+          "staticField" : true,
+          "finalField" : true,
+          "stability" : "STABLE"
+        }
+      ]
     },
     {
       "className" : "ai.protomolt.proto.grpc.workspace.FileProfileTlsResolver$Binding",
@@ -41208,6 +41323,82 @@
         }
       ],
       "fields" : [ ]
+    },
+    {
+      "className" : "ai.protomolt.proto.grpc.workspace.ProfileTlsConfigs",
+      "kind" : "CLASS",
+      "visibility" : "PUBLIC",
+      "finalType" : true,
+      "abstractType" : false,
+      "superclass" : "",
+      "interfaces" : [ ],
+      "stability" : "STABLE",
+      "constructors" : [ ],
+      "methods" : [
+        {
+          "name" : "load",
+          "parameterTypes" : [
+            "java.nio.file.Path"
+          ],
+          "returnType" : "ai.protomolt.proto.grpc.workspace.v1.ProfileTlsConfig",
+          "visibility" : "PUBLIC",
+          "staticMethod" : true,
+          "finalMethod" : false,
+          "abstractMethod" : false,
+          "defaultMethod" : false,
+          "stability" : "STABLE"
+        },
+        {
+          "name" : "loadResolver",
+          "parameterTypes" : [
+            "java.nio.file.Path"
+          ],
+          "returnType" : "ai.protomolt.proto.grpc.workspace.FileProfileTlsResolver",
+          "visibility" : "PUBLIC",
+          "staticMethod" : true,
+          "finalMethod" : false,
+          "abstractMethod" : false,
+          "defaultMethod" : false,
+          "stability" : "STABLE"
+        },
+        {
+          "name" : "requireWellFormed",
+          "parameterTypes" : [
+            "ai.protomolt.proto.grpc.workspace.v1.ProfileTlsConfig"
+          ],
+          "returnType" : "ai.protomolt.proto.grpc.workspace.v1.ProfileTlsConfig",
+          "visibility" : "PUBLIC",
+          "staticMethod" : true,
+          "finalMethod" : false,
+          "abstractMethod" : false,
+          "defaultMethod" : false,
+          "stability" : "STABLE"
+        },
+        {
+          "name" : "toResolver",
+          "parameterTypes" : [
+            "ai.protomolt.proto.grpc.workspace.v1.ProfileTlsConfig",
+            "java.nio.file.Path"
+          ],
+          "returnType" : "ai.protomolt.proto.grpc.workspace.FileProfileTlsResolver",
+          "visibility" : "PUBLIC",
+          "staticMethod" : true,
+          "finalMethod" : false,
+          "abstractMethod" : false,
+          "defaultMethod" : false,
+          "stability" : "STABLE"
+        }
+      ],
+      "fields" : [
+        {
+          "name" : "MAX_CONFIG_BYTES",
+          "fieldType" : "int",
+          "visibility" : "PUBLIC",
+          "staticField" : true,
+          "finalField" : true,
+          "stability" : "STABLE"
+        }
+      ]
     },
     {
       "className" : "ai.protomolt.proto.grpc.workspace.ProfileTlsResolver",
@@ -85670,6 +85861,20 @@
           "stability" : "STABLE"
         },
         {
+          "name" : "openSnapshot",
+          "parameterTypes" : [
+            "java.lang.String",
+            "java.lang.String"
+          ],
+          "returnType" : "ai.protomolt.proto.repo.blob.spi.BlobStore.ObjectRead",
+          "visibility" : "PUBLIC",
+          "staticMethod" : false,
+          "finalMethod" : false,
+          "abstractMethod" : false,
+          "defaultMethod" : false,
+          "stability" : "STABLE"
+        },
+        {
           "name" : "openStream",
           "parameterTypes" : [
             "java.lang.String",
@@ -85768,6 +85973,20 @@
             "ai.protomolt.proto.repo.blob.spi.ObjectReclaimer"
           ],
           "returnType" : "ai.protomolt.proto.repo.blob.spi.ObjectReclaimer",
+          "visibility" : "PUBLIC",
+          "staticMethod" : false,
+          "finalMethod" : false,
+          "abstractMethod" : false,
+          "defaultMethod" : false,
+          "stability" : "STABLE"
+        },
+        {
+          "name" : "statObject",
+          "parameterTypes" : [
+            "java.lang.String",
+            "java.lang.String"
+          ],
+          "returnType" : "ai.protomolt.proto.repo.blob.spi.BlobStore.ObjectMetadata",
           "visibility" : "PUBLIC",
           "staticMethod" : false,
           "finalMethod" : false,
@@ -86000,6 +86219,50 @@
           "stability" : "STABLE"
         },
         {
+          "name" : "objectLength",
+          "parameterTypes" : [
+            "java.lang.String",
+            "java.lang.String"
+          ],
+          "returnType" : "long",
+          "visibility" : "PUBLIC",
+          "staticMethod" : false,
+          "finalMethod" : false,
+          "abstractMethod" : false,
+          "defaultMethod" : false,
+          "stability" : "STABLE"
+        },
+        {
+          "name" : "openSnapshot",
+          "parameterTypes" : [
+            "java.lang.String",
+            "java.lang.String"
+          ],
+          "returnType" : "ai.protomolt.proto.repo.blob.spi.BlobStore.ObjectRead",
+          "visibility" : "PUBLIC",
+          "staticMethod" : false,
+          "finalMethod" : false,
+          "abstractMethod" : false,
+          "defaultMethod" : false,
+          "stability" : "STABLE"
+        },
+        {
+          "name" : "openStream",
+          "parameterTypes" : [
+            "java.lang.String",
+            "java.lang.String",
+            "long",
+            "long"
+          ],
+          "returnType" : "java.io.InputStream",
+          "visibility" : "PUBLIC",
+          "staticMethod" : false,
+          "finalMethod" : false,
+          "abstractMethod" : false,
+          "defaultMethod" : false,
+          "stability" : "STABLE"
+        },
+        {
           "name" : "put",
           "parameterTypes" : [
             "ai.protomolt.proto.repo.blob.spi.BlobStore.PutSpec",
@@ -86044,12 +86307,42 @@
           "stability" : "STABLE"
         },
         {
+          "name" : "put",
+          "parameterTypes" : [
+            "ai.protomolt.proto.repo.blob.spi.BlobStore.PutSpec",
+            "java.io.InputStream",
+            "long",
+            "int"
+          ],
+          "returnType" : "ai.protomolt.proto.repo.blob.spi.BlobStore.PutResult",
+          "visibility" : "PUBLIC",
+          "staticMethod" : false,
+          "finalMethod" : false,
+          "abstractMethod" : false,
+          "defaultMethod" : false,
+          "stability" : "STABLE"
+        },
+        {
           "name" : "reclaim",
           "parameterTypes" : [
             "java.lang.String",
             "java.lang.String"
           ],
           "returnType" : "boolean",
+          "visibility" : "PUBLIC",
+          "staticMethod" : false,
+          "finalMethod" : false,
+          "abstractMethod" : false,
+          "defaultMethod" : false,
+          "stability" : "STABLE"
+        },
+        {
+          "name" : "statObject",
+          "parameterTypes" : [
+            "java.lang.String",
+            "java.lang.String"
+          ],
+          "returnType" : "ai.protomolt.proto.repo.blob.spi.BlobStore.ObjectMetadata",
           "visibility" : "PUBLIC",
           "staticMethod" : false,
           "finalMethod" : false,
@@ -86606,6 +86899,20 @@
           "stability" : "STABLE"
         },
         {
+          "name" : "openSnapshot",
+          "parameterTypes" : [
+            "java.lang.String",
+            "java.lang.String"
+          ],
+          "returnType" : "ai.protomolt.proto.repo.blob.spi.BlobStore.ObjectRead",
+          "visibility" : "PUBLIC",
+          "staticMethod" : false,
+          "finalMethod" : false,
+          "abstractMethod" : false,
+          "defaultMethod" : false,
+          "stability" : "STABLE"
+        },
+        {
           "name" : "openStream",
           "parameterTypes" : [
             "java.lang.String",
@@ -86675,6 +86982,20 @@
             "int"
           ],
           "returnType" : "ai.protomolt.proto.repo.blob.spi.BlobStore.PutResult",
+          "visibility" : "PUBLIC",
+          "staticMethod" : false,
+          "finalMethod" : false,
+          "abstractMethod" : false,
+          "defaultMethod" : false,
+          "stability" : "STABLE"
+        },
+        {
+          "name" : "statObject",
+          "parameterTypes" : [
+            "java.lang.String",
+            "java.lang.String"
+          ],
+          "returnType" : "ai.protomolt.proto.repo.blob.spi.BlobStore.ObjectMetadata",
           "visibility" : "PUBLIC",
           "staticMethod" : false,
           "finalMethod" : false,
@@ -87254,6 +87575,20 @@
           "stability" : "STABLE"
         },
         {
+          "name" : "openSnapshot",
+          "parameterTypes" : [
+            "java.lang.String",
+            "java.lang.String"
+          ],
+          "returnType" : "ai.protomolt.proto.repo.blob.spi.BlobStore.ObjectRead",
+          "visibility" : "PUBLIC",
+          "staticMethod" : false,
+          "finalMethod" : false,
+          "abstractMethod" : false,
+          "defaultMethod" : true,
+          "stability" : "STABLE"
+        },
+        {
           "name" : "openStream",
           "parameterTypes" : [
             "java.lang.String",
@@ -87357,6 +87692,20 @@
           "finalMethod" : false,
           "abstractMethod" : false,
           "defaultMethod" : false,
+          "stability" : "STABLE"
+        },
+        {
+          "name" : "statObject",
+          "parameterTypes" : [
+            "java.lang.String",
+            "java.lang.String"
+          ],
+          "returnType" : "ai.protomolt.proto.repo.blob.spi.BlobStore.ObjectMetadata",
+          "visibility" : "PUBLIC",
+          "staticMethod" : false,
+          "finalMethod" : false,
+          "abstractMethod" : false,
+          "defaultMethod" : true,
           "stability" : "STABLE"
         }
       ],
@@ -87704,6 +88053,215 @@
           "name" : "sizeBytes",
           "parameterTypes" : [ ],
           "returnType" : "long",
+          "visibility" : "PUBLIC",
+          "staticMethod" : false,
+          "finalMethod" : false,
+          "abstractMethod" : false,
+          "defaultMethod" : false,
+          "stability" : "STABLE"
+        },
+        {
+          "name" : "toString",
+          "parameterTypes" : [ ],
+          "returnType" : "java.lang.String",
+          "visibility" : "PUBLIC",
+          "staticMethod" : false,
+          "finalMethod" : true,
+          "abstractMethod" : false,
+          "defaultMethod" : false,
+          "stability" : "STABLE"
+        }
+      ],
+      "fields" : [ ]
+    },
+    {
+      "className" : "ai.protomolt.proto.repo.blob.spi.BlobStore$ObjectMetadata",
+      "kind" : "RECORD",
+      "visibility" : "PUBLIC",
+      "finalType" : false,
+      "abstractType" : false,
+      "superclass" : "",
+      "interfaces" : [ ],
+      "stability" : "STABLE",
+      "constructors" : [
+        {
+          "parameterTypes" : [
+            "long",
+            "java.lang.String",
+            "java.lang.String",
+            "java.lang.String",
+            "java.util.Map"
+          ],
+          "visibility" : "PUBLIC",
+          "stability" : "STABLE"
+        }
+      ],
+      "methods" : [
+        {
+          "name" : "attributes",
+          "parameterTypes" : [ ],
+          "returnType" : "java.util.Map",
+          "visibility" : "PUBLIC",
+          "staticMethod" : false,
+          "finalMethod" : false,
+          "abstractMethod" : false,
+          "defaultMethod" : false,
+          "stability" : "STABLE"
+        },
+        {
+          "name" : "contentType",
+          "parameterTypes" : [ ],
+          "returnType" : "java.lang.String",
+          "visibility" : "PUBLIC",
+          "staticMethod" : false,
+          "finalMethod" : false,
+          "abstractMethod" : false,
+          "defaultMethod" : false,
+          "stability" : "STABLE"
+        },
+        {
+          "name" : "eTag",
+          "parameterTypes" : [ ],
+          "returnType" : "java.lang.String",
+          "visibility" : "PUBLIC",
+          "staticMethod" : false,
+          "finalMethod" : false,
+          "abstractMethod" : false,
+          "defaultMethod" : false,
+          "stability" : "STABLE"
+        },
+        {
+          "name" : "equals",
+          "parameterTypes" : [
+            "java.lang.Object"
+          ],
+          "returnType" : "boolean",
+          "visibility" : "PUBLIC",
+          "staticMethod" : false,
+          "finalMethod" : true,
+          "abstractMethod" : false,
+          "defaultMethod" : false,
+          "stability" : "STABLE"
+        },
+        {
+          "name" : "hashCode",
+          "parameterTypes" : [ ],
+          "returnType" : "int",
+          "visibility" : "PUBLIC",
+          "staticMethod" : false,
+          "finalMethod" : true,
+          "abstractMethod" : false,
+          "defaultMethod" : false,
+          "stability" : "STABLE"
+        },
+        {
+          "name" : "length",
+          "parameterTypes" : [ ],
+          "returnType" : "long",
+          "visibility" : "PUBLIC",
+          "staticMethod" : false,
+          "finalMethod" : false,
+          "abstractMethod" : false,
+          "defaultMethod" : false,
+          "stability" : "STABLE"
+        },
+        {
+          "name" : "toString",
+          "parameterTypes" : [ ],
+          "returnType" : "java.lang.String",
+          "visibility" : "PUBLIC",
+          "staticMethod" : false,
+          "finalMethod" : true,
+          "abstractMethod" : false,
+          "defaultMethod" : false,
+          "stability" : "STABLE"
+        },
+        {
+          "name" : "versionId",
+          "parameterTypes" : [ ],
+          "returnType" : "java.lang.String",
+          "visibility" : "PUBLIC",
+          "staticMethod" : false,
+          "finalMethod" : false,
+          "abstractMethod" : false,
+          "defaultMethod" : false,
+          "stability" : "STABLE"
+        }
+      ],
+      "fields" : [ ]
+    },
+    {
+      "className" : "ai.protomolt.proto.repo.blob.spi.BlobStore$ObjectRead",
+      "kind" : "RECORD",
+      "visibility" : "PUBLIC",
+      "finalType" : false,
+      "abstractType" : false,
+      "superclass" : "",
+      "interfaces" : [
+        "java.lang.AutoCloseable"
+      ],
+      "stability" : "STABLE",
+      "constructors" : [
+        {
+          "parameterTypes" : [
+            "ai.protomolt.proto.repo.blob.spi.BlobStore.ObjectMetadata",
+            "java.io.InputStream"
+          ],
+          "visibility" : "PUBLIC",
+          "stability" : "STABLE"
+        }
+      ],
+      "methods" : [
+        {
+          "name" : "close",
+          "parameterTypes" : [ ],
+          "returnType" : "void",
+          "visibility" : "PUBLIC",
+          "staticMethod" : false,
+          "finalMethod" : false,
+          "abstractMethod" : false,
+          "defaultMethod" : false,
+          "stability" : "STABLE"
+        },
+        {
+          "name" : "equals",
+          "parameterTypes" : [
+            "java.lang.Object"
+          ],
+          "returnType" : "boolean",
+          "visibility" : "PUBLIC",
+          "staticMethod" : false,
+          "finalMethod" : true,
+          "abstractMethod" : false,
+          "defaultMethod" : false,
+          "stability" : "STABLE"
+        },
+        {
+          "name" : "hashCode",
+          "parameterTypes" : [ ],
+          "returnType" : "int",
+          "visibility" : "PUBLIC",
+          "staticMethod" : false,
+          "finalMethod" : true,
+          "abstractMethod" : false,
+          "defaultMethod" : false,
+          "stability" : "STABLE"
+        },
+        {
+          "name" : "metadata",
+          "parameterTypes" : [ ],
+          "returnType" : "ai.protomolt.proto.repo.blob.spi.BlobStore.ObjectMetadata",
+          "visibility" : "PUBLIC",
+          "staticMethod" : false,
+          "finalMethod" : false,
+          "abstractMethod" : false,
+          "defaultMethod" : false,
+          "stability" : "STABLE"
+        },
+        {
+          "name" : "stream",
+          "parameterTypes" : [ ],
+          "returnType" : "java.io.InputStream",
           "visibility" : "PUBLIC",
           "staticMethod" : false,
           "finalMethod" : false,
@@ -88693,6 +89251,22 @@
           "finalMethod" : false,
           "abstractMethod" : false,
           "defaultMethod" : false,
+          "stability" : "STABLE"
+        },
+        {
+          "name" : "put",
+          "parameterTypes" : [
+            "ai.protomolt.proto.repo.blob.spi.BlobStore.PutSpec",
+            "java.io.InputStream",
+            "long",
+            "int"
+          ],
+          "returnType" : "ai.protomolt.proto.repo.blob.spi.BlobStore.PutResult",
+          "visibility" : "PUBLIC",
+          "staticMethod" : false,
+          "finalMethod" : false,
+          "abstractMethod" : false,
+          "defaultMethod" : true,
           "stability" : "STABLE"
         }
       ],
@@ -122064,6 +122638,34 @@
           ],
           "visibility" : "PUBLIC",
           "stability" : "STABLE"
+        },
+        {
+          "parameterTypes" : [
+            "java.lang.String",
+            "int",
+            "int",
+            "java.nio.file.Path",
+            "int",
+            "java.lang.String",
+            "boolean",
+            "java.nio.file.Path",
+            "ai.protomolt.proto.serve.ProtoMoltServe.JobsOptions",
+            "java.util.List",
+            "java.nio.file.Path",
+            "ai.protomolt.proto.grpc.policy.OutboundChannelPolicy",
+            "java.nio.file.Path",
+            "ai.protomolt.proto.serve.ProtoMoltServe.DelegationOptions",
+            "ai.protomolt.proto.serve.ProtoMoltServe.TaskConsoleOptions",
+            "ai.protomolt.proto.serve.ProtoMoltServe.MeshClusterOptions",
+            "java.nio.file.Path",
+            "ai.protomolt.proto.serve.ProtoMoltServe.IdentityStoreOptions",
+            "ai.protomolt.proto.serve.ProtoMoltServe.ConfigLaneOptions",
+            "ai.protomolt.proto.serve.ProtoMoltServe.WorkflowAuthoringOptions",
+            "ai.protomolt.proto.serve.ProtoMoltServe.WorkflowPreparationOptions",
+            "java.nio.file.Path"
+          ],
+          "visibility" : "PUBLIC",
+          "stability" : "STABLE"
         }
       ],
       "methods" : [
@@ -122249,6 +122851,17 @@
           "name" : "outboundPolicy",
           "parameterTypes" : [ ],
           "returnType" : "ai.protomolt.proto.grpc.policy.OutboundChannelPolicy",
+          "visibility" : "PUBLIC",
+          "staticMethod" : false,
+          "finalMethod" : false,
+          "abstractMethod" : false,
+          "defaultMethod" : false,
+          "stability" : "STABLE"
+        },
+        {
+          "name" : "profileTlsConfig",
+          "parameterTypes" : [ ],
+          "returnType" : "java.nio.file.Path",
           "visibility" : "PUBLIC",
           "staticMethod" : false,
           "finalMethod" : false,

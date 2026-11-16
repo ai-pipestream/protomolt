@@ -449,6 +449,88 @@ class SkosConverterTest {
         assertThat(jsonLdGraph.isIsomorphicWith(directGraph)).isTrue();
     }
 
+    @Test void turtleAndStreamRdfEmitBeforeTheExportFinishes() throws Exception {
+        var scheme = read(SIMPLE + """
+                ex:b a skos:Concept; skos:inScheme ex:scheme; skos:prefLabel "Beta"@en; skos:broader ex:a .
+                ex:c a skos:Concept; skos:inScheme ex:scheme; skos:prefLabel "Gamma"@en .
+                """);
+        var events = new ArrayList<String>();
+        assertThatThrownBy(() -> converter.write(scheme, new StreamRDFBase() {
+            private int triples;
+
+            @Override public void start() {
+                events.add("start");
+            }
+
+            @Override public void triple(Triple triple) {
+                assertThat(events).startsWith("start");
+                events.add("triple");
+                triples++;
+                if (triples == 2) {
+                    throw new IllegalStateException("second-triple");
+                }
+            }
+
+            @Override public void finish() {
+                events.add("finish");
+            }
+        })).isInstanceOf(IllegalStateException.class).hasMessage("second-triple");
+        assertThat(events).containsExactly("start", "triple", "triple");
+
+        var complete = new ByteArrayOutputStream();
+        converter.write(scheme, complete, SkosConverter.Format.TURTLE);
+        byte[] full = complete.toByteArray();
+        var firstChunk = new ByteArrayOutputStream();
+        OutputStream stopping = new OutputStream() {
+            private boolean stopped;
+
+            @Override public void write(int b) throws IOException {
+                write(new byte[] {(byte) b}, 0, 1);
+            }
+
+            @Override public void write(byte[] buffer, int offset, int length) throws IOException {
+                if (length <= 0 || stopped) {
+                    return;
+                }
+                firstChunk.write(buffer, offset, length);
+                stopped = true;
+                throw new IOException("first-turtle-chunk");
+            }
+        };
+        assertThatThrownBy(() -> converter.write(scheme, stopping, SkosConverter.Format.TURTLE))
+                .hasStackTraceContaining("first-turtle-chunk");
+        assertThat(firstChunk.size()).isPositive().isLessThan(full.length);
+    }
+
+    @Test void rdfXmlGraphSizeEqualsTheStreamedTripleCount() {
+        var scheme = read(SIMPLE + """
+                ex:b a skos:Concept; skos:inScheme ex:scheme; skos:prefLabel "Beta"@en; skos:broader ex:a .
+                """);
+        var streamed = new ArrayList<Triple>();
+        converter.write(scheme, new StreamRDFBase() {
+            @Override public void triple(Triple triple) {
+                streamed.add(triple);
+            }
+        });
+        var xml = new ByteArrayOutputStream();
+        converter.write(scheme, xml, SkosConverter.Format.RDF_XML);
+        var graph = GraphMemFactory.createDefaultGraph();
+        try {
+            RDFParser.source(new ByteArrayInputStream(xml.toByteArray())).lang(Lang.RDFXML).parse(graph);
+            assertThat(graph.size()).isEqualTo(streamed.size());
+            var direct = GraphMemFactory.createDefaultGraph();
+            try {
+                converter.write(scheme, StreamRDFLib.graph(direct));
+                assertThat(graph.isIsomorphicWith(direct)).isTrue();
+                assertThat(direct.size()).isEqualTo(streamed.size());
+            } finally {
+                direct.close();
+            }
+        } finally {
+            graph.close();
+        }
+    }
+
     @Test void exportRefusesAllDuplicateRepeatedValuesBeforeStartingSinkOrWritingBytes() {
         var valid = read(SIMPLE + """
                 ex:b a skos:Concept; skos:inScheme ex:scheme; skos:prefLabel "Beta"@en .
