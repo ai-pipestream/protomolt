@@ -309,7 +309,10 @@ export function createSaveAsJobStore(): SaveAsJobStore {
   async function refresh(operationId: string) {
     const entry = find(operationId)
     const client = clients.get(operationId)
-    if (entry === undefined || client === undefined || entry.reconciling) return
+    // While a publish is in flight a lookup could answer for the job as it was before or
+    // after that publish reached the server, and nothing here could tell which. The publish
+    // answers for itself, and polling resumes from its answer.
+    if (entry === undefined || client === undefined || entry.reconciling || entry.submitting) return
     const signal = signalFor(operationId)
     const sequence = beginCall(operationId)
     entry.reconciling = true
@@ -339,7 +342,8 @@ export function createSaveAsJobStore(): SaveAsJobStore {
   async function cancel(operationId: string, reason: string) {
     const entry = find(operationId)
     const client = clients.get(operationId)
-    if (entry === undefined || client === undefined || entry.cancelling) return
+    // Not while a publish is in flight, for the reason refresh gives.
+    if (entry === undefined || client === undefined || entry.cancelling || entry.submitting) return
     clearTimer(operationId)
     const signal = signalFor(operationId)
     const sequence = beginCall(operationId)

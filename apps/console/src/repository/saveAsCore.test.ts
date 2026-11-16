@@ -610,6 +610,28 @@ describe('saveAsCore', () => {
         destination: { ...destination, entryId: '   ' },
       }),
     ).toThrow(SaveAsInputError)
+
+    // An entry ID is free-form, up to 500 characters: a URI is an ordinary one.
+    for (const entryId of ['https://example.org/report', 'a\\b', '..', `urn:x:${'k'.repeat(400)}`]) {
+      const sent = buildPublishSaveAsRequest({
+        operationId: 'op-free', source, capability: view.compatible[0],
+        destination: { ...destination, entryId },
+      })
+      expect(sent.destination?.address?.entryId).toBe(entryId)
+    }
+    expect(() =>
+      buildPublishSaveAsRequest({
+        operationId: 'op-long', source, capability: view.compatible[0],
+        destination: { ...destination, entryId: 'e'.repeat(501) },
+      }),
+    ).toThrow(SaveAsInputError)
+    // A rendition name is a path segment and stays path-safe.
+    expect(() =>
+      buildPublishSaveAsRequest({
+        operationId: 'op-slash', source, capability: view.compatible[0],
+        destination: { ...destination, renditionName: 'a/b' },
+      }),
+    ).toThrow(SaveAsInputError)
   })
 
   it('treats an Internal error and an unrecognized job state as outcomes still unknown', () => {

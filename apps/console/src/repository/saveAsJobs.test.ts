@@ -3,6 +3,7 @@ import { Code, ConnectError } from '@connectrpc/connect'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { EntryAddressSchema, RenditionDescriptorSchema } from '@/gen/ai/protomolt/proto/repo/archive/v1/entry_pb'
 import {
+  CancelRepositorySinkJobResponseSchema,
   GetRepositorySinkJobResponseSchema,
   PublishRepositorySinkRequestSchema,
   PublishRepositorySinkResponseSchema,
@@ -238,7 +239,7 @@ describe('Save-as job store', () => {
     jobs.dispose()
   })
 
-  it('applies a publish response that arrives after a later status lookup failed', async () => {
+  it('lets an in-flight publish answer for itself and then polls the job it started', async () => {
     vi.useFakeTimers()
     let releasePublish = () => {}
     const publishGate = new Promise<void>((resolve) => {
@@ -255,7 +256,6 @@ describe('Save-as job store', () => {
         },
         getRepositorySinkJob(req) {
           gets += 1
-          if (gets === 1) throw new ConnectError('no such job', Code.NotFound)
           return create(GetRepositorySinkJobResponseSchema, {
             job: job(req.operationId, RepositorySinkJobState.SUCCEEDED),
           })
@@ -264,44 +264,101 @@ describe('Save-as job store', () => {
     ).repositorySink
     const jobs = createSaveAsJobStore()
     const publishing = jobs.publish(client, request('op-early'), false)
+    // Admission may still be pending: a lookup now could only say "not found".
     await jobs.refresh('op-early')
+    expect(gets).toBe(0)
     expect(jobs.find('op-early')!.error).toBeNull()
     releasePublish()
     await publishing
     expect(jobs.find('op-early')!.summary?.phase).toBe('queued')
     // The accepted job is polled to its end.
     await vi.advanceTimersByTimeAsync(6000)
+    expect(gets).toBe(1)
     expect(jobs.find('op-early')!.summary?.phase).toBe('succeeded')
     jobs.dispose()
   })
 
   it('accepts a terminal outcome from an older call over a newer call that saw the job running', async () => {
-    let releasePublish = () => {}
-    const publishGate = new Promise<void>((resolve) => {
-      releasePublish = resolve
+    let releaseCancel = () => {}
+    const cancelGate = new Promise<void>((resolve) => {
+      releaseCancel = resolve
     })
     const client = routerClients((r) =>
       r.service(RepositorySinkService, {
-        async publishRepositorySink(req) {
-          await publishGate
+        publishRepositorySink(req) {
           return create(PublishRepositorySinkResponseSchema, {
-            job: job(req.operationId, RepositorySinkJobState.SUCCEEDED),
+            job: job(req.operationId, RepositorySinkJobState.RUNNING),
+          })
+        },
+        async cancelRepositorySinkJob(req) {
+          await cancelGate
+          return create(CancelRepositorySinkJobResponseSchema, {
+            job: job(req.operationId, RepositorySinkJobState.CANCELLED),
           })
         },
         getRepositorySinkJob(req) {
           return create(GetRepositorySinkJobResponseSchema, {
-            job: job(req.operationId, RepositorySinkJobState.UNRESOLVED),
+            job: job(req.operationId, RepositorySinkJobState.RUNNING),
           })
         },
       }),
     ).repositorySink
     const jobs = createSaveAsJobStore()
-    const publishing = jobs.publish(client, request('op-sync'), true)
+    await jobs.publish(client, request('op-sync'), true)
+    const cancelling = jobs.cancel('op-sync', 'stop')
     await jobs.refresh('op-sync')
-    expect(jobs.find('op-sync')!.summary?.phase).toBe('unresolved')
+    expect(jobs.find('op-sync')!.summary?.phase).toBe('running')
+    releaseCancel()
+    await cancelling
+    // The cancel began first, but a job that has ended does not go back to running.
+    expect(jobs.find('op-sync')!.summary?.phase).toBe('cancelled')
+    jobs.dispose()
+  })
+
+  it('does not look a job up or cancel it while its publish is still in flight', async () => {
+    let releasePublish = () => {}
+    const publishGate = new Promise<void>((resolve) => {
+      releasePublish = resolve
+    })
+    let publishes = 0
+    let lookups = 0
+    let cancels = 0
+    const client = routerClients((r) =>
+      r.service(RepositorySinkService, {
+        async publishRepositorySink(req) {
+          publishes += 1
+          if (publishes === 1) throw new ConnectError('lost', Code.Unavailable)
+          await publishGate
+          return create(PublishRepositorySinkResponseSchema, {
+            job: job(req.operationId, RepositorySinkJobState.RUNNING),
+          })
+        },
+        getRepositorySinkJob(req) {
+          lookups += 1
+          // What the server held before the retry restarted the job.
+          return create(GetRepositorySinkJobResponseSchema, {
+            job: job(req.operationId, RepositorySinkJobState.FAILED),
+          })
+        },
+        cancelRepositorySinkJob(req) {
+          cancels += 1
+          return create(CancelRepositorySinkJobResponseSchema, {
+            job: job(req.operationId, RepositorySinkJobState.CANCELLED),
+          })
+        },
+      }),
+    ).repositorySink
+    const jobs = createSaveAsJobStore()
+    await jobs.publish(client, request('op-serial'), true)
+    const retrying = jobs.retry('op-serial')
+    // Either answer could describe the job from before the retry, in an order nobody can know.
+    await jobs.refresh('op-serial')
+    await jobs.cancel('op-serial', 'stop')
+    expect(lookups).toBe(0)
+    expect(cancels).toBe(0)
     releasePublish()
-    await publishing
-    expect(jobs.find('op-sync')!.summary?.phase).toBe('succeeded')
+    await retrying
+    expect(jobs.find('op-serial')!.summary?.phase).toBe('running')
     jobs.dispose()
   })
 

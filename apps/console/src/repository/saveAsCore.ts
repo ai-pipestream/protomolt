@@ -522,9 +522,9 @@ export interface BuildPublishSaveAsInput {
 }
 
 /**
- * Checks one destination coordinate and returns it unchanged. Names are compared exactly by the
- * repository, so nothing is trimmed: a value that is only whitespace is refused, and any other
- * value is the name it will be written under.
+ * Checks an archive, rendition name or sub-key, which are path segments, and returns it
+ * unchanged. Names are compared exactly by the repository, so nothing is trimmed: a value that
+ * is only whitespace is refused, and any other value is the name it will be written under.
  */
 function validateSafeSegment(value: string, label: string, maxLen = 128): string {
   if (value.trim() === '') {
@@ -547,6 +547,22 @@ function validateSafeSegment(value: string, label: string, maxLen = 128): string
 }
 
 /**
+ * Checks an `EntryAddress` account or entry ID and returns it unchanged. The contract makes
+ * both free-form (an entry ID may be a URI or any natural key) with only a length bound, so
+ * nothing about their characters is refused here. A value that is only whitespace is refused
+ * as a slip of the keyboard.
+ */
+function validateFreeFormIdentity(value: string, label: string, maxLen: number): string {
+  if (value.trim() === '') {
+    throw new SaveAsInputError(`${label}: required.`)
+  }
+  if (value.length > maxLen) {
+    throw new SaveAsInputError(`${label}: must be at most ${maxLen} characters.`)
+  }
+  return value
+}
+
+/**
  * Construct a validated `PublishRepositorySinkRequest` bound to a deterministic
  * `operationId`, pinned `SinkSource`, compatible `SaveAsCapabilityItem`, and
  * explicit `SinkDestination`.
@@ -560,9 +576,9 @@ export function buildPublishSaveAsRequest(input: BuildPublishSaveAsInput): Publi
     throw new SaveAsInputError('Conversion provider: selected capability is incompatible with this source.')
   }
 
-  const accountId = validateSafeSegment(input.destination.accountId, 'Destination account', 128)
-  const archive = validateSafeSegment(input.destination.archive, 'Destination archive', 128)
-  const entryId = validateSafeSegment(input.destination.entryId, 'Destination entry ID', 256)
+  const accountId = validateFreeFormIdentity(input.destination.accountId, 'Destination account', 200)
+  const archive = validateSafeSegment(input.destination.archive, 'Destination archive', 100)
+  const entryId = validateFreeFormIdentity(input.destination.entryId, 'Destination entry ID', 500)
   const renditionName = validateSafeSegment(input.destination.renditionName, 'Rendition name', 128)
   if (renditionName === 'parsed' && !isProtobufMediaType(input.capability.mediaType)) {
     throw new SaveAsInputError("Rendition name: converted non-protobuf renditions cannot overwrite the 'parsed' protobuf slot.")
