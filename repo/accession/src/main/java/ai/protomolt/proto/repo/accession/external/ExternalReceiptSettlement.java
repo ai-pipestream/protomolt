@@ -32,7 +32,8 @@ import ai.protomolt.proto.repo.v2.PurgeDocumentRequest;
 import com.google.protobuf.Message;
 import com.google.protobuf.Timestamp;
 import java.time.Clock;
-import java.util.HashSet;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
@@ -469,19 +470,34 @@ final class ExternalReceiptSettlement {
                 return false;
             }
         }
-        Set<String> deletedObjects = new HashSet<>();
-        for (ExternalLink link : ledger.getHistoricalLinksList()) {
-            if (link.getProjectionLifecycle()
-                    == ExternalProjectionLifecycle.EXTERNAL_PROJECTION_LIFECYCLE_DELETED) {
-                deletedObjects.add(objectKey(link));
-            }
-        }
         if (ledger.hasCurrentLink()) {
             return false;
         }
+        // The newest source revision each object has deletion evidence for.
+        Map<String, Long> deletedUpTo = new HashMap<>();
         for (ExternalLink link : ledger.getHistoricalLinksList()) {
-            if (!deletedObjects.contains(objectKey(link))) {
-                return false;
+            if (link.getProjectionLifecycle()
+                    == ExternalProjectionLifecycle.EXTERNAL_PROJECTION_LIFECYCLE_DELETED) {
+                deletedUpTo.merge(objectKey(link), link.getSourceRevision(), Math::max);
+            }
+        }
+        for (ExternalLink link : ledger.getHistoricalLinksList()) {
+            switch (link.getProjectionLifecycle()) {
+                case EXTERNAL_PROJECTION_LIFECYCLE_DELETED -> {
+                    // Settled.
+                }
+                case EXTERNAL_PROJECTION_LIFECYCLE_SUPERSEDED -> {
+                    // An earlier projection of an object is gone once a later projection of
+                    // that same object has been deleted. Evidence from before it proves nothing.
+                    Long covered = deletedUpTo.get(objectKey(link));
+                    if (covered == null || covered < link.getSourceRevision()) {
+                        return false;
+                    }
+                }
+                default -> {
+                    // Owed a deletion, or in a state that should not be in history at all.
+                    return false;
+                }
             }
         }
         return true;

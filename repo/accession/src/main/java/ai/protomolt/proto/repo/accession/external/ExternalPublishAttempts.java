@@ -30,6 +30,7 @@ import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
 import java.time.Clock;
 import java.util.Set;
+import java.util.Optional;
 import java.util.UUID;
 
 /**
@@ -159,7 +160,22 @@ final class ExternalPublishAttempts {
                 intent.getBindingId(),
                 retainedSecurity,
                 "ext-fenced:" + operationId + ":" + UUID.randomUUID(),
-                current -> current.toBuilder().addOperations(failedRecord).build());
+                current -> {
+                    // Another request may have registered this operation ID since the caller
+                    // looked. The same intent is a replay; a different one is a conflict.
+                    Optional<ExternalPublicationOperationRecord> registered =
+                            findOperation(current, operationId);
+                    if (registered.isPresent()) {
+                        if (!registered.get().getIntentSha256().equals(intentSha256)) {
+                            throw Status.ALREADY_EXISTS
+                                    .withDescription("Operation '" + operationId
+                                            + "' is already bound to a different publication intent")
+                                    .asRuntimeException();
+                        }
+                        return current;
+                    }
+                    return current.toBuilder().addOperations(failedRecord).build();
+                });
         return new ExternalPublicationCoordinator.OperationResult(
                 findOperation(updated, operationId).orElseThrow(),
                 optionalCurrentLink(updated),

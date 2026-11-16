@@ -81,12 +81,16 @@ final class ExternalDeletionLifecycle {
                 accountId, request.bindingId(), request.sourceAddress());
         Optional<ExternalLedgerStore.LoadedLedger> ledgerOpt = ledgers.loadOptionalLedger(ledgerAddr, request.sourceAddress());
 
-        ResolvedDeleteTarget target = resolveDeleteTarget(
-                accountId,
-                request.bindingId(),
-                request.bindingRevision(),
-                request.externalObjectId(),
-                ledgerOpt.map(ExternalLedgerStore.LoadedLedger::ledger));
+        ResolvedDeleteTarget target = replayedTarget(
+                        ledgerOpt.map(ExternalLedgerStore.LoadedLedger::ledger),
+                        request.operationId(), request.externalObjectId(), request.bindingRevision())
+                .orElseGet(() -> resolveDeleteTarget(
+                        accountId,
+                        request.bindingId(),
+                        request.bindingRevision(),
+                        request.externalObjectId(),
+                        request.tombstoneRevision(),
+                        ledgerOpt.map(ExternalLedgerStore.LoadedLedger::ledger)));
 
         ExternalPublicationIntent intent = ExternalPublicationIntent.newBuilder()
                 .setEncodingVersion(1)
@@ -131,12 +135,16 @@ final class ExternalDeletionLifecycle {
                 .map(ExternalLedgerStore.LoadedLedger::security)
                 .orElse(DocumentSecurity.getDefaultInstance());
 
-        ResolvedDeleteTarget target = resolveDeleteTarget(
-                accountId,
-                request.bindingId(),
-                0L,
-                request.externalObjectId(),
-                ledgerOpt.map(ExternalLedgerStore.LoadedLedger::ledger));
+        ResolvedDeleteTarget target = replayedTarget(
+                        ledgerOpt.map(ExternalLedgerStore.LoadedLedger::ledger),
+                        request.operationId(), request.externalObjectId(), 0L)
+                .orElseGet(() -> resolveDeleteTarget(
+                        accountId,
+                        request.bindingId(),
+                        0L,
+                        request.externalObjectId(),
+                        ALL_REVISIONS,
+                        ledgerOpt.map(ExternalLedgerStore.LoadedLedger::ledger)));
 
         ExternalPublicationIntent intent = ExternalPublicationIntent.newBuilder()
                 .setEncodingVersion(1)
@@ -231,7 +239,13 @@ final class ExternalDeletionLifecycle {
                         next.setSourcePurged(true);
                         next.setLastPurgeId(purgeId.get());
                     }
-                    if (current.hasCurrentLink()
+                    // A tombstone covers what was published up to it. A publication made
+                    // after the source was restored is not owed this deletion.
+                    boolean coversCurrent = current.hasCurrentLink()
+                            && (tombstoneRevision.isEmpty()
+                                    || current.getCurrentLink().getSourceRevision()
+                                            <= tombstoneRevision.get());
+                    if (coversCurrent
                             && current.getCurrentLink().getProjectionLifecycle()
                                     == ExternalProjectionLifecycle.EXTERNAL_PROJECTION_LIFECYCLE_ACTIVE) {
                         next.setCurrentLink(current.getCurrentLink().toBuilder()
@@ -410,14 +424,42 @@ final class ExternalDeletionLifecycle {
                 evidence);
     }
 
+    /** For a purge: every source revision is covered. */
+    static final long ALL_REVISIONS = 0L;
+
+    /**
+     * When a request carries an operation ID the ledger already knows and names no target of
+     * its own, the target is the one that operation recorded. Resolving it afresh could pick a
+     * different object once the first one is gone, and turn a replay into a conflict.
+     */
+    static Optional<ResolvedDeleteTarget> replayedTarget(
+            Optional<ExternalPublicationLedger> ledgerOpt,
+            String operationId,
+            String explicitExternalObjectId,
+            long explicitBindingRevision) {
+        boolean namesTarget = (explicitExternalObjectId != null && !explicitExternalObjectId.isEmpty())
+                || explicitBindingRevision > 0L;
+        if (ledgerOpt.isEmpty() || operationId == null || operationId.isEmpty() || namesTarget) {
+            return Optional.empty();
+        }
+        return findOperation(ledgerOpt.get(), operationId)
+                .filter(operation -> operation.getIntent().getAction()
+                        == ExternalPublicationAction.EXTERNAL_PUBLICATION_ACTION_DELETE)
+                .map(operation -> new ResolvedDeleteTarget(
+                        operation.getBindingSnapshot(),
+                        operation.getIntent().getExternalObjectId()));
+    }
+
     ResolvedDeleteTarget resolveDeleteTarget(
             String accountId,
             String bindingId,
             long explicitBindingRevision,
             String explicitExternalObjectId,
+            long coveredUpToSourceRevision,
             Optional<ExternalPublicationLedger> ledgerOpt) {
         Optional<ResolvedDeleteTarget> recorded = recordedTarget(
-                ledgerOpt, explicitBindingRevision, explicitExternalObjectId);
+                ledgerOpt, explicitBindingRevision, explicitExternalObjectId,
+                coveredUpToSourceRevision);
         if (recorded.isPresent()) {
             return recorded.get();
         }
@@ -451,6 +493,9 @@ final class ExternalDeletionLifecycle {
      * newest publication still pending. With an object named, it is
      * that object's link, restricted to {@code explicitBindingRevision} when one is given.
      *
+     * <p>Only projections published up to {@code coveredUpToSourceRevision} are considered, so
+     * a tombstone handled late never reaches a publication made after the source was restored.
+     *
      * @return the recorded target, or empty when the named object has no link in the ledger
      * @throws io.grpc.StatusRuntimeException FAILED_PRECONDITION when no object is named and
      *         {@code explicitBindingRevision} is not the revision the default link used
@@ -458,17 +503,21 @@ final class ExternalDeletionLifecycle {
     static Optional<ResolvedDeleteTarget> recordedTarget(
             Optional<ExternalPublicationLedger> ledgerOpt,
             long explicitBindingRevision,
-            String explicitExternalObjectId) {
+            String explicitExternalObjectId,
+            long coveredUpToSourceRevision) {
         if (ledgerOpt.isEmpty()) {
             return Optional.empty();
         }
-        List<ExternalLink> candidates = linksInDeletionOrder(ledgerOpt.get());
+        List<ExternalLink> candidates =
+                linksInDeletionOrder(ledgerOpt.get(), coveredUpToSourceRevision);
         if (explicitExternalObjectId != null && !explicitExternalObjectId.isEmpty()) {
             return recordedSnapshotFor(
-                    ledgerOpt.get(), candidates, explicitBindingRevision, explicitExternalObjectId);
+                    ledgerOpt.get(), candidates, explicitBindingRevision, explicitExternalObjectId,
+                    coveredUpToSourceRevision);
         }
         if (candidates.isEmpty()) {
-            return unsettledPublication(ledgerOpt.get(), explicitBindingRevision);
+            return unsettledPublication(
+                    ledgerOpt.get(), explicitBindingRevision, coveredUpToSourceRevision);
         }
         ExternalLink chosen = candidates.getFirst();
         if (explicitBindingRevision > 0L && chosen.getBindingRevision() != explicitBindingRevision) {
@@ -492,7 +541,8 @@ final class ExternalDeletionLifecycle {
             ExternalPublicationLedger ledger,
             List<ExternalLink> linksInOrder,
             long explicitBindingRevision,
-            String externalObjectId) {
+            String externalObjectId,
+            long coveredUpToSourceRevision) {
         Map<Long, ExternalSystemBinding> byRevision = new LinkedHashMap<>();
         for (ExternalLink link : linksInOrder) {
             if (link.getExternalObjectId().equals(externalObjectId)) {
@@ -505,6 +555,7 @@ final class ExternalDeletionLifecycle {
                             == ExternalPublicationAction.EXTERNAL_PUBLICATION_ACTION_PUBLISH
                     && operation.getOutcome()
                             == ExternalPublicationOutcome.EXTERNAL_PUBLICATION_OUTCOME_PENDING
+                    && covered(operation.getIntent().getSourceRevision(), coveredUpToSourceRevision)
                     && operation.getIntent().getExternalObjectId().equals(externalObjectId)) {
                 byRevision.putIfAbsent(
                         operation.getIntent().getBindingRevision(), operation.getBindingSnapshot());
@@ -531,7 +582,8 @@ final class ExternalDeletionLifecycle {
      * a deletion that names no object must reach. A publication that failed left nothing.
      */
     private static Optional<ResolvedDeleteTarget> unsettledPublication(
-            ExternalPublicationLedger ledger, long explicitBindingRevision) {
+            ExternalPublicationLedger ledger, long explicitBindingRevision,
+            long coveredUpToSourceRevision) {
         for (int i = ledger.getOperationsCount() - 1; i >= 0; i--) {
             ExternalPublicationOperationRecord operation = ledger.getOperations(i);
             if (operation.getIntent().getAction()
@@ -544,6 +596,9 @@ final class ExternalDeletionLifecycle {
                     && operation.getIntent().getBindingRevision() != explicitBindingRevision) {
                 continue;
             }
+            if (!covered(operation.getIntent().getSourceRevision(), coveredUpToSourceRevision)) {
+                continue;
+            }
             return Optional.of(new ResolvedDeleteTarget(
                     operation.getBindingSnapshot(), operation.getIntent().getExternalObjectId()));
         }
@@ -551,14 +606,19 @@ final class ExternalDeletionLifecycle {
     }
 
     /** Current link first, then live historical links newest first, then deleted ones. */
-    private static List<ExternalLink> linksInDeletionOrder(ExternalPublicationLedger ledger) {
+    private static List<ExternalLink> linksInDeletionOrder(
+            ExternalPublicationLedger ledger, long coveredUpToSourceRevision) {
         List<ExternalLink> ordered = new ArrayList<>(ledger.getHistoricalLinksCount() + 1);
-        if (ledger.hasCurrentLink()) {
+        if (ledger.hasCurrentLink()
+                && covered(ledger.getCurrentLink().getSourceRevision(), coveredUpToSourceRevision)) {
             ordered.add(ledger.getCurrentLink());
         }
         List<ExternalLink> deleted = new ArrayList<>();
         for (int i = ledger.getHistoricalLinksCount() - 1; i >= 0; i--) {
             ExternalLink historical = ledger.getHistoricalLinks(i);
+            if (!covered(historical.getSourceRevision(), coveredUpToSourceRevision)) {
+                continue;
+            }
             if (historical.getProjectionLifecycle()
                     == ExternalProjectionLifecycle.EXTERNAL_PROJECTION_LIFECYCLE_DELETED) {
                 deleted.add(historical);
@@ -568,5 +628,15 @@ final class ExternalDeletionLifecycle {
         }
         ordered.addAll(deleted);
         return ordered;
+    }
+
+    /**
+     * Whether a deletion bounded at {@code coveredUpToSourceRevision} reaches something
+     * published for {@code sourceRevision}. A tombstone at revision N covers revisions up to
+     * N; {@link #ALL_REVISIONS} (a purge) covers everything.
+     */
+    private static boolean covered(long sourceRevision, long coveredUpToSourceRevision) {
+        return coveredUpToSourceRevision == ALL_REVISIONS
+                || sourceRevision <= coveredUpToSourceRevision;
     }
 }

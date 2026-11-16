@@ -277,4 +277,23 @@ class ExternalReceiptSettlementTest {
                         "object-d", 1L, 0L))
                 .build())).isFalse();
     }
+
+    @Test
+    void oldDeletionEvidenceDoesNotCoverALaterPublicationOfTheSameObject() {
+        // B was deleted, then a publication already in flight put B back: it is owed a
+        // deletion again, and the evidence from the first deletion says nothing about it.
+        ExternalPublicationLedger.Builder purged = ExternalPublicationLedger.newBuilder()
+                .setSourcePurged(true).setLastPurgeId("purge-1")
+                .addHistoricalLinks(link("object-b", 1L, 2L,
+                        ExternalProjectionLifecycle.EXTERNAL_PROJECTION_LIFECYCLE_DELETED));
+        assertThat(ExternalReceiptSettlement.nothingOutstanding(purged.clone()
+                .addHistoricalLinks(link("object-b", 1L, 3L,
+                        ExternalProjectionLifecycle.EXTERNAL_PROJECTION_LIFECYCLE_DELETION_PENDING))
+                .build())).isFalse();
+        // The same holds for a superseded projection newer than the deletion.
+        assertThat(ExternalReceiptSettlement.nothingOutstanding(purged.clone()
+                .addHistoricalLinks(link("object-b", 1L, 3L,
+                        ExternalProjectionLifecycle.EXTERNAL_PROJECTION_LIFECYCLE_SUPERSEDED))
+                .build())).isFalse();
+    }
 }
