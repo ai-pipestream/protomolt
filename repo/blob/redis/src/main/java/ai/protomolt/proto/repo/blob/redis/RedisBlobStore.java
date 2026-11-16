@@ -4,6 +4,7 @@ import ai.protomolt.proto.repo.blob.spi.BlobStoreException;
 import ai.protomolt.proto.repo.blob.spi.ExpiringBlobStore;
 import redis.clients.jedis.JedisPool;
 import redis.clients.jedis.params.ScanParams;
+import redis.clients.jedis.util.JedisURIHelper;
 import java.io.InputStream;
 import java.io.IOException;
 import java.io.UncheckedIOException;
@@ -17,6 +18,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * Standalone Valkey / Redis-compatible object storage with one atomic hash per encoded object.
@@ -30,7 +32,10 @@ public final class RedisBlobStore implements ExpiringBlobStore, AutoCloseable {
     private static final int DELETE_CHUNK = 1000;
     private final JedisPool pool;
     private final URI uri;
+    private final RedisTls tls;
+    private final int maxConcurrentTransfers;
     private final java.util.Set<RedisTransfer> transfers = java.util.concurrent.ConcurrentHashMap.newKeySet();
+    private int reservedTransfers;
     private boolean closed;
     private final int ttlSeconds;
     private final long maxObjectBytes;
@@ -42,7 +47,9 @@ public final class RedisBlobStore implements ExpiringBlobStore, AutoCloseable {
         keys = new RedisObjectKeys(config.keyPrefix(), config.writePolicy());
         ttlSeconds = config.ttlSeconds();
         maxObjectBytes = config.maxObjectBytes();
+        maxConcurrentTransfers = config.maxConcurrentTransfers();
         uri = URI.create(config.uri());
+        tls = JedisURIHelper.isRedisSSLScheme(uri) ? RedisTls.open() : null;
         pool = new JedisPool(uri);
     }
 
@@ -316,18 +323,55 @@ public final class RedisBlobStore implements ExpiringBlobStore, AutoCloseable {
         }
     }
     private RedisTransfer openTransfer() throws IOException {
+        reserveTransfer();
+        RedisTransfer transfer = null;
+        var released = new AtomicBoolean();
+        try {
+            transfer = new RedisTransfer(uri, tls, opened -> releaseTransfer(opened, released));
+            synchronized (transfers) {
+                if (closed) throw new IllegalStateException("Redis store is closed");
+                transfers.add(transfer);
+            }
+            return transfer;
+        } catch (IOException | RuntimeException | Error failure) {
+            if (transfer != null) {
+                try { transfer.close(); }
+                catch (IOException close) { failure.addSuppressed(close); }
+            } else releaseReservation(released);
+            throw failure;
+        }
+    }
+
+    private void reserveTransfer() {
         synchronized (transfers) {
             if (closed) throw new IllegalStateException("Redis store is closed");
+            if (reservedTransfers >= maxConcurrentTransfers) throw exhausted();
+            reservedTransfers++;
         }
-        var transfer = new RedisTransfer(uri, transfers::remove);
+    }
+
+    private void releaseTransfer(RedisTransfer transfer, AtomicBoolean released) {
+        if (!released.compareAndSet(false, true)) return;
         synchronized (transfers) {
-            if (closed) {
-                transfer.close();
-                throw new IllegalStateException("Redis store is closed");
-            }
-            transfers.add(transfer);
+            transfers.remove(transfer);
+            if (reservedTransfers == 0)
+                throw new IllegalStateException("Redis streaming transfer released without a reservation");
+            reservedTransfers--;
         }
-        return transfer;
+    }
+
+    private void releaseReservation(AtomicBoolean released) {
+        if (!released.compareAndSet(false, true)) return;
+        synchronized (transfers) {
+            if (reservedTransfers == 0)
+                throw new IllegalStateException("Redis streaming transfer released without a reservation");
+            reservedTransfers--;
+        }
+    }
+
+    private BlobStoreException exhausted() {
+        return new BlobStoreException(BlobStoreException.Code.RESOURCE_EXHAUSTED,
+                "Redis streaming transfer limit of " + maxConcurrentTransfers + " is exhausted", null);
     }
 
     @Override public void close() {
