@@ -42,6 +42,7 @@ import {
   describeSaveAsCapabilities,
   encodeParquetRendererOptions,
   evaluateSaveAsSessionAccess,
+  PARQUET_COLUMNS_HINT,
   PARQUET_MASK_STRATEGY_CHOICES,
   PARQUET_OPTIONS_TYPE,
   SaveAsInputError,
@@ -49,6 +50,7 @@ import {
 } from './saveAsCore'
 import {
   classifySinkRpcError,
+  commitFollowUp,
   describeSinkJob,
   enteredSucceeded,
 } from './saveAsJobCore'
@@ -665,5 +667,26 @@ describe('saveAsCore', () => {
     // REMOVE clears values; the column stays unless it is left out of the column list.
     expect(titles.get(ParquetMaskStrategy.REMOVE)).toContain('column stays')
     expect(titles.get(ParquetMaskStrategy.REMOVE)).not.toContain('omit')
+  })
+
+  it('says that a blank column list exports every field, not only scalars', () => {
+    // The renderer expands an empty column list to all fields: nested messages, maps and
+    // repeated fields included.
+    expect(PARQUET_COLUMNS_HINT).not.toContain('scalar')
+    expect(PARQUET_COLUMNS_HINT).toContain('every field')
+    expect(PARQUET_COLUMNS_HINT).toContain('nested')
+  })
+
+  it('follows a commit into the page only from the open dialog that made it', () => {
+    const base = { dialogOpen: true, sameEntry: true, viewedVersion: 2n as bigint | null, committedVersion: 5n }
+    // The operator is still in the dialog on the entry it wrote to.
+    expect(commitFollowUp(base)).toBe('open-version')
+    expect(commitFollowUp({ ...base, viewedVersion: null })).toBe('reload')
+    expect(commitFollowUp({ ...base, viewedVersion: 5n })).toBe('reload')
+    // The dialog was closed and the operator moved on: the banner reports the job, and the
+    // page they are reading is left alone.
+    expect(commitFollowUp({ ...base, dialogOpen: false })).toBe('none')
+    expect(commitFollowUp({ ...base, dialogOpen: false, viewedVersion: null })).toBe('none')
+    expect(commitFollowUp({ ...base, sameEntry: false })).toBe('none')
   })
 })

@@ -6,7 +6,7 @@
         <v-text-field
           v-model="form.columnsText"
           label="Projected columns (optional)"
-          hint="Comma-separated top-level field names; leave blank for all scalar columns"
+          :hint="PARQUET_COLUMNS_HINT"
           persistent-hint
           density="compact"
           variant="outlined"
@@ -86,7 +86,11 @@
 </template>
 
 <script setup lang="ts">
-import { PARQUET_MASK_STRATEGY_CHOICES, type ParquetOptionsFormInput } from '@/repository/saveAsCore'
+import {
+  PARQUET_COLUMNS_HINT,
+  PARQUET_MASK_STRATEGY_CHOICES,
+  type ParquetOptionsFormInput,
+} from '@/repository/saveAsCore'
 
 /**
  * Parquet projection and masking fields of the Save-as draft. The dialog owns the form; any edit

@@ -61,6 +61,29 @@ export interface SinkJobSummary {
   updatedAt: string
 }
 
+/**
+ * What the page that opened Save-as does when its job commits. It follows the commit (opens
+ * the new version, or reloads the one shown) only while its dialog is still open on the entry
+ * that was written. Once the dialog is closed the operator has moved on, the banner reports the
+ * job, and the page they are reading is not replaced.
+ */
+export function commitFollowUp(input: {
+  dialogOpen: boolean
+  sameEntry: boolean
+  viewedVersion: bigint | null
+  committedVersion: bigint
+}): 'open-version' | 'reload' | 'none' {
+  if (!input.dialogOpen || !input.sameEntry) return 'none'
+  if (
+    input.viewedVersion !== null
+    && input.committedVersion > 0n
+    && input.viewedVersion !== input.committedVersion
+  ) {
+    return 'open-version'
+  }
+  return 'reload'
+}
+
 /** True when a job's phase has just become succeeded, whichever call reported it. */
 export function enteredSucceeded(
   previous: SinkJobPhase | undefined,

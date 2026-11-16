@@ -948,6 +948,7 @@ import {
   type ArchiveRenditionSourceInput,
 } from '@/repository/saveAsCore'
 import {
+  commitFollowUp,
   type SinkJobSummary,
 } from '@/repository/saveAsJobCore'
 import {
@@ -1286,11 +1287,15 @@ function openSaveAsForRendition(row: EnrichedRenditionRow) {
 
 function onSaveAsCommitted(job: SinkJobSummary) {
   const dest = job.destinationAddress
-  if (dest && address.value && sameEntry(address.value, dest)) {
-    if (requested.value !== null && job.destinationVersion > 0n && requested.value !== job.destinationVersion) {
-      openVersion(job.destinationVersion)
-      return
-    }
+  const followUp = commitFollowUp({
+    dialogOpen: saveAsDialogOpen.value,
+    sameEntry: Boolean(dest && address.value && sameEntry(address.value, dest)),
+    viewedVersion: requested.value,
+    committedVersion: job.destinationVersion,
+  })
+  if (followUp === 'open-version') {
+    openVersion(job.destinationVersion)
+  } else if (followUp === 'reload') {
     void load()
   }
 }

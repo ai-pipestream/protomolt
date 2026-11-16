@@ -46,6 +46,13 @@ export const ZERO_PROVIDERS_MESSAGE = 'No Save-as conversion providers are enabl
  * The mask strategies as the Parquet renderer applies them (see `ParquetMaskStrategy`). Neither
  * removes a column: leaving a column out of the output is done with the column list.
  */
+/**
+ * What the column list does. The Parquet renderer expands an empty list to all of the row's
+ * fields, so "blank" is the widest export, not a scalar-only one.
+ */
+export const PARQUET_COLUMNS_HINT =
+  'Comma-separated top-level field names; leave blank to export every field, including nested, repeated and map fields'
+
 export const PARQUET_MASK_STRATEGY_CHOICES: readonly { title: string; value: ParquetMaskStrategy }[] = [
   { title: 'Unspecified (redact when classes are set, otherwise no masking)', value: ParquetMaskStrategy.UNSPECIFIED },
   { title: 'Redact (strings become "***", other values are cleared)', value: ParquetMaskStrategy.REDACT },
@@ -363,7 +370,7 @@ export function describeSaveAsCapabilities(response: ListSaveAsCapabilitiesRespo
 }
 
 export interface ParquetOptionsFormInput {
-  /** Comma- or newline-separated top-level protobuf field names; empty means all supported scalar fields. */
+  /** Comma- or newline-separated top-level protobuf field names; empty means every field. */
   columnsText: string
   /** Comma- or newline-separated sensitivity classes to mask. */
   maskedSensitivityClassesText: string
