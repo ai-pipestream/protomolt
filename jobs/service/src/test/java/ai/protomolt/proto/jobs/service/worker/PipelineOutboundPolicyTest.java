@@ -12,7 +12,6 @@ import ai.protomolt.proto.grpc.profile.v1.MethodPolicy;
 import ai.protomolt.proto.grpc.profile.v1.Operation;
 import ai.protomolt.proto.grpc.profile.v1.ServiceEndpoint;
 import ai.protomolt.proto.grpc.profile.v1.ServiceProfile;
-import ai.protomolt.proto.grpc.workflow.v1.ServiceDependency;
 import ai.protomolt.proto.jobs.service.PipelineJobCoordinator;
 import ai.protomolt.proto.jobs.service.WorkflowRunSubmitter;
 import ai.protomolt.proto.jobs.service.store.InMemoryWorkflowRunStore;
@@ -40,7 +39,6 @@ import org.junit.jupiter.api.io.TempDir;
 
 import java.nio.file.Path;
 import java.io.IOException;
-import java.io.UncheckedIOException;
 import java.util.Optional;
 import java.util.List;
 import java.util.Set;
@@ -61,7 +59,6 @@ import static ai.protomolt.proto.jobs.service.worker.PipelinePolicyTestFixture.p
 import static ai.protomolt.proto.jobs.service.worker.PipelinePolicyTestFixture.submitPipeline;
 import static ai.protomolt.proto.jobs.service.worker.PipelinePolicyTestFixture.workerConfig;
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
  * Verifies that durable pipeline execution in {@link WorkflowRunWorker} enforces
@@ -376,11 +373,6 @@ class PipelineOutboundPolicyTest {
         try (WorkflowRunWorker worker = new WorkflowRunWorker(
                 store, context, null, new WorkflowRunner(allowLoopback),
                 allowLoopback, flaky, null, workerConfig("flaky-profiles", 4, 1))) {
-            assertThatThrownBy(() -> worker.resolvePipelineTarget(ServiceDependency.newBuilder()
-                    .setAlias("echo").setServiceProfile(PROFILE_NAME).build()))
-                    .isInstanceOf(UncheckedIOException.class)
-                    .hasMessageContaining(PROFILE_NAME);
-
             String jobId = submitPipeline(
                     submitter, schema, echoPipeline(schema, "echo", "plain"), "hello");
             assertThat(worker.workOnce()).isTrue();
@@ -422,9 +414,187 @@ class PipelineOutboundPolicyTest {
     }
 
     @Test
+    void aFalseGatedLiveStepIsSkippedWithoutReadingItsProfile() throws Exception {
+        ServiceProfileRepository unreadable = profilesFailingFrom(1);
+        InMemoryWorkflowRunStore store = new InMemoryWorkflowRunStore();
+        WorkflowRunSubmitter submitter = new WorkflowRunSubmitter(store, null, 4);
+        OutboundChannelPolicy allowLoopback = OutboundChannelPolicy.builder()
+                .allowedHosts(Set.of("127.0.0.1"))
+                .build();
+        Pipeline live = echoPipeline(schema, "echo", "plain");
+        Pipeline gatedOff = live.toBuilder()
+                .setSteps(0, live.getSteps(0).toBuilder().setWhen("input.message == 'never'"))
+                .build();
+        try (WorkflowRunWorker worker = new WorkflowRunWorker(
+                store, context, null, new WorkflowRunner(allowLoopback),
+                allowLoopback, unreadable, null, workerConfig("gated-off", 4, 1))) {
+            String jobId = submitPipeline(submitter, schema, gatedOff, "hello");
+            assertThat(worker.workOnce()).isTrue();
+
+            // The step never calls, so its profile is never needed.
+            WorkflowRunRecord done = store.get(UUID.fromString(jobId)).orElseThrow();
+            assertThat(done.status).as("error: %s", done.error)
+                    .isEqualTo(WorkflowRunRecord.STATUS_COMPLETED);
+            assertThat(done.attempt).isEqualTo(1);
+            assertThat(plainCalls.get()).isZero();
+        }
+    }
+
+    @Test
+    void aCallAfterASkippedExternalStepStillTakesItsTargetPermit() throws Exception {
+        AtomicInteger inFlight = new AtomicInteger();
+        AtomicInteger maxConcurrent = new AtomicInteger();
+        CountDownLatch firstEntered = new CountDownLatch(1);
+        plainInvokeHook.set(() -> {
+            int current = inFlight.incrementAndGet();
+            maxConcurrent.accumulateAndGet(current, Math::max);
+            firstEntered.countDown();
+            try {
+                Thread.sleep(80);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            } finally {
+                inFlight.decrementAndGet();
+            }
+        });
+        InMemoryWorkflowRunStore store = new InMemoryWorkflowRunStore();
+        WorkflowRunSubmitter submitter = new WorkflowRunSubmitter(store, null, 4);
+        OutboundChannelPolicy allowLoopback = OutboundChannelPolicy.builder()
+                .allowedHosts(Set.of("127.0.0.1"))
+                .maxActiveChannels(4)
+                .build();
+        // The run's first step is an external step its gate skips; the call comes second.
+        Pipeline live = echoPipeline(schema, "echo", "plain");
+        Pipeline skipThenCall = live.toBuilder()
+                .setSteps(0, live.getSteps(0).toBuilder()
+                        .setName("approval")
+                        .setWhen("input.message == 'never'")
+                        .setGrpcCall(live.getSteps(0).getGrpcCall().toBuilder()
+                                .clearEdge()
+                                .clearEdgeCardinality()
+                                .setCompletion(StepCompletion.STEP_COMPLETION_EXTERNAL)))
+                .addSteps(live.getSteps(0))
+                .build();
+        try (WorkflowRunWorker worker = new WorkflowRunWorker(
+                store, context, null, new WorkflowRunner(allowLoopback),
+                allowLoopback, serviceProfiles, null, workerConfig("skip-then-call", 4, 1))) {
+            List<String> jobs = List.of(
+                    submitPipeline(submitter, schema, skipThenCall, "one"),
+                    submitPipeline(submitter, schema, skipThenCall, "two"),
+                    submitPipeline(submitter, schema, skipThenCall, "three"));
+            try (ExecutorService pool = Executors.newVirtualThreadPerTaskExecutor()) {
+                Future<Boolean> first = pool.submit(worker::workOnce);
+                assertThat(firstEntered.await(5, TimeUnit.SECONDS)).isTrue();
+                Future<Boolean> second = pool.submit(worker::workOnce);
+                Future<Boolean> third = pool.submit(worker::workOnce);
+                assertThat(first.get(5, TimeUnit.SECONDS)).isTrue();
+                assertThat(second.get(5, TimeUnit.SECONDS)).isTrue();
+                assertThat(third.get(5, TimeUnit.SECONDS)).isTrue();
+            }
+            assertThat(maxConcurrent.get()).isEqualTo(1);
+            for (String id : jobs) {
+                WorkflowRunRecord done = store.get(UUID.fromString(id)).orElseThrow();
+                assertThat(done.status).as("error: %s", done.error)
+                        .isEqualTo(WorkflowRunRecord.STATUS_COMPLETED);
+            }
+        }
+    }
+
+    @Test
+    void timeSpentOpeningTheChannelCountsAgainstTheStepDeadline() throws Exception {
+        OutboundChannelPolicy allowLoopback = OutboundChannelPolicy.builder()
+                .allowedHosts(Set.of("127.0.0.1"))
+                .build();
+        ChannelFactory standard = ChannelFactory.standard(allowLoopback);
+        // Opening the channel takes longer than the whole pipeline deadline.
+        ChannelFactory slowToOpen = new ChannelFactory() {
+            @Override
+            public ManagedChannel open(String target, boolean tls) {
+                try {
+                    Thread.sleep(1500);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+                return standard.open(target, tls);
+            }
+
+            @Override
+            public void validateTarget(String target, boolean tls) {
+                standard.validateTarget(target, tls);
+            }
+
+            @Override
+            public void validateDeadline(long deadlineMillis) {
+                standard.validateDeadline(deadlineMillis);
+            }
+
+            @Override
+            public OutboundChannelPolicy policy() {
+                return allowLoopback;
+            }
+        };
+        InMemoryWorkflowRunStore store = new InMemoryWorkflowRunStore();
+        WorkflowRunSubmitter submitter = new WorkflowRunSubmitter(store, null, 4);
+        try (WorkflowRunWorker worker = new WorkflowRunWorker(
+                store, context, null, new WorkflowRunner(allowLoopback),
+                slowToOpen, serviceProfiles, null, WorkflowRunWorker.EndpointCredentials.NONE,
+                workerConfig("slow-channel", 4, 1))) {
+            Pipeline oneSecond = echoPipeline(schema, "echo", "plain").toBuilder()
+                    .setDeadline(com.google.protobuf.Duration.newBuilder().setSeconds(1))
+                    .build();
+            String jobId = submitPipeline(submitter, schema, oneSecond, "late");
+            assertThat(worker.workOnce()).isTrue();
+            WorkflowRunRecord after = store.get(UUID.fromString(jobId)).orElseThrow();
+            assertThat(plainCalls.get()).as("no call after the deadline has passed").isZero();
+            assertThat(after.status).as("error: %s", after.error)
+                    .isEqualTo(WorkflowRunRecord.STATUS_QUEUED);
+        }
+    }
+
+    @Test
+    void workerShutdownDuringACallLeavesTheRunForRecovery() throws Exception {
+        CountDownLatch entered = new CountDownLatch(1);
+        CountDownLatch releaseServer = new CountDownLatch(1);
+        plainInvokeHook.set(() -> {
+            entered.countDown();
+            try {
+                releaseServer.await(20, TimeUnit.SECONDS);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+        });
+        InMemoryWorkflowRunStore store = new InMemoryWorkflowRunStore();
+        WorkflowRunSubmitter submitter = new WorkflowRunSubmitter(store, null, 4);
+        OutboundChannelPolicy allowLoopback = OutboundChannelPolicy.builder()
+                .allowedHosts(Set.of("127.0.0.1"))
+                .build();
+        WorkflowRunWorker worker = new WorkflowRunWorker(
+                store, context, null, new WorkflowRunner(allowLoopback),
+                allowLoopback, serviceProfiles, null, workerConfig("shutting-down", 4, 1));
+        try {
+            String jobId = submitPipeline(
+                    submitter, schema, echoPipeline(schema, "echo", "plain"), "hello");
+            worker.start();
+            assertThat(entered.await(5, TimeUnit.SECONDS)).isTrue();
+
+            worker.close();
+
+            // The call was cut short by this worker stopping, not refused by the service:
+            // the run keeps its claim and is recovered when the lease expires.
+            WorkflowRunRecord interrupted = store.get(UUID.fromString(jobId)).orElseThrow();
+            assertThat(interrupted.status).as("error: %s", interrupted.error)
+                    .isEqualTo(WorkflowRunRecord.STATUS_RUNNING);
+            assertThat(interrupted.error).isNull();
+        } finally {
+            releaseServer.countDown();
+            worker.close();
+        }
+    }
+
+    @Test
     void profileReadFailureAtCallTimeRequeuesTheRunAndTheRetrySucceeds() throws Exception {
-        // The first read (target permit) succeeds and the second (the call) fails once.
-        ServiceProfileRepository flaky = profilesFailingBetween(2, 2);
+        // The profile is read once per call; the first call's read fails.
+        ServiceProfileRepository flaky = profilesFailingBetween(1, 1);
         InMemoryWorkflowRunStore store = new InMemoryWorkflowRunStore();
         WorkflowRunSubmitter submitter = new WorkflowRunSubmitter(store, null, 4);
         OutboundChannelPolicy allowLoopback = OutboundChannelPolicy.builder()
@@ -451,12 +621,12 @@ class PipelineOutboundPolicyTest {
 
     @Test
     void timeSpentResolvingTheProfileCountsAgainstTheStepDeadline() throws Exception {
-        // The second read (the call) takes longer than the whole pipeline deadline.
+        // The call's profile read takes longer than the whole pipeline deadline.
         AtomicInteger reads = new AtomicInteger();
         ServiceProfileRepository slow = new ServiceProfileRepository() {
             @Override
             public Optional<ServiceProfile> find(String name) throws IOException {
-                if (reads.incrementAndGet() == 2) {
+                if (reads.incrementAndGet() == 1) {
                     try {
                         Thread.sleep(1500);
                     } catch (InterruptedException e) {
@@ -578,18 +748,7 @@ class PipelineOutboundPolicyTest {
         try (WorkflowRunWorker worker = new WorkflowRunWorker(
                 store, context, null, new WorkflowRunner(allowLoopback),
                 allowLoopback, serviceProfiles, null, workerConfig("shared-cap", 4, 1))) {
-            String expectedTarget = "127.0.0.1:" + plainPort;
-            assertThat(worker.resolvePipelineTarget(ServiceDependency.newBuilder()
-                    .setAlias("alias_blank_a").setServiceProfile(PROFILE_NAME).build()))
-                    .isEqualTo(expectedTarget);
-            assertThat(worker.resolvePipelineTarget(ServiceDependency.newBuilder()
-                    .setAlias("alias_blank_b").setServiceProfile(PROFILE_NAME).build()))
-                    .isEqualTo(expectedTarget);
-            assertThat(worker.resolvePipelineTarget(ServiceDependency.newBuilder()
-                    .setAlias("alias_explicit").setServiceProfile(PROFILE_NAME)
-                    .setEndpoint("plain").build()))
-                    .isEqualTo(expectedTarget);
-
+            // "plain" and "plain-mirror" are two endpoint names for one host and port.
             String firstJob = submitPipeline(
                     submitter, schema, echoPipeline(schema, "alias_alpha", "plain"), "one");
             String secondJob = submitPipeline(

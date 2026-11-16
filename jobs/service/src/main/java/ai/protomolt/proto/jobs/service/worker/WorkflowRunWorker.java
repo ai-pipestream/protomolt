@@ -30,7 +30,6 @@ import java.time.Duration;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
@@ -131,7 +130,7 @@ public final class WorkflowRunWorker implements AutoCloseable {
     private final WorkflowSegmentRunner workflowRunner;
     private final PipelineSegmentRunner pipelineRunner;
     private final WorkflowRequestConsumer requestConsumer;
-    private final ConcurrentHashMap<String, Semaphore> targetPermits = new ConcurrentHashMap<>();
+    private final TargetPermits targetPermits;
     private final List<Thread> threads = new CopyOnWriteArrayList<>();
     private volatile boolean closed;
 
@@ -203,10 +202,12 @@ public final class WorkflowRunWorker implements AutoCloseable {
         Objects.requireNonNull(context, "context");
         Objects.requireNonNull(runner, "runner");
         this.config = Objects.requireNonNull(config, "config");
+        this.targetPermits = new TargetPermits(config.maxConcurrentPerTarget());
         this.pipelineTransport = new ServiceProfilePipelineTransport(
                 Objects.requireNonNull(channelFactory, "channelFactory"),
                 serviceProfiles,
-                Objects.requireNonNull(credentials, "credentials"));
+                Objects.requireNonNull(credentials, "credentials"),
+                targetPermits);
         PipelineExecutor executor = new PipelineExecutor(this.pipelineTransport, structured);
         WorkflowRunSubmitter submitter = new WorkflowRunSubmitter(
                 store, repository, config.maxAttemptsDefault());
@@ -223,7 +224,9 @@ public final class WorkflowRunWorker implements AutoCloseable {
      * @param context type resolution and JSON machinery
      * @param repository resolves stored workflow names, or null for inline-only
      * @param runner the workflow executor
-     * @param pipelineExecutor the pipeline executor used for durable pipeline runs
+     * @param pipelineExecutor the pipeline executor used for durable pipeline runs; its
+     *        transport is used as it is, so the per-target call limit of
+     *        {@code config} applies only to workers built with the other constructors
      * @param config worker/consumer settings
      */
     public WorkflowRunWorker(WorkflowRunStore store, ActionContext context,
@@ -235,6 +238,7 @@ public final class WorkflowRunWorker implements AutoCloseable {
         Objects.requireNonNull(pipelineExecutor, "pipelineExecutor");
         this.pipelineTransport = null;
         this.config = Objects.requireNonNull(config, "config");
+        this.targetPermits = new TargetPermits(config.maxConcurrentPerTarget());
         WorkflowRunSubmitter submitter = new WorkflowRunSubmitter(
                 store, repository, config.maxAttemptsDefault());
         this.workflowRunner = new WorkflowSegmentRunner(store, context, runner, this);
@@ -286,23 +290,13 @@ public final class WorkflowRunWorker implements AutoCloseable {
         requestConsumer.submitRequest(value);
     }
 
-    String resolvePipelineTarget(ServiceDependency dependency) {
-        return pipelineTransport != null
-                ? pipelineTransport.resolveTargetKey(dependency)
-                : ServiceProfilePipelineTransport.staticDependencyKey(dependency);
+    Semaphore acquireTargetPermit(String target) {
+        return targetPermits.acquire(target);
     }
 
-    Semaphore acquireTargetPermit(String target) {
-        Semaphore semaphore = targetPermits.computeIfAbsent(target,
-                key -> new Semaphore(config.maxConcurrentPerTarget()));
-        try {
-            semaphore.acquire();
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            throw new IllegalStateException("interrupted acquiring the per-target permit "
-                    + "for " + target, e);
-        }
-        return semaphore;
+    /** True once {@link #close()} has begun: calls still in flight are being cut short. */
+    boolean isClosing() {
+        return closed;
     }
 
     Duration backoff(int attempt) {

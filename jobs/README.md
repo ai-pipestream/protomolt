@@ -143,13 +143,24 @@ state machine, lease sweeper, `WorkerClaim` fencing, and outbox relay:
 
 ## Per-target concurrency
 
-A worker acquires a permit (bounded at `maxConcurrentPerTarget`) for the
-target of the job's NEXT unexecuted step before running a segment, and
-releases it when the segment ends. This is a documented approximation — a
-segment may call several targets, so the cap throttles the step each job is
-about to run rather than every call in flight. It exists because the
-inference tier's bottleneck is one box per model, and an uncapped worker
-fleet will DDoS it.
+The cap exists because the inference tier's bottleneck is one box per
+model, and an uncapped worker fleet will DDoS it. Each worker allows
+`maxConcurrentPerTarget` calls in flight to one target.
+
+- **Workflow runs** acquire a permit for the target of the job's NEXT
+  unexecuted step before running a segment and release it when the segment
+  ends. This is an approximation: a segment may call several targets, so
+  the cap throttles the step each job is about to run rather than every
+  call in flight.
+- **Pipeline runs** acquire the permit at each call, keyed by the resolved
+  `host:port`, and release it when the call returns. Every call is covered,
+  including each fan-out branch, and a step that its gate skips or that
+  parks for external completion takes no permit and reads no service
+  profile. Waiting for a permit counts against the step deadline; when the
+  deadline passes first the call is not made and the run is retried.
+
+When a worker is closed while a pipeline call is in flight, the run is not
+failed: it keeps its claim and is recovered when the lease expires.
 
 ## Wiring
 

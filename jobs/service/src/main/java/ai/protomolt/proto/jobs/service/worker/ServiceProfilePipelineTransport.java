@@ -28,7 +28,7 @@ import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.util.List;
 import java.util.Objects;
-import java.util.Optional;
+import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
 
 /**
@@ -44,46 +44,16 @@ final class ServiceProfilePipelineTransport implements PipelineTransport, AutoCl
     private final PipelineChannelCache channelCache;
     private final ServiceProfileRepository serviceProfiles;
     private final WorkflowRunWorker.EndpointCredentials credentials;
+    private final TargetPermits targetPermits;
 
     ServiceProfilePipelineTransport(ChannelFactory channels,
                                     ServiceProfileRepository serviceProfiles,
-                                    WorkflowRunWorker.EndpointCredentials credentials) {
+                                    WorkflowRunWorker.EndpointCredentials credentials,
+                                    TargetPermits targetPermits) {
         this.channelCache = new PipelineChannelCache(channels);
         this.serviceProfiles = serviceProfiles;
         this.credentials = Objects.requireNonNull(credentials, "credentials");
-    }
-
-    String resolveTargetKey(ServiceDependency dependency) {
-        if (serviceProfiles != null) {
-            try {
-                Optional<ServiceProfile> found = serviceProfiles.find(
-                        dependency.getServiceProfile());
-                if (found.isPresent()) {
-                    ServiceEndpoint endpoint = findEndpoint(found.get(), dependency.getEndpoint());
-                    if (endpoint != null) {
-                        if (!endpoint.getHost().isBlank() && endpoint.getPort() > 0) {
-                            return formatTarget(endpoint);
-                        }
-                        return found.get().getName() + "/" + endpoint.getName();
-                    }
-                }
-            } catch (IOException unreadable) {
-                // A guessed key would let the permit and the call disagree about the target.
-                throw new UncheckedIOException(
-                        "could not read service profile '" + dependency.getServiceProfile()
-                                + "' to resolve the call target", unreadable);
-            }
-        }
-        return staticDependencyKey(dependency);
-    }
-
-    static String staticDependencyKey(ServiceDependency dependency) {
-        String profile = dependency.getServiceProfile();
-        String endpoint = dependency.getEndpoint();
-        if (!profile.isBlank()) {
-            return endpoint.isBlank() ? profile : profile + "/" + endpoint;
-        }
-        return endpoint.isBlank() ? dependency.getAlias() : endpoint;
+        this.targetPermits = Objects.requireNonNull(targetPermits, "targetPermits");
     }
 
     @Override
@@ -125,39 +95,39 @@ final class ServiceProfilePipelineTransport implements PipelineTransport, AutoCl
         channelCache.validateTargetAndDeadline(target, tls, effectiveDeadlineMs);
 
         Metadata headers = buildHeaders(hostHeaders, context);
-        long callDeadlineMs = remainingAfterResolution(
-                effectiveDeadlineMs, startedNanos, profileMethodName(method));
-        if (customTls != null) {
-            PipelineChannelCache.Lease dedicated = channelCache.openDedicated(target, customTls);
+        String methodName = profileMethodName(method);
+        // The permit is taken here, once the step is known to call this target, and held
+        // only for the call: a step its gate skips, or one that parks, never reaches this.
+        Semaphore permit = targetPermits.acquireWithin(target,
+                remaining(effectiveDeadlineMs, startedNanos, methodName));
+        try {
+            PipelineChannelCache.Lease lease = customTls != null
+                    ? channelCache.openDedicated(target, customTls)
+                    : channelCache.acquireShared(target, tls);
             try {
-                return executeCall(dedicated.channel(), method, requests, callDeadlineMs,
+                return executeCall(lease.channel(), method, requests,
+                        remaining(effectiveDeadlineMs, startedNanos, methodName),
                         maxResponses, headers, credentialed);
             } finally {
-                dedicated.release();
+                lease.release();
             }
-        }
-        PipelineChannelCache.Lease lease = channelCache.acquireShared(target, tls);
-        try {
-            return executeCall(lease.channel(), method, requests, callDeadlineMs,
-                    maxResponses, headers, credentialed);
         } finally {
-            lease.release();
+            permit.release();
         }
     }
 
     /**
-     * The time left for the call itself. Reading the profile and resolving credentials are
-     * part of the step, so what they took comes off the step's deadline; when nothing is left
-     * the call is not made.
+     * The time left of the step's deadline. Reading the profile, resolving credentials,
+     * waiting for a call slot and opening the channel are all part of the step, so what they
+     * took comes off its deadline; when nothing is left the call is not made.
      */
-    private static long remainingAfterResolution(long deadlineMs, long startedNanos,
-                                                 String methodName) {
+    private static long remaining(long deadlineMs, long startedNanos, String methodName) {
         long remainingMs = deadlineMs
                 - TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedNanos);
         if (remainingMs <= 0) {
             throw Status.DEADLINE_EXCEEDED
                     .withDescription("deadline of " + deadlineMs + " ms for " + methodName
-                            + " passed while resolving its service profile and credentials")
+                            + " passed before the call could start")
                     .asRuntimeException();
         }
         return remainingMs;

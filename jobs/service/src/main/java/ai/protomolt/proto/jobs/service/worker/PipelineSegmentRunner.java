@@ -1,7 +1,5 @@
 package ai.protomolt.proto.jobs.service.worker;
 
-import ai.protomolt.proto.grpc.workflow.v1.ServiceDependency;
-import ai.protomolt.proto.grpc.workflow.v1.StepCompletion;
 import ai.protomolt.proto.jobs.service.PipelineJobCoordinator;
 import ai.protomolt.proto.jobs.service.PipelineJobCoordinator.PipelineDefinitionException;
 import ai.protomolt.proto.jobs.service.events.WorkflowRunEventFactory;
@@ -12,8 +10,6 @@ import ai.protomolt.proto.jobs.service.store.WorkflowRunStore;
 import ai.protomolt.proto.jobs.service.store.WorkflowRunStoreException;
 import ai.protomolt.proto.pipeline.PipelineExecutor;
 import ai.protomolt.proto.pipeline.v1.EdgeCardinality;
-import ai.protomolt.proto.pipeline.v1.Pipeline;
-import ai.protomolt.proto.pipeline.v1.PipelineStep;
 import io.grpc.Status;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -22,7 +18,6 @@ import java.io.UncheckedIOException;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.concurrent.Semaphore;
 
 /**
  * Package-private executor for one claimed durable {@link Pipeline} segment: reconstructs
@@ -60,14 +55,6 @@ final class PipelineSegmentRunner {
             return;
         }
         List<PipelineExecutor.Checkpoint> accumulated = new ArrayList<>(prior);
-        Semaphore permit;
-        try {
-            permit = acquirePipelinePermit(definition.pipeline(), prior.size());
-        } catch (UncheckedIOException unreadableProfile) {
-            // Nothing was called, so the run can be retried as it stands.
-            retryOrDead(job, claim, "PIPELINE: " + unreadableProfile.getMessage());
-            return;
-        }
         PipelineExecutor.ExecutionIdentity identity =
                 new PipelineExecutor.ExecutionIdentity(job.jobId.toString(), job.attempt);
         try {
@@ -111,11 +98,14 @@ final class PipelineSegmentRunner {
             if (e.getCause() instanceof ClaimLostException lost) {
                 throw lost;
             }
-            handlePipelineFailure(job, claim, e);
-        } finally {
-            if (permit != null) {
-                permit.release();
+            if (worker.isClosing()) {
+                // This worker stopping cut the segment short; that says nothing about the
+                // run. It keeps its claim and is recovered when the lease expires.
+                LOG.info("pipeline run {} interrupted by worker shutdown ({}: {}); left for "
+                        + "lease recovery", job.jobId, e.kind(), e.getMessage());
+                return;
             }
+            handlePipelineFailure(job, claim, e);
         }
     }
 
@@ -159,29 +149,5 @@ final class PipelineSegmentRunner {
         }
         return e.kind() == PipelineExecutor.FailureKind.PIPELINE
                 && e.getCause() instanceof WorkflowRunStoreException;
-    }
-
-    /** An external-completion step calls no service: it parks, or its gate skips it. */
-    private static boolean completesExternally(PipelineStep step) {
-        return step.hasGrpcCall() && step.getGrpcCall().getCompletion()
-                == StepCompletion.STEP_COMPLETION_EXTERNAL;
-    }
-
-    private Semaphore acquirePipelinePermit(Pipeline pipeline, int nextStepIndex) {
-        if (nextStepIndex >= pipeline.getStepsCount()) {
-            return null;
-        }
-        PipelineStep step = pipeline.getSteps(nextStepIndex);
-        if (step.getDependency().isEmpty() || completesExternally(step)) {
-            return null;
-        }
-        String target = step.getDependency();
-        for (ServiceDependency dependency : pipeline.getDependenciesList()) {
-            if (dependency.getAlias().equals(step.getDependency())) {
-                target = worker.resolvePipelineTarget(dependency);
-                break;
-            }
-        }
-        return worker.acquireTargetPermit(target);
     }
 }
