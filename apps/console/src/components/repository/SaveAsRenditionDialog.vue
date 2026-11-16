@@ -305,7 +305,7 @@ import {
   type ClassifiedSinkError,
   type SinkJobSummary,
 } from '@/repository/saveAsJobCore'
-import { useSaveAsJobs } from '@/repository/saveAsJobs'
+import { SaveAsJobCapacityError, useSaveAsJobs } from '@/repository/saveAsJobs'
 import {
   type ResolvedOccurrenceOption,
 } from '@/repository/saveAsProvenanceCore'
@@ -618,7 +618,17 @@ async function submitSaveAs() {
   }
 
   activeOperationId.value = opId
-  await jobs.publish(clients.repositorySink, request, true)
+  try {
+    await jobs.publish(clients.repositorySink, request, true)
+  } catch (error) {
+    if (error instanceof SaveAsJobCapacityError) {
+      // Nothing was sent and nothing is tracked under this operation ID.
+      activeOperationId.value = null
+      inputError.value = error.message
+      return
+    }
+    throw error
+  }
 }
 
 async function retrySameOperation() {

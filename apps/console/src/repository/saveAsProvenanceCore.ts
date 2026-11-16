@@ -206,6 +206,15 @@ function formatMapSubscript(step: RepositorySchemaOccurrenceStep): string | null
 }
 
 /**
+ * The message descriptor retained for the `Any` that occurs in `part` at `stepsBefore` (the
+ * locator steps leading up to, and not including, its boundary), or null when none is loaded.
+ */
+export type BoundaryDescLookup = (
+  part: PartSelector,
+  stepsBefore: readonly RepositorySchemaOccurrenceStep[],
+) => DescMessage | null
+
+/**
  * Reconstruct selectable `occurrence_field_path` options for resolved top-level
  * or nested message `Any` occurrences within a decoded document part.
  */
@@ -213,7 +222,7 @@ export function listPartOccurrenceOptions(
   validation: RevisionValidation | null,
   part: PartSelector,
   rootDesc: DescMessage | null,
-  lookupTypeDesc?: (typeUrl: string) => DescMessage | null,
+  lookupBoundaryDesc?: BoundaryDescLookup,
 ): ResolvedOccurrenceOption[] {
   if (validation === null || rootDesc === null) return []
   const results: ResolvedOccurrenceOption[] = []
@@ -230,15 +239,17 @@ export function listPartOccurrenceOptions(
     const segments: string[] = []
     let supported = true
 
-    for (const step of locator.steps) {
+    for (let index = 0; index < locator.steps.length; index++) {
+      const step = locator.steps[index]
       if (curDesc === null) {
         supported = false
         break
       }
       if (step.step.case === 'anyBoundary') {
-        const boundaryTypeUrl = step.step.value.typeUrl
-        if (curDesc.typeName === 'google.protobuf.Any' && lookupTypeDesc !== undefined) {
-          curDesc = lookupTypeDesc(boundaryTypeUrl)
+        if (curDesc.typeName === 'google.protobuf.Any' && lookupBoundaryDesc !== undefined) {
+          // Two occurrences may share a type URL and retain different schemas, so the Any is
+          // identified by where it occurs.
+          curDesc = lookupBoundaryDesc(part, locator.steps.slice(0, index))
         }
         continue
       }

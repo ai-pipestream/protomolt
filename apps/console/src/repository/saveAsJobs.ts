@@ -49,7 +49,11 @@ export interface SaveAsJobEntry {
 export interface SaveAsJobStore {
   readonly items: readonly SaveAsJobEntry[]
   find(operationId: string): SaveAsJobEntry | undefined
-  /** Publishes (or re-publishes) the frozen request under its operation ID. */
+  /**
+   * Publishes (or re-publishes) the frozen request under its operation ID.
+   *
+   * @throws SaveAsJobCapacityError when the job is new and no tracked job can be forgotten
+   */
   publish(client: SinkClient, request: PublishRepositorySinkRequest, dialogOpen: boolean): Promise<void>
   refresh(operationId: string): Promise<void>
   cancel(operationId: string, reason: string): Promise<void>
@@ -63,9 +67,35 @@ export interface SaveAsJobStore {
 const MAX_RETAINED_SAVE_AS_JOBS = 20
 const OPEN_POLL_MS = 500
 const CLOSED_POLL_MS = 5000
+const MAX_POLL_BACKOFF_MS = 30_000
+
+/**
+ * Raised when a new job cannot be tracked: every retained job is still in flight, shown in an
+ * open dialog, or has an outcome the server has not confirmed, and forgetting any of them would
+ * lose an operation the operator may still need to reconcile.
+ */
+export class SaveAsJobCapacityError extends Error {
+  constructor() {
+    super(
+      `${MAX_RETAINED_SAVE_AS_JOBS} Save-as jobs are already being tracked and none has a confirmed `
+        + 'outcome. Refresh or dismiss one before starting another.',
+    )
+    this.name = 'SaveAsJobCapacityError'
+  }
+}
 
 function isActive(summary: SinkJobSummary | null): boolean {
   return summary !== null && (summary.phase === 'queued' || summary.phase === 'running')
+}
+
+/** Call ordering and poll backoff for one job; kept beside the entry, not shown. */
+interface JobCalls {
+  /** Sequence number handed to the most recently started call. */
+  started: number
+  /** Sequence number of the call whose outcome the entry currently shows. */
+  shown: number
+  /** Status calls that have failed in a row. */
+  failedPolls: number
 }
 
 export function createSaveAsJobStore(): SaveAsJobStore {
@@ -73,7 +103,36 @@ export function createSaveAsJobStore(): SaveAsJobStore {
   const clients = new Map<string, SinkClient>()
   const controllers = new Map<string, AbortController>()
   const timers = new Map<string, ReturnType<typeof setTimeout>>()
+  const calls = new Map<string, JobCalls>()
   let disposed = false
+
+  function callsFor(operationId: string): JobCalls {
+    let state = calls.get(operationId)
+    if (state === undefined) {
+      state = { started: 0, shown: 0, failedPolls: 0 }
+      calls.set(operationId, state)
+    }
+    return state
+  }
+
+  /** Numbers a call as it starts, so its outcome can be ordered against the others. */
+  function beginCall(operationId: string): number {
+    const state = callsFor(operationId)
+    state.started += 1
+    return state.started
+  }
+
+  /**
+   * Claims the entry for the outcome of call `sequence`. Publish, status and cancel calls can
+   * overlap, and a call that started earlier describes older state, so its outcome is dropped
+   * once a later call's outcome is shown.
+   */
+  function claim(operationId: string, sequence: number): boolean {
+    const state = callsFor(operationId)
+    if (sequence < state.shown) return false
+    state.shown = sequence
+    return true
+  }
 
   function find(operationId: string): SaveAsJobEntry | undefined {
     return items.find((item) => item.operationId === operationId)
@@ -100,7 +159,8 @@ export function createSaveAsJobStore(): SaveAsJobStore {
   function schedulePoll(entry: SaveAsJobEntry) {
     clearTimer(entry.operationId)
     if (disposed || !isActive(entry.summary)) return
-    const delay = entry.dialogOpen ? OPEN_POLL_MS : CLOSED_POLL_MS
+    const base = entry.dialogOpen ? OPEN_POLL_MS : CLOSED_POLL_MS
+    const delay = Math.min(base * 2 ** callsFor(entry.operationId).failedPolls, MAX_POLL_BACKOFF_MS)
     timers.set(
       entry.operationId,
       setTimeout(() => {
@@ -110,12 +170,18 @@ export function createSaveAsJobStore(): SaveAsJobStore {
     )
   }
 
-  function apply(entry: SaveAsJobEntry, summary: SinkJobSummary, source: SaveAsJobUpdateSource) {
+  function apply(
+    entry: SaveAsJobEntry,
+    summary: SinkJobSummary,
+    source: SaveAsJobUpdateSource,
+    sequence: number,
+  ) {
+    if (!claim(entry.operationId, sequence)) return
     entry.summary = summary
     entry.updatedBy = source
-    if (summary.phase === 'succeeded' || isActive(summary)) {
-      entry.error = null
-    }
+    // The server has answered for this job, so an earlier call's failure no longer describes it.
+    entry.error = null
+    callsFor(entry.operationId).failedPolls = 0
     if (isActive(summary)) {
       schedulePoll(entry)
     } else {
@@ -123,18 +189,36 @@ export function createSaveAsJobStore(): SaveAsJobStore {
     }
   }
 
+  function fail(entry: SaveAsJobEntry, error: ClassifiedSinkError, sequence: number) {
+    if (!claim(entry.operationId, sequence)) return
+    entry.error = error
+  }
+
+  /** A job may be forgotten only once the server has confirmed how it ended. */
+  function canEvict(item: SaveAsJobEntry): boolean {
+    return (
+      !item.dialogOpen
+      && !item.submitting
+      && !item.reconciling
+      && !item.cancelling
+      && item.summary !== null
+      && item.summary.terminal
+    )
+  }
+
   function track(client: SinkClient, request: PublishRepositorySinkRequest, dialogOpen: boolean): SaveAsJobEntry {
     const existing = find(request.operationId)
-    clients.set(request.operationId, client)
     if (existing !== undefined) {
+      clients.set(request.operationId, client)
       existing.dialogOpen = dialogOpen
       return existing
     }
     if (items.length >= MAX_RETAINED_SAVE_AS_JOBS) {
-      const settledIndex = items.findIndex((item) => !item.dialogOpen && !isActive(item.summary))
-      const evicted = items[settledIndex >= 0 ? settledIndex : 0]
-      dismiss(evicted.operationId)
+      const evictable = items.find(canEvict)
+      if (evictable === undefined) throw new SaveAsJobCapacityError()
+      dismiss(evictable.operationId)
     }
+    clients.set(request.operationId, client)
     items.push({
       operationId: request.operationId,
       accountId: request.destination?.address?.accountId ?? '',
@@ -156,23 +240,28 @@ export function createSaveAsJobStore(): SaveAsJobStore {
     if (entry.submitting) return
     clearTimer(entry.operationId)
     const signal = signalFor(entry.operationId)
+    const sequence = beginCall(entry.operationId)
     entry.submitting = true
     entry.error = null
     try {
       const response = await client.publishRepositorySink(entry.request, { signal })
       if (response.job === undefined) {
-        entry.error = {
-          kind: 'unsettled',
-          codeLabel: 'EmptyJobResponse',
-          message: 'Server returned an empty job envelope; refresh status to inspect recorded state.',
-          canReconcile: true,
-        }
+        fail(
+          entry,
+          {
+            kind: 'unsettled',
+            codeLabel: 'EmptyJobResponse',
+            message: 'Server returned an empty job envelope; refresh status to inspect recorded state.',
+            canReconcile: true,
+          },
+          sequence,
+        )
         return
       }
-      apply(entry, describeSinkJob(response.job), 'publish')
+      apply(entry, describeSinkJob(response.job), 'publish', sequence)
     } catch (error) {
       if (!isOwnCancellation(error, signal)) {
-        entry.error = classifySinkRpcError(error)
+        fail(entry, classifySinkRpcError(error), sequence)
       }
     } finally {
       entry.submitting = false
@@ -184,6 +273,7 @@ export function createSaveAsJobStore(): SaveAsJobStore {
     const client = clients.get(operationId)
     if (entry === undefined || client === undefined || entry.reconciling) return
     const signal = signalFor(operationId)
+    const sequence = beginCall(operationId)
     entry.reconciling = true
     try {
       const response = await client.getRepositorySinkJob(
@@ -191,14 +281,20 @@ export function createSaveAsJobStore(): SaveAsJobStore {
         { signal },
       )
       if (response.job !== undefined) {
-        apply(entry, describeSinkJob(response.job), 'refresh')
+        apply(entry, describeSinkJob(response.job), 'refresh', sequence)
       }
     } catch (error) {
       if (!isOwnCancellation(error, signal)) {
-        entry.error = classifySinkRpcError(error)
+        callsFor(operationId).failedPolls += 1
+        fail(entry, classifySinkRpcError(error), sequence)
       }
     } finally {
       entry.reconciling = false
+      // The timer that started this call is spent. A job last seen queued or running is still
+      // watched, with a longer wait after each status call that failed.
+      if (find(operationId) === entry && isActive(entry.summary) && !timers.has(operationId)) {
+        schedulePoll(entry)
+      }
     }
   }
 
@@ -208,6 +304,7 @@ export function createSaveAsJobStore(): SaveAsJobStore {
     if (entry === undefined || client === undefined || entry.cancelling) return
     clearTimer(operationId)
     const signal = signalFor(operationId)
+    const sequence = beginCall(operationId)
     entry.cancelling = true
     try {
       const response = await client.cancelRepositorySinkJob(
@@ -215,14 +312,18 @@ export function createSaveAsJobStore(): SaveAsJobStore {
         { signal },
       )
       if (response.job !== undefined) {
-        apply(entry, describeSinkJob(response.job), 'cancel')
+        apply(entry, describeSinkJob(response.job), 'cancel', sequence)
       }
     } catch (error) {
       if (!isOwnCancellation(error, signal)) {
-        entry.error = classifySinkRpcError(error)
+        fail(entry, classifySinkRpcError(error), sequence)
       }
     } finally {
       entry.cancelling = false
+      // A cancel that failed leaves the job running, so it is still watched.
+      if (find(operationId) === entry && isActive(entry.summary) && !timers.has(operationId)) {
+        schedulePoll(entry)
+      }
     }
   }
 
@@ -238,6 +339,7 @@ export function createSaveAsJobStore(): SaveAsJobStore {
     controllers.get(operationId)?.abort()
     controllers.delete(operationId)
     clients.delete(operationId)
+    calls.delete(operationId)
     const index = items.findIndex((item) => item.operationId === operationId)
     if (index >= 0) items.splice(index, 1)
   }

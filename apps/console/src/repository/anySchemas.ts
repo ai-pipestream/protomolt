@@ -126,12 +126,13 @@ export class AnySchemas {
     return { desc, boundary }
   }
 
-  /** Lookup a loaded message descriptor by retained `Any` type URL, or null when not loaded. */
-  descForTypeUrl(typeUrl: string): DescMessage | null {
-    for (const entry of this.byOccurrence.values()) {
-      if (entry.retained.schema?.typeUrl === typeUrl) return entry.desc
-    }
-    return null
+  /**
+   * The descriptor retained for the `Any` occurring in `part` at `steps`, or null when not
+   * loaded. Occurrences are told apart by location, since two may share a type URL and retain
+   * different schemas.
+   */
+  descAt(part: PartSelector, steps: readonly RepositorySchemaOccurrenceStep[]): DescMessage | null {
+    return this.byOccurrence.get(locationKey({ part, steps: steps.map(stepKey) }))?.desc ?? null
   }
 }
 

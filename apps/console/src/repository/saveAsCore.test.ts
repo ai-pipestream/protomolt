@@ -483,4 +483,90 @@ describe('saveAsCore', () => {
       },
     ])
   })
+
+  it('sends provider identity exactly as advertised, however long, and shortens it only for display', () => {
+    const providerId = `provider-${'p'.repeat(140)}`
+    const providerVersion = `1.0.0+${'v'.repeat(80)}`
+    const sourceProfile = `profile-${'s'.repeat(140)}`
+    const extension = `.${'x'.repeat(40)}`
+    const view = describeSaveAsCapabilities(
+      create(ListSaveAsCapabilitiesResponseSchema, {
+        capabilities: [
+          create(SaveAsCapabilitySchema, {
+            status: SaveAsCompatibilityStatus.COMPATIBLE,
+            capability: create(RendererCapabilitySchema, {
+              providerId,
+              providerVersion,
+              sourceProfile,
+              mediaType: 'text/csv',
+              extension,
+              maxInputBytes: 1024,
+              maxOutputBytes: 1024,
+            }),
+          }),
+        ],
+      }),
+    )
+    const capability = view.compatible[0]
+    // The labels are bounded for the page.
+    expect(capability.providerId.length).toBeLessThan(providerId.length)
+    expect(capability.providerVersion.length).toBeLessThan(providerVersion.length)
+
+    const published = buildPublishSaveAsRequest({
+      operationId: 'op-long',
+      source: buildArchiveRenditionSinkSource({
+        address: create(EntryAddressSchema, { accountId: 'acct-a', archive: 'datasets', entryId: 'e-1' }),
+        rendition: { name: 'original' },
+        revision: 1n,
+      }),
+      capability,
+      destination: {
+        accountId: 'acct-a',
+        archive: 'datasets',
+        entryId: 'e-1',
+        renditionName: 'csv',
+        preconditionMode: 'unconditional',
+      },
+    })
+    expect(published.conversion?.providerId).toBe(providerId)
+    expect(published.conversion?.providerVersion).toBe(providerVersion)
+    expect(published.conversion?.sourceProfile).toBe(sourceProfile)
+    expect(published.conversion?.extension).toBe(extension)
+  })
+
+  it('resolves a nested Any by where it occurs, not by its type URL alone', () => {
+    const core = create(PartSelectorSchema, { selector: { case: 'part', value: DocumentPart.CORE } })
+    const typeUrl = 'type.googleapis.com/ai.protomolt.proto.repo.v1.Document'
+    const boundary = {
+      step: {
+        case: 'anyBoundary' as const,
+        value: { typeUrl, valueSha256: 'b'.repeat(64), valueSizeBytes: 8n },
+      },
+    }
+    const validation = create(RevisionValidationSchema, {
+      resolvedOccurrences: [
+        {
+          occurrence: {
+            part: core,
+            steps: [
+              { step: { case: 'fieldNumber', value: 4 } },
+              boundary,
+              { step: { case: 'fieldNumber', value: 4 } },
+            ],
+          },
+          schema: { typeUrl: 'type.googleapis.com/google.protobuf.StringValue', descriptorSha256: 'a'.repeat(64) },
+          payloadLength: 5n,
+        },
+      ],
+    })
+    const asked: string[][] = []
+    const options = listPartOccurrenceOptions(validation, core, DocumentSchema, (part, stepsBefore) => {
+      expect(part).toBe(core)
+      asked.push(stepsBefore.map((step) => `${step.step.case}:${String(step.step.value)}`))
+      return DocumentSchema
+    })
+    // The lookup is told which occurrence it is resolving: the Any at field 4.
+    expect(asked).toEqual([['fieldNumber:4']])
+    expect(options.map((option) => option.fieldPath)).toEqual(['structured_data.structured_data'])
+  })
 })

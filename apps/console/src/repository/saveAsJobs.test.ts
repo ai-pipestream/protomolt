@@ -1,8 +1,9 @@
 import { create } from '@bufbuild/protobuf'
 import { Code, ConnectError } from '@connectrpc/connect'
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { EntryAddressSchema, RenditionDescriptorSchema } from '@/gen/ai/protomolt/proto/repo/archive/v1/entry_pb'
 import {
+  GetRepositorySinkJobResponseSchema,
   PublishRepositorySinkRequestSchema,
   PublishRepositorySinkResponseSchema,
   RepositorySinkJobSchema,
@@ -11,7 +12,7 @@ import {
   SinkDestinationSchema,
 } from '@/gen/ai/protomolt/proto/repo/sink/v1/repository_sink_pb'
 import { routerClients } from './repositoryTestKit'
-import { createSaveAsJobStore } from './saveAsJobs'
+import { createSaveAsJobStore, SaveAsJobCapacityError } from './saveAsJobs'
 
 const request = (operationId: string) =>
   create(PublishRepositorySinkRequestSchema, {
@@ -79,6 +80,139 @@ describe('Save-as job store', () => {
     expect(jobs.items).toHaveLength(1)
     expect(jobs.find('op-2')!.error).toBeNull()
     expect(jobs.find('op-2')!.summary?.phase).toBe('failed')
+    jobs.dispose()
+  })
+
+  const job = (operationId: string, state: RepositorySinkJobState) =>
+    create(RepositorySinkJobSchema, { operationId, accountId: 'acct-a', state })
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it('ignores a status response that started before a newer call and finishes after it', async () => {
+    let releaseGet = () => {}
+    const getGate = new Promise<void>((resolve) => {
+      releaseGet = resolve
+    })
+    let publishes = 0
+    const client = routerClients((r) =>
+      r.service(RepositorySinkService, {
+        publishRepositorySink(req) {
+          publishes += 1
+          if (publishes === 1) throw new ConnectError('lost', Code.Unavailable)
+          return create(PublishRepositorySinkResponseSchema, {
+            job: job(req.operationId, RepositorySinkJobState.SUCCEEDED),
+          })
+        },
+        async getRepositorySinkJob(req) {
+          await getGate
+          return create(GetRepositorySinkJobResponseSchema, {
+            job: job(req.operationId, RepositorySinkJobState.UNRESOLVED),
+          })
+        },
+      }),
+    ).repositorySink
+    const jobs = createSaveAsJobStore()
+    await jobs.publish(client, request('op-race'), true)
+    const staleRefresh = jobs.refresh('op-race')
+    await jobs.publish(client, jobs.find('op-race')!.request, true)
+    expect(jobs.find('op-race')!.summary?.phase).toBe('succeeded')
+    releaseGet()
+    await staleRefresh
+    expect(jobs.find('op-race')!.summary?.phase).toBe('succeeded')
+    expect(jobs.find('op-race')!.updatedBy).toBe('publish')
+    expect(jobs.find('op-race')!.error).toBeNull()
+    jobs.dispose()
+  })
+
+  it('keeps polling an active job after a status call fails', async () => {
+    vi.useFakeTimers()
+    let gets = 0
+    const client = routerClients((r) =>
+      r.service(RepositorySinkService, {
+        publishRepositorySink(req) {
+          return create(PublishRepositorySinkResponseSchema, {
+            job: job(req.operationId, RepositorySinkJobState.RUNNING),
+          })
+        },
+        getRepositorySinkJob(req) {
+          gets += 1
+          if (gets === 1) throw new ConnectError('blip', Code.Unavailable)
+          return create(GetRepositorySinkJobResponseSchema, {
+            job: job(req.operationId, RepositorySinkJobState.SUCCEEDED),
+          })
+        },
+      }),
+    ).repositorySink
+    const jobs = createSaveAsJobStore()
+    await jobs.publish(client, request('op-poll'), true)
+    expect(jobs.find('op-poll')!.summary?.phase).toBe('running')
+    await vi.advanceTimersByTimeAsync(600)
+    expect(gets).toBe(1)
+    expect(jobs.find('op-poll')!.error?.kind).toBe('unsettled')
+    await vi.advanceTimersByTimeAsync(60_000)
+    expect(gets).toBe(2)
+    expect(jobs.find('op-poll')!.summary?.phase).toBe('succeeded')
+    expect(jobs.find('op-poll')!.error).toBeNull()
+    jobs.dispose()
+  })
+
+  it.each([
+    ['failed', RepositorySinkJobState.FAILED],
+    ['cancelled', RepositorySinkJobState.CANCELLED],
+  ] as const)('clears a lost-response error once status confirms the job %s', async (phase, state) => {
+    const client = routerClients((r) =>
+      r.service(RepositorySinkService, {
+        publishRepositorySink() {
+          throw new ConnectError('lost', Code.Unavailable)
+        },
+        getRepositorySinkJob(req) {
+          return create(GetRepositorySinkJobResponseSchema, { job: job(req.operationId, state) })
+        },
+      }),
+    ).repositorySink
+    const jobs = createSaveAsJobStore()
+    await jobs.publish(client, request('op-lost'), true)
+    expect(jobs.find('op-lost')!.error?.kind).toBe('unsettled')
+    await jobs.refresh('op-lost')
+    expect(jobs.find('op-lost')!.summary?.phase).toBe(phase)
+    expect(jobs.find('op-lost')!.error).toBeNull()
+    jobs.dispose()
+  })
+
+  it('evicts only a confirmed terminal job and refuses a new one when none can go', async () => {
+    let outcome: 'lost' | 'failed' = 'lost'
+    const client = routerClients((r) =>
+      r.service(RepositorySinkService, {
+        publishRepositorySink(req) {
+          if (outcome === 'lost') throw new ConnectError('lost', Code.Unavailable)
+          return create(PublishRepositorySinkResponseSchema, {
+            job: job(req.operationId, RepositorySinkJobState.FAILED),
+          })
+        },
+      }),
+    ).repositorySink
+    const jobs = createSaveAsJobStore()
+    // Twenty operations whose outcome is unknown: none may be forgotten.
+    for (let i = 0; i < 20; i++) {
+      await jobs.publish(client, request(`op-${i}`), false)
+    }
+    await expect(jobs.publish(client, request('op-extra'), false)).rejects.toBeInstanceOf(
+      SaveAsJobCapacityError,
+    )
+    expect(jobs.items).toHaveLength(20)
+    expect(jobs.find('op-extra')).toBeUndefined()
+    expect(jobs.find('op-0')).toBeDefined()
+
+    // Once one of them is confirmed terminal it makes room.
+    outcome = 'failed'
+    await jobs.publish(client, jobs.find('op-7')!.request, false)
+    expect(jobs.find('op-7')!.summary?.phase).toBe('failed')
+    await jobs.publish(client, request('op-extra'), false)
+    expect(jobs.find('op-7')).toBeUndefined()
+    expect(jobs.find('op-extra')).toBeDefined()
+    expect(jobs.items).toHaveLength(20)
     jobs.dispose()
   })
 })

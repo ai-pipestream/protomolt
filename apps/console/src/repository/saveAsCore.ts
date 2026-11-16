@@ -181,13 +181,30 @@ export function buildListSaveAsCapabilitiesRequest(source: SinkSource) {
   return create(ListSaveAsCapabilitiesRequestSchema, { source })
 }
 
-export interface SaveAsCapabilityItem {
-  key: string
+/**
+ * A capability's identity exactly as the server advertised it. A publish request must carry
+ * these values unchanged: the server matches them exactly, so a shortened or cleaned label
+ * names no capability at all.
+ */
+export interface SaveAsCapabilityWireIdentity {
   providerId: string
   providerVersion: string
   sourceProfile: string
-  mediaType: string
   extension: string
+}
+
+export interface SaveAsCapabilityItem {
+  key: string
+  /** Display label; see {@link SaveAsCapabilityItem.wire} for the value sent to the server. */
+  providerId: string
+  /** Display label. */
+  providerVersion: string
+  /** Display label. */
+  sourceProfile: string
+  mediaType: string
+  /** Display label. */
+  extension: string
+  wire: SaveAsCapabilityWireIdentity
   defaultRenditionName: string
   optionsType: string
   optionsFingerprint: string
@@ -279,6 +296,12 @@ function mapSaveAsCapability(entry: SaveAsCapability): SaveAsCapabilityItem | nu
     sourceProfile,
     mediaType,
     extension,
+    wire: {
+      providerId: cap.providerId,
+      providerVersion: cap.providerVersion,
+      sourceProfile: cap.sourceProfile,
+      extension: cap.extension,
+    },
     defaultRenditionName: defaultRenditionSlotName(extension, cap.providerId),
     optionsType,
     optionsFingerprint,
@@ -577,11 +600,11 @@ export function buildPublishSaveAsRequest(input: BuildPublishSaveAsInput): Publi
     operationId,
     source: input.source,
     conversion: create(ConversionSpecSchema, {
-      providerId: input.capability.providerId,
-      providerVersion: input.capability.providerVersion,
-      sourceProfile: input.capability.sourceProfile,
+      providerId: input.capability.wire.providerId,
+      providerVersion: input.capability.wire.providerVersion,
+      sourceProfile: input.capability.wire.sourceProfile,
       mediaType: input.capability.mediaType,
-      extension: input.capability.extension,
+      extension: input.capability.wire.extension,
       optionsType: input.capability.optionsType,
       optionsFingerprint: input.capability.optionsFingerprint,
       options: optionsBytes,

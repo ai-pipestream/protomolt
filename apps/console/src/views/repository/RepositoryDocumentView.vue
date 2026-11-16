@@ -847,7 +847,7 @@ async function readPartAt(index: number) {
           validation.value,
           entry.selector,
           decoded.desc as DescMessage,
-          (typeUrl) => schemas.descForTypeUrl(typeUrl),
+          (occurrencePart, stepsBefore) => schemas.descAt(occurrencePart, stepsBefore),
         )
       : []
     partView.value = {
