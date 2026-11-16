@@ -3,6 +3,7 @@ package ai.protomolt.proto.jobs.service;
 import ai.protomolt.proto.actions.ActionCatalog;
 import ai.protomolt.proto.actions.ActionContext;
 import ai.protomolt.proto.actions.ActionException;
+import ai.protomolt.proto.descriptors.DescriptorRegistry;
 import ai.protomolt.proto.grpc.profile.ServiceProfileValidation;
 import ai.protomolt.proto.grpc.workflow.v1.ServiceDependency;
 import ai.protomolt.proto.grpc.workflow.v1.StepCompletion;
@@ -75,6 +76,7 @@ class PipelineRunCodecTest {
             message EnvelopeInput {
               string request_id = 1;
               google.protobuf.Any detail = 2;
+              repeated google.protobuf.Any extras = 3;
             }
             message EnvelopeOutput {
               string status = 1;
@@ -499,6 +501,83 @@ class PipelineRunCodecTest {
                         8, "approve", files, null))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("item 0 must be a JSON object");
+    }
+
+    @Test
+    void anAnyIsAlwaysAnObjectEvenWhenItPacksATypeThatIsNot() throws Exception {
+        // proto3 JSON prints Any as {"@type": ..., "value": <custom JSON>} for a packed
+        // well-known type, so Any needs no "value" carrier of its own.
+        DescriptorRegistry wellKnown = DescriptorRegistry.create(false);
+        wellKnown.registerFile(Timestamp.getDescriptor().getFile());
+        wellKnown.registerFile(Any.getDescriptor().getFile());
+        PipelineRunView.Printer printer = PipelineRunView.Printer.over(wellKnown);
+        Any packedInstant = Any.pack(Timestamp.newBuilder().setSeconds(1).build());
+        DynamicMessage any = DynamicMessage.parseFrom(
+                Any.getDescriptor(), packedInstant.toByteString());
+
+        ObjectNode printed = PipelineRunView.asObject(any, printer);
+        assertThat(printed.get("@type").asText())
+                .isEqualTo("type.googleapis.com/google.protobuf.Timestamp");
+        assertThat(printed.get("value").asText()).isEqualTo("1970-01-01T00:00:01Z");
+
+        // What the view shows is what complete-step accepts, unary and as a stream item.
+        assertThat(PipelineExternalCompletionParser.parseResponses(
+                        printed, EdgeCardinality.EDGE_CARDINALITY_ONE, Any.getDescriptor(),
+                        8, "approve", files, wellKnown))
+                .singleElement()
+                .satisfies(m -> assertThat(m.toByteString())
+                        .isEqualTo(packedInstant.toByteString()));
+        ObjectNode stream = JSON.createObjectNode();
+        stream.putArray("items").add(printed).add(printed);
+        assertThat(PipelineExternalCompletionParser.parseResponses(
+                        stream, EdgeCardinality.EDGE_CARDINALITY_MANY, Any.getDescriptor(),
+                        8, "approve", files, wellKnown))
+                .extracting(m -> m.toByteString())
+                .containsExactly(packedInstant.toByteString(), packedInstant.toByteString());
+    }
+
+    @Test
+    void viewRaisesCorruptionEvenWhenAnotherAnyHasAnUnknownType() throws Exception {
+        Descriptor inputType = file.findMessageTypeByName("EnvelopeInput");
+        Any corruptKnown = Any.newBuilder()
+                .setTypeUrl("type.googleapis.com/jobs.pipeline.codec.EnvelopeOutput")
+                .setValue(ByteString.copyFrom(new byte[] {(byte) 0xFF}))
+                .build();
+        Any unknown = Any.newBuilder()
+                .setTypeUrl("type.googleapis.com/unregistered.OpaqueSecret")
+                .setValue(ByteString.copyFrom(new byte[] {0x0a, 0x01, 0x78}))
+                .build();
+        PipelineRunView.Printer printer =
+                PipelineRunView.Printer.over(PipelineRunCodec.buildRegistry(files, null));
+        for (List<Any> order : List.of(
+                List.of(corruptKnown, unknown), List.of(unknown, corruptKnown))) {
+            DynamicMessage.Builder mixed = DynamicMessage.newBuilder(inputType)
+                    .setField(inputType.findFieldByName("request_id"), "req-mixed");
+            for (Any extra : order) {
+                mixed.addRepeatedField(inputType.findFieldByName("extras"),
+                        DynamicMessage.parseFrom(Any.getDescriptor(), extra.toByteString()));
+            }
+            assertThatThrownBy(() -> PipelineRunView.message(mixed.build(), printer))
+                    .isInstanceOf(ProtobufJsonException.class);
+        }
+
+        // An unknown type nested inside a known Any is still only an unknown type.
+        DynamicMessage inner = DynamicMessage.newBuilder(inputType)
+                .setField(inputType.findFieldByName("detail"),
+                        DynamicMessage.parseFrom(Any.getDescriptor(), unknown.toByteString()))
+                .build();
+        Any knownAroundUnknown = Any.newBuilder()
+                .setTypeUrl("type.googleapis.com/jobs.pipeline.codec.EnvelopeInput")
+                .setValue(inner.toByteString())
+                .build();
+        DynamicMessage nested = DynamicMessage.newBuilder(inputType)
+                .addRepeatedField(inputType.findFieldByName("extras"),
+                        DynamicMessage.parseFrom(Any.getDescriptor(),
+                                knownAroundUnknown.toByteString()))
+                .build();
+        assertThat(PipelineRunView.message(nested, printer)
+                .get(PipelineRunView.UNRENDERABLE_TYPE_KEY).asText())
+                .isEqualTo("jobs.pipeline.codec.EnvelopeInput");
     }
 
     private static WorkflowRunRecord pipelineRow(byte[] definition) {

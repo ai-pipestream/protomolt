@@ -5,6 +5,7 @@ import ai.protomolt.proto.descriptors.DescriptorRegistry;
 import ai.protomolt.proto.grpc.workflow.v1.BranchFailurePolicy;
 import ai.protomolt.proto.grpc.workflow.v1.FanOutSpec;
 import ai.protomolt.proto.grpc.workflow.v1.StepCompletion;
+import ai.protomolt.proto.grpc.workflow.v1.TypedEdge;
 import ai.protomolt.proto.pipeline.PipelineExecutor.BranchOutcome;
 import ai.protomolt.proto.pipeline.PipelineExecutor.Checkpoint;
 import ai.protomolt.proto.pipeline.PipelineExecutor.FailureKind;
@@ -60,6 +61,7 @@ final class CheckpointReplay {
         requireBranchEvidence(step, saved, shape.fanOut(), context.streamLimit());
         List<DynamicMessage> values = decodeMessages(step, saved, shape);
         if (shape.fanOut() != null && !saved.outcome().skipped()) {
+            requireEveryItemBranched(step, saved, shape.fanOut(), scope, context.registry());
             requireCollectedBranches(step, saved, shape, values.getFirst());
         }
         if (step.hasCollect()) {
@@ -219,10 +221,8 @@ final class CheckpointReplay {
             throws PipelineExecutionException {
         Descriptor type = shape.type();
         boolean skipped = saved.outcome().skipped();
-        boolean validateResponse = !skipped
-                && step.hasGrpcCall()
-                && step.getGrpcCall().getValidateResponse()
-                && !step.getGrpcCall().hasFanOut();
+        boolean validateResponse = !skipped && shape.fanOut() == null
+                && validatesResponses(step);
         List<DynamicMessage> values = new ArrayList<>(saved.messages().size());
         for (DynamicMessage message : saved.messages()) {
             if (!message.getDescriptorForType().getFullName().equals(type.getFullName())
@@ -250,6 +250,37 @@ final class CheckpointReplay {
         return values;
     }
 
+    /**
+     * Whether a live run validates this step's responses: a gRPC step when it declares
+     * {@code validate_response}, and a structured step always, because generation returns
+     * only a form that passed its target type's rules.
+     */
+    private static boolean validatesResponses(PipelineStep step) {
+        return step.hasStructured()
+                || (step.hasGrpcCall() && step.getGrpcCall().getValidateResponse());
+    }
+
+    /**
+     * A fan-out that completes records one branch per item its edge maps, so the items are
+     * mapped again from the replayed scope and the evidence must cover every one of them.
+     */
+    private static void requireEveryItemBranched(PipelineStep step, Checkpoint saved,
+                                                 FanOutSpec fanOut,
+                                                 Map<String, PipelineBinding> scope,
+                                                 DescriptorRegistry registry)
+            throws PipelineExecutionException {
+        TypedEdge edge = step.hasGrpcCall()
+                ? step.getGrpcCall().getEdge() : step.getStructured().getEdge();
+        DynamicMessage holder = EdgeMapping.mapEdge(edge, scope, registry, step.getName())
+                .getFirst();
+        int items = EdgeMapping.prepareFanOut(step.getName(), holder, edge, fanOut, registry)
+                .size();
+        if (saved.branches().size() != items) {
+            throw invalid(step, "checkpoint has " + saved.branches().size()
+                    + " branch(es) for the " + items + " item(s) the step fans out over");
+        }
+    }
+
     private static void requireCollectedBranches(PipelineStep step, Checkpoint saved,
                                                  Shape shape, DynamicMessage collectedHolder)
             throws PipelineExecutionException {
@@ -257,7 +288,7 @@ final class CheckpointReplay {
         FieldDescriptor collectedField =
                 shape.type().findFieldByName(shape.fanOut().getCollectInto());
         int collected = collectedHolder.getRepeatedFieldCount(collectedField);
-        if (step.hasGrpcCall() && step.getGrpcCall().getValidateResponse()) {
+        if (validatesResponses(step)) {
             for (int i = 0; i < collected; i++) {
                 StepValues.validate(
                         StepValues.dynamic(

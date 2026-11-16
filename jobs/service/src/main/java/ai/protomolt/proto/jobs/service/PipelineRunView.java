@@ -17,6 +17,7 @@ import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.google.protobuf.DynamicMessage;
 import com.google.protobuf.InvalidProtocolBufferException;
+import com.google.protobuf.Message;
 import java.util.List;
 
 /**
@@ -142,12 +143,18 @@ final class PipelineRunView {
         try {
             printed = printer.transcoder().toJson(message);
         } catch (ProtobufJsonException unprintable) {
-            if (!UnresolvedAnyTypes.presentIn(message, printer.registry())) {
+            // proto3 JSON cannot print an Any whose type is outside the run's descriptor set.
+            // When that alone is why the message does not print, the view says so; the stored
+            // bytes are unaffected. Any other printing failure is raised.
+            Message withoutUndefinedAny = UnresolvedAnyTypes
+                    .without(message, printer.registry())
+                    .orElseThrow(() -> unprintable);
+            try {
+                printer.transcoder().toJson(withoutUndefinedAny);
+            } catch (ProtobufJsonException alsoUnprintable) {
+                unprintable.addSuppressed(alsoUnprintable);
                 throw unprintable;
             }
-            // proto3 JSON cannot print an Any whose type is outside the run's descriptor set.
-            // The view says so; the stored bytes are unaffected. Any other printing failure
-            // is raised.
             ObjectNode marker = JSON.createObjectNode();
             marker.put(UNRENDERABLE_TYPE_KEY, message.getDescriptorForType().getFullName());
             return marker;

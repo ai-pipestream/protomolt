@@ -25,6 +25,7 @@ import com.google.protobuf.Any;
 import com.google.protobuf.ByteString;
 import com.google.protobuf.DescriptorProtos.FileDescriptorSet;
 import com.google.protobuf.Descriptors.Descriptor;
+import com.google.protobuf.Descriptors.FieldDescriptor;
 import com.google.protobuf.Descriptors.FileDescriptor;
 import com.google.protobuf.DynamicMessage;
 import com.google.protobuf.Duration;
@@ -774,6 +775,118 @@ class PipelineSegmentsTest {
                     });
         }
         assertThat(executor.runSegment(pipeline, files, input, List.of(honest), cp -> { }))
+                .isInstanceOf(Segment.Completed.class);
+    }
+
+    @Test
+    void replayRejectsAStructuredCheckpointThatFailsItsTargetValidation() throws Exception {
+        Pipeline pipeline = PipelineFixtures.base("structured-replay", TICKET)
+                .addDependencies(PipelineFixtures.dependency("structured-generation"))
+                .addSteps(PipelineFixtures.structuredStep("summarize",
+                        "structured-generation", "structured-model", null))
+                .build();
+        List<FileDescriptor> files = PipelineFixtures.files();
+        DynamicMessage input = ticket("in");
+        Descriptor summaryType = PipelineFixtures.type(SUMMARY);
+        PipelineExecutor executor = new PipelineExecutor((dep, method, reqs, deadline, max) -> {
+            throw new AssertionError("a replayed structured step calls nothing");
+        });
+        String pipelineFp = PipelineExecutor.pipelineFingerprint(pipeline, files);
+        String inputFp = PipelineExecutor.inputFingerprint(input);
+
+        // Summary.headline needs at least three characters; live generation refuses "no".
+        DynamicMessage tooShort = DynamicMessage.newBuilder(summaryType)
+                .setField(summaryType.findFieldByName("headline"), "no")
+                .build();
+        Checkpoint invalid = new Checkpoint(pipelineFp, inputFp,
+                new StepOutcome("summarize", false, 0, 1),
+                EdgeCardinality.EDGE_CARDINALITY_ONE, List.of(tooShort), List.of());
+        assertThatThrownBy(() -> executor.runSegment(
+                pipeline, files, input, List.of(invalid), cp -> { }))
+                .isInstanceOfSatisfying(PipelineExecutionException.class, e -> {
+                    assertThat(e.kind()).isEqualTo(FailureKind.VALIDATION);
+                    assertThat(e.step()).isEqualTo("summarize");
+                });
+
+        DynamicMessage fine = DynamicMessage.newBuilder(summaryType)
+                .setField(summaryType.findFieldByName("headline"), "long enough")
+                .build();
+        Checkpoint valid = new Checkpoint(pipelineFp, inputFp,
+                new StepOutcome("summarize", false, 0, 1),
+                EdgeCardinality.EDGE_CARDINALITY_ONE, List.of(fine), List.of());
+        assertThat(executor.runSegment(pipeline, files, input, List.of(valid), cp -> { }))
+                .isInstanceOf(Segment.Completed.class);
+    }
+
+    @Test
+    void replayRejectsFanOutEvidenceThatDoesNotCoverEveryMappedItem() throws Exception {
+        FanOutSpec fanOut = FanOutSpec.newBuilder()
+                .setItems("items")
+                .setCollectType(BATCH)
+                .setCollectInto("items")
+                .setMaxItems(10)
+                .setMaxConcurrency(2)
+                .setFailurePolicy(BranchFailurePolicy.BRANCH_FAILURE_POLICY_CONTINUE)
+                .build();
+        Pipeline pipeline = PipelineFixtures.base("fan-replay", BATCH)
+                .addDependencies(PipelineFixtures.dependency("pipeline.test.Worker"))
+                .addSteps(PipelineStep.newBuilder()
+                        .setName("fan")
+                        .setDependency("pipeline.test.Worker")
+                        .setGrpcCall(GrpcCallStep.newBuilder()
+                                .setMethod(PROCESS)
+                                .setMethodShape(MethodShape.METHOD_SHAPE_UNARY)
+                                .setEdge(PipelineFixtures.edge(BATCH, List.of("input"),
+                                        "items = input.items"))
+                                .setEdgeCardinality(EdgeCardinality.EDGE_CARDINALITY_ONE)
+                                .setOutputCardinality(EdgeCardinality.EDGE_CARDINALITY_ONE)
+                                .setCompletion(StepCompletion.STEP_COMPLETION_LIVE)
+                                .setFanOut(fanOut)))
+                .build();
+        List<FileDescriptor> files = PipelineFixtures.files();
+        Descriptor batchType = PipelineFixtures.type(BATCH);
+        FieldDescriptor items = batchType.findFieldByName("items");
+        DynamicMessage input = DynamicMessage.newBuilder(batchType)
+                .addRepeatedField(items, ticket("a"))
+                .addRepeatedField(items, ticket("b"))
+                .addRepeatedField(items, ticket("c"))
+                .build();
+        PipelineExecutor live = new PipelineExecutor((dep, method, reqs, deadline, max) ->
+                List.of(ticket("ok:" + titleOf(reqs.getFirst()))));
+        List<Checkpoint> written = new ArrayList<>();
+        live.runSegment(pipeline, files, input, List.of(), written::add);
+        Checkpoint honest = written.getFirst();
+        assertThat(honest.branches()).hasSize(3);
+        assertThat(honest.outcome()).isEqualTo(new StepOutcome("fan", false, 3, 1));
+
+        PipelineExecutor replay = new PipelineExecutor((dep, method, reqs, deadline, max) -> {
+            throw new AssertionError("replay calls nothing");
+        });
+
+        // No branch ran, nothing collected: internally consistent, and skips all three calls.
+        Checkpoint empty = new Checkpoint(honest.pipelineFingerprint(),
+                honest.inputFingerprint(), new StepOutcome("fan", false, 0, 1),
+                EdgeCardinality.EDGE_CARDINALITY_ONE,
+                List.of(DynamicMessage.getDefaultInstance(batchType)), List.of());
+        // Two of three branches: internally consistent, and skips the third call.
+        Checkpoint truncated = new Checkpoint(honest.pipelineFingerprint(),
+                honest.inputFingerprint(), new StepOutcome("fan", false, 2, 1),
+                EdgeCardinality.EDGE_CARDINALITY_ONE,
+                List.of(DynamicMessage.newBuilder(batchType)
+                        .addRepeatedField(items, ticket("ok:a"))
+                        .addRepeatedField(items, ticket("ok:b"))
+                        .build()),
+                honest.branches().subList(0, 2));
+        for (Checkpoint forged : List.of(empty, truncated)) {
+            assertThatThrownBy(() -> replay.runSegment(
+                    pipeline, files, input, List.of(forged), cp -> { }))
+                    .as("%d branch(es) for three items", forged.branches().size())
+                    .isInstanceOfSatisfying(PipelineExecutionException.class, e -> {
+                        assertThat(e.kind()).isEqualTo(FailureKind.PIPELINE);
+                        assertThat(e.getMessage()).contains("3 item");
+                    });
+        }
+        assertThat(replay.runSegment(pipeline, files, input, List.of(honest), cp -> { }))
                 .isInstanceOf(Segment.Completed.class);
     }
 
