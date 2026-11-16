@@ -364,6 +364,14 @@ describe('externalLinkRow', () => {
     })
   }
 
+  it('gives projections of one source and binding revision to different objects different keys', () => {
+    const base = sampleExternalLink({ externalVersion: 'epoch-1' })
+    const otherObject = create(ExternalLinkSchema, { ...base, externalObjectId: 'claims-index:doc-1-copy' })
+    const otherVersion = create(ExternalLinkSchema, { ...base, externalVersion: 'epoch-2' })
+    const keys = externalLinkRows([base, otherObject, otherVersion]).map((row) => row.key)
+    expect(new Set(keys).size).toBe(3)
+  })
+
   it('projects canonical external identity, historical binding snapshot, and guarded displayHref', () => {
     const row = externalLinkRow(
       sampleExternalLink({
@@ -373,7 +381,7 @@ describe('externalLinkRow', () => {
       }),
     )
     expect(row).toEqual({
-      key: 'search-primary\u00002\u0000intake:acct-a\u0000ds-files\u0000doc-1\u00007',
+      key: 'search-primary\u00002\u0000acct-a\u0000intake:acct-a\u0000ds-files\u0000doc-1\u00007\u0000claims-index:doc-1\u0000v3-epoch9',
       bindingId: 'search-primary',
       bindingRevision: 2n,
       provider: 'protomolt-search',

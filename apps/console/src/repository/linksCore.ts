@@ -566,7 +566,19 @@ export function externalLinkRow(link: ExternalLink): ExternalLinkRow {
       ? null
       : enumLabel(ExternalServingVisibilitySchema, link.managedSearch.servingVisibility)
   return {
-    key: `${link.bindingId}\u0000${link.bindingRevision}\u0000${sourceCall.graphId}\u0000${sourceCall.graphAddressId}\u0000${sourceCall.docId}\u0000${link.sourceRevision}`,
+    // Everything that tells two projections apart: the same source and binding revision can
+    // have been projected to different objects or object versions, and in different accounts.
+    key: [
+      link.bindingId,
+      link.bindingRevision,
+      link.sourceAddress?.accountId ?? '',
+      sourceCall.graphId,
+      sourceCall.graphAddressId,
+      sourceCall.docId,
+      link.sourceRevision,
+      link.externalObjectId,
+      link.externalVersion ?? '',
+    ].join('\u0000'),
     bindingId: link.bindingId,
     bindingRevision: link.bindingRevision,
     provider: snapshot.provider,
