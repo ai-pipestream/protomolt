@@ -4,10 +4,12 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.time.Duration;
+import java.util.Optional;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicBoolean;
 import org.junit.jupiter.api.Test;
 
 class EmbeddingInFlightLimitTest {
@@ -116,6 +118,65 @@ class EmbeddingInFlightLimitTest {
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasCauseInstanceOf(ArithmeticException.class)
                 .hasMessageContaining("too long");
+    }
+
+    @Test
+    void permitCanBeClosedIdempotentlyFromAnotherThreadAndTracksCounts() throws Exception {
+        var limit = new EmbeddingInFlightLimit();
+        EmbeddingInFlightLimit.Permit permit = limit.acquire(2, Duration.ofSeconds(5));
+        assertThat(limit.inFlight()).isEqualTo(1);
+        assertThat(limit.waiting()).isZero();
+        try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
+            executor.submit(permit::close).get(5, TimeUnit.SECONDS);
+        }
+        permit.close();
+        assertThat(limit.inFlight()).isZero();
+        assertThat(limit.waiting()).isZero();
+        assertThat(limit.execute(3, () -> "reconfigured")).isEqualTo("reconfigured");
+    }
+
+    @Test
+    void cancelledWaiterReturnsEmptyOnWakeupWithoutClaimingFreedSlotOrInterrupting() throws Exception {
+        var limit = new EmbeddingInFlightLimit();
+        EmbeddingInFlightLimit.Permit held = limit.acquire(1, Duration.ofSeconds(5));
+        var cancelled = new AtomicBoolean();
+        var interrupted = new AtomicBoolean();
+        try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
+            var abortedWaiter = executor.submit(() -> {
+                Optional<EmbeddingInFlightLimit.Permit> result =
+                        limit.acquire(1, Duration.ofSeconds(30), cancelled::get);
+                interrupted.set(Thread.currentThread().isInterrupted());
+                return result;
+            });
+            awaitWaiting(limit, 1);
+            var healthyWaiter = executor.submit(() -> limit.acquire(1, Duration.ofSeconds(5)));
+            awaitWaiting(limit, 2);
+
+            cancelled.set(true);
+            held.close();
+
+            assertThat(abortedWaiter.get(5, TimeUnit.SECONDS)).isEmpty();
+            assertThat(interrupted).isFalse();
+            try (EmbeddingInFlightLimit.Permit second = healthyWaiter.get(5, TimeUnit.SECONDS)) {
+                assertThat(second).isNotNull();
+                assertThat(limit.inFlight()).isEqualTo(1);
+                assertThat(limit.waiting()).isZero();
+            }
+            assertThat(limit.inFlight()).isZero();
+            assertThat(limit.waiting()).isZero();
+        }
+    }
+
+    private static void awaitWaiting(EmbeddingInFlightLimit limit, int expected)
+            throws InterruptedException {
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+        while (limit.waiting() != expected) {
+            if (System.nanoTime() > deadline) {
+                throw new AssertionError("expected " + expected + " waiting, found " + limit.waiting());
+            }
+            Thread.onSpinWait();
+            Thread.sleep(1);
+        }
     }
 
     private static void await(CountDownLatch latch) {
