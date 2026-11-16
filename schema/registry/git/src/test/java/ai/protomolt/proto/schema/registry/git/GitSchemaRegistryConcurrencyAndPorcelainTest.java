@@ -47,7 +47,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
- * Regression suite for issue #867:
+ * Covers the Git-backed registry under concurrency and alongside porcelain commits:
  * <ul>
  *   <li>commit-pinned object reads ({@link RegistryGitObjects#blob} and
  *       {@link RegistryGitObjects#blobsUnder}),</li>
