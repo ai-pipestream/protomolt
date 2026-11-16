@@ -1,32 +1,20 @@
 package ai.protomolt.proto.pipeline;
 
-import ai.protomolt.proto.cel.CelEnvironmentFactory;
-import ai.protomolt.proto.cel.CelEvaluator;
 import ai.protomolt.proto.descriptors.DescriptorFingerprints;
 import ai.protomolt.proto.descriptors.DescriptorRegistry;
 import ai.protomolt.proto.grpc.profile.ServiceProfileValidation;
-import ai.protomolt.proto.grpc.workflow.v1.BranchFailurePolicy;
-import ai.protomolt.proto.grpc.workflow.v1.CelMappingRule;
 import ai.protomolt.proto.grpc.workflow.v1.FanOutSpec;
 import ai.protomolt.proto.grpc.workflow.v1.ServiceDependency;
 import ai.protomolt.proto.grpc.workflow.v1.StepCompletion;
-import ai.protomolt.proto.grpc.workflow.v1.TypedEdge;
 import ai.protomolt.proto.inference.structured.StructuredGenerationException;
 import ai.protomolt.proto.inference.structured.StructuredGenerator;
 import ai.protomolt.proto.inference.v1.GenerateStructuredRequest;
-import ai.protomolt.proto.mapper.cel.CelProtoMapper;
 import ai.protomolt.proto.pipeline.v1.EdgeCardinality;
 import ai.protomolt.proto.pipeline.v1.GrpcCallStep;
 import ai.protomolt.proto.pipeline.v1.Pipeline;
 import ai.protomolt.proto.pipeline.v1.PipelineStep;
 import ai.protomolt.proto.pipeline.v1.StructuredStep;
-import ai.protomolt.proto.projection.MessageProjection;
-import ai.protomolt.proto.shapes.MessageScope;
-import ai.protomolt.proto.shapes.ScopedProtoMapper;
-import ai.protomolt.proto.validate.ProtoValidator;
-import ai.protomolt.proto.validate.ValidationResult;
 import com.google.protobuf.Any;
-import com.google.protobuf.CodedOutputStream;
 import com.google.protobuf.Descriptors.Descriptor;
 import com.google.protobuf.Descriptors.FieldDescriptor;
 import com.google.protobuf.Descriptors.FileDescriptor;
@@ -37,7 +25,6 @@ import com.google.protobuf.Message;
 import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
 
-import java.io.IOException;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -206,21 +193,6 @@ public final class PipelineExecutor {
         }
     }
 
-    private record Binding(Descriptor type, EdgeCardinality cardinality,
-                           List<DynamicMessage> values) {
-        Binding {
-            values = List.copyOf(values);
-            if (cardinality == EdgeCardinality.EDGE_CARDINALITY_ONE
-                    && values.size() != 1) {
-                throw new IllegalArgumentException("a ONE binding contains exactly one value");
-            }
-        }
-
-        DynamicMessage one() {
-            return values.getFirst();
-        }
-    }
-
     private final PipelineTransport transport;
     private final StructuredGenerator generator;
 
@@ -240,14 +212,14 @@ public final class PipelineExecutor {
     public static String pipelineFingerprint(Pipeline pipeline, List<FileDescriptor> files) {
         Objects.requireNonNull(pipeline, "pipeline");
         Objects.requireNonNull(files, "files");
-        return ServiceProfileValidation.sha256(canonicalBytes(pipeline))
+        return ServiceProfileValidation.sha256(StepValues.canonicalBytes(pipeline))
                 + ":" + descriptorIdentity(files);
     }
 
     /** Canonical SHA-256 identity of a binary protobuf input message. */
     public static String inputFingerprint(Message input) {
         Objects.requireNonNull(input, "input");
-        return ServiceProfileValidation.sha256(canonicalBytes(input));
+        return ServiceProfileValidation.sha256(StepValues.canonicalBytes(input));
     }
 
     /** Checks and executes one pipeline against the exact supplied descriptor set. */
@@ -308,12 +280,12 @@ public final class PipelineExecutor {
         Map<String, ServiceDependency> dependencies = new LinkedHashMap<>();
         pipeline.getDependenciesList().forEach(dependency ->
                 dependencies.put(dependency.getAlias(), dependency));
-        Map<String, Binding> scope = new LinkedHashMap<>();
-        scope.put("input", one(input));
+        Map<String, PipelineBinding> scope = new LinkedHashMap<>();
+        scope.put("input", PipelineBinding.one(input));
         List<StepOutcome> outcomes = new ArrayList<>();
         List<BranchOutcome> branches = new ArrayList<>();
         long deadlineNanos = StepDeadlines.pipelineDeadline(pipeline);
-        Binding last = scope.get("input");
+        PipelineBinding last = scope.get("input");
 
         String currentPipelineFingerprint = pipelineFingerprint(pipeline, files);
         String currentInputFingerprint = inputFingerprint(input);
@@ -321,13 +293,15 @@ public final class PipelineExecutor {
             throw failure("", FailureKind.PIPELINE,
                     "checkpoint prefix exceeds pipeline steps", null);
         }
+        CheckpointReplay.Context replay = new CheckpointReplay.Context(
+                currentPipelineFingerprint, currentInputFingerprint, registry, files,
+                pipeline.getMaxStreamMessages());
         List<Checkpoint> checkpoints = new ArrayList<>(prior);
         int index = 0;
         for (PipelineStep step : pipeline.getStepsList()) {
             if (index < prior.size()) {
                 Checkpoint saved = prior.get(index++);
-                last = restore(step, saved, currentPipelineFingerprint, currentInputFingerprint,
-                        scope, registry, files, pipeline.getMaxStreamMessages());
+                last = CheckpointReplay.restore(step, saved, scope, replay);
                 scope.put(step.getName(), last);
                 outcomes.add(saved.outcome());
                 branches.addAll(saved.branches());
@@ -343,10 +317,7 @@ public final class PipelineExecutor {
                 last = runStructured(step, scope, registry, deadlineNanos,
                         pipeline.getMaxStreamMessages(), branches);
             } else {
-                if (step.getGrpcCall().getCompletion() == StepCompletion.STEP_COMPLETION_EXTERNAL
-                        && (step.getWhen().isBlank() || evaluateGate(step, scope,
-                                DescriptorSets.resolveMethod(files, step.getGrpcCall().getMethod())
-                                        .getInputType()))) {
+                if (parksForExternalCompletion(step, scope, files)) {
                     return new Segment.Parked(step.getName(), currentPipelineFingerprint,
                             currentInputFingerprint, step.getGrpcCall().getOutputCardinality(),
                             checkpoints);
@@ -373,14 +344,31 @@ public final class PipelineExecutor {
         if (pipeline.hasOutput()) {
             Descriptor outputType = registry.findDescriptorByFullName(
                     pipeline.getOutput().getType());
-            DynamicMessage output = map(outputType, singleValues(scope),
+            DynamicMessage output = EdgeMapping.map(outputType, EdgeMapping.singleValues(scope),
                     pipeline.getOutput().getRulesList(),
                     pipeline.getOutput().getCelRulesList(), registry, "output");
-            last = one(output);
+            last = PipelineBinding.one(output);
         }
         return new Segment.Completed(
                 new Result(last.cardinality(), last.values(), outcomes, branches),
                 checkpoints);
+    }
+
+    /**
+     * An external-completion step whose gate passes is never called here. The segment yields,
+     * and the step resumes when a later segment replays the coordinator's completion as that
+     * step's checkpoint through {@link CheckpointReplay}.
+     */
+    private static boolean parksForExternalCompletion(PipelineStep step,
+                                                      Map<String, PipelineBinding> scope,
+                                                      List<FileDescriptor> files)
+            throws PipelineExecutionException {
+        if (step.getGrpcCall().getCompletion() != StepCompletion.STEP_COMPLETION_EXTERNAL) {
+            return false;
+        }
+        return step.getWhen().isBlank() || EdgeMapping.evaluateGate(step, scope,
+                DescriptorSets.resolveMethod(files, step.getGrpcCall().getMethod())
+                        .getInputType());
     }
 
     private static void registerTransitiveFiles(List<FileDescriptor> files,
@@ -412,150 +400,7 @@ public final class PipelineExecutor {
         return DescriptorFingerprints.fingerprint(List.copyOf(closure.values()));
     }
 
-    private static Binding restore(PipelineStep step, Checkpoint saved,
-                                   String pipelineFingerprint, String inputFingerprint,
-                                   Map<String, Binding> scope, DescriptorRegistry registry,
-                                   List<FileDescriptor> files, int limit)
-            throws PipelineExecutionException {
-        if (!saved.pipelineFingerprint().equals(pipelineFingerprint)
-                || !saved.inputFingerprint().equals(inputFingerprint)
-                || !saved.outcome().name().equals(step.getName())) {
-            throw failure(step.getName(), FailureKind.PIPELINE,
-                    "checkpoint identity does not match the pipeline, input and ordered step",
-                    null);
-        }
-        Descriptor type;
-        EdgeCardinality cardinality = EdgeCardinality.EDGE_CARDINALITY_ONE;
-        MethodDescriptor method = null;
-        if (step.hasGrpcCall()) {
-            method = DescriptorSets.resolveMethod(files, step.getGrpcCall().getMethod());
-            type = step.getGrpcCall().hasFanOut()
-                    ? registry.findDescriptorByFullName(
-                            step.getGrpcCall().getFanOut().getCollectType())
-                    : method.getOutputType();
-            cardinality = step.getGrpcCall().getOutputCardinality();
-        } else if (step.hasStructured()) {
-            type = registry.findDescriptorByFullName(step.getStructured().hasFanOut()
-                    ? step.getStructured().getFanOut().getCollectType()
-                    : step.getStructured().getSpec().getTargetType());
-        } else if (step.hasCollect()) {
-            type = registry.findDescriptorByFullName(step.getCollect().getCollectType());
-        } else {
-            type = StreamPaths.repeatedField(
-                    scope.get(step.getUnnest().getSource()).type(),
-                    step.getUnnest().getPath()).getMessageType();
-            cardinality = EdgeCardinality.EDGE_CARDINALITY_MANY;
-        }
-        boolean externalStep = step.hasGrpcCall()
-                && step.getGrpcCall().getCompletion() == StepCompletion.STEP_COMPLETION_EXTERNAL;
-        if (saved.cardinality() != cardinality
-                || saved.messages().size() > limit
-                || (cardinality == EdgeCardinality.EDGE_CARDINALITY_ONE
-                        && saved.messages().size() != 1)
-                || saved.outcome().requestCount() < 0
-                || saved.outcome().responseCount() < 0
-                || ((!step.hasGrpcCall() || externalStep) && saved.outcome().requestCount() != 0)
-                || (!saved.outcome().skipped()
-                        && saved.outcome().responseCount() != saved.messages().size())
-                || (saved.outcome().skipped()
-                        && (!step.hasGrpcCall() || step.getWhen().isBlank()
-                                || saved.outcome().requestCount() != 0
-                                || saved.outcome().responseCount() != 0))) {
-            throw failure(step.getName(), FailureKind.PIPELINE,
-                    "invalid checkpoint cardinality or outcome", null);
-        }
-        if (saved.outcome().skipped()
-                && cardinality == EdgeCardinality.EDGE_CARDINALITY_MANY
-                && !saved.messages().isEmpty()) {
-            throw failure(step.getName(), FailureKind.PIPELINE,
-                    "skipped stream checkpoint must be empty", null);
-        }
-        FanOutSpec fanOut = step.hasGrpcCall() && step.getGrpcCall().hasFanOut()
-                ? step.getGrpcCall().getFanOut()
-                : step.hasStructured() && step.getStructured().hasFanOut()
-                        ? step.getStructured().getFanOut() : null;
-        if ((fanOut == null || saved.outcome().skipped()) && !saved.branches().isEmpty()) {
-            throw failure(step.getName(), FailureKind.PIPELINE,
-                    "checkpoint has branch evidence for a step without executed fan-out", null);
-        }
-        if (fanOut != null && !saved.outcome().skipped()) {
-            if (saved.branches().size() > fanOut.getMaxItems()
-                    || saved.branches().size() > limit) {
-                throw failure(step.getName(), FailureKind.PIPELINE,
-                        "checkpoint branch evidence exceeds fan-out bounds", null);
-            }
-            for (int i = 0; i < saved.branches().size(); i++) {
-                BranchOutcome branch = saved.branches().get(i);
-                if (branch.index() != i
-                        || !(step.getName() + "#" + i).equals(branch.id())
-                        || branch.error() == null
-                        || (branch.succeeded()
-                                && (branch.kind() != null || !branch.error().isEmpty()))
-                        || (!branch.succeeded()
-                                && (branch.kind() == null || branch.error().isBlank()
-                                        || fanOut.getFailurePolicy()
-                                                == BranchFailurePolicy.BRANCH_FAILURE_POLICY_FAIL_FAST))) {
-                    throw failure(step.getName(), FailureKind.PIPELINE,
-                            "invalid checkpoint branch evidence", null);
-                }
-            }
-        }
-        List<DynamicMessage> values = new ArrayList<>(saved.messages().size());
-        for (DynamicMessage message : saved.messages()) {
-            if (!message.getDescriptorForType().getFullName().equals(type.getFullName())
-                    || !DescriptorFingerprints.fingerprintOf(message.getDescriptorForType())
-                            .equals(DescriptorFingerprints.fingerprintOf(type))) {
-                throw failure(step.getName(), FailureKind.PIPELINE,
-                        "checkpoint response descriptor does not match " + type.getFullName(),
-                        null);
-            }
-            if (saved.outcome().skipped()
-                    && !message.equals(DynamicMessage.getDefaultInstance(
-                            message.getDescriptorForType()))) {
-                throw failure(step.getName(), FailureKind.PIPELINE,
-                        "skipped checkpoint contains a response", null);
-            }
-            try {
-                DynamicMessage restored = DynamicMessage.parseFrom(type, canonicalBytes(message));
-                if (!saved.outcome().skipped()
-                        && step.hasGrpcCall()
-                        && step.getGrpcCall().getValidateResponse()
-                        && !step.getGrpcCall().hasFanOut()) {
-                    validate(restored, step.getName(), "checkpoint response");
-                }
-                values.add(restored);
-            } catch (InvalidProtocolBufferException e) {
-                throw failure(step.getName(), FailureKind.PIPELINE,
-                        "checkpoint response cannot be decoded", e);
-            }
-        }
-        if (fanOut != null && !saved.outcome().skipped()) {
-            long successes = saved.branches().stream().filter(BranchOutcome::succeeded).count();
-            FieldDescriptor collectedField = type.findFieldByName(fanOut.getCollectInto());
-            int collected = values.getFirst().getRepeatedFieldCount(collectedField);
-            if (step.hasGrpcCall() && step.getGrpcCall().getValidateResponse()) {
-                for (int i = 0; i < collected; i++) {
-                    validate(dynamic((Message) values.getFirst()
-                                    .getRepeatedField(collectedField, i)),
-                            step.getName(), "checkpoint branch response");
-                }
-            }
-            if (successes != collected
-                    || (step.hasGrpcCall()
-                            && saved.outcome().requestCount() != saved.branches().size())) {
-                throw failure(step.getName(), FailureKind.PIPELINE,
-                        "checkpoint branches do not match the collected responses", null);
-            }
-        }
-        if (step.hasCollect()) {
-            scope.remove(step.getCollect().getSource());
-        } else if (method != null) {
-            consumeRequestStream(step.getGrpcCall(), method, scope);
-        }
-        return new Binding(type, cardinality, values);
-    }
-
-    private Binding runGrpc(PipelineStep step, Map<String, Binding> scope,
+    private PipelineBinding runGrpc(PipelineStep step, Map<String, PipelineBinding> scope,
                             DescriptorRegistry registry, List<FileDescriptor> files,
                             Map<String, ServiceDependency> dependencies,
                             ExecutionIdentity identity,
@@ -566,14 +411,14 @@ public final class PipelineExecutor {
         MethodDescriptor method = DescriptorSets.resolveMethod(files, call.getMethod());
         long stepDeadlineNanos = StepDeadlines.stepDeadline(step, pipelineDeadlineNanos);
 
-        if (!step.getWhen().isBlank() && !evaluateGate(step, scope, method.getInputType())) {
-            consumeRequestStream(call, method, scope);
-            Binding skipped = call.hasFanOut()
-                    ? one(DynamicMessage.getDefaultInstance(registry.findDescriptorByFullName(
+        if (!step.getWhen().isBlank() && !EdgeMapping.evaluateGate(step, scope, method.getInputType())) {
+            PipelineBinding.consumeRequestStream(call, method, scope);
+            PipelineBinding skipped = call.hasFanOut()
+                    ? PipelineBinding.one(DynamicMessage.getDefaultInstance(registry.findDescriptorByFullName(
                             call.getFanOut().getCollectType())))
                     : method.isServerStreaming()
-                            ? many(method.getOutputType(), List.of())
-                            : one(DynamicMessage.getDefaultInstance(method.getOutputType()));
+                            ? PipelineBinding.many(method.getOutputType(), List.of())
+                            : PipelineBinding.one(DynamicMessage.getDefaultInstance(method.getOutputType()));
             scope.put(step.getName(), skipped);
             outcomes.add(new StepOutcome(step.getName(), true, 0, 0));
             return skipped;
@@ -583,19 +428,19 @@ public final class PipelineExecutor {
                     "external-completion step requires a durable job coordinator", null);
         }
 
-        List<DynamicMessage> produced = mapEdge(call.getEdge(), scope, registry,
+        List<DynamicMessage> produced = EdgeMapping.mapEdge(call.getEdge(), scope, registry,
                 step.getName());
         if (call.hasFanOut()) {
-            Binding result = runFanOutGrpc(step, produced.getFirst(), method,
+            PipelineBinding result = runFanOutGrpc(step, produced.getFirst(), method,
                     dependencies.get(step.getDependency()), registry, identity,
                     stepDeadlineNanos, streamLimit, branches);
             scope.put(step.getName(), result);
             outcomes.add(new StepOutcome(step.getName(), false,
-                    fanOutItems(produced.getFirst(), call.getFanOut()).size(), 1));
+                    EdgeMapping.fanOutItems(produced.getFirst(), call.getFanOut()).size(), 1));
             return result;
         }
 
-        List<DynamicMessage> requests = deliver(produced, call.getEdge(), registry,
+        List<DynamicMessage> requests = EdgeMapping.deliver(produced, call.getEdge(), registry,
                 step.getName());
         long callMillis = StepDeadlines.remainingMillis(step.getName(), stepDeadlineNanos);
         PipelineTransport.CallContext callContext = new PipelineTransport.CallContext(
@@ -615,20 +460,20 @@ public final class PipelineExecutor {
         verifyResponseCount(step.getName(), method, responses, streamLimit);
         if (call.getValidateResponse()) {
             for (DynamicMessage response : responses) {
-                validate(response, step.getName(), "response");
+                StepValues.validate(response, step.getName(), "response");
             }
         }
-        consumeRequestStream(call, method, scope);
-        Binding binding = method.isServerStreaming()
-                ? many(method.getOutputType(), responses)
-                : one(responses.getFirst());
+        PipelineBinding.consumeRequestStream(call, method, scope);
+        PipelineBinding binding = method.isServerStreaming()
+                ? PipelineBinding.many(method.getOutputType(), responses)
+                : PipelineBinding.one(responses.getFirst());
         scope.put(step.getName(), binding);
         outcomes.add(new StepOutcome(step.getName(), false, requests.size(),
                 responses.size()));
         return binding;
     }
 
-    private Binding runStructured(PipelineStep step, Map<String, Binding> scope,
+    private PipelineBinding runStructured(PipelineStep step, Map<String, PipelineBinding> scope,
                                   DescriptorRegistry registry, long deadlineNanos,
                                   int streamLimit, List<BranchOutcome> branches)
             throws PipelineExecutionException {
@@ -641,24 +486,24 @@ public final class PipelineExecutor {
         Descriptor target = registry.findDescriptorByFullName(
                 structured.getSpec().getTargetType());
         if (!structured.hasEdge()) {
-            return one(generate(step.getName(), structured, target, null,
+            return PipelineBinding.one(generate(step.getName(), structured, target, null,
                     stepDeadlineNanos));
         }
-        List<DynamicMessage> produced = mapEdge(structured.getEdge(), scope, registry,
+        List<DynamicMessage> produced = EdgeMapping.mapEdge(structured.getEdge(), scope, registry,
                 step.getName());
         if (!structured.hasFanOut()) {
-            DynamicMessage grounding = deliver(produced, structured.getEdge(), registry,
+            DynamicMessage grounding = EdgeMapping.deliver(produced, structured.getEdge(), registry,
                     step.getName()).getFirst();
-            return one(generate(step.getName(), structured, target, grounding,
+            return PipelineBinding.one(generate(step.getName(), structured, target, grounding,
                     stepDeadlineNanos));
         }
         return runFanOutStructured(step, produced.getFirst(), target, registry, streamLimit,
                 stepDeadlineNanos, branches);
     }
 
-    private Binding runUnnest(PipelineStep step, Map<String, Binding> scope, int limit)
+    private PipelineBinding runUnnest(PipelineStep step, Map<String, PipelineBinding> scope, int limit)
             throws PipelineExecutionException {
-        Binding source = scope.get(step.getUnnest().getSource());
+        PipelineBinding source = scope.get(step.getUnnest().getSource());
         FieldDescriptor field = StreamPaths.repeatedField(source.type(),
                 step.getUnnest().getPath());
         List<?> raw = StreamPaths.repeatedValues(source.one(), step.getUnnest().getPath());
@@ -668,28 +513,28 @@ public final class PipelineExecutor {
                             + limit, null);
         }
         List<DynamicMessage> values = raw.stream()
-                .map(value -> dynamic((Message) value)).toList();
-        return many(field.getMessageType(), values);
+                .map(value -> StepValues.dynamic((Message) value)).toList();
+        return PipelineBinding.many(field.getMessageType(), values);
     }
 
-    private Binding runCollect(PipelineStep step, Map<String, Binding> scope,
+    private PipelineBinding runCollect(PipelineStep step, Map<String, PipelineBinding> scope,
                                DescriptorRegistry registry) throws PipelineExecutionException {
-        Binding source = scope.remove(step.getCollect().getSource());
+        PipelineBinding source = scope.remove(step.getCollect().getSource());
         Descriptor type = registry.findDescriptorByFullName(step.getCollect().getCollectType());
         FieldDescriptor field = type.findFieldByName(step.getCollect().getCollectInto());
         DynamicMessage.Builder builder = DynamicMessage.newBuilder(type);
         source.values().forEach(value -> builder.addRepeatedField(field, value));
-        return one(builder.build());
+        return PipelineBinding.one(builder.build());
     }
 
-    private Binding runFanOutGrpc(PipelineStep step, DynamicMessage holder,
+    private PipelineBinding runFanOutGrpc(PipelineStep step, DynamicMessage holder,
                                   MethodDescriptor method, ServiceDependency dependency,
                                   DescriptorRegistry registry, ExecutionIdentity identity,
                                   long deadlineNanos, int streamLimit,
                                   List<BranchOutcome> branches)
             throws PipelineExecutionException {
         FanOutSpec fanOut = step.getGrpcCall().getFanOut();
-        List<DynamicMessage> items = prepareFanOut(step.getName(), holder,
+        List<DynamicMessage> items = EdgeMapping.prepareFanOut(step.getName(), holder,
                 step.getGrpcCall().getEdge(), fanOut, registry);
         if (items.size() > streamLimit) {
             throw failure(step.getName(), FailureKind.FAN_OUT,
@@ -713,21 +558,21 @@ public final class PipelineExecutor {
                     }
                     verifyResponseCount(step.getName(), method, responses, streamLimit);
                     if (step.getGrpcCall().getValidateResponse()) {
-                        validate(responses.getFirst(), step.getName(), "branch response");
+                        StepValues.validate(responses.getFirst(), step.getName(), "branch response");
                     }
                     return responses.getFirst();
                 }, deadlineNanos, branches);
-        return one(collect(fanOut, outputs, registry));
+        return PipelineBinding.one(EdgeMapping.collect(fanOut, outputs, registry));
     }
 
-    private Binding runFanOutStructured(PipelineStep step, DynamicMessage holder,
+    private PipelineBinding runFanOutStructured(PipelineStep step, DynamicMessage holder,
                                         Descriptor target, DescriptorRegistry registry,
                                         int streamLimit, long deadlineNanos,
                                         List<BranchOutcome> branches)
             throws PipelineExecutionException {
         StructuredStep structured = step.getStructured();
         FanOutSpec fanOut = structured.getFanOut();
-        List<DynamicMessage> items = prepareFanOut(step.getName(), holder,
+        List<DynamicMessage> items = EdgeMapping.prepareFanOut(step.getName(), holder,
                 structured.getEdge(), fanOut, registry);
         if (items.size() > streamLimit) {
             throw failure(step.getName(), FailureKind.FAN_OUT,
@@ -736,82 +581,7 @@ public final class PipelineExecutor {
         List<DynamicMessage> outputs = FanOutBranches.run(step.getName(), items, fanOut,
                 grounding -> generate(step.getName(), structured, target, grounding,
                         deadlineNanos), deadlineNanos, branches);
-        return one(collect(fanOut, outputs, registry));
-    }
-
-    private static List<DynamicMessage> mapEdge(TypedEdge edge,
-                                                Map<String, Binding> scope,
-                                                DescriptorRegistry registry,
-                                                String step)
-            throws PipelineExecutionException {
-        Binding stream = null;
-        for (String source : edge.getSourcesList()) {
-            Binding binding = scope.get(source);
-            if (binding.cardinality() == EdgeCardinality.EDGE_CARDINALITY_MANY) {
-                stream = binding;
-            }
-        }
-        Descriptor produceType = registry.findDescriptorByFullName(edge.getProduceType());
-        List<DynamicMessage> produced = new ArrayList<>();
-        int count = stream == null ? 1 : stream.values().size();
-        for (int i = 0; i < count; i++) {
-            Map<String, DynamicMessage> values = new LinkedHashMap<>();
-            for (String source : edge.getSourcesList()) {
-                Binding binding = scope.get(source);
-                values.put(source, binding.cardinality()
-                        == EdgeCardinality.EDGE_CARDINALITY_MANY
-                        ? binding.values().get(i) : binding.one());
-            }
-            produced.add(map(produceType, values, edge.getRulesList(),
-                    edge.getCelRulesList(), registry, step));
-        }
-        return produced;
-    }
-
-    private static List<DynamicMessage> deliver(List<DynamicMessage> produced,
-                                                TypedEdge edge,
-                                                DescriptorRegistry registry,
-                                                String step)
-            throws PipelineExecutionException {
-        List<DynamicMessage> delivered = new ArrayList<>(produced.size());
-        for (DynamicMessage value : produced) {
-            DynamicMessage next = edge.getProjectTo().isEmpty()
-                    ? value : project(value, edge.getProjectTo(), registry, step);
-            if (edge.getValidate()) {
-                validate(next, step, "edge value");
-            }
-            delivered.add(next);
-        }
-        return delivered;
-    }
-
-    private static List<DynamicMessage> prepareFanOut(String step, DynamicMessage holder,
-                                                      TypedEdge edge, FanOutSpec fanOut,
-                                                      DescriptorRegistry registry)
-            throws PipelineExecutionException {
-        List<DynamicMessage> raw = fanOutItems(holder, fanOut);
-        if (raw.size() > fanOut.getMaxItems()) {
-            throw failure(step, FailureKind.FAN_OUT,
-                    "fan-out produced " + raw.size() + " items, over max_items "
-                            + fanOut.getMaxItems(), null);
-        }
-        return deliver(raw, edge, registry, step);
-    }
-
-    private static List<DynamicMessage> fanOutItems(DynamicMessage holder,
-                                                    FanOutSpec fanOut) {
-        return StreamPaths.repeatedValues(holder, fanOut.getItems()).stream()
-                .map(value -> dynamic((Message) value)).toList();
-    }
-
-    private static DynamicMessage collect(FanOutSpec fanOut,
-                                          List<DynamicMessage> outputs,
-                                          DescriptorRegistry registry) {
-        Descriptor type = registry.findDescriptorByFullName(fanOut.getCollectType());
-        FieldDescriptor field = type.findFieldByName(fanOut.getCollectInto());
-        DynamicMessage.Builder builder = DynamicMessage.newBuilder(type);
-        outputs.forEach(output -> builder.addRepeatedField(field, output));
-        return builder.build();
+        return PipelineBinding.one(EdgeMapping.collect(fanOut, outputs, registry));
     }
 
     private DynamicMessage generate(String step, StructuredStep structured,
@@ -863,88 +633,6 @@ public final class PipelineExecutor {
         }
     }
 
-    private static DynamicMessage map(Descriptor type,
-                                      Map<String, DynamicMessage> values,
-                                      List<String> rules,
-                                      List<CelMappingRule> celRules,
-                                      DescriptorRegistry registry,
-                                      String where)
-            throws PipelineExecutionException {
-        ScopedProtoMapper mapper = new ScopedProtoMapper(registry);
-        MessageScope.Builder messageScope = MessageScope.builder();
-        values.forEach(messageScope::add);
-        DynamicMessage.Builder target = DynamicMessage.newBuilder(type);
-        try {
-            mapper.map(messageScope.build(), target, rules);
-            if (!celRules.isEmpty()) {
-                new CelProtoMapper(mapper.fieldMapper(), evaluator(values, type), "target",
-                        new LinkedHashMap<>(values)).map(target,
-                        CelMappingRules.toMapperRules(celRules));
-            }
-            return target.build();
-        } catch (Exception e) {
-            throw failure(where, FailureKind.MAPPING,
-                    "mapping failed: " + e.getMessage(), e);
-        }
-    }
-
-    private static DynamicMessage project(DynamicMessage source, String targetType,
-                                          DescriptorRegistry registry, String step)
-            throws PipelineExecutionException {
-        Descriptor target = registry.findDescriptorByFullName(targetType);
-        try {
-            Message projected = MessageProjection.forTarget(target, registry)
-                    .orElseThrow(() -> new IllegalArgumentException(
-                            "projection target declares no sources"))
-                    .project(source);
-            return dynamic(projected);
-        } catch (Exception e) {
-            throw failure(step, FailureKind.PROJECTION,
-                    "edge projection failed: " + e.getMessage(), e);
-        }
-    }
-
-    private static boolean evaluateGate(PipelineStep step, Map<String, Binding> scope,
-                                        Descriptor target) throws PipelineExecutionException {
-        Map<String, DynamicMessage> values = singleValues(scope);
-        try {
-            return evaluator(values, target).evaluateBooleanOrFail(step.getWhen(),
-                    new LinkedHashMap<>(values));
-        } catch (RuntimeException e) {
-            throw failure(step.getName(), FailureKind.GATE,
-                    "gate failed: " + e.getMessage(), e);
-        }
-    }
-
-    private static CelEvaluator evaluator(Map<String, DynamicMessage> values,
-                                          Descriptor target) {
-        CelEnvironmentFactory factory = CelEnvironmentFactory.builder();
-        values.forEach((name, value) ->
-                factory.addMessageVar(name, value.getDescriptorForType()));
-        factory.addMessageVar("target", target);
-        return new CelEvaluator(factory.build());
-    }
-
-    private static Map<String, DynamicMessage> singleValues(Map<String, Binding> scope) {
-        Map<String, DynamicMessage> values = new LinkedHashMap<>();
-        scope.forEach((name, binding) -> {
-            if (binding.cardinality() == EdgeCardinality.EDGE_CARDINALITY_ONE) {
-                values.put(name, binding.one());
-            }
-        });
-        return values;
-    }
-
-    private static void validate(DynamicMessage value, String step, String label)
-            throws PipelineExecutionException {
-        ValidationResult result = ProtoValidator.forMessageType(
-                value.getDescriptorForType()).validate(value);
-        if (!result.valid()) {
-            throw failure(step, FailureKind.VALIDATION,
-                    label + " failed validation: " + validationSummary(result), null);
-        }
-    }
-
     private static void verifyResponseCount(String step, MethodDescriptor method,
                                             List<DynamicMessage> responses, int limit)
             throws PipelineExecutionException {
@@ -959,65 +647,11 @@ public final class PipelineExecutor {
         }
     }
 
-    private static void consumeRequestStream(GrpcCallStep call, MethodDescriptor method,
-                                             Map<String, Binding> scope) {
-        if (!method.isClientStreaming() || !call.hasEdge()) {
-            return;
-        }
-        call.getEdge().getSourcesList().stream()
-                .filter(source -> {
-                    Binding binding = scope.get(source);
-                    return binding != null && binding.cardinality()
-                            == EdgeCardinality.EDGE_CARDINALITY_MANY;
-                })
-                .findFirst().ifPresent(scope::remove);
-    }
-
-    private static Binding one(DynamicMessage value) {
-        return new Binding(value.getDescriptorForType(),
-                EdgeCardinality.EDGE_CARDINALITY_ONE, List.of(value));
-    }
-
-    private static Binding many(Descriptor type, List<DynamicMessage> values) {
-        return new Binding(type, EdgeCardinality.EDGE_CARDINALITY_MANY, values);
-    }
-
-    private static DynamicMessage dynamic(Message message) {
-        if (message instanceof DynamicMessage dynamic) {
-            return dynamic;
-        }
-        try {
-            return DynamicMessage.parseFrom(message.getDescriptorForType(),
-                    message.toByteString());
-        } catch (InvalidProtocolBufferException e) {
-            throw new IllegalArgumentException("message cannot be converted to its descriptor", e);
-        }
-    }
-
-    static byte[] canonicalBytes(Message message) {
-        byte[] bytes = new byte[message.getSerializedSize()];
-        CodedOutputStream out = CodedOutputStream.newInstance(bytes);
-        out.useDeterministicSerialization();
-        try {
-            message.writeTo(out);
-            out.checkNoSpaceLeft();
-        } catch (IOException e) {
-            throw new IllegalStateException("in-memory protobuf serialization failed", e);
-        }
-        return bytes;
-    }
-
     private static String findingsSummary(List<PipelineChecker.Finding> findings) {
         return findings.stream().map(finding -> (finding.step().isEmpty()
                         ? "pipeline" : finding.step()) + "/" + finding.kind() + ": "
                         + finding.error()).reduce((left, right) -> left + "; " + right)
                 .orElse("");
-    }
-
-    private static String validationSummary(ValidationResult result) {
-        return result.violations().stream()
-                .map(violation -> violation.path() + ": " + violation.message())
-                .reduce((left, right) -> left + "; " + right).orElse("");
     }
 
     /** Builds a classified failure that carries no gRPC status code. */
