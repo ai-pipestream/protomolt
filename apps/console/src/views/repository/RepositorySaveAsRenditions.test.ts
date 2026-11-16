@@ -660,6 +660,124 @@ describe('Repository Save-as and format icons', () => {
     jobs.dispose()
   })
 
+  it('keeps a SUCCEEDED publish response that lands while the view is unmounting', async () => {
+    const jobs = createSaveAsJobStore()
+    const publishCalls: PublishRepositorySinkRequest[] = []
+    const getJobCalls: GetRepositorySinkJobRequest[] = []
+    let releasePublish = () => {}
+    const publishGate = new Promise<void>((resolve) => {
+      releasePublish = resolve
+    })
+
+    const { wrapper } = await mountRepositoryView(
+      RepositoryArchiveEntryView,
+      { name: 'repository-archive-entry', query: { account: 'acct-a', archive: 'datasets', entry: 'e-metrics' } },
+      (router: ConnectRouter) => {
+        router.service(ArchiveService, {
+          listArchives: () =>
+            create(ListArchivesResponseSchema, {
+              archives: [create(ArchiveSchema, { accountId: 'acct-a', name: 'datasets' })],
+            }),
+          getEntryManifest: () =>
+            create(GetEntryManifestResponseSchema, {
+              info: create(EntryInfoSchema, { address: entryAddr(), currentVersion: 2n, title: 'Metrics' }),
+              manifest: create(VersionManifestSchema, {
+                address: entryAddr(),
+                version: 2n,
+                renditions: [
+                  create(RenditionManifestEntrySchema, {
+                    rendition: create(RenditionDescriptorSchema, { name: 'parsed', mediaType: 'application/x-protobuf' }),
+                    state: RenditionState.PRESENT,
+                    sizeBytes: BigInt(PROTO_BYTES.length),
+                    sha256: PROTO_SHA,
+                  }),
+                ],
+              }),
+            }),
+          listVersions: () => create(ListVersionsResponseSchema, { versions: [] }),
+        })
+        router.service(RepositorySinkService, {
+          listRenditionProvenance: () => create(ListRenditionProvenanceResponseSchema),
+          listSaveAsCapabilities: () =>
+            create(ListSaveAsCapabilitiesResponseSchema, {
+              resolvedSourceRevision: 2n,
+              sourceSchemaType: 'ai.protomolt.proto.repo.v1.Document',
+              sourceSizeBytes: BigInt(PROTO_BYTES.length),
+              capabilities: [
+                create(SaveAsCapabilitySchema, { capability: parquetCap, status: SaveAsCompatibilityStatus.COMPATIBLE }),
+              ],
+            }),
+          publishRepositorySink: async (req) => {
+            publishCalls.push(req)
+            await publishGate
+            return create(PublishRepositorySinkResponseSchema, {
+              job: create(RepositorySinkJobSchema, {
+                operationId: req.operationId,
+                accountId: 'acct-a',
+                state: RepositorySinkJobState.SUCCEEDED,
+                frozenSourceRevision: 2n,
+                destinationAddress: req.destination?.address,
+                destinationRendition: req.destination?.rendition,
+                destinationVersion: 4n,
+                bytesCommitted: BigInt(PARQUET_BYTES.length),
+              }),
+            })
+          },
+          getRepositorySinkJob: (req) => {
+            getJobCalls.push(req)
+            return create(GetRepositorySinkJobResponseSchema, {
+              job: create(RepositorySinkJobSchema, {
+                operationId: req.operationId,
+                accountId: req.accountId,
+                state: RepositorySinkJobState.SUCCEEDED,
+                frozenSourceRevision: 2n,
+                destinationAddress: entryAddr(),
+                destinationRendition: create(RenditionDescriptorSchema, {
+                  name: 'parquet',
+                  mediaType: 'application/vnd.apache.parquet',
+                }),
+                destinationVersion: 3n,
+                bytesCommitted: BigInt(PARQUET_BYTES.length),
+              }),
+            })
+          },
+        })
+      },
+      { [SAVE_AS_JOBS as symbol]: jobs },
+    )
+
+    await wrapper.get('[data-testid="save-as-rendition-parsed"]').trigger('click')
+    await settle()
+    ;(document.body.querySelector('[data-testid="save-as-submit-btn"]') as HTMLButtonElement).click()
+    await settle()
+    expect(publishCalls).toHaveLength(1)
+    const operationId = publishCalls[0]!.operationId
+
+    // The committed response is released and the view unmounts in the same tick, so the reply is
+    // in flight while the dialog's own call scopes abort.
+    releasePublish()
+    wrapper.unmount()
+    await settle()
+    const entry = jobs.find(operationId)!
+    expect(entry.dialogOpen).toBe(false)
+    expect(entry.error).toBeNull()
+    expect(entry.summary?.phase).toBe('succeeded')
+    expect(entry.summary?.destinationVersion).toBe(4n)
+    // The receipt came from the publish reply itself, not from a later status poll.
+    expect(getJobCalls).toHaveLength(0)
+
+    const banner = mount(SaveAsJobBanner, {
+      global: { plugins: [vuetifyForTests()], provide: { [SAVE_AS_JOBS as symbol]: jobs } },
+      attachTo: document.body,
+    })
+    const shown = banner.get('[data-testid="save-as-job-banner"]')
+    expect(shown.attributes('data-job-phase')).toBe('succeeded')
+    expect(shown.text()).toContain(operationId)
+    expect(shown.text()).toContain('v4')
+    banner.unmount()
+    jobs.dispose()
+  })
+
   it('disables Save-as actions with a clear explanation when the signed-in session is read-only', async () => {
     const readOnlySession = {
       status: async () =>
