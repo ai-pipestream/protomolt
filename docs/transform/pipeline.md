@@ -93,9 +93,12 @@ worker reassignments.
 
 `protomolt-jobs-service` (`PipelineJobCoordinator`,
 `WorkflowRunSubmitter.submitPipeline`, `WorkflowRunWorker`, and `complete-step`)
-persists pipeline definitions, transitive descriptor sets, inputs, and step
-checkpoints in `workflow_run` with canonical protobuf wire bytes preserved in
-base64 alongside JSON projections for `get-job` and `list-jobs`. Production
+persists a pipeline run in `workflow_run` as protobuf: a `PipelineRunDefinition`
+(the pipeline, its transitive descriptor set, the input bytes and both
+fingerprints), a `PipelineRunCheckpoints` and, on completion, a
+`PipelineRunResult`, each in its own `BYTEA` column. A pipeline row writes none
+of the workflow JSON columns. `get-job` and `list-jobs` render the stored
+protobuf to JSON for display only; nothing reads that JSON back. Production
 workers (`JobsFleetMount`, `JobsModule`, and policy-backed `WorkflowRunWorker`
 constructors) resolve `ServiceDependency` endpoints from
 `ServiceProfileRepository` and enforce `OutboundChannelPolicy` allowlists,

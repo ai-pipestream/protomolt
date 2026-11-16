@@ -36,7 +36,7 @@ final class PipelineExternalCompletionParser {
         if (cardinality == EdgeCardinality.EDGE_CARDINALITY_ONE) {
             return List.of(transcoder.fromJsonDynamic(response.toString(), outputType));
         }
-        JsonNode itemsNode = response.get(PipelineCheckpointCodec.ITEMS_KEY);
+        JsonNode itemsNode = response.get(PipelineRunView.ITEMS_KEY);
         if (!(itemsNode instanceof ArrayNode items)) {
             throw new IllegalArgumentException(
                     "streaming external step '" + stepName

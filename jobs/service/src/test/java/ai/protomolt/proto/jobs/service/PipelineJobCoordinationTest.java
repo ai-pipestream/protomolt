@@ -14,7 +14,6 @@ import ai.protomolt.proto.grpc.workflow.v1.TypedEdge;
 import ai.protomolt.proto.jobs.service.actions.CompleteStepAction;
 import ai.protomolt.proto.jobs.service.actions.GetJobAction;
 import ai.protomolt.proto.jobs.service.actions.ListJobsAction;
-import ai.protomolt.proto.jobs.service.actions.SubmitWorkflowAction;
 import ai.protomolt.proto.jobs.service.events.WorkflowRunEventFactory;
 import ai.protomolt.proto.jobs.service.store.ClaimLostException;
 import ai.protomolt.proto.jobs.service.store.InMemoryWorkflowRunStore;
@@ -435,7 +434,7 @@ class PipelineJobCoordinationTest {
         assertThat(worker.workOnce()).isTrue();
         WorkflowRunRecord completedJob = store.get(jobId).orElseThrow();
         assertThat(completedJob.status).isEqualTo(WorkflowRunRecord.STATUS_COMPLETED);
-        String committedCheckpoints = completedJob.checkpoints;
+        byte[] committedCheckpoints = completedJob.pipelineCheckpoints;
         int finalEventCount = store.events().size();
 
         // Unknown field on external completion survived replay!
@@ -453,7 +452,8 @@ class PipelineJobCoordinationTest {
                 .isEqualTo(new ParkedCompletion.Conflict("COMPLETED"));
         assertThat(store.get(jobId).orElseThrow().status)
                 .isEqualTo(WorkflowRunRecord.STATUS_COMPLETED);
-        assertThat(store.get(jobId).orElseThrow().checkpoints).isEqualTo(committedCheckpoints);
+        assertThat(store.get(jobId).orElseThrow().pipelineCheckpoints)
+                .isEqualTo(committedCheckpoints);
         assertThat(store.events()).hasSize(finalEventCount);
         assertThat(commitSideEffects.get()).isEqualTo(1);
     }
@@ -561,29 +561,22 @@ class PipelineJobCoordinationTest {
     }
 
     @Test
-    void streamingExternalCompletionAndSubmitVerbWorkEndToEnd() throws Exception {
+    void streamingExternalCompletionWorksEndToEndOnProtobufRunState() throws Exception {
         Pipeline pipeline = streamingExternalPipeline();
-        ObjectNode workflowEnvelope = PipelineRunCodec.encodeDefinition(
-                pipeline, files,
-                DynamicMessage.getDefaultInstance(type("OrderInput")));
-        // Remove inputBase64/inputFingerprint so submit parses the caller's JSON input.
-        workflowEnvelope.remove(PipelineRunCodec.INPUT_BASE64_KEY);
-        workflowEnvelope.remove(PipelineRunCodec.INPUT_FINGERPRINT_KEY);
+        Descriptor orderInput = type("OrderInput");
+        DynamicMessage input = DynamicMessage.newBuilder(orderInput)
+                .setField(orderInput.findFieldByName("order_id"), "stream-ord-9")
+                .build();
+        var submitted = coordinator.submit(pipeline, files, input, null);
+        assertThat(submitted.ok()).as(submitted.error()).isTrue();
+        String jobId = submitted.jobId();
 
-        SubmitWorkflowAction namedSubmitAction = new SubmitWorkflowAction(
-                store,
-                name -> "streaming-approval-pipeline".equals(name)
-                        ? java.util.Optional.of(workflowEnvelope)
-                        : java.util.Optional.empty(),
-                4);
-
-        ObjectNode submitReq = JSON.createObjectNode();
-        submitReq.put("workflowName", "streaming-approval-pipeline");
-        submitReq.putObject("input").put("orderId", "stream-ord-9");
-
-        ObjectNode submitReply = dispatch(namedSubmitAction, submitReq);
-        assertThat(submitReply.path("ok").asBoolean()).isTrue();
-        String jobId = submitReply.path("jobId").asText();
+        // The stored run is protobuf; none of the workflow JSON columns is written.
+        WorkflowRunRecord stored = store.get(UUID.fromString(jobId)).orElseThrow();
+        assertThat(stored.pipelineDefinition).isNotNull();
+        assertThat(stored.workflowDefinition).isNull();
+        assertThat(stored.input).isNull();
+        assertThat(stored.checkpoints).isNull();
 
         WorkflowRunWorker defaultWorker = newWorker("default-worker");
         try {
@@ -605,7 +598,9 @@ class PipelineJobCoordinationTest {
             assertThat(defaultWorker.workOnce()).isTrue();
             WorkflowRunRecord done = store.get(UUID.fromString(jobId)).orElseThrow();
             assertThat(done.status).isEqualTo(WorkflowRunRecord.STATUS_COMPLETED);
-            JsonNode result = JSON.readTree(done.result);
+            assertThat(done.result).isNull();
+            assertThat(done.pipelineResult).isNotNull();
+            JsonNode result = PipelineJobCoordinator.view(done).result();
             assertThat(result.path("decisions")).hasSize(2);
         } finally {
             defaultWorker.close();

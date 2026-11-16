@@ -14,12 +14,12 @@ import ai.protomolt.proto.pipeline.PipelineExecutor.Result;
 import ai.protomolt.proto.pipeline.PipelineExecutor.StepOutcome;
 import ai.protomolt.proto.pipeline.v1.EdgeCardinality;
 import ai.protomolt.proto.pipeline.v1.Pipeline;
+import ai.protomolt.proto.pipeline.v1.PipelineRunCheckpoint;
+import ai.protomolt.proto.pipeline.v1.PipelineRunCheckpoints;
 import ai.protomolt.proto.pipeline.v1.PipelineStep;
 import ai.protomolt.proto.validate.ProtoValidator;
 import ai.protomolt.proto.validate.ValidationResult;
-import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.google.protobuf.Descriptors.Descriptor;
@@ -42,7 +42,6 @@ import java.util.UUID;
  */
 public final class PipelineJobCoordinator {
 
-    private static final ObjectMapper JSON = new ObjectMapper();
 
     /**
      * Reconstructed durable snapshot of a submitted pipeline run.
@@ -143,9 +142,9 @@ public final class PipelineJobCoordinator {
         this.submitter = new WorkflowRunSubmitter(store, null, maxAttemptsDefault);
     }
 
-    /** Returns {@code true} when {@code job} carries a durable pipeline definition envelope. */
+    /** Returns {@code true} when {@code job} is a pipeline run: it stores a pipeline definition. */
     public static boolean isPipelineJob(WorkflowRunRecord job) {
-        return job != null && PipelineRunCodec.isPipelineDefinition(job.workflowDefinition);
+        return job != null && job.pipelineDefinition != null;
     }
 
     /** Reconstructs and statically verifies the durable pipeline snapshot stored on {@code job}. */
@@ -160,19 +159,35 @@ public final class PipelineJobCoordinator {
         return PipelineCheckpointCodec.readCheckpoints(job, definition);
     }
 
-    /** Encodes an ordered checkpoint prefix for persistence on {@code workflow_run.checkpoints}. */
-    public static String writeCheckpoints(List<Checkpoint> checkpoints,
-                                          List<FileDescriptor> files) {
+    /** Serializes an ordered checkpoint prefix as a {@code PipelineRunCheckpoints}. */
+    public static byte[] writeCheckpoints(List<Checkpoint> checkpoints) {
         Objects.requireNonNull(checkpoints, "checkpoints");
-        Objects.requireNonNull(files, "files");
-        return PipelineCheckpointCodec.writeCheckpoints(checkpoints, files);
+        return PipelineCheckpointCodec.writeCheckpoints(checkpoints).toByteArray();
     }
 
-    /** Encodes a completed pipeline result as a JSON object for {@code workflow_run.result}. */
-    public static String writeResult(Result result, List<FileDescriptor> files) {
+    /** Serializes a completed pipeline result as a {@code PipelineRunResult}. */
+    public static byte[] writeResult(Result result, Definition definition) {
         Objects.requireNonNull(result, "result");
-        Objects.requireNonNull(files, "files");
-        return PipelineCheckpointCodec.writeResult(result, files);
+        Objects.requireNonNull(definition, "definition");
+        return PipelineCheckpointCodec.writeResult(result, definition).toByteArray();
+    }
+
+    /**
+     * The JSON view of a pipeline run for display: its input, one entry per checkpoint and,
+     * once complete, its result. Output only; nothing reads it back.
+     *
+     * @param input the run's input message
+     * @param checkpoints one entry per executed step
+     * @param result the final output, or null until the run completes
+     */
+    public record RunView(ObjectNode input, ArrayNode checkpoints, JsonNode result) {
+    }
+
+    /** Renders {@code job}, a pipeline run, for the get-job and list-jobs replies. */
+    public static RunView view(WorkflowRunRecord job) {
+        Objects.requireNonNull(job, "job");
+        PipelineRunView.Documents documents = PipelineRunView.render(job);
+        return new RunView(documents.input(), documents.checkpoints(), documents.result());
     }
 
     /**
@@ -287,12 +302,10 @@ public final class PipelineJobCoordinator {
                 cardinality,
                 canonicalResponses,
                 List.of());
-        String entryJson = PipelineCheckpointCodec.writeCheckpointEntry(
-                candidate, definition.files());
-        return store.completeParkedStep(
+        return store.completeParkedPipelineStep(
                 jobId,
                 stepName,
-                entryJson,
+                PipelineCheckpointCodec.toProto(candidate),
                 validationError == null
                         ? WorkflowRunEventFactory.stepCheckpoint(job, stepName)
                         : WorkflowRunEventFactory.failed(job, stepName, validationError),
@@ -419,20 +432,27 @@ public final class PipelineJobCoordinator {
                 || step.getGrpcCall().getCompletion() != StepCompletion.STEP_COMPLETION_EXTERNAL) {
             return false;
         }
-        try {
-            JsonNode tree = JSON.readTree(job.checkpoints == null ? "[]" : job.checkpoints);
-            if (tree instanceof ArrayNode array) {
-                for (JsonNode entry : array) {
-                    if (stepName.equals(entry.path("name").asText())
-                            && !entry.path("skipped").asBoolean(false)) {
-                        return true;
-                    }
-                }
+        for (PipelineRunCheckpoint checkpoint : storedCheckpoints(job, stepName)) {
+            if (stepName.equals(checkpoint.getOutcome().getStep())
+                    && !checkpoint.getOutcome().getSkipped()) {
+                return true;
             }
-        } catch (JsonProcessingException e) {
-            throw new PipelineDefinitionException(stepName,
-                    "stored checkpoints are not readable JSON: " + e.getMessage(), e);
         }
         return false;
+    }
+
+    private static List<PipelineRunCheckpoint> storedCheckpoints(WorkflowRunRecord job,
+                                                                 String stepName) {
+        if (job.pipelineCheckpoints == null) {
+            return List.of();
+        }
+        try {
+            return PipelineRunCheckpoints.parseFrom(job.pipelineCheckpoints)
+                    .getCheckpointsList();
+        } catch (InvalidProtocolBufferException e) {
+            throw new PipelineDefinitionException(stepName,
+                    "stored checkpoints are not a readable PipelineRunCheckpoints: "
+                            + e.getMessage(), e);
+        }
     }
 }

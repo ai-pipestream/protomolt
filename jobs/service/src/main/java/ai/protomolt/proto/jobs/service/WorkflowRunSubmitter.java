@@ -4,7 +4,6 @@ import ai.protomolt.proto.actions.ActionContext;
 import ai.protomolt.proto.descriptors.DescriptorRegistry;
 import ai.protomolt.proto.descriptors.MessageFingerprints;
 import ai.protomolt.proto.http.json.MalformedProtobufJsonException;
-import ai.protomolt.proto.jobs.service.PipelineJobCoordinator.PipelineDefinitionException;
 import ai.protomolt.proto.jobs.service.events.WorkflowRunEventFactory;
 import ai.protomolt.proto.jobs.service.store.WorkflowRunRecord;
 import ai.protomolt.proto.jobs.service.store.WorkflowRunStore;
@@ -99,9 +98,6 @@ public final class WorkflowRunSubmitter {
         if (!(workflowNode instanceof ObjectNode workflow) || !(input instanceof ObjectNode inputObj)) {
             return fail("", "'workflow' (or 'workflowName') and 'input' objects are required");
         }
-        if (PipelineRunCodec.isPipelineNode(workflow)) {
-            return submitInlinePipeline(workflow, workflowName, inputObj, jobIdOrNull, context);
-        }
         CompiledWorkflow definition;
         try {
             definition = WorkflowJson.parse(workflow, context);
@@ -176,28 +172,6 @@ public final class WorkflowRunSubmitter {
         return submitPipelineNamed(pipeline, files, input, null, jobIdOrNull);
     }
 
-    private Outcome submitInlinePipeline(ObjectNode workflow, String workflowName,
-                                         ObjectNode inputObj, String jobIdOrNull,
-                                         ActionContext context) {
-        PipelineRunCodec.PartialSubmission partial;
-        try {
-            partial = PipelineRunCodec.decodeSubmissionEnvelope(workflow,
-                    context == null ? null : context.registry());
-        } catch (PipelineDefinitionException e) {
-            return fail(e.step(), e.getMessage());
-        }
-        DynamicMessage parsedInput;
-        try {
-            parsedInput = partial.transcoder().fromJsonDynamic(
-                    inputObj.toString(), partial.inputType());
-        } catch (MalformedProtobufJsonException e) {
-            return fail("", "'input' is not valid proto3 JSON for "
-                    + partial.inputType().getFullName() + ": " + e.getMessage());
-        }
-        return submitPipelineNamed(partial.pipeline(), partial.files(), parsedInput,
-                workflowName, jobIdOrNull);
-    }
-
     private Outcome submitPipelineNamed(Pipeline pipeline, List<FileDescriptor> files,
                                         Message input, String explicitName,
                                         String jobIdOrNull) {
@@ -235,15 +209,16 @@ public final class WorkflowRunSubmitter {
                 return fail("", "'jobId' must be a uuid; got '" + jobIdOrNull + "'");
             }
         }
-        ObjectNode definitionEnvelope = PipelineRunCodec.encodeDefinition(
-                pipeline, files, canonicalInput);
         WorkflowRunRecord record = new WorkflowRunRecord();
         record.jobId = jobId;
         record.workflowName = explicitName != null && !explicitName.isBlank()
                 ? explicitName
                 : pipeline.getName();
-        record.workflowDefinition = definitionEnvelope.toString();
-        record.input = PipelineCheckpointCodec.renderInputJson(canonicalInput, files);
+        record.pipelineDefinition = PipelineRunCodec.encodeDefinition(
+                pipeline, files, canonicalInput).toByteArray();
+        // A pipeline run keeps its state in the protobuf columns and leaves the workflow
+        // JSON columns empty.
+        record.checkpoints = null;
         record.status = WorkflowRunRecord.STATUS_QUEUED;
         record.maxAttempts = maxAttemptsDefault;
         record.runAfter = Instant.now();

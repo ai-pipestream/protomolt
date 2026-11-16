@@ -4,6 +4,8 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 
+import ai.protomolt.proto.pipeline.v1.PipelineRunCheckpoint;
+import ai.protomolt.proto.pipeline.v1.PipelineRunCheckpoints;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Comparator;
@@ -112,6 +114,14 @@ public final class InMemoryWorkflowRunStore implements WorkflowRunStore {
     public synchronized void saveCheckpoint(WorkerClaim claim, String checkpointsJson,
             WorkflowRunEventRecord stepEvent) {
         WorkflowRunRecord job = requireClaim(claim);
+        beforeCheckpointWrite(claim, job);
+        job.checkpoints = checkpointsJson;
+        job.updatedAt = Instant.now();
+        events.add(stepEvent);
+    }
+
+    /** The checkpoint-write test hooks, shared by workflow and pipeline saves. */
+    private void beforeCheckpointWrite(WorkerClaim claim, WorkflowRunRecord job) {
         checkpointWrites++;
         if (stealClaimAtCheckpoint == checkpointWrites) {
             stealClaimAtCheckpoint = 0;
@@ -125,9 +135,81 @@ public final class InMemoryWorkflowRunStore implements WorkflowRunStore {
             throw WorkflowRunStoreException.wrap("simulated store hiccup",
                     new java.sql.SQLException("connection reset"));
         }
-        job.checkpoints = checkpointsJson;
+    }
+
+    @Override
+    public synchronized void savePipelineCheckpoints(WorkerClaim claim, byte[] checkpoints,
+            WorkflowRunEventRecord stepEvent) {
+        WorkflowRunRecord job = requireClaim(claim);
+        beforeCheckpointWrite(claim, job);
+        job.pipelineCheckpoints = checkpoints.clone();
         job.updatedAt = Instant.now();
         events.add(stepEvent);
+    }
+
+    @Override
+    public synchronized void markPipelineWaiting(WorkerClaim claim, String stepName,
+            byte[] checkpoints, WorkflowRunEventRecord event) {
+        WorkflowRunRecord job = requireClaim(claim);
+        job.status = WorkflowRunRecord.STATUS_WAITING;
+        job.outstandingStep = stepName;
+        job.pipelineCheckpoints = checkpoints.clone();
+        job.leaseOwner = null;
+        job.leaseUntil = null;
+        job.updatedAt = Instant.now();
+        events.add(event);
+    }
+
+    @Override
+    public synchronized void markPipelineCompleted(WorkerClaim claim, byte[] result,
+            String verdict, WorkflowRunEventRecord event) {
+        WorkflowRunRecord job = requireClaim(claim);
+        job.status = WorkflowRunRecord.STATUS_COMPLETED;
+        job.pipelineResult = result.clone();
+        job.verdict = verdict;
+        job.leaseOwner = null;
+        job.leaseUntil = null;
+        job.outstandingStep = null;
+        job.completedAt = Instant.now();
+        job.updatedAt = job.completedAt;
+        events.add(event);
+    }
+
+    @Override
+    public synchronized ParkedCompletion completeParkedPipelineStep(UUID jobId, String stepName,
+            PipelineRunCheckpoint checkpoint, WorkflowRunEventRecord stepEvent,
+            String validationError) {
+        WorkflowRunRecord job = require(jobId);
+        PipelineRunCheckpoints checkpoints =
+                PipelineCheckpointBytes.parse(job.pipelineCheckpoints);
+        ParkedCompletion settled = PipelineCheckpointBytes.alreadySettled(
+                checkpoints, stepName, checkpoint, job.status);
+        if (settled != null) {
+            return settled;
+        }
+        if (!WorkflowRunRecord.STATUS_WAITING.equals(job.status)
+                || !stepName.equals(job.outstandingStep)) {
+            return new ParkedCompletion.WrongState(job.status, job.outstandingStep);
+        }
+        if (validationError != null) {
+            job.status = WorkflowRunRecord.STATUS_FAILED;
+            job.error = validationError;
+            job.leaseOwner = null;
+            job.leaseUntil = null;
+            job.outstandingStep = null;
+            job.completedAt = Instant.now();
+            job.updatedAt = job.completedAt;
+            events.add(stepEvent);
+            return new ParkedCompletion.Rejected(validationError);
+        }
+        job.pipelineCheckpoints =
+                checkpoints.toBuilder().addCheckpoints(checkpoint).build().toByteArray();
+        job.status = WorkflowRunRecord.STATUS_QUEUED;
+        job.outstandingStep = null;
+        job.runAfter = Instant.now();
+        job.updatedAt = job.runAfter;
+        events.add(stepEvent);
+        return new ParkedCompletion.Completed();
     }
 
     @Override
@@ -241,10 +323,6 @@ public final class InMemoryWorkflowRunStore implements WorkflowRunStore {
         }
         if (!stored.path("response").equals(candidate.path("response"))) {
             return false;
-        }
-        if (stored.has("pipelineCheckpoint") || candidate.has("pipelineCheckpoint")) {
-            return stored.path("pipelineCheckpoint")
-                    .equals(candidate.path("pipelineCheckpoint"));
         }
         return true;
     }

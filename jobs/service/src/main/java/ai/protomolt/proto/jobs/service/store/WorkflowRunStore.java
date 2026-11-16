@@ -40,9 +40,16 @@ public interface WorkflowRunStore {
 
     /** Compare only the immutable submission, not execution state or retry settings. */
     static boolean sameSubmission(WorkflowRunRecord left, WorkflowRunRecord right) {
-        return Objects.equals(left.workflowName, right.workflowName)
-                && Objects.equals(left.inputRef, right.inputRef)
-                && sameJson(left.workflowDefinition, right.workflowDefinition)
+        if (!Objects.equals(left.workflowName, right.workflowName)
+                || !Objects.equals(left.inputRef, right.inputRef)) {
+            return false;
+        }
+        if (left.pipelineDefinition != null || right.pipelineDefinition != null) {
+            // A pipeline definition is stored deterministically, so equal submissions
+            // are equal bytes.
+            return java.util.Arrays.equals(left.pipelineDefinition, right.pipelineDefinition);
+        }
+        return sameJson(left.workflowDefinition, right.workflowDefinition)
                 && sameJson(left.input, right.input);
     }
 
@@ -179,6 +186,65 @@ public interface WorkflowRunStore {
      * @param delay how long until the job is claimable again
      */
     void requeue(WorkerClaim claim, Duration delay);
+
+    /**
+     * Save a pipeline run's checkpoints after a step, as {@link #saveCheckpoint} does for a
+     * workflow run. The four pipeline writes are refused by a store that predates pipeline
+     * runs; a store that accepts a pipeline submission implements all four.
+     *
+     * @param claim the worker's claim on the job
+     * @param checkpoints a serialized {@code PipelineRunCheckpoints}: every checkpoint so far
+     * @param stepEvent the step event committed with the row
+     */
+    default void savePipelineCheckpoints(WorkerClaim claim, byte[] checkpoints,
+                                         WorkflowRunEventRecord stepEvent) {
+        throw new UnsupportedOperationException("this store does not hold pipeline runs");
+    }
+
+    /**
+     * Park a pipeline run on an external-completion step, as {@link #markWaiting} does for a
+     * workflow run.
+     *
+     * @param claim the worker's claim on the job
+     * @param stepName the external step the run waits on
+     * @param checkpoints a serialized {@code PipelineRunCheckpoints}: every checkpoint so far
+     * @param event the event committed with the row
+     */
+    default void markPipelineWaiting(WorkerClaim claim, String stepName, byte[] checkpoints,
+                                     WorkflowRunEventRecord event) {
+        throw new UnsupportedOperationException("this store does not hold pipeline runs");
+    }
+
+    /**
+     * Complete a pipeline run, as {@link #markCompleted} does for a workflow run.
+     *
+     * @param claim the worker's claim on the job
+     * @param result a serialized {@code PipelineRunResult}
+     * @param verdict the one-line completion summary
+     * @param event the event committed with the row
+     */
+    default void markPipelineCompleted(WorkerClaim claim, byte[] result, String verdict,
+                                       WorkflowRunEventRecord event) {
+        throw new UnsupportedOperationException("this store does not hold pipeline runs");
+    }
+
+    /**
+     * Accept the completion of a parked external pipeline step, with the same gating,
+     * idempotency and outcomes as {@link #completeParkedStep}. A step already checkpointed
+     * with byte-identical content is {@code AlreadyDone}; with different content,
+     * {@code Conflict}.
+     *
+     * @param jobId the job
+     * @param stepName the external step being completed
+     * @param checkpoint the step's checkpoint
+     * @param event the event committed with the row
+     * @param validationError null to accept, or the reason the completion fails the run
+     */
+    default ParkedCompletion completeParkedPipelineStep(UUID jobId, String stepName,
+            ai.protomolt.proto.pipeline.v1.PipelineRunCheckpoint checkpoint,
+            WorkflowRunEventRecord event, String validationError) {
+        throw new UnsupportedOperationException("this store does not hold pipeline runs");
+    }
 
     /**
      * Accept the response for a parked external step, atomically gated on

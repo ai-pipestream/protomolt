@@ -3,18 +3,16 @@ package ai.protomolt.proto.jobs.service;
 import ai.protomolt.proto.descriptors.DescriptorFingerprints;
 import ai.protomolt.proto.descriptors.DescriptorRegistry;
 import ai.protomolt.proto.descriptors.MessageFingerprints;
-import ai.protomolt.proto.http.json.ProtobufJsonTranscoder;
 import ai.protomolt.proto.jobs.service.PipelineJobCoordinator.Definition;
 import ai.protomolt.proto.jobs.service.PipelineJobCoordinator.PipelineDefinitionException;
 import ai.protomolt.proto.jobs.service.store.WorkflowRunRecord;
 import ai.protomolt.proto.pipeline.PipelineChecker;
 import ai.protomolt.proto.pipeline.PipelineExecutor;
 import ai.protomolt.proto.pipeline.v1.Pipeline;
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.ArrayNode;
-import com.fasterxml.jackson.databind.node.ObjectNode;
+import ai.protomolt.proto.pipeline.v1.PipelineRunDefinition;
+import ai.protomolt.proto.validate.ProtoValidator;
+import ai.protomolt.proto.validate.ValidationResult;
+import com.google.protobuf.ByteString;
 import com.google.protobuf.DescriptorProtos.FileDescriptorProto;
 import com.google.protobuf.DescriptorProtos.FileDescriptorSet;
 import com.google.protobuf.Descriptors.Descriptor;
@@ -24,9 +22,7 @@ import com.google.protobuf.Descriptors.MethodDescriptor;
 import com.google.protobuf.Descriptors.ServiceDescriptor;
 import com.google.protobuf.DynamicMessage;
 import com.google.protobuf.InvalidProtocolBufferException;
-
 import java.util.ArrayList;
-import java.util.Base64;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -35,55 +31,19 @@ import java.util.Map;
 import java.util.Set;
 
 /**
- * Package-private binary-faithful JSONB codec for the {@code protomolt.pipeline.v1}
- * run-definition envelope stored in {@code workflow_run.workflow_definition}, preserving
- * exact protobuf wire bytes, transitive descriptor closure, and SHA-256 identities.
+ * Builds and reads the {@link PipelineRunDefinition} a durable pipeline run stores in
+ * {@code workflow_run.pipeline_definition_pb}: the pipeline, its descriptor closure, the input
+ * bytes and both fingerprints. Reading rebuilds the descriptors, re-checks the pipeline and
+ * recomputes both fingerprints, and refuses a definition that does not reproduce what it
+ * claims.
  */
 final class PipelineRunCodec {
-
-    static final String FORMAT_KEY = "format";
-    static final String PIPELINE_FORMAT_V1 = "protomolt.pipeline.v1";
-    static final String PIPELINE_BASE64_KEY = "pipelineBase64";
-    static final String DESCRIPTOR_SET_BASE64_KEY = "descriptorSetBase64";
-    static final String DESCRIPTOR_FILES_KEY = "descriptorFiles";
-    static final String INPUT_BASE64_KEY = "inputBase64";
-    static final String PIPELINE_FINGERPRINT_KEY = "pipelineFingerprint";
-    static final String INPUT_FINGERPRINT_KEY = "inputFingerprint";
-
-    private static final ObjectMapper JSON = new ObjectMapper();
 
     private PipelineRunCodec() {
     }
 
-    static boolean isPipelineNode(JsonNode node) {
-        return node instanceof ObjectNode object && hasPipelineMarker(object);
-    }
-
-    static boolean isPipelineDefinition(String workflowDefinition) {
-        if (workflowDefinition == null) {
-            throw new IllegalArgumentException(
-                    "stored workflow definition is not readable JSON: content is null");
-        }
-        JsonNode tree;
-        try {
-            tree = JSON.readTree(workflowDefinition);
-        } catch (JsonProcessingException e) {
-            throw new IllegalArgumentException(
-                    "stored workflow definition is not readable JSON: " + e.getMessage(), e);
-        }
-        if (!(tree instanceof ObjectNode object)) {
-            throw new IllegalArgumentException(
-                    "stored workflow definition is not a JSON object");
-        }
-        if (!hasPipelineMarker(object)) {
-            return false;
-        }
-        readDefinitionEnvelope(object);
-        return true;
-    }
-
-    static ObjectNode encodeDefinition(Pipeline pipeline, List<FileDescriptor> files,
-                                       DynamicMessage canonicalInput) {
+    static PipelineRunDefinition encodeDefinition(Pipeline pipeline, List<FileDescriptor> files,
+                                                  DynamicMessage canonicalInput) {
         List<FileDescriptor> sortedRootFiles = files.stream()
                 .sorted(Comparator.comparing(FileDescriptor::getName))
                 .toList();
@@ -91,67 +51,55 @@ final class PipelineRunCodec {
         for (FileDescriptor file : sortedRootFiles) {
             collectTopological(file, closure);
         }
-        FileDescriptorSet descriptorSet = FileDescriptorSet.newBuilder()
-                .addAllFile(closure.values())
-                .build();
-        String pipelineFingerprint = PipelineExecutor.pipelineFingerprint(pipeline, sortedRootFiles);
-        String inputFingerprint = PipelineExecutor.inputFingerprint(canonicalInput);
-
-        ObjectNode root = JSON.createObjectNode();
-        root.put(FORMAT_KEY, PIPELINE_FORMAT_V1);
-        root.put(PIPELINE_BASE64_KEY, Base64.getEncoder().encodeToString(
-                MessageFingerprints.deterministicBytes(pipeline)));
-        root.put(DESCRIPTOR_SET_BASE64_KEY, Base64.getEncoder().encodeToString(
-                MessageFingerprints.deterministicBytes(descriptorSet)));
-        ArrayNode fileNames = root.putArray(DESCRIPTOR_FILES_KEY);
+        PipelineRunDefinition.Builder definition = PipelineRunDefinition.newBuilder()
+                .setPipeline(pipeline)
+                .setDescriptorSet(FileDescriptorSet.newBuilder().addAllFile(closure.values()))
+                .setInput(ByteString.copyFrom(
+                        MessageFingerprints.deterministicBytes(canonicalInput)))
+                .setPipelineFingerprint(
+                        PipelineExecutor.pipelineFingerprint(pipeline, sortedRootFiles))
+                .setInputFingerprint(PipelineExecutor.inputFingerprint(canonicalInput));
         for (FileDescriptor file : sortedRootFiles) {
-            fileNames.add(file.getName());
+            definition.addRootFiles(file.getName());
         }
-        root.put(INPUT_BASE64_KEY, Base64.getEncoder().encodeToString(
-                MessageFingerprints.deterministicBytes(canonicalInput)));
-        root.put(PIPELINE_FINGERPRINT_KEY, pipelineFingerprint);
-        root.put(INPUT_FINGERPRINT_KEY, inputFingerprint);
-        return root;
-    }
-
-    record PartialSubmission(Pipeline pipeline, List<FileDescriptor> files,
-                             Descriptor inputType, ProtobufJsonTranscoder transcoder) {
-    }
-
-    static PartialSubmission decodeSubmissionEnvelope(ObjectNode envelope,
-                                                      DescriptorRegistry extraRegistry) {
-        requirePipelineFormat(envelope);
-        Pipeline pipeline = decodePipeline(textOrNull(envelope, PIPELINE_BASE64_KEY));
-        Map<String, FileDescriptor> allBuilt = decodeDescriptorMap(
-                textOrNull(envelope, DESCRIPTOR_SET_BASE64_KEY));
-        List<FileDescriptor> files = selectRootFiles(envelope.get(DESCRIPTOR_FILES_KEY), allBuilt);
-        verifyPipeline(pipeline, files);
-        DescriptorRegistry registry = buildRegistry(files, extraRegistry);
-        Descriptor inputType = registry.findDescriptorByFullName(pipeline.getInputType());
-        if (inputType == null) {
-            throw new PipelineDefinitionException("",
-                    "input_type '" + pipeline.getInputType() + "' does not resolve");
-        }
-        return new PartialSubmission(pipeline, files, inputType,
-                new ProtobufJsonTranscoder(registry));
+        return definition.build();
     }
 
     static Definition readDefinition(WorkflowRunRecord job) {
-        if (job == null || job.workflowDefinition == null) {
+        if (job == null || job.pipelineDefinition == null) {
             throw new PipelineDefinitionException("", "job has no stored pipeline definition");
         }
-        JsonNode tree;
+        PipelineRunDefinition stored;
         try {
-            tree = JSON.readTree(job.workflowDefinition);
-        } catch (JsonProcessingException e) {
+            stored = PipelineRunDefinition.parseFrom(job.pipelineDefinition);
+        } catch (InvalidProtocolBufferException e) {
             throw new PipelineDefinitionException("",
-                    "stored pipeline definition is not readable JSON: " + e.getMessage(), e);
+                    "stored pipeline definition is not a readable PipelineRunDefinition: "
+                            + e.getMessage(), e);
         }
-        if (!(tree instanceof ObjectNode envelope)) {
+        return readDefinition(stored);
+    }
+
+    static Definition readDefinition(PipelineRunDefinition stored) {
+        requireValid(stored);
+        Pipeline pipeline = stored.getPipeline();
+        Map<String, FileDescriptor> allBuilt = buildDescriptors(stored.getDescriptorSet());
+        List<FileDescriptor> files = selectRootFiles(stored.getRootFilesList(), allBuilt);
+        verifyPipeline(pipeline, files);
+        String computedPipelineFp = PipelineExecutor.pipelineFingerprint(pipeline, files);
+        if (!computedPipelineFp.equals(stored.getPipelineFingerprint())) {
             throw new PipelineDefinitionException("",
-                    "stored workflow definition is not a JSON object");
+                    "stored pipeline fingerprint does not match reconstructed pipeline and descriptors");
         }
-        return readDefinitionEnvelope(envelope);
+        DescriptorRegistry registry = buildRegistry(files, null);
+        Descriptor inputType = registry.findDescriptorByFullName(pipeline.getInputType());
+        DynamicMessage input = decodeInput(inputType, stored.getInput());
+        String computedInputFp = PipelineExecutor.inputFingerprint(input);
+        if (!computedInputFp.equals(stored.getInputFingerprint())) {
+            throw new PipelineDefinitionException("",
+                    "stored input fingerprint does not match decoded input bytes");
+        }
+        return new Definition(pipeline, files, input, computedPipelineFp, computedInputFp);
     }
 
     static MethodDescriptor resolveMethod(List<FileDescriptor> files, String qualified) {
@@ -204,82 +152,26 @@ final class PipelineRunCodec {
                         .equals(DescriptorFingerprints.fingerprintOf(right));
     }
 
-    private static boolean hasPipelineMarker(ObjectNode object) {
-        return object.has(FORMAT_KEY)
-                || object.has(PIPELINE_BASE64_KEY)
-                || object.has(DESCRIPTOR_SET_BASE64_KEY)
-                || object.has(DESCRIPTOR_FILES_KEY)
-                || object.has(INPUT_BASE64_KEY)
-                || object.has(PIPELINE_FINGERPRINT_KEY)
-                || object.has(INPUT_FINGERPRINT_KEY);
-    }
-
-    private static void requirePipelineFormat(ObjectNode envelope) {
-        JsonNode formatNode = envelope.get(FORMAT_KEY);
-        if (formatNode == null || !formatNode.isTextual()) {
+    private static void requireValid(PipelineRunDefinition stored) {
+        ValidationResult result =
+                ProtoValidator.forMessageType(PipelineRunDefinition.getDescriptor())
+                        .validate(stored);
+        if (!result.valid()) {
+            ValidationResult.Violation first = result.violations().getFirst();
             throw new PipelineDefinitionException("",
-                    "stored pipeline definition is missing format '" + PIPELINE_FORMAT_V1 + "'");
-        }
-        String format = formatNode.asText();
-        if (!PIPELINE_FORMAT_V1.equals(format)) {
-            throw new PipelineDefinitionException("",
-                    "unsupported pipeline definition format '" + format + "'");
+                    "stored pipeline definition is invalid at " + first.path() + ": "
+                            + first.message());
         }
     }
 
-    private static Definition readDefinitionEnvelope(ObjectNode envelope) {
-        requirePipelineFormat(envelope);
-        Pipeline pipeline = decodePipeline(textOrNull(envelope, PIPELINE_BASE64_KEY));
-        Map<String, FileDescriptor> allBuilt = decodeDescriptorMap(
-                textOrNull(envelope, DESCRIPTOR_SET_BASE64_KEY));
-        List<FileDescriptor> files = selectRootFiles(envelope.get(DESCRIPTOR_FILES_KEY), allBuilt);
-        verifyPipeline(pipeline, files);
-
-        String storedPipelineFp = textOrNull(envelope, PIPELINE_FINGERPRINT_KEY);
-        String computedPipelineFp = PipelineExecutor.pipelineFingerprint(pipeline, files);
-        if (!computedPipelineFp.equals(storedPipelineFp)) {
-            throw new PipelineDefinitionException("",
-                    "stored pipeline fingerprint does not match reconstructed pipeline and descriptors");
-        }
-
-        DescriptorRegistry registry = buildRegistry(files, null);
-        Descriptor inputType = registry.findDescriptorByFullName(pipeline.getInputType());
-        String inputBase64 = textOrNull(envelope, INPUT_BASE64_KEY);
-        if (inputBase64 == null) {
-            throw new PipelineDefinitionException("",
-                    "stored pipeline definition is missing inputBase64");
-        }
-        DynamicMessage input = decodeInput(inputType, inputBase64);
-        String storedInputFp = textOrNull(envelope, INPUT_FINGERPRINT_KEY);
-        String computedInputFp = PipelineExecutor.inputFingerprint(input);
-        if (!computedInputFp.equals(storedInputFp)) {
-            throw new PipelineDefinitionException("",
-                    "stored input fingerprint does not match decoded input bytes");
-        }
-        return new Definition(pipeline, files, input, computedPipelineFp, computedInputFp);
-    }
-
-    private static DynamicMessage decodeInput(Descriptor inputType, String inputBase64) {
+    private static DynamicMessage decodeInput(Descriptor inputType, ByteString input) {
         try {
-            byte[] rawInput = Base64.getDecoder().decode(inputBase64);
-            return DynamicMessage.parseFrom(inputType, rawInput);
-        } catch (IllegalArgumentException | InvalidProtocolBufferException e) {
+            return DynamicMessage.parseFrom(inputType, input);
+        } catch (InvalidProtocolBufferException e) {
             throw new PipelineDefinitionException("",
-                    "stored pipeline inputBase64 cannot be decoded as "
+                    "stored pipeline input cannot be decoded as "
                             + inputType.getFullName() + ": " + e.getMessage(), e);
         }
-    }
-
-    private static String textOrNull(ObjectNode node, String field) {
-        JsonNode value = node.get(field);
-        if (value == null || value.isNull()) {
-            return null;
-        }
-        if (!value.isTextual()) {
-            throw new PipelineDefinitionException("",
-                    "pipeline envelope field '" + field + "' must be a string");
-        }
-        return value.asText();
     }
 
     private static void collectTopological(FileDescriptor file,
@@ -293,29 +185,7 @@ final class PipelineRunCodec {
         out.put(file.getName(), file.toProto());
     }
 
-    private static Pipeline decodePipeline(String base64) {
-        if (base64 == null || base64.isBlank()) {
-            throw new PipelineDefinitionException("", "missing pipelineBase64");
-        }
-        try {
-            return Pipeline.parseFrom(Base64.getDecoder().decode(base64));
-        } catch (IllegalArgumentException | InvalidProtocolBufferException e) {
-            throw new PipelineDefinitionException("",
-                    "invalid pipelineBase64: " + e.getMessage(), e);
-        }
-    }
-
-    private static Map<String, FileDescriptor> decodeDescriptorMap(String base64) {
-        if (base64 == null || base64.isBlank()) {
-            throw new PipelineDefinitionException("", "missing descriptorSetBase64");
-        }
-        FileDescriptorSet set;
-        try {
-            set = FileDescriptorSet.parseFrom(Base64.getDecoder().decode(base64));
-        } catch (IllegalArgumentException | InvalidProtocolBufferException e) {
-            throw new PipelineDefinitionException("",
-                    "invalid descriptorSetBase64: " + e.getMessage(), e);
-        }
+    private static Map<String, FileDescriptor> buildDescriptors(FileDescriptorSet set) {
         Map<String, FileDescriptorProto> protos = new LinkedHashMap<>();
         for (FileDescriptorProto proto : set.getFileList()) {
             protos.put(proto.getName(), proto);
@@ -362,26 +232,14 @@ final class PipelineRunCodec {
         }
     }
 
-    private static List<FileDescriptor> selectRootFiles(JsonNode descriptorFilesNode,
+    private static List<FileDescriptor> selectRootFiles(List<String> rootFiles,
                                                         Map<String, FileDescriptor> allBuilt) {
-        if (descriptorFilesNode == null || descriptorFilesNode.isNull()) {
-            return List.copyOf(allBuilt.values());
-        }
-        if (!(descriptorFilesNode instanceof ArrayNode names) || names.isEmpty()) {
-            throw new PipelineDefinitionException("",
-                    "descriptorFiles must be a non-empty array of file names");
-        }
-        List<FileDescriptor> selected = new ArrayList<>(names.size());
-        for (JsonNode nameNode : names) {
-            if (!nameNode.isTextual()) {
-                throw new PipelineDefinitionException("",
-                        "descriptorFiles entries must be strings");
-            }
-            FileDescriptor found = allBuilt.get(nameNode.asText());
+        List<FileDescriptor> selected = new ArrayList<>(rootFiles.size());
+        for (String name : rootFiles) {
+            FileDescriptor found = allBuilt.get(name);
             if (found == null) {
                 throw new PipelineDefinitionException("",
-                        "descriptor file '" + nameNode.asText()
-                                + "' is absent from descriptorSetBase64");
+                        "root file '" + name + "' is absent from the stored descriptor set");
             }
             selected.add(found);
         }

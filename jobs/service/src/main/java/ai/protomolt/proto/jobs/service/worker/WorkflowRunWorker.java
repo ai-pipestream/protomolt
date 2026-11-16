@@ -9,7 +9,6 @@ import ai.protomolt.proto.grpc.profile.v1.ServiceProfile;
 import ai.protomolt.proto.grpc.workflow.v1.ServiceDependency;
 import ai.protomolt.proto.inference.structured.StructuredGenerator;
 import ai.protomolt.proto.jobs.service.PipelineJobCoordinator;
-import ai.protomolt.proto.jobs.service.PipelineJobCoordinator.PipelineDefinitionException;
 import ai.protomolt.proto.jobs.service.WorkflowRunSubmitter;
 import ai.protomolt.proto.jobs.service.WorkflowRunsConfig;
 import ai.protomolt.proto.jobs.service.events.WorkflowRunEventFactory;
@@ -348,17 +347,7 @@ public final class WorkflowRunWorker implements AutoCloseable {
     }
 
     private void executeClaimed(WorkflowRunRecord job, WorkerClaim claim) {
-        boolean pipelineJob;
-        try {
-            pipelineJob = PipelineJobCoordinator.isPipelineJob(job);
-        } catch (PipelineDefinitionException e) {
-            failJob(job, claim, e.step(), "PIPELINE: " + e.getMessage());
-            return;
-        } catch (IllegalArgumentException e) {
-            failJob(job, claim, "", "WORKFLOW: " + e.getMessage());
-            return;
-        }
-        if (pipelineJob) {
+        if (PipelineJobCoordinator.isPipelineJob(job)) {
             pipelineRunner.execute(job, claim);
             return;
         }

@@ -9,6 +9,7 @@ import ai.protomolt.proto.grpc.profile.v1.Operation;
 import ai.protomolt.proto.grpc.profile.v1.ServiceEndpoint;
 import ai.protomolt.proto.grpc.profile.v1.ServiceProfile;
 import ai.protomolt.proto.grpc.workflow.v1.ServiceDependency;
+import ai.protomolt.proto.jobs.service.PipelineJobCoordinator;
 import ai.protomolt.proto.jobs.service.WorkflowRunSubmitter;
 import ai.protomolt.proto.jobs.service.store.InMemoryWorkflowRunStore;
 import ai.protomolt.proto.jobs.service.store.WorkflowRunRecord;
@@ -239,7 +240,7 @@ class PipelineOutboundPolicyTest {
             WorkflowRunRecord tlsCompleted = store.get(UUID.fromString(tlsJobId)).orElseThrow();
             assertThat(tlsCompleted.status).isEqualTo(WorkflowRunRecord.STATUS_COMPLETED);
             assertThat(negotiatedTlsProtocol.get()).startsWith("TLS");
-            JsonNode result = JSON.readTree(tlsCompleted.result);
+            JsonNode result = PipelineJobCoordinator.view(tlsCompleted).result();
             assertThat(result.path("echoed").asText()).isEqualTo("echo:hello-tls");
             assertThat(result.path("operationId").asText()).isEqualTo(tlsJobId + "/call_echo");
 

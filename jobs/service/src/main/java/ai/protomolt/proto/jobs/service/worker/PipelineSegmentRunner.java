@@ -70,16 +70,15 @@ final class PipelineSegmentRunner {
                     identity,
                     checkpoint -> {
                         accumulated.add(checkpoint);
-                        store.saveCheckpoint(claim,
-                                PipelineJobCoordinator.writeCheckpoints(
-                                        accumulated, definition.files()),
+                        store.savePipelineCheckpoints(claim,
+                                PipelineJobCoordinator.writeCheckpoints(accumulated),
                                 WorkflowRunEventFactory.stepCheckpoint(
                                         job, checkpoint.outcome().name()));
                     });
             switch (segment) {
                 case PipelineExecutor.Segment.Completed completed -> {
-                    String resultJson = PipelineJobCoordinator.writeResult(
-                            completed.result(), definition.files());
+                    byte[] result = PipelineJobCoordinator.writeResult(
+                            completed.result(), definition);
                     String verdict = completed.result().cardinality()
                             == EdgeCardinality.EDGE_CARDINALITY_ONE
                             ? completed.result().steps().size() + " steps, output "
@@ -87,14 +86,13 @@ final class PipelineSegmentRunner {
                                             .getDescriptorForType().getFullName()
                             : completed.result().steps().size() + " steps, stream ("
                                     + completed.result().messages().size() + " messages)";
-                    store.markCompleted(claim, resultJson, verdict,
+                    store.markPipelineCompleted(claim, result, verdict,
                             WorkflowRunEventFactory.completed(job, verdict));
                     LOG.info("pipeline run {} completed: {}", job.jobId, verdict);
                 }
                 case PipelineExecutor.Segment.Parked parked -> {
-                    store.markWaiting(claim, parked.step(),
-                            PipelineJobCoordinator.writeCheckpoints(
-                                    accumulated, definition.files()),
+                    store.markPipelineWaiting(claim, parked.step(),
+                            PipelineJobCoordinator.writeCheckpoints(accumulated),
                             WorkflowRunEventFactory.waiting(job, parked.step()));
                     LOG.info("pipeline run {} parked on external step '{}'",
                             job.jobId, parked.step());

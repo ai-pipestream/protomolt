@@ -1,0 +1,168 @@
+syntax = "proto3";
+
+package ai.protomolt.proto.pipeline.v1;
+
+import "ai/protomolt/proto/meta/v1/metadata.proto";
+import "ai/protomolt/proto/pipeline/v1/pipeline.proto";
+import "ai/protomolt/proto/validate/v1/validate.proto";
+import "google/protobuf/descriptor.proto";
+
+option java_multiple_files = true;
+option java_package = "ai.protomolt.proto.pipeline.v1";
+
+// The durable state of one pipeline run: what a coordinator stores so a run
+// can stop at any step and resume on another worker. These messages are the
+// stored form. Step and input messages are carried as serialized bytes
+// because their types are defined by the run's own descriptor set, which is
+// the only thing that can decode them.
+
+// What a run executes: the pipeline, the descriptors it was checked against,
+// and its input. Fixed at submit and never rewritten.
+message PipelineRunDefinition {
+  option (ai.protomolt.proto.meta.v1.message) = {
+    description: "The pipeline, descriptor closure and input a durable pipeline run executes."
+    owner: "protomolt"
+    sensitivity: "internal"
+  };
+
+  // The checked pipeline.
+  Pipeline pipeline = 1 [(ai.protomolt.proto.validate.v1.field).required = true];
+  // The pipeline's descriptor files with every transitive dependency,
+  // dependencies before dependents.
+  google.protobuf.FileDescriptorSet descriptor_set = 2 [(ai.protomolt.proto.validate.v1.field).required = true];
+  // The file names within descriptor_set the pipeline was checked against,
+  // sorted. Fingerprints are computed over these roots.
+  repeated string root_files = 3 [(ai.protomolt.proto.validate.v1.field).repeated = {
+    min_items: 1
+    max_items: 4096
+    unique: true
+    items: {
+      string: {min_len: 1}
+    }
+  }];
+  // The input message, serialized deterministically as pipeline.input_type.
+  bytes input = 4;
+  // PipelineExecutor.pipelineFingerprint of pipeline and root_files.
+  string pipeline_fingerprint = 5 [(ai.protomolt.proto.validate.v1.field) = {
+    required: true
+    string: {min_len: 1}
+  }];
+  // PipelineExecutor.inputFingerprint of input.
+  string input_fingerprint = 6 [(ai.protomolt.proto.validate.v1.field) = {
+    required: true
+    string: {min_len: 1}
+  }];
+}
+
+// Why a pipeline step or fan-out branch failed. Mirrors
+// PipelineExecutor.FailureKind.
+enum PipelineFailureKind {
+  // A succeeded branch carries no kind.
+  PIPELINE_FAILURE_KIND_UNSPECIFIED = 0;
+  PIPELINE_FAILURE_KIND_PREFLIGHT = 1;
+  PIPELINE_FAILURE_KIND_GATE = 2;
+  PIPELINE_FAILURE_KIND_MAPPING = 3;
+  PIPELINE_FAILURE_KIND_PROJECTION = 4;
+  PIPELINE_FAILURE_KIND_VALIDATION = 5;
+  PIPELINE_FAILURE_KIND_DEADLINE = 6;
+  PIPELINE_FAILURE_KIND_GRPC = 7;
+  PIPELINE_FAILURE_KIND_STRUCTURED = 8;
+  PIPELINE_FAILURE_KIND_FAN_OUT = 9;
+  PIPELINE_FAILURE_KIND_EXTERNAL = 10;
+  PIPELINE_FAILURE_KIND_PIPELINE = 11;
+}
+
+// One step's observable cardinality and skip outcome.
+message PipelineStepOutcome {
+  // The step name.
+  string step = 1 [(ai.protomolt.proto.validate.v1.field) = {
+    required: true
+    string: {min_len: 1}
+  }];
+  // True when the step's gate was false and the step did not run.
+  bool skipped = 2;
+  // Requests sent; zero for steps that call nothing.
+  int32 request_count = 3 [(ai.protomolt.proto.validate.v1.field).int32.gte = 0];
+  // Responses received.
+  int32 response_count = 4 [(ai.protomolt.proto.validate.v1.field).int32.gte = 0];
+}
+
+// The outcome of one fan-out branch, in branch order.
+message PipelineBranchOutcome {
+  // "<step>#<index>".
+  string id = 1 [(ai.protomolt.proto.validate.v1.field) = {
+    required: true
+    string: {min_len: 1}
+  }];
+  // Zero-based branch position.
+  int32 index = 2 [(ai.protomolt.proto.validate.v1.field).int32.gte = 0];
+  // True when the branch produced its response.
+  bool succeeded = 3;
+  // Set only on a failed branch.
+  PipelineFailureKind kind = 4 [(ai.protomolt.proto.validate.v1.field).enum.defined_only = true];
+  // The failure text; empty on a succeeded branch.
+  string error = 5;
+}
+
+// One executed step, as saved for replay.
+message PipelineRunCheckpoint {
+  option (ai.protomolt.proto.meta.v1.message) = {
+    description: "One executed pipeline step saved so a later segment resumes after it."
+    owner: "protomolt"
+    sensitivity: "internal"
+  };
+
+  // The pipeline this checkpoint belongs to.
+  string pipeline_fingerprint = 1 [(ai.protomolt.proto.validate.v1.field) = {
+    required: true
+    string: {min_len: 1}
+  }];
+  // The input this checkpoint belongs to.
+  string input_fingerprint = 2 [(ai.protomolt.proto.validate.v1.field) = {
+    required: true
+    string: {min_len: 1}
+  }];
+  // The step and its counts.
+  PipelineStepOutcome outcome = 3 [(ai.protomolt.proto.validate.v1.field).required = true];
+  // ONE or MANY.
+  EdgeCardinality cardinality = 4 [(ai.protomolt.proto.validate.v1.field).enum = {
+    defined_only: true
+    not_in: [0]
+  }];
+  // The step's output messages, each serialized deterministically as the
+  // step's output type.
+  repeated bytes messages = 5;
+  // Fan-out branch outcomes, when the step fanned out.
+  repeated PipelineBranchOutcome branches = 6;
+}
+
+// The ordered checkpoints of one run: one per executed step, in step order.
+message PipelineRunCheckpoints {
+  repeated PipelineRunCheckpoint checkpoints = 1;
+}
+
+// The final binding of a completed run.
+message PipelineRunResult {
+  option (ai.protomolt.proto.meta.v1.message) = {
+    description: "The final output of a completed durable pipeline run."
+    owner: "protomolt"
+    sensitivity: "internal"
+  };
+
+  // ONE or MANY.
+  EdgeCardinality cardinality = 1 [(ai.protomolt.proto.validate.v1.field).enum = {
+    defined_only: true
+    not_in: [0]
+  }];
+  // The output messages, each serialized deterministically as output_type.
+  repeated bytes messages = 2;
+  // The full name of the output message type within the run's descriptor set.
+  string output_type = 3 [(ai.protomolt.proto.validate.v1.field) = {
+    required: true
+    string: {min_len: 1}
+  }];
+  // Every step's outcome, in step order.
+  repeated PipelineStepOutcome steps = 4;
+  // Every fan-out branch outcome, in execution order.
+  repeated PipelineBranchOutcome branches = 5;
+}

@@ -26,6 +26,7 @@ import ai.protomolt.proto.pipeline.v1.EdgeCardinality;
 import ai.protomolt.proto.pipeline.v1.GrpcCallStep;
 import ai.protomolt.proto.pipeline.v1.MethodShape;
 import ai.protomolt.proto.pipeline.v1.Pipeline;
+import ai.protomolt.proto.pipeline.v1.PipelineRunDefinition;
 import ai.protomolt.proto.pipeline.v1.PipelineStep;
 import ai.protomolt.proto.sources.CompiledProtos;
 import ai.protomolt.proto.sources.ProtoSourceCompiler;
@@ -419,6 +420,49 @@ class PipelineJobPostgresRecoveryIT {
         assertThat(store.pollPendingEvents(50).stream()
                 .filter(e -> WorkflowRunEventRecord.TYPE_COMPLETED.equals(e.eventType))
                 .count()).isEqualTo(1);
+    }
+
+    @Test
+    void pipelineRunIsStoredAsProtobufAndTheTableRefusesARowThatIsBothKinds() throws Exception {
+        Pipeline pipeline = buildPipeline();
+        PipelineJobCoordinator coordinator = new PipelineJobCoordinator(store, 4);
+        UUID jobId = UUID.randomUUID();
+        DynamicMessage input = buildInput("shape-1", ByteString.copyFromUtf8("h"), 1L,
+                Any.pack(StringValue.of("shape-payload")), UnknownFieldSet.getDefaultInstance());
+        assertThat(coordinator.submit(pipeline, files, input, jobId.toString()).ok()).isTrue();
+
+        database.inTransaction(c -> {
+            try (var ps = c.prepareStatement("""
+                    SELECT workflow_definition IS NULL, input IS NULL, checkpoints IS NULL,
+                           result IS NULL, pipeline_definition_pb
+                      FROM workflow_run WHERE job_id = ?""")) {
+                ps.setObject(1, jobId);
+                try (var rs = ps.executeQuery()) {
+                    assertThat(rs.next()).isTrue();
+                    assertThat(rs.getBoolean(1)).as("workflow_definition is null").isTrue();
+                    assertThat(rs.getBoolean(2)).as("input is null").isTrue();
+                    assertThat(rs.getBoolean(3)).as("checkpoints is null").isTrue();
+                    assertThat(rs.getBoolean(4)).as("result is null").isTrue();
+                    assertThat(PipelineRunDefinition.parseFrom(rs.getBytes(5)).getPipeline())
+                            .isEqualTo(pipeline);
+                }
+            } catch (SQLException | com.google.protobuf.InvalidProtocolBufferException e) {
+                throw new IllegalStateException(e);
+            }
+            return null;
+        });
+
+        // A row cannot carry a workflow definition and a pipeline definition at once.
+        assertThatThrownBy(() -> database.inTransaction(c -> {
+            try (var ps = c.prepareStatement("""
+                    UPDATE workflow_run SET workflow_definition = '{}'::jsonb
+                     WHERE job_id = ?""")) {
+                ps.setObject(1, jobId);
+                return ps.executeUpdate();
+            } catch (SQLException e) {
+                throw new IllegalStateException(e);
+            }
+        })).hasStackTraceContaining("chk_workflow_run_one_definition");
     }
 
     private static void expireLeaseInPostgres(UUID jobId) {

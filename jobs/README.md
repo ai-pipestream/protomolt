@@ -110,10 +110,13 @@ mutating the committed outcome.
 `ai.protomolt.proto.pipeline.v1.Pipeline` definitions on the same `workflow_run`
 state machine, lease sweeper, `WorkerClaim` fencing, and outbox relay:
 
-- The `protomolt.pipeline.v1` job snapshot stores canonical protobuf wire bytes
-  for the `Pipeline`, topological `FileDescriptorSet` closure, and input
-  message (`bytes`, `uint64`, `google.protobuf.Any`, and unknown fields remain
-  intact across restarts), paired with SHA-256 pipeline and input fingerprints.
+- A pipeline run is stored as protobuf. `pipeline_definition_pb` holds a
+  `PipelineRunDefinition`: the `Pipeline`, its topological `FileDescriptorSet`
+  closure, the input message bytes (`bytes`, `uint64`, `google.protobuf.Any`,
+  and unknown fields remain intact across restarts) and the SHA-256 pipeline
+  and input fingerprints. A pipeline row leaves the workflow JSON columns
+  (`workflow_definition`, `input`, `checkpoints`, `result`) null, and a table
+  constraint refuses a row that is both kinds.
 - `WorkflowRunWorker` executes segments via `PipelineExecutor.runSegment` with
   `ExecutionIdentity(jobId, attempt)` so outbound calls propagate
   `x-protomolt-operation-id` (`<jobId>/<stepName>` or `<jobId>/<step>#<branch>`)
@@ -122,10 +125,11 @@ state machine, lease sweeper, `WorkerClaim` fencing, and outbox relay:
   `ServiceProfileRepository` and validate every target, TLS setting, and call
   deadline through `OutboundChannelPolicy` / `ChannelFactory` before opening
   outbound channels, closing owned channels on worker shutdown.
-- Each pipeline checkpoint stores canonical protobuf message bytes, cardinality
-  (`ONE` or `MANY`), `StepOutcome` counts, and fan-out `BranchOutcome` evidence
-  alongside a JSON `response` view (`{"items": [...]}` for streams) for
-  `get-job`.
+- `pipeline_checkpoints_pb` holds a `PipelineRunCheckpoints`: per step, the
+  output message bytes, cardinality (`ONE` or `MANY`), `StepOutcome` counts and
+  fan-out `BranchOutcome` evidence. `pipeline_result_pb` holds the
+  `PipelineRunResult`. `get-job` and `list-jobs` render these to JSON for
+  display (`{"items": [...]}` for streams); that JSON is output only.
 - `complete-step` settles both unary (`ONE`) and server-streaming (`MANY`, via
   `{"items": [...]}`) external pipeline steps, enforcing `max_stream_messages`
   and `validate_response` before requeuing.

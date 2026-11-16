@@ -10,6 +10,7 @@ import ai.protomolt.proto.grpc.profile.v1.ServiceProfile;
 import ai.protomolt.proto.grpc.profile.v1.SourceKind;
 import ai.protomolt.proto.grpc.profile.v1.Transport;
 import ai.protomolt.proto.grpc.workspace.ProfileCredentialResolver;
+import ai.protomolt.proto.jobs.service.PipelineJobCoordinator;
 import ai.protomolt.proto.jobs.service.WorkflowRunSubmitter;
 import ai.protomolt.proto.jobs.service.store.JdbcWorkflowRunStore;
 import ai.protomolt.proto.jobs.service.store.WorkflowRunDatabase;
@@ -241,7 +242,7 @@ class JobsFleetPipelineOutboundPolicyIT {
                     .isEqualTo(WorkflowRunRecord.STATUS_COMPLETED);
             assertThat(mtlsCalls.get()).isEqualTo(1);
             assertThat(mtlsPeerSubject.get()).isEqualTo("CN=serve-jobs-mtls-client");
-            JsonNode result = JSON.readTree(settled.result);
+            JsonNode result = PipelineJobCoordinator.view(settled).result();
             assertThat(result.path("echoed").asText()).isEqualTo("echo:mtls-pipeline");
             assertThat(result.path("operationId").asText()).isEqualTo(jobId + "/call_echo");
         }
@@ -308,7 +309,7 @@ class JobsFleetPipelineOutboundPolicyIT {
             assertThat(completed.status).isEqualTo(WorkflowRunRecord.STATUS_COMPLETED);
             assertThat(tlsCalls.get()).isEqualTo(1);
             assertThat(tlsProtocol.get()).startsWith("TLS");
-            JsonNode result = JSON.readTree(completed.result);
+            JsonNode result = PipelineJobCoordinator.view(completed).result();
             assertThat(result.path("echoed").asText()).isEqualTo("echo:serve-tls");
             assertThat(result.path("operationId").asText()).isEqualTo(tlsJobId + "/call_echo");
         } finally {

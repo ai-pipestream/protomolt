@@ -2,8 +2,6 @@ package ai.protomolt.proto.jobs.service;
 
 import ai.protomolt.proto.descriptors.DescriptorRegistry;
 import ai.protomolt.proto.descriptors.MessageFingerprints;
-import ai.protomolt.proto.http.json.ProtobufJsonException;
-import ai.protomolt.proto.http.json.ProtobufJsonTranscoder;
 import ai.protomolt.proto.jobs.service.PipelineJobCoordinator.Definition;
 import ai.protomolt.proto.jobs.service.PipelineJobCoordinator.PipelineDefinitionException;
 import ai.protomolt.proto.jobs.service.store.WorkflowRunRecord;
@@ -14,255 +12,227 @@ import ai.protomolt.proto.pipeline.PipelineExecutor.Result;
 import ai.protomolt.proto.pipeline.PipelineExecutor.StepOutcome;
 import ai.protomolt.proto.pipeline.v1.EdgeCardinality;
 import ai.protomolt.proto.pipeline.v1.Pipeline;
+import ai.protomolt.proto.pipeline.v1.PipelineBranchOutcome;
+import ai.protomolt.proto.pipeline.v1.PipelineFailureKind;
+import ai.protomolt.proto.pipeline.v1.PipelineRunCheckpoint;
+import ai.protomolt.proto.pipeline.v1.PipelineRunCheckpoints;
+import ai.protomolt.proto.pipeline.v1.PipelineRunResult;
 import ai.protomolt.proto.pipeline.v1.PipelineStep;
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.ArrayNode;
-import com.fasterxml.jackson.databind.node.ObjectNode;
+import ai.protomolt.proto.pipeline.v1.PipelineStepOutcome;
+import com.google.protobuf.ByteString;
 import com.google.protobuf.Descriptors.Descriptor;
 import com.google.protobuf.Descriptors.FieldDescriptor;
 import com.google.protobuf.Descriptors.FileDescriptor;
 import com.google.protobuf.DynamicMessage;
 import com.google.protobuf.InvalidProtocolBufferException;
-
 import java.util.ArrayList;
-import java.util.Base64;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
 /**
- * Package-private binary-faithful JSONB codec for durable pipeline checkpoints, branch
- * evidence, input previews, and results stored in {@code workflow_run}.
+ * Converts executor checkpoints and results to and from the protobuf messages a durable
+ * pipeline run stores in {@code workflow_run.pipeline_checkpoints_pb} and
+ * {@code pipeline_result_pb}. Step messages are stored as deterministic bytes and decoded
+ * against the step's output type from the run's own descriptor set.
  */
 final class PipelineCheckpointCodec {
-
-    static final String PIPELINE_CHECKPOINT_KEY = "pipelineCheckpoint";
-    static final String ITEMS_KEY = "items";
-    static final String BINARY_BASE64_FALLBACK_KEY = "binaryBase64";
-
-    private static final String NAME_KEY = "name";
-    private static final String SKIPPED_KEY = "skipped";
-    private static final String RESPONSE_KEY = "response";
-    private static final String CARDINALITY_KEY = "cardinality";
-    private static final String REQUEST_COUNT_KEY = "requestCount";
-    private static final String RESPONSE_COUNT_KEY = "responseCount";
-    private static final String MESSAGES_BASE64_KEY = "messagesBase64";
-    private static final String BRANCHES_KEY = "branches";
-    private static final String BRANCH_ID_KEY = "id";
-    private static final String BRANCH_INDEX_KEY = "index";
-    private static final String BRANCH_SUCCEEDED_KEY = "succeeded";
-    private static final String BRANCH_KIND_KEY = "kind";
-    private static final String BRANCH_ERROR_KEY = "error";
-
-    private static final ObjectMapper JSON = new ObjectMapper();
 
     private PipelineCheckpointCodec() {
     }
 
     static List<Checkpoint> readCheckpoints(WorkflowRunRecord job, Definition definition) {
-        String raw = job.checkpoints == null ? "[]" : job.checkpoints;
-        JsonNode tree;
+        if (job.pipelineCheckpoints == null) {
+            return List.of();
+        }
+        PipelineRunCheckpoints stored;
         try {
-            tree = JSON.readTree(raw);
-        } catch (JsonProcessingException e) {
+            stored = PipelineRunCheckpoints.parseFrom(job.pipelineCheckpoints);
+        } catch (InvalidProtocolBufferException e) {
             throw new PipelineDefinitionException("",
-                    "stored checkpoints are not readable JSON: " + e.getMessage(), e);
+                    "stored checkpoints are not a readable PipelineRunCheckpoints: "
+                            + e.getMessage(), e);
         }
-        if (!(tree instanceof ArrayNode array)) {
-            throw new PipelineDefinitionException("", "stored checkpoints are not an array");
-        }
-        Pipeline pipeline = definition.pipeline();
-        if (array.size() > pipeline.getStepsCount()) {
-            throw new PipelineDefinitionException("",
-                    "stored checkpoints (" + array.size() + ") outnumber pipeline steps ("
-                            + pipeline.getStepsCount() + ")");
-        }
-        DescriptorRegistry registry = PipelineRunCodec.buildRegistry(definition.files(), null);
-        Map<String, Descriptor> scopeTypes = new LinkedHashMap<>();
-        scopeTypes.put("input", definition.input().getDescriptorForType());
+        return readCheckpoints(stored, definition);
+    }
 
-        List<Checkpoint> restored = new ArrayList<>(array.size());
-        for (int i = 0; i < array.size(); i++) {
-            PipelineStep step = pipeline.getSteps(i);
-            Descriptor stepOutputType = stepOutputType(
-                    step, definition.files(), registry, scopeTypes);
-            scopeTypes.put(step.getName(), stepOutputType);
-            restored.add(readCheckpointEntry(array.get(i), i, step, stepOutputType));
+    static List<Checkpoint> readCheckpoints(PipelineRunCheckpoints stored,
+                                            Definition definition) {
+        Pipeline pipeline = definition.pipeline();
+        if (stored.getCheckpointsCount() > pipeline.getStepsCount()) {
+            throw new PipelineDefinitionException("",
+                    "stored checkpoints (" + stored.getCheckpointsCount()
+                            + ") outnumber pipeline steps (" + pipeline.getStepsCount() + ")");
+        }
+        List<Descriptor> outputTypes = stepOutputTypes(definition);
+        List<Checkpoint> restored = new ArrayList<>(stored.getCheckpointsCount());
+        for (int i = 0; i < stored.getCheckpointsCount(); i++) {
+            restored.add(fromProto(
+                    stored.getCheckpoints(i), i, pipeline.getSteps(i), outputTypes.get(i)));
         }
         return List.copyOf(restored);
     }
 
-    static String writeCheckpoints(List<Checkpoint> checkpoints, List<FileDescriptor> files) {
-        ProtobufJsonTranscoder transcoder = new ProtobufJsonTranscoder(
-                PipelineRunCodec.buildRegistry(files, null));
-        ArrayNode array = JSON.createArrayNode();
+    static PipelineRunCheckpoints writeCheckpoints(List<Checkpoint> checkpoints) {
+        PipelineRunCheckpoints.Builder stored = PipelineRunCheckpoints.newBuilder();
         for (Checkpoint checkpoint : checkpoints) {
-            array.add(checkpointEntryNode(checkpoint, transcoder));
+            stored.addCheckpoints(toProto(checkpoint));
         }
-        return array.toString();
+        return stored.build();
     }
 
-    static String writeCheckpointEntry(Checkpoint checkpoint, List<FileDescriptor> files) {
-        ProtobufJsonTranscoder transcoder = new ProtobufJsonTranscoder(
-                PipelineRunCodec.buildRegistry(files, null));
-        return checkpointEntryNode(checkpoint, transcoder).toString();
-    }
-
-    static ObjectNode checkpointEntryNode(Checkpoint checkpoint,
-                                          ProtobufJsonTranscoder transcoder) {
-        ObjectNode entry = JSON.createObjectNode();
-        entry.put(NAME_KEY, checkpoint.outcome().name());
-        entry.put(SKIPPED_KEY, checkpoint.outcome().skipped());
-        if (!checkpoint.outcome().skipped()) {
-            if (checkpoint.cardinality() == EdgeCardinality.EDGE_CARDINALITY_ONE) {
-                entry.set(RESPONSE_KEY, messageJsonObject(
-                        checkpoint.messages().getFirst(), transcoder, JSON));
-            } else {
-                ObjectNode streamWrapper = JSON.createObjectNode();
-                ArrayNode items = streamWrapper.putArray(ITEMS_KEY);
-                for (DynamicMessage message : checkpoint.messages()) {
-                    items.add(messageJsonObject(message, transcoder, JSON));
-                }
-                entry.set(RESPONSE_KEY, streamWrapper);
-            }
-        }
-        ObjectNode meta = entry.putObject(PIPELINE_CHECKPOINT_KEY);
-        meta.put(PipelineRunCodec.PIPELINE_FINGERPRINT_KEY, checkpoint.pipelineFingerprint());
-        meta.put(PipelineRunCodec.INPUT_FINGERPRINT_KEY, checkpoint.inputFingerprint());
-        meta.put(CARDINALITY_KEY, checkpoint.cardinality().name());
-        meta.put(REQUEST_COUNT_KEY, checkpoint.outcome().requestCount());
-        meta.put(RESPONSE_COUNT_KEY, checkpoint.outcome().responseCount());
-        ArrayNode messagesBase64 = meta.putArray(MESSAGES_BASE64_KEY);
+    static PipelineRunCheckpoint toProto(Checkpoint checkpoint) {
+        PipelineRunCheckpoint.Builder stored = PipelineRunCheckpoint.newBuilder()
+                .setPipelineFingerprint(checkpoint.pipelineFingerprint())
+                .setInputFingerprint(checkpoint.inputFingerprint())
+                .setOutcome(toProto(checkpoint.outcome()))
+                .setCardinality(checkpoint.cardinality());
         for (DynamicMessage message : checkpoint.messages()) {
-            messagesBase64.add(Base64.getEncoder().encodeToString(
+            stored.addMessages(ByteString.copyFrom(
                     MessageFingerprints.deterministicBytes(message)));
         }
-        ArrayNode branchesNode = meta.putArray(BRANCHES_KEY);
         for (BranchOutcome branch : checkpoint.branches()) {
-            ObjectNode b = branchesNode.addObject();
-            b.put(BRANCH_ID_KEY, branch.id());
-            b.put(BRANCH_INDEX_KEY, branch.index());
-            b.put(BRANCH_SUCCEEDED_KEY, branch.succeeded());
-            if (branch.kind() != null) {
-                b.put(BRANCH_KIND_KEY, branch.kind().name());
-            }
-            b.put(BRANCH_ERROR_KEY, branch.error());
+            stored.addBranches(toProto(branch));
         }
-        return entry;
+        return stored.build();
     }
 
-    static String writeResult(Result result, List<FileDescriptor> files) {
-        ProtobufJsonTranscoder transcoder = new ProtobufJsonTranscoder(
-                PipelineRunCodec.buildRegistry(files, null));
-        if (result.cardinality() == EdgeCardinality.EDGE_CARDINALITY_ONE) {
-            return messageJsonObject(result.message(), transcoder, JSON).toString();
-        }
-        ObjectNode streamWrapper = JSON.createObjectNode();
-        ArrayNode items = streamWrapper.putArray(ITEMS_KEY);
+    static PipelineRunResult writeResult(Result result, Definition definition) {
+        PipelineRunResult.Builder stored = PipelineRunResult.newBuilder()
+                .setCardinality(result.cardinality())
+                .setOutputType(finalOutputType(definition).getFullName());
         for (DynamicMessage message : result.messages()) {
-            items.add(messageJsonObject(message, transcoder, JSON));
-        }
-        return streamWrapper.toString();
-    }
-
-    static String renderInputJson(DynamicMessage input, List<FileDescriptor> files) {
-        ProtobufJsonTranscoder transcoder = new ProtobufJsonTranscoder(
-                PipelineRunCodec.buildRegistry(files, null));
-        return messageJsonObject(input, transcoder, JSON).toString();
-    }
-
-    static ObjectNode messageJsonObject(DynamicMessage message,
-                                        ProtobufJsonTranscoder transcoder,
-                                        ObjectMapper mapper) {
-        String preview;
-        try {
-            preview = transcoder.toJson(message);
-        } catch (ProtobufJsonException unrenderable) {
-            // proto3 JSON cannot print an Any whose type is outside the pipeline's descriptor
-            // closure; authoritative wire bytes are carried in Base64.
-            ObjectNode fallback = mapper.createObjectNode();
-            fallback.put(BINARY_BASE64_FALLBACK_KEY, Base64.getEncoder().encodeToString(
+            stored.addMessages(ByteString.copyFrom(
                     MessageFingerprints.deterministicBytes(message)));
-            return fallback;
         }
-        JsonNode tree;
-        try {
-            tree = mapper.readTree(preview);
-        } catch (JsonProcessingException notJson) {
-            throw new IllegalStateException(
-                    "proto3 JSON printer produced text that is not JSON for "
-                            + message.getDescriptorForType().getFullName(), notJson);
+        for (StepOutcome step : result.steps()) {
+            stored.addSteps(toProto(step));
         }
-        if (tree instanceof ObjectNode objectNode) {
-            return objectNode;
+        for (BranchOutcome branch : result.branches()) {
+            stored.addBranches(toProto(branch));
         }
-        throw new IllegalStateException(
-                "proto3 JSON printer produced a non-object node for "
-                        + message.getDescriptorForType().getFullName());
+        return stored.build();
     }
 
-    private static Checkpoint readCheckpointEntry(JsonNode entry, int index,
-                                                  PipelineStep step,
-                                                  Descriptor stepOutputType) {
-        if (entry == null || !entry.isObject()) {
-            throw new PipelineDefinitionException(step.getName(),
-                    "checkpoint " + index + " is not a JSON object");
+    /** The messages of a stored result, decoded against the run's own descriptor set. */
+    static List<DynamicMessage> readResultMessages(PipelineRunResult stored,
+                                                   Definition definition) {
+        Descriptor outputType = PipelineRunCodec.buildRegistry(definition.files(), null)
+                .findDescriptorByFullName(stored.getOutputType());
+        if (outputType == null) {
+            throw new PipelineDefinitionException("",
+                    "stored result type '" + stored.getOutputType()
+                            + "' is absent from the run's descriptor set");
         }
-        String stepName = entry.path(NAME_KEY).asText("");
+        return decodeMessages(stored.getMessagesList(), outputType, "");
+    }
+
+    /** The type of the run's final binding: the declared output, or the last step's output. */
+    static Descriptor finalOutputType(Definition definition) {
+        Pipeline pipeline = definition.pipeline();
+        if (pipeline.hasOutput()) {
+            return PipelineRunCodec.buildRegistry(definition.files(), null)
+                    .findDescriptorByFullName(pipeline.getOutput().getType());
+        }
+        if (pipeline.getStepsCount() == 0) {
+            return definition.input().getDescriptorForType();
+        }
+        return stepOutputTypes(definition).getLast();
+    }
+
+    /** Each step's output type, in step order. */
+    static List<Descriptor> stepOutputTypes(Definition definition) {
+        DescriptorRegistry registry = PipelineRunCodec.buildRegistry(definition.files(), null);
+        Map<String, Descriptor> scopeTypes = new LinkedHashMap<>();
+        scopeTypes.put("input", definition.input().getDescriptorForType());
+        List<Descriptor> types = new ArrayList<>(definition.pipeline().getStepsCount());
+        for (PipelineStep step : definition.pipeline().getStepsList()) {
+            Descriptor type = stepOutputType(step, definition.files(), registry, scopeTypes);
+            scopeTypes.put(step.getName(), type);
+            types.add(type);
+        }
+        return types;
+    }
+
+    private static Checkpoint fromProto(PipelineRunCheckpoint stored, int index,
+                                        PipelineStep step, Descriptor stepOutputType) {
+        String stepName = stored.getOutcome().getStep();
         if (!step.getName().equals(stepName)) {
             throw new PipelineDefinitionException(step.getName(),
                     "checkpoint " + index + " belongs to step '" + stepName
                             + "' but pipeline step " + index + " is '" + step.getName() + "'");
         }
-        boolean skipped = entry.path(SKIPPED_KEY).asBoolean(false);
-        JsonNode meta = entry.get(PIPELINE_CHECKPOINT_KEY);
-        if (meta == null || !meta.isObject()) {
+        EdgeCardinality cardinality = stored.getCardinality();
+        if (cardinality != EdgeCardinality.EDGE_CARDINALITY_ONE
+                && cardinality != EdgeCardinality.EDGE_CARDINALITY_MANY) {
             throw new PipelineDefinitionException(stepName,
-                    "checkpoint '" + stepName + "' is missing pipelineCheckpoint metadata");
+                    "invalid checkpoint cardinality '" + cardinality + "'");
         }
-        String cpPipelineFp = meta.path(PipelineRunCodec.PIPELINE_FINGERPRINT_KEY).asText("");
-        String cpInputFp = meta.path(PipelineRunCodec.INPUT_FINGERPRINT_KEY).asText("");
-        EdgeCardinality cardinality = parseCardinality(
-                meta.path(CARDINALITY_KEY).asText(""), stepName);
-        int requestCount = requireInt(meta, REQUEST_COUNT_KEY, stepName);
-        int responseCount = requireInt(meta, RESPONSE_COUNT_KEY, stepName);
-        List<DynamicMessage> messages = decodeMessages(
-                meta.get(MESSAGES_BASE64_KEY), stepOutputType, stepName);
-        List<BranchOutcome> branches = readBranches(meta.get(BRANCHES_KEY), stepName);
+        List<BranchOutcome> branches = new ArrayList<>(stored.getBranchesCount());
+        for (PipelineBranchOutcome branch : stored.getBranchesList()) {
+            branches.add(fromProto(branch, stepName));
+        }
         return new Checkpoint(
-                cpPipelineFp,
-                cpInputFp,
-                new StepOutcome(stepName, skipped, requestCount, responseCount),
+                stored.getPipelineFingerprint(),
+                stored.getInputFingerprint(),
+                new StepOutcome(stepName, stored.getOutcome().getSkipped(),
+                        stored.getOutcome().getRequestCount(),
+                        stored.getOutcome().getResponseCount()),
                 cardinality,
-                messages,
+                decodeMessages(stored.getMessagesList(), stepOutputType, stepName),
                 branches);
     }
 
-    private static List<DynamicMessage> decodeMessages(JsonNode rawMessages,
-                                                       Descriptor stepOutputType,
-                                                       String stepName) {
-        if (!(rawMessages instanceof ArrayNode messagesArray)) {
-            throw new PipelineDefinitionException(stepName,
-                    "checkpoint '" + stepName + "' messagesBase64 is not an array");
-        }
-        List<DynamicMessage> messages = new ArrayList<>(messagesArray.size());
-        for (JsonNode item : messagesArray) {
-            if (!item.isTextual()) {
-                throw new PipelineDefinitionException(stepName,
-                        "checkpoint '" + stepName + "' message entry is not base64 text");
-            }
+    private static List<DynamicMessage> decodeMessages(List<ByteString> stored,
+                                                       Descriptor type, String stepName) {
+        List<DynamicMessage> messages = new ArrayList<>(stored.size());
+        for (ByteString bytes : stored) {
             try {
-                byte[] decoded = Base64.getDecoder().decode(item.asText());
-                messages.add(DynamicMessage.parseFrom(stepOutputType, decoded));
-            } catch (IllegalArgumentException | InvalidProtocolBufferException e) {
+                messages.add(DynamicMessage.parseFrom(type, bytes));
+            } catch (InvalidProtocolBufferException e) {
                 throw new PipelineDefinitionException(stepName,
-                        "checkpoint '" + stepName + "' message cannot be decoded as "
-                                + stepOutputType.getFullName() + ": " + e.getMessage(), e);
+                        "stored message cannot be decoded as " + type.getFullName() + ": "
+                                + e.getMessage(), e);
             }
         }
         return messages;
+    }
+
+    private static PipelineStepOutcome toProto(StepOutcome outcome) {
+        return PipelineStepOutcome.newBuilder()
+                .setStep(outcome.name())
+                .setSkipped(outcome.skipped())
+                .setRequestCount(outcome.requestCount())
+                .setResponseCount(outcome.responseCount())
+                .build();
+    }
+
+    private static PipelineBranchOutcome toProto(BranchOutcome branch) {
+        PipelineBranchOutcome.Builder stored = PipelineBranchOutcome.newBuilder()
+                .setId(branch.id())
+                .setIndex(branch.index())
+                .setSucceeded(branch.succeeded())
+                .setError(branch.error());
+        if (branch.kind() != null) {
+            stored.setKind(PipelineFailureKind.valueOf(
+                    "PIPELINE_FAILURE_KIND_" + branch.kind().name()));
+        }
+        return stored.build();
+    }
+
+    private static BranchOutcome fromProto(PipelineBranchOutcome stored, String stepName) {
+        FailureKind kind = null;
+        if (stored.getKind() != PipelineFailureKind.PIPELINE_FAILURE_KIND_UNSPECIFIED) {
+            if (stored.getKind() == PipelineFailureKind.UNRECOGNIZED) {
+                throw new PipelineDefinitionException(stepName,
+                        "invalid branch failure kind " + stored.getKindValue());
+            }
+            kind = FailureKind.valueOf(stored.getKind().name()
+                    .substring("PIPELINE_FAILURE_KIND_".length()));
+        }
+        return new BranchOutcome(
+                stored.getId(), stored.getIndex(), stored.getSucceeded(), kind,
+                stored.getError());
     }
 
     private static Descriptor stepOutputType(PipelineStep step,
@@ -311,66 +281,5 @@ final class PipelineCheckpointCodec {
             }
             start = dot + 1;
         }
-    }
-
-    private static EdgeCardinality parseCardinality(String value, String stepName) {
-        try {
-            EdgeCardinality cardinality = EdgeCardinality.valueOf(value);
-            if (cardinality == EdgeCardinality.EDGE_CARDINALITY_UNSPECIFIED
-                    || cardinality == EdgeCardinality.UNRECOGNIZED) {
-                throw new PipelineDefinitionException(stepName,
-                        "invalid checkpoint cardinality '" + value + "'");
-            }
-            return cardinality;
-        } catch (IllegalArgumentException e) {
-            throw new PipelineDefinitionException(stepName,
-                    "invalid checkpoint cardinality '" + value + "'", e);
-        }
-    }
-
-    private static int requireInt(JsonNode parent, String field, String stepName) {
-        JsonNode value = parent.get(field);
-        if (value == null || !value.isIntegralNumber() || !value.canConvertToInt()) {
-            throw new PipelineDefinitionException(stepName,
-                    "checkpoint '" + stepName + "' field '" + field + "' is not an int");
-        }
-        return value.intValue();
-    }
-
-    private static List<BranchOutcome> readBranches(JsonNode rawBranches, String stepName) {
-        if (rawBranches == null || rawBranches.isNull()) {
-            return List.of();
-        }
-        if (!(rawBranches instanceof ArrayNode array)) {
-            throw new PipelineDefinitionException(stepName,
-                    "checkpoint '" + stepName + "' branches is not an array");
-        }
-        List<BranchOutcome> branches = new ArrayList<>(array.size());
-        for (JsonNode node : array) {
-            if (!node.isObject()) {
-                throw new PipelineDefinitionException(stepName,
-                        "checkpoint '" + stepName + "' branch entry is not an object");
-            }
-            String id = node.path(BRANCH_ID_KEY).asText("");
-            int index = requireInt(node, BRANCH_INDEX_KEY, stepName);
-            boolean succeeded = node.path(BRANCH_SUCCEEDED_KEY).asBoolean(false);
-            FailureKind kind = null;
-            JsonNode kindNode = node.get(BRANCH_KIND_KEY);
-            if (kindNode != null && !kindNode.isNull()) {
-                try {
-                    kind = FailureKind.valueOf(kindNode.asText(""));
-                } catch (IllegalArgumentException e) {
-                    throw new PipelineDefinitionException(stepName,
-                            "invalid branch failure kind '" + kindNode.asText("") + "'", e);
-                }
-            }
-            JsonNode errorNode = node.get(BRANCH_ERROR_KEY);
-            if (errorNode == null || !errorNode.isTextual()) {
-                throw new PipelineDefinitionException(stepName,
-                        "checkpoint '" + stepName + "' branch error is missing");
-            }
-            branches.add(new BranchOutcome(id, index, succeeded, kind, errorNode.asText()));
-        }
-        return List.copyOf(branches);
     }
 }
