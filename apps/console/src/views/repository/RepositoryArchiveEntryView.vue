@@ -944,13 +944,17 @@ import { byteSize, instant } from '@/repository/formatCore'
 import { documentRoute } from '@/repository/linksCore'
 import { rpcFailure, type RpcFailure } from '@/repository/rpcErrorCore'
 import {
-  buildListRenditionProvenanceRequest,
   evaluateSaveAsSessionAccess,
-  mergeRenditionsWithProvenance,
   type ArchiveRenditionSourceInput,
-  type EnrichedRenditionRow,
-  type SinkJobSummary,
 } from '@/repository/saveAsCore'
+import {
+  type SinkJobSummary,
+} from '@/repository/saveAsJobCore'
+import {
+  buildListRenditionProvenanceRequest,
+  mergeRenditionsWithProvenance,
+  type EnrichedRenditionRow,
+} from '@/repository/saveAsProvenanceCore'
 import { UploadInputError, fileSha256, newOperationId } from '@/repository/uploadCore'
 import { useCallScope } from '@/repository/useCallScope'
 

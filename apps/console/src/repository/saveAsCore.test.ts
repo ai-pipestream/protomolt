@@ -38,18 +38,22 @@ import {
   buildArchiveRenditionSinkSource,
   buildDocumentPartSinkSource,
   buildPublishSaveAsRequest,
-  classifySinkRpcError,
   defaultRenditionSlotName,
   describeSaveAsCapabilities,
-  describeSinkJob,
   encodeParquetRendererOptions,
   evaluateSaveAsSessionAccess,
-  listPartOccurrenceOptions,
-  mergeRenditionsWithProvenance,
   PARQUET_OPTIONS_TYPE,
   SaveAsInputError,
   ZERO_PROVIDERS_MESSAGE,
 } from './saveAsCore'
+import {
+  classifySinkRpcError,
+  describeSinkJob,
+} from './saveAsJobCore'
+import {
+  listPartOccurrenceOptions,
+  mergeRenditionsWithProvenance,
+} from './saveAsProvenanceCore'
 
 const parquetCapability = create(RendererCapabilitySchema, {
   providerId: 'parquet-v1',

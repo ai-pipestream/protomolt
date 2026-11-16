@@ -166,90 +166,12 @@
           <template v-if="selectedCapability !== null">
             <v-divider class="my-3" />
 
-            <div v-if="selectedCapability.optionsKind === 'parquet'" class="mb-4" data-testid="save-as-parquet-options">
-              <div class="text-subtitle-2 mb-2">Parquet projection &amp; masking options</div>
-              <v-row density="compact">
-                <v-col cols="12" sm="6">
-                  <v-text-field
-                    v-model="parquetForm.columnsText"
-                    label="Projected columns (optional)"
-                    hint="Comma-separated top-level field names; leave blank for all scalar columns"
-                    persistent-hint
-                    density="compact"
-                    variant="outlined"
-                    :disabled="lockedByActiveAttempt"
-                    data-testid="parquet-columns-input"
-                    @update:model-value="markDraftEdited"
-                  />
-                </v-col>
-                <v-col cols="12" sm="6">
-                  <v-text-field
-                    v-model="parquetForm.maxOutputBytesText"
-                    label="Max output bytes (optional)"
-                    hint="Whole bytes; leave blank for provider ceiling"
-                    persistent-hint
-                    density="compact"
-                    variant="outlined"
-                    inputmode="numeric"
-                    :disabled="lockedByActiveAttempt"
-                    data-testid="parquet-max-bytes-input"
-                    @update:model-value="markDraftEdited"
-                  />
-                </v-col>
-                <v-col cols="12" sm="6">
-                  <v-text-field
-                    v-model="parquetForm.maskedSensitivityClassesText"
-                    label="Masked sensitivity classes (optional)"
-                    hint="Comma-separated sensitivity classes (e.g. PII, SECRET)"
-                    persistent-hint
-                    density="compact"
-                    variant="outlined"
-                    :disabled="lockedByActiveAttempt"
-                    data-testid="parquet-sensitivity-input"
-                    @update:model-value="markDraftEdited"
-                  />
-                </v-col>
-                <v-col cols="12" sm="6">
-                  <v-select
-                    v-model="parquetForm.maskStrategy"
-                    :items="maskStrategyItems"
-                    item-title="title"
-                    item-value="value"
-                    label="Mask strategy"
-                    density="compact"
-                    variant="outlined"
-                    hide-details="auto"
-                    :disabled="lockedByActiveAttempt"
-                    data-testid="parquet-mask-strategy-select"
-                    @update:model-value="markDraftEdited"
-                  />
-                </v-col>
-                <v-col cols="12" sm="6">
-                  <v-text-field
-                    v-model="parquetForm.mappingId"
-                    label="Mapping ID (optional)"
-                    density="compact"
-                    variant="outlined"
-                    hide-details="auto"
-                    :disabled="lockedByActiveAttempt"
-                    data-testid="parquet-mapping-id-input"
-                    @update:model-value="markDraftEdited"
-                  />
-                </v-col>
-                <v-col cols="12" sm="6">
-                  <v-text-field
-                    v-model="parquetForm.policyId"
-                    label="Policy ID (optional)"
-                    density="compact"
-                    variant="outlined"
-                    hide-details="auto"
-                    :disabled="lockedByActiveAttempt"
-                    data-testid="parquet-policy-id-input"
-                    @update:model-value="markDraftEdited"
-                  />
-                </v-col>
-              </v-row>
-            </div>
+            <SaveAsParquetOptions
+              v-if="selectedCapability.optionsKind === 'parquet'"
+              :form="parquetForm"
+              :disabled="lockedByActiveAttempt"
+              @edited="markDraftEdited"
+            />
 
             <div v-else class="mb-4" data-testid="save-as-default-options">
               <div class="text-subtitle-2 mb-1">Provider options</div>
@@ -284,88 +206,13 @@
 
             <v-divider class="my-3" />
 
-            <div class="mb-3" data-testid="save-as-destination">
-              <div class="text-subtitle-2 mb-2">Archive destination</div>
-              <v-row density="compact">
-                <v-col cols="12" sm="4">
-                  <v-combobox
-                    v-if="availableArchives.length > 0"
-                    v-model="destinationForm.archive"
-                    :items="availableArchives"
-                    label="Destination archive"
-                    density="compact"
-                    variant="outlined"
-                    hide-details="auto"
-                    :disabled="lockedByActiveAttempt"
-                    data-testid="save-as-archive-input"
-                    @update:model-value="markDraftEdited"
-                  />
-                  <v-text-field
-                    v-else
-                    v-model="destinationForm.archive"
-                    label="Destination archive"
-                    density="compact"
-                    variant="outlined"
-                    hide-details="auto"
-                    :disabled="lockedByActiveAttempt"
-                    data-testid="save-as-archive-input"
-                    @update:model-value="markDraftEdited"
-                  />
-                </v-col>
-                <v-col cols="12" sm="4">
-                  <v-text-field
-                    v-model="destinationForm.entryId"
-                    label="Destination entry ID"
-                    density="compact"
-                    variant="outlined"
-                    hide-details="auto"
-                    :disabled="lockedByActiveAttempt"
-                    data-testid="save-as-entry-input"
-                    @update:model-value="markDraftEdited"
-                  />
-                </v-col>
-                <v-col cols="12" sm="4">
-                  <v-text-field
-                    v-model="destinationForm.renditionName"
-                    label="Rendition slot name"
-                    density="compact"
-                    variant="outlined"
-                    hide-details="auto"
-                    :disabled="lockedByActiveAttempt"
-                    data-testid="save-as-rendition-input"
-                    @update:model-value="onRenditionNameEdited"
-                  />
-                </v-col>
-                <v-col cols="12" sm="6">
-                  <v-select
-                    v-model="destinationForm.preconditionMode"
-                    :items="preconditionModeItems"
-                    item-title="title"
-                    item-value="value"
-                    label="Destination version precondition"
-                    density="compact"
-                    variant="outlined"
-                    hide-details="auto"
-                    :disabled="lockedByActiveAttempt"
-                    data-testid="save-as-precondition-select"
-                    @update:model-value="markDraftEdited"
-                  />
-                </v-col>
-                <v-col v-if="destinationForm.preconditionMode === 'expected-version'" cols="12" sm="6">
-                  <v-text-field
-                    v-model="destinationForm.expectedDestinationVersionText"
-                    label="Expected destination version"
-                    density="compact"
-                    variant="outlined"
-                    hide-details="auto"
-                    inputmode="numeric"
-                    :disabled="lockedByActiveAttempt"
-                    data-testid="save-as-expected-version-input"
-                    @update:model-value="markDraftEdited"
-                  />
-                </v-col>
-              </v-row>
-            </div>
+            <SaveAsDestinationFields
+              :form="destinationForm"
+              :disabled="lockedByActiveAttempt"
+              :archives="availableArchives"
+              @edited="markDraftEdited"
+              @rendition-name-edited="onRenditionNameEdited"
+            />
           </template>
         </template>
 
@@ -381,163 +228,15 @@
           {{ inputError }}
         </v-alert>
 
-        <!-- RPC / Conflict / Unsettled alert -->
-        <v-alert
-          v-if="classifiedError !== null"
-          :type="classifiedError.kind === 'unsettled' ? 'warning' : 'error'"
-          variant="tonal"
-          :role="classifiedError.kind === 'unsettled' ? 'status' : 'alert'"
-          class="mt-3"
-          data-testid="save-as-rpc-error"
-        >
-          <div class="font-weight-medium">
-            <template v-if="classifiedError.kind === 'unsettled'">
-              Outcome unresolved ({{ classifiedError.codeLabel }}) — rendition commit is not yet confirmed
-            </template>
-            <template v-else-if="classifiedError.kind === 'conflict'">
-              Version conflict ({{ classifiedError.codeLabel }})
-            </template>
-            <template v-else>
-              Save-as failed ({{ classifiedError.codeLabel }})
-            </template>
-          </div>
-          <div class="text-body-2 mt-1">{{ classifiedError.message }}</div>
-          <div v-if="activeOperationId !== null" class="text-caption mt-1">
-            Operation ID: <code>{{ activeOperationId }}</code>
-          </div>
-          <div class="d-flex flex-wrap ga-2 mt-2">
-            <v-btn
-              v-if="classifiedError.canReconcile && activeOperationId !== null"
-              size="small"
-              variant="tonal"
-              :loading="reconciling"
-              data-testid="save-as-reconcile-btn"
-              @click="refreshJobStatus"
-            >
-              Refresh status
-            </v-btn>
-            <v-btn
-              v-if="classifiedError.canReconcile && frozenRequest !== null"
-              size="small"
-              variant="outlined"
-              :loading="submitting"
-              data-testid="save-as-retry-same-btn"
-              @click="retrySameOperation"
-            >
-              Retry same operation
-            </v-btn>
-            <v-btn
-              v-if="classifiedError.kind === 'conflict'"
-              size="small"
-              variant="tonal"
-              data-testid="save-as-reload-source-btn"
-              @click="emit('reloadSource')"
-            >
-              Reload source
-            </v-btn>
-            <v-btn
-              v-if="classifiedError.kind === 'unauthenticated'"
-              size="small"
-              variant="tonal"
-              @click="signIn"
-            >
-              Sign in
-            </v-btn>
-          </div>
-        </v-alert>
-
-        <!-- Sink job status card -->
-        <v-alert
-          v-if="jobSummary !== null"
-          :type="jobAlertType"
-          variant="tonal"
-          role="status"
-          aria-live="polite"
-          class="mt-3"
-          data-testid="save-as-job-status"
-          :data-job-phase="jobSummary.phase"
-        >
-          <div class="d-flex align-center justify-space-between flex-wrap ga-2">
-            <span class="font-weight-medium">Job status: {{ jobSummary.stateLabel }}</span>
-            <span class="text-caption">Operation <code>{{ jobSummary.operationId }}</code></span>
-          </div>
-
-          <v-progress-linear
-            v-if="jobSummary.phase === 'queued' || jobSummary.phase === 'running'"
-            indeterminate
-            class="my-2"
-            aria-label="Sink conversion job in progress"
-          />
-
-          <div v-if="jobSummary.phase === 'succeeded'" class="text-body-2 mt-1" data-testid="save-as-job-receipt">
-            Committed <code>{{ jobSummary.destinationRendition?.name }}</code>
-            ({{ byteSize(jobSummary.bytesCommitted) }})
-            at version <strong>v{{ jobSummary.destinationVersion.toString() }}</strong>
-            on <code>{{ jobSummary.destinationAddress?.archive }} / {{ jobSummary.destinationAddress?.entryId }}</code>.
-          </div>
-
-          <div v-if="jobSummary.phase === 'unresolved'" class="text-body-2 mt-1">
-            The server has not yet confirmed whether this rendition committed. Refresh status or retry the same operation before assuming completion.
-          </div>
-
-          <div v-if="jobSummary.failureMessage" class="text-body-2 mt-1" data-testid="save-as-job-failure">
-            {{ jobSummary.failureMessage }}
-            <span v-if="jobSummary.failureReasonCode" class="text-caption">({{ jobSummary.failureReasonCode }})</span>
-          </div>
-
-          <div class="d-flex flex-wrap ga-2 mt-2">
-            <v-btn
-              v-if="jobSummary.canReconcile"
-              size="small"
-              variant="tonal"
-              :loading="reconciling"
-              data-testid="save-as-refresh-job-btn"
-              @click="refreshJobStatus"
-            >
-              Refresh status
-            </v-btn>
-            <v-btn
-              v-if="jobSummary.canCancel"
-              size="small"
-              color="warning"
-              variant="tonal"
-              :loading="cancelling"
-              data-testid="save-as-cancel-job-btn"
-              @click="cancelActiveJob"
-            >
-              Cancel job
-            </v-btn>
-            <v-btn
-              v-if="jobSummary.canRetrySameOperation && frozenRequest !== null"
-              size="small"
-              variant="outlined"
-              :loading="submitting"
-              data-testid="save-as-retry-job-btn"
-              @click="retrySameOperation"
-            >
-              Retry same operation
-            </v-btn>
-            <v-btn
-              v-if="jobSummary.isConflict"
-              size="small"
-              variant="tonal"
-              data-testid="save-as-conflict-reload-btn"
-              @click="emit('reloadSource')"
-            >
-              Reload source
-            </v-btn>
-            <v-btn
-              v-if="jobSummary.phase === 'succeeded' && destinationEntryLink !== null"
-              size="small"
-              variant="tonal"
-              :to="destinationEntryLink"
-              data-testid="save-as-open-entry-btn"
-              @click="closeDialog"
-            >
-              Open destination entry
-            </v-btn>
-          </div>
-        </v-alert>
+        <SaveAsJobPanel
+          :entry="activeJob"
+          @refresh="refreshJobStatus"
+          @retry="retrySameOperation"
+          @cancel="cancelActiveJob"
+          @reload-source="emit('reloadSource')"
+          @sign-in="signIn"
+          @open-entry="closeDialog"
+        />
       </v-card-text>
 
       <v-card-actions class="justify-end ga-2 px-4 pb-4">
@@ -568,9 +267,11 @@
 <script setup lang="ts">
 import { create } from '@bufbuild/protobuf'
 import { computed, inject, onBeforeUnmount, reactive, ref, shallowRef, watch } from 'vue'
-import type { RouteLocationRaw } from 'vue-router'
 import RpcFailureAlert from '@/components/repository/RpcFailureAlert.vue'
 import FormatIcon from '@/components/repository/FormatIcon.vue'
+import SaveAsDestinationFields from '@/components/repository/SaveAsDestinationFields.vue'
+import SaveAsJobPanel from '@/components/repository/SaveAsJobPanel.vue'
+import SaveAsParquetOptions from '@/components/repository/SaveAsParquetOptions.vue'
 import { ParquetMaskStrategy } from '@/gen/ai/protomolt/proto/emit/parquet/v1/parquet_renderer_pb'
 import { ListArchivesRequestSchema } from '@/gen/ai/protomolt/proto/repo/archive/v1/archive_service_pb'
 import type { PublishRepositorySinkRequest, SinkSource } from '@/gen/ai/protomolt/proto/repo/sink/v1/repository_sink_pb'
@@ -579,25 +280,26 @@ import { byteSize } from '@/repository/formatCore'
 import { isOwnCancellation, rpcFailure, type RpcFailure } from '@/repository/rpcErrorCore'
 import {
   buildArchiveRenditionSinkSource,
-  buildCancelRepositorySinkJobRequest,
   buildDocumentPartSinkSource,
-  buildGetRepositorySinkJobRequest,
   buildListSaveAsCapabilitiesRequest,
   buildPublishSaveAsRequest,
-  classifySinkRpcError,
   describeSaveAsCapabilities,
-  describeSinkJob,
   SaveAsInputError,
   type ArchiveRenditionSourceInput,
-  type ClassifiedSinkError,
   type DocumentPartSourceInput,
   type ParquetOptionsFormInput,
-  type ResolvedOccurrenceOption,
   type SaveAsCapabilitiesView,
   type SaveAsCapabilityItem,
   type SaveAsDestinationInput,
-  type SinkJobSummary,
 } from '@/repository/saveAsCore'
+import {
+  type ClassifiedSinkError,
+  type SinkJobSummary,
+} from '@/repository/saveAsJobCore'
+import { useSaveAsJobs } from '@/repository/saveAsJobs'
+import {
+  type ResolvedOccurrenceOption,
+} from '@/repository/saveAsProvenanceCore'
 import { newOperationId } from '@/repository/uploadCore'
 import { useCallScope } from '@/repository/useCallScope'
 
@@ -634,7 +336,7 @@ const clients = useRepositoryClients()
 const signIn = inject(REPOSITORY_SIGN_IN, () => {})
 const capScope = useCallScope()
 const archivesScope = useCallScope()
-const jobScope = useCallScope()
+const jobs = useSaveAsJobs()
 
 const loadingCapabilities = ref(false)
 const capabilitiesFailure = ref<RpcFailure | null>(null)
@@ -665,27 +367,19 @@ const destinationForm = reactive<SaveAsDestinationInput>({
   expectedDestinationVersionText: '',
 })
 
-const submitting = ref(false)
-const reconciling = ref(false)
-const cancelling = ref(false)
 const inputError = ref<string | null>(null)
-const classifiedError = ref<ClassifiedSinkError | null>(null)
 const activeOperationId = ref<string | null>(null)
-const frozenRequest = shallowRef<PublishRepositorySinkRequest | null>(null)
-const jobSummary = shallowRef<SinkJobSummary | null>(null)
-let pollTimer: ReturnType<typeof setTimeout> | null = null
-
-const maskStrategyItems = [
-  { title: 'Unspecified (none unless classes set)', value: ParquetMaskStrategy.UNSPECIFIED },
-  { title: 'Redact (null out masked columns)', value: ParquetMaskStrategy.REDACT },
-  { title: 'Remove (omit masked columns)', value: ParquetMaskStrategy.REMOVE },
-]
-
-const preconditionModeItems = [
-  { title: 'Match expected destination version', value: 'expected-version' as const },
-  { title: 'Create new archive entry only', value: 'create-only' as const },
-  { title: 'Any current destination version', value: 'unconditional' as const },
-]
+// The job itself (calls, polling, operation ID and summary) lives in the host store, so it
+// survives this dialog unmounting; these views only read the active entry.
+const activeJob = computed(() =>
+  activeOperationId.value === null ? undefined : jobs.find(activeOperationId.value),
+)
+const submitting = computed(() => activeJob.value?.submitting ?? false)
+const reconciling = computed(() => activeJob.value?.reconciling ?? false)
+const cancelling = computed(() => activeJob.value?.cancelling ?? false)
+const classifiedError = computed<ClassifiedSinkError | null>(() => activeJob.value?.error ?? null)
+const frozenRequest = computed<PublishRepositorySinkRequest | null>(() => activeJob.value?.request ?? null)
+const jobSummary = computed<SinkJobSummary | null>(() => activeJob.value?.summary ?? null)
 
 const occurrenceSelectItems = computed(() => [
   { title: 'Entire part root message', value: '' },
@@ -723,55 +417,21 @@ const lockedByActiveAttempt = computed(() => {
   return false
 })
 
-const jobAlertType = computed<'info' | 'success' | 'warning' | 'error'>(() => {
-  const j = jobSummary.value
-  if (j === null) return 'info'
-  if (j.phase === 'succeeded') return 'success'
-  if (j.phase === 'queued' || j.phase === 'running') return 'info'
-  if (j.phase === 'unresolved' || j.phase === 'cancelled') return 'warning'
-  return 'error'
-})
-
-const destinationEntryLink = computed<RouteLocationRaw | null>(() => {
-  const j = jobSummary.value
-  if (j === null || j.phase !== 'succeeded') return null
-  const addr = j.destinationAddress
-  if (addr === null) return null
-  return {
-    name: 'repository-archive-entry',
-    query: {
-      account: addr.accountId,
-      archive: addr.archive,
-      entry: addr.entryId,
-      version: j.destinationVersion > 0n ? j.destinationVersion.toString() : undefined,
-    },
+function releaseActiveJob() {
+  const entry = activeJob.value
+  if (entry === undefined) return
+  if (entry.dialogOpen && entry.summary !== null && !lockedByActiveAttempt.value) {
+    // Settled and already shown here: nothing left for the banner to keep.
+    jobs.dismiss(entry.operationId)
+  } else {
+    jobs.setDialogOpen(entry.operationId, false)
   }
-})
-
-function clearPollTimer() {
-  if (pollTimer !== null) {
-    clearTimeout(pollTimer)
-    pollTimer = null
-  }
-}
-
-function scheduleJobPoll() {
-  clearPollTimer()
-  const j = jobSummary.value
-  if (!props.open || j === null || (j.phase !== 'queued' && j.phase !== 'running')) return
-  pollTimer = setTimeout(() => {
-    pollTimer = null
-    void refreshJobStatus()
-  }, 500)
 }
 
 function resetAttemptState() {
-  clearPollTimer()
+  releaseActiveJob()
   inputError.value = null
-  classifiedError.value = null
   activeOperationId.value = null
-  frozenRequest.value = null
-  jobSummary.value = null
 }
 
 function markDraftEdited() {
@@ -914,28 +574,11 @@ function onOccurrenceChanged() {
   void loadCapabilities()
 }
 
-function applyJobUpdate(summary: SinkJobSummary, emitOnSuccess: boolean) {
-  const alreadySucceeded = jobSummary.value?.phase === 'succeeded'
-  jobSummary.value = summary
-  if (summary.phase === 'succeeded') {
-    classifiedError.value = null
-    clearPollTimer()
-    if (emitOnSuccess && !alreadySucceeded) {
-      emit('saved', summary)
-    }
-  } else if (summary.phase === 'queued' || summary.phase === 'running') {
-    classifiedError.value = null
-    scheduleJobPoll()
-  } else {
-    clearPollTimer()
-  }
-}
-
 async function submitSaveAs() {
   if (submitting.value || selectedCapability.value === null) return
   inputError.value = null
-  classifiedError.value = null
-  jobSummary.value = null
+  releaseActiveJob()
+  activeOperationId.value = null
 
   let request: PublishRepositorySinkRequest
   const opId = newOperationId()
@@ -963,88 +606,28 @@ async function submitSaveAs() {
   }
 
   activeOperationId.value = opId
-  frozenRequest.value = request
-  await executePublish(request)
+  await jobs.publish(clients.repositorySink, request, true)
 }
 
 async function retrySameOperation() {
-  if (submitting.value || frozenRequest.value === null) return
-  classifiedError.value = null
-  await executePublish(frozenRequest.value)
-}
-
-async function executePublish(request: PublishRepositorySinkRequest) {
-  const signal = jobScope.next()
-  submitting.value = true
-  try {
-    const response = await clients.repositorySink.publishRepositorySink(request, { signal })
-    if (response.job === undefined) {
-      classifiedError.value = {
-        kind: 'unsettled',
-        codeLabel: 'EmptyJobResponse',
-        message: 'Server returned an empty job envelope; refresh status to inspect recorded state.',
-        canReconcile: true,
-      }
-      return
-    }
-    applyJobUpdate(describeSinkJob(response.job), true)
-  } catch (error) {
-    if (!isOwnCancellation(error, signal)) {
-      classifiedError.value = classifySinkRpcError(error)
-    }
-  } finally {
-    submitting.value = false
-  }
+  const request = frozenRequest.value
+  if (submitting.value || request === null) return
+  await jobs.publish(clients.repositorySink, request, true)
 }
 
 async function refreshJobStatus() {
-  const opId = activeOperationId.value
-  if (opId === null || reconciling.value) return
-  const signal = jobScope.next()
-  reconciling.value = true
-  try {
-    const response = await clients.repositorySink.getRepositorySinkJob(
-      buildGetRepositorySinkJobRequest(props.accountId, opId),
-      { signal },
-    )
-    if (response.job !== undefined) {
-      applyJobUpdate(describeSinkJob(response.job), true)
-    }
-  } catch (error) {
-    if (!isOwnCancellation(error, signal)) {
-      classifiedError.value = classifySinkRpcError(error)
-    }
-  } finally {
-    reconciling.value = false
-  }
+  if (activeOperationId.value !== null) await jobs.refresh(activeOperationId.value)
 }
 
 async function cancelActiveJob() {
-  const opId = activeOperationId.value
-  if (opId === null || cancelling.value) return
-  clearPollTimer()
-  const signal = jobScope.next()
-  cancelling.value = true
-  try {
-    const response = await clients.repositorySink.cancelRepositorySinkJob(
-      buildCancelRepositorySinkJobRequest(props.accountId, opId, 'Cancelled from console Save-as dialog'),
-      { signal },
-    )
-    if (response.job !== undefined) {
-      applyJobUpdate(describeSinkJob(response.job), false)
-    }
-  } catch (error) {
-    if (!isOwnCancellation(error, signal)) {
-      classifiedError.value = classifySinkRpcError(error)
-    }
-  } finally {
-    cancelling.value = false
+  if (activeOperationId.value !== null) {
+    await jobs.cancel(activeOperationId.value, 'Cancelled from console Save-as dialog')
   }
 }
 
 function closeDialog() {
   if (submitting.value || cancelling.value || reconciling.value) return
-  clearPollTimer()
+  if (activeOperationId.value !== null) jobs.setDialogOpen(activeOperationId.value, false)
   emit('close')
 }
 
@@ -1063,15 +646,26 @@ watch(
   (isOpen) => {
     if (isOpen) {
       initializeDialogState()
-    } else {
-      clearPollTimer()
+    } else if (activeOperationId.value !== null) {
+      jobs.setDialogOpen(activeOperationId.value, false)
     }
   },
   { immediate: true },
 )
 
+// Emit `saved` once per observed commit; a cancel that finds the job already committed does not.
+watch(
+  () => [activeJob.value?.summary?.phase, activeJob.value?.updatedBy] as const,
+  ([phase, updatedBy], [previousPhase]) => {
+    const summary = jobSummary.value
+    if (phase === 'succeeded' && previousPhase !== 'succeeded' && updatedBy !== 'cancel' && summary !== null) {
+      emit('saved', summary)
+    }
+  },
+)
+
 onBeforeUnmount(() => {
-  clearPollTimer()
+  if (activeOperationId.value !== null) jobs.setDialogOpen(activeOperationId.value, false)
 })
 </script>
 

@@ -462,10 +462,12 @@ import { decodePart, readPart, retainedDescriptorSet, type DecodedPart } from '@
 import { rpcFailure, type RpcFailure } from '@/repository/rpcErrorCore'
 import {
   evaluateSaveAsSessionAccess,
-  listPartOccurrenceOptions,
   type DocumentPartSourceInput,
-  type ResolvedOccurrenceOption,
 } from '@/repository/saveAsCore'
+import {
+  listPartOccurrenceOptions,
+  type ResolvedOccurrenceOption,
+} from '@/repository/saveAsProvenanceCore'
 import { useCallScope } from '@/repository/useCallScope'
 import { buildDescriptorModel, type DescriptorModel } from '@/services/descriptorModel'
 
