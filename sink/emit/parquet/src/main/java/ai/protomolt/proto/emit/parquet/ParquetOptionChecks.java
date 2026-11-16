@@ -99,6 +99,13 @@ final class ParquetOptionChecks {
     static ParquetExportOptions toExportOptions(
             ParquetRendererOptions options, Set<String> selectedColumns) throws RenderFailure {
         if (options.getMaskedSensitivityClassesCount() == 0) {
+            if (options.getMaskStrategy() != ParquetMaskStrategy.PARQUET_MASK_STRATEGY_UNSPECIFIED) {
+                throw new RenderFailure(
+                        RenderFailure.Kind.INVALID,
+                        "mask_strategy " + options.getMaskStrategy()
+                                + " needs at least one entry in masked_sensitivity_classes;"
+                                + " without one nothing would be masked");
+            }
             return new ParquetExportOptions(selectedColumns, Set.of(), null, null, false);
         }
         Set<String> classes = new LinkedHashSet<>(options.getMaskedSensitivityClassesCount());
