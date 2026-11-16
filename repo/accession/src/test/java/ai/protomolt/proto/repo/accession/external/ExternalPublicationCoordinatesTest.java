@@ -251,4 +251,30 @@ class ExternalPublicationCoordinatesTest {
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("bindingRevision");
     }
+
+    @Test
+    void anErrorMessageThatCarriesACredentialIsWithheldFromStoredDiagnostics() {
+        for (String leaking : List.of(
+                "UNAUTHENTICATED: rejected header Authorization: Bearer sk-live-0123456789abcdef",
+                "upstream said: Basic dXNlcjpwYXNzd29yZA== is not valid",
+                "connect to https://svc:hunter2@search.internal:9443/ingest failed",
+                "redirected to https://search.internal/cb?access_token=abc123def456",
+                "bad client_secret=s3cr3t-value in request",
+                "key rejected -----BEGIN PRIVATE KEY----- MIIB",
+                "token eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.c2lnbmF0dXJl expired")) {
+            assertThat(ExternalPublicationCoordinates.containsCredentialMaterial(leaking))
+                    .as(leaking).isTrue();
+            assertThat(ExternalLedgerStore.sanitizeMessage(leaking))
+                    .isEqualTo(ExternalLedgerStore.WITHHELD_DIAGNOSTIC);
+        }
+        for (String plain : List.of(
+                "Missing mandatory facet field",
+                "token revoked",
+                "quota exceeded for dataset corpus-main at https://search.internal/status?page=2",
+                "basic validation failed: bearer of bad news")) {
+            assertThat(ExternalPublicationCoordinates.containsCredentialMaterial(plain))
+                    .as(plain).isFalse();
+            assertThat(ExternalLedgerStore.sanitizeMessage(plain)).isEqualTo(plain);
+        }
+    }
 }

@@ -363,6 +363,9 @@ public final class ExternalBindingStore {
                         .asRuntimeException());
         ExternalSystemBinding current = existing.binding();
         if (current.getLifecycle() == ExternalBindingLifecycle.EXTERNAL_BINDING_LIFECYCLE_RETIRED) {
+            // Retired already. An earlier call may have saved the revision and then failed to
+            // mirror it, so the mirror is written again before this one reports success.
+            configLane.mirror(current);
             return current;
         }
 

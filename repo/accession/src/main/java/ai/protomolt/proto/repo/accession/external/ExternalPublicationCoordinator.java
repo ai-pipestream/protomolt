@@ -631,10 +631,16 @@ public final class ExternalPublicationCoordinator {
                     op.getIntent(),
                     outboundAuth,
                     includeServingObservation));
-        } catch (StatusRuntimeException transportFailure) {
+        } catch (StatusRuntimeException statusFailure) {
+            Status.Code code = statusFailure.getStatus().getCode();
+            if (code != Status.Code.UNAVAILABLE && code != Status.Code.DEADLINE_EXCEEDED) {
+                // The provider answered the status query with a refusal. That is not an
+                // outage to wait out: the caller is told, and the operation is left as it is.
+                throw statusFailure;
+            }
             statusResult = new ExternalProviderGateway.ProviderStatusResult.Unavailable(
-                    "STATUS_ENDPOINT_" + transportFailure.getStatus().getCode().name(),
-                    sanitizeMessage(transportFailure.getMessage()));
+                    "STATUS_ENDPOINT_" + code.name(),
+                    sanitizeMessage(statusFailure.getMessage()));
         }
 
         Timestamp finishedAt = timestamp(clock.instant());

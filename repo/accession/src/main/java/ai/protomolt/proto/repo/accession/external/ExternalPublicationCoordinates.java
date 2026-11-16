@@ -566,6 +566,101 @@ public final class ExternalPublicationCoordinates {
         return looksLikeCompactJwt(value);
     }
 
+    /**
+     * Whether free text, such as an error message from a provider or the transport, carries
+     * something that reads as a credential: an Authorization value ({@code Bearer} or
+     * {@code Basic} followed by a token), a PEM block, a compact JWT, a URL with userinfo, or
+     * a {@code key=value} pair under a credential key name. Used to keep such text out of
+     * anything that is stored; it recognizes the plain cases and cannot prove absence.
+     */
+    static boolean containsCredentialMaterial(String text) {
+        if (text == null || text.isEmpty()) {
+            return false;
+        }
+        if (text.toLowerCase(Locale.ROOT).contains("-----begin ")) {
+            return true;
+        }
+        String previous = "";
+        int start = 0;
+        for (int i = 0; i <= text.length(); i++) {
+            if (i < text.length() && !Character.isWhitespace(text.charAt(i))) {
+                continue;
+            }
+            if (i > start) {
+                String word = text.substring(start, i);
+                if (isCredentialWord(previous, word)) {
+                    return true;
+                }
+                previous = word;
+            }
+            start = i + 1;
+        }
+        return false;
+    }
+
+    private static boolean isCredentialWord(String previousWord, String word) {
+        String scheme = previousWord.toLowerCase(Locale.ROOT);
+        if ((scheme.equals("bearer") || scheme.equals("basic")
+                        || scheme.endsWith(":bearer") || scheme.endsWith(":basic"))
+                && word.length() >= 8 && !isPlainWord(word)) {
+            return true;
+        }
+        if (looksLikeCompactJwt(trimPunctuation(word))) {
+            return true;
+        }
+        int schemeSep = word.indexOf("://");
+        if (schemeSep >= 0 && word.indexOf('@', schemeSep + 3) >= 0) {
+            return true;
+        }
+        // key=value, alone or inside a URL query or fragment.
+        int from = 0;
+        while (from < word.length()) {
+            int eq = word.indexOf('=', from);
+            if (eq < 0) {
+                break;
+            }
+            int keyStart = eq;
+            while (keyStart > 0 && isKeyChar(word.charAt(keyStart - 1))) {
+                keyStart--;
+            }
+            String key = word.substring(keyStart, eq).toLowerCase(Locale.ROOT);
+            if (FORBIDDEN_URL_QUERY_KEYS.contains(key) && eq + 1 < word.length()) {
+                return true;
+            }
+            from = eq + 1;
+        }
+        return false;
+    }
+
+    /** Letters only, as in ordinary prose ("basic validation"); a token is rarely that. */
+    private static boolean isPlainWord(String word) {
+        for (int i = 0; i < word.length(); i++) {
+            if (!Character.isLetter(word.charAt(i))) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private static boolean isKeyChar(char ch) {
+        return (ch < 0x80 && Character.isLetterOrDigit(ch)) || ch == '_' || ch == '-';
+    }
+
+    private static String trimPunctuation(String word) {
+        int start = 0;
+        int end = word.length();
+        while (start < end && !isKeyChar(word.charAt(start))) {
+            start++;
+        }
+        while (end > start && !isKeyChar(word.charAt(end - 1)) && word.charAt(end - 1) != '.') {
+            end--;
+        }
+        while (end > start && word.charAt(end - 1) == '.') {
+            end--;
+        }
+        return word.substring(start, end);
+    }
+
     /** Three dot-separated base64url segments, the first beginning as an encoded JSON object. */
     private static boolean looksLikeCompactJwt(String value) {
         if (!value.startsWith("eyJ")) {

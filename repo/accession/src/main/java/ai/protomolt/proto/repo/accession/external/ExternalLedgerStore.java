@@ -461,8 +461,21 @@ final class ExternalLedgerStore {
             }
         }
         String result = clean.toString().trim();
-        return result.isEmpty() ? "External provider failure" : result;
+        if (result.isEmpty()) {
+            return "External provider failure";
+        }
+        if (ExternalPublicationCoordinates.containsCredentialMaterial(raw)) {
+            // Providers and transports echo requests into their errors. The ledger is read by
+            // everyone with access to the source, so a message that reads as carrying a
+            // credential is not stored at all; the diagnostic code beside it still is.
+            return WITHHELD_DIAGNOSTIC;
+        }
+        return result;
     }
+
+    /** Stored in place of a diagnostic message that looked like it carried a credential. */
+    static final String WITHHELD_DIAGNOSTIC =
+            "Message withheld: it contained credential-like text";
 
     static String truncateTitle(String docId) {
         return docId.length() <= 200 ? docId : docId.substring(0, 200);
