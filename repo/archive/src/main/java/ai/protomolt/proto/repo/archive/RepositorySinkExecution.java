@@ -144,6 +144,9 @@ final class RepositorySinkExecution {
                         }
                         throw toStatusException(reconciledJob.getFailure());
                     }
+                    // Authority and the frozen source are settled before the failure is
+                    // cleared, so a caller who may not retry leaves the job as it was.
+                    RetryInputs retry = resolveRetryInputs(reconciled, accountId, caller);
                     RepositorySinkJob requeuedJob = reconciledJob.toBuilder()
                             .setState(RepositorySinkJobState.REPOSITORY_SINK_JOB_STATE_QUEUED)
                             .setBytesRendered(0L)
@@ -159,8 +162,13 @@ final class RepositorySinkExecution {
                                     reconciled.lease().leaseEpoch(),
                                     requeuedJob);
                     if (claimedRetry.isPresent()) {
-                        return retryFromFrozenRevision(
-                                claimedRetry.get(), incomingRequest, accountId, jobKey, caller);
+                        return dispatchExecution(
+                                claimedRetry.get(),
+                                retry.source(),
+                                retry.destinationBinding(),
+                                jobKey,
+                                caller,
+                                incomingRequest.getAsync());
                     }
                     cursor = leases.find(accountId, operationId).orElse(reconciled);
                 }
@@ -182,11 +190,16 @@ final class RepositorySinkExecution {
         }
     }
 
-    PublishRepositorySinkResponse retryFromFrozenRevision(
+    /** What a retry runs with: the destination it may write and the source it froze. */
+    private record RetryInputs(ArchiveBinding destinationBinding, ResolvedSource source) {}
+
+    /**
+     * Checks that the caller may write the stored destination and resolves the stored source at
+     * its frozen revision. Changes nothing, so it runs before a retry claims the job.
+     */
+    private RetryInputs resolveRetryInputs(
             RepositorySinkJobStore.StoredJob stored,
-            PublishRepositorySinkRequest incomingRequest,
             String accountId,
-            RepositorySinkLeaseCoordinator.JobKey jobKey,
             RepositorySinkAuthorizer.CapturedCaller caller) {
         SinkDestination dest = stored.request().getDestination();
         ArchiveBinding destBinding =
@@ -198,8 +211,23 @@ final class RepositorySinkExecution {
                 () -> sources.resolveSource(
                         stored.request().getSource(),
                         stored.job().getFrozenSourceRevision()));
+        return new RetryInputs(destBinding, source);
+    }
+
+    PublishRepositorySinkResponse retryFromFrozenRevision(
+            RepositorySinkJobStore.StoredJob stored,
+            PublishRepositorySinkRequest incomingRequest,
+            String accountId,
+            RepositorySinkLeaseCoordinator.JobKey jobKey,
+            RepositorySinkAuthorizer.CapturedCaller caller) {
+        RetryInputs retry = resolveRetryInputs(stored, accountId, caller);
         return dispatchExecution(
-                stored, source, destBinding, jobKey, caller, incomingRequest.getAsync());
+                stored,
+                retry.source(),
+                retry.destinationBinding(),
+                jobKey,
+                caller,
+                incomingRequest.getAsync());
     }
 
     PublishRepositorySinkResponse dispatchExecution(
