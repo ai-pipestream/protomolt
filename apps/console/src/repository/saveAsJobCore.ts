@@ -84,6 +84,24 @@ export function commitFollowUp(input: {
   return 'reload'
 }
 
+/**
+ * Whether a v2 document is the one behind an archive entry: archive entries are documents
+ * under the graph `archive:<account>`, addressed by archive and entry ID.
+ */
+export function documentBacksEntry(
+  document: { accountId: string; graphId: string; graphAddressId: string; docId: string },
+  entry: { accountId: string; archive: string; entryId: string } | null | undefined,
+): boolean {
+  return (
+    entry !== undefined
+    && entry !== null
+    && document.accountId === entry.accountId
+    && document.graphId === `archive:${entry.accountId}`
+    && document.graphAddressId === entry.archive
+    && document.docId === entry.entryId
+  )
+}
+
 /** True when a job's phase has just become succeeded, whichever call reported it. */
 export function enteredSucceeded(
   previous: SinkJobPhase | undefined,
@@ -139,6 +157,8 @@ export function describeSinkJob(job: RepositorySinkJob): SinkJobSummary {
     terminal: phase === 'succeeded' || phase === 'failed' || phase === 'cancelled',
     canCancel: phase === 'queued' || phase === 'running',
     canReconcile: phase === 'queued' || phase === 'running' || phase === 'unresolved',
+    // Re-publishing an unresolved operation makes the server reconcile its commit outcome, and
+    // a retryable failure is requeued; both are worth sending the same request again for.
     canRetrySameOperation: phase === 'unresolved' || retryableFailure,
     isConflict,
     replayed: job.replayed,
@@ -177,6 +197,9 @@ export function classifySinkRpcError(error: unknown): ClassifiedSinkError {
       || error.code === Code.Unknown
       // The sink answers INTERNAL when a commit may or may not have gone through.
       || error.code === Code.Internal
+      // A cancellation that reaches us as an error did not come from this console (its own
+      // aborts are recognized before classification), and it can arrive after admission.
+      || error.code === Code.Canceled
     ) {
       return {
         kind: 'unsettled',

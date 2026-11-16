@@ -404,6 +404,7 @@
       :default-destination-entry-id="call?.docId ?? ''"
       :default-expected-destination-version="defaultSaveAsExpectedVersion"
       @close="saveAsDialogOpen = false"
+      @saved="onSaveAsCommitted"
       @reload-source="onSaveAsReloadSource"
     />
   </div>
@@ -459,6 +460,7 @@ import {
 } from '@/repository/documentCore'
 import { byteSize, hexDump } from '@/repository/formatCore'
 import { PartPayloadError, decodePart, readPart, retainedDescriptorSet, type DecodedPart } from '@/repository/partReadCore'
+import { commitFollowUp, documentBacksEntry, type SinkJobSummary } from '@/repository/saveAsJobCore'
 import { rpcFailure, type RpcFailure } from '@/repository/rpcErrorCore'
 import {
   evaluateSaveAsSessionAccess,
@@ -634,6 +636,25 @@ function onSaveAsReloadSource() {
     return
   }
   void load()
+}
+
+/**
+ * A Save-as that wrote to the archive entry this document is behind made a new revision of it.
+ * While the dialog is still open the page follows: a pinned older revision gives way to the
+ * current one, and the current one is read again.
+ */
+function onSaveAsCommitted(job: SinkJobSummary) {
+  const followUp = commitFollowUp({
+    dialogOpen: saveAsDialogOpen.value,
+    sameEntry: address.value !== null && documentBacksEntry(address.value, job.destinationAddress),
+    viewedVersion: requested.value,
+    committedVersion: job.destinationVersion,
+  })
+  if (followUp === 'open-version') {
+    openRevision(null)
+  } else if (followUp === 'reload') {
+    void load()
+  }
 }
 
 async function ensureSessionLoaded() {
@@ -817,7 +838,9 @@ async function readPartAt(index: number) {
       decoded = await decodePart(clients.documents, address.value, part.revision, validation.value, entry.selector, part.bytes, signal)
     } catch (error) {
       if (signal.aborted) return
-      schemaFailure = rpcFailure(error)
+      // Bytes that do not decode are not a schema that failed to load: only the latter is
+      // reported as a schema failure.
+      schemaFailure = error instanceof PartPayloadError ? null : rpcFailure(error)
       const boundSha = validation.value.partSchemas.find(
         (b) => b.part !== undefined && equals(PartSelectorSchema, b.part, entry.selector!),
       )?.fragmentSchema?.descriptorSha256 ?? null

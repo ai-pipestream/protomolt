@@ -522,4 +522,27 @@ describe('Save-as job store', () => {
     expect(entry.request.operationId).toBe('op-silent')
     jobs.dispose()
   })
+
+  it('keeps an unknown outcome unknown when a retry is refused', async () => {
+    let call = 0
+    const client = routerClients((r) =>
+      r.service(RepositorySinkService, {
+        publishRepositorySink() {
+          call += 1
+          // The first publish may have committed; its reply was lost. Access then changed.
+          if (call === 1) throw new ConnectError('lost', Code.Unavailable)
+          throw new ConnectError('no longer a writer', Code.PermissionDenied)
+        },
+      }),
+    ).repositorySink
+    const jobs = createSaveAsJobStore()
+    await jobs.publish(client, request('op-denied-retry'), false)
+    await jobs.retry('op-denied-retry')
+    const entry = jobs.find('op-denied-retry')!
+    // The refusal is about the retry. What the first publish did is still not known.
+    expect(entry.error?.kind).toBe('unsettled')
+    expect(entry.error?.canReconcile).toBe(true)
+    expect(entry.error?.message).toContain('PermissionDenied')
+    jobs.dispose()
+  })
 })

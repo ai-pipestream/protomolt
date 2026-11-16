@@ -485,6 +485,12 @@ export function encodeParquetRendererOptions(
     throw new SaveAsInputError('Mask strategy: choose REDACT or REMOVE when sensitivity classes are specified.')
   }
 
+  if (uniqueClasses.length === 0 && form.maskStrategy !== ParquetMaskStrategy.UNSPECIFIED) {
+    // The renderer refuses a strategy with nothing to apply it to; say so here instead of
+    // letting every such job fail.
+    throw new SaveAsInputError('Sensitivity classes: name at least one class for the chosen mask strategy.')
+  }
+
   const maxOutputBytes = parseOptionalNonNegativeBigInt(form.maxOutputBytesText, 'Max output bytes')
   if (capabilityMaxOutputBytes > 0n && maxOutputBytes > capabilityMaxOutputBytes) {
     throw new SaveAsInputError(

@@ -107,6 +107,11 @@ interface JobCalls {
   publishStarted: number
   /** Status calls that have failed in a row. */
   failedPolls: number
+  /**
+   * The error of a publish whose outcome is unknown and has not been confirmed since. It
+   * stands until the server describes the job, whatever later calls fail with.
+   */
+  unknownOutcome: ClassifiedSinkError | null
 }
 
 export function createSaveAsJobStore(): SaveAsJobStore {
@@ -120,7 +125,7 @@ export function createSaveAsJobStore(): SaveAsJobStore {
   function callsFor(operationId: string): JobCalls {
     let state = calls.get(operationId)
     if (state === undefined) {
-      state = { started: 0, shown: 0, publishStarted: 0, failedPolls: 0 }
+      state = { started: 0, shown: 0, publishStarted: 0, failedPolls: 0, unknownOutcome: null }
       calls.set(operationId, state)
     }
     return state
@@ -202,6 +207,7 @@ export function createSaveAsJobStore(): SaveAsJobStore {
     // The server has answered for this job, so an earlier call's failure no longer describes it.
     entry.error = null
     callsFor(entry.operationId).failedPolls = 0
+    callsFor(entry.operationId).unknownOutcome = null
     if (isActive(summary)) {
       schedulePoll(entry)
     } else {
@@ -218,6 +224,21 @@ export function createSaveAsJobStore(): SaveAsJobStore {
   /** Records that the publish call itself failed, unless a later call has shown the job. */
   function failPublish(entry: SaveAsJobEntry, error: ClassifiedSinkError, sequence: number) {
     if (answeredSince(entry.operationId, sequence)) return
+    const state = callsFor(entry.operationId)
+    if (error.canReconcile) {
+      state.unknownOutcome = error
+      entry.error = error
+      return
+    }
+    if (state.unknownOutcome !== null) {
+      // This attempt was refused outright, but an earlier one may have committed and nobody
+      // has confirmed otherwise. The refusal is noted; the outcome stays unknown.
+      entry.error = {
+        ...state.unknownOutcome,
+        message: `${state.unknownOutcome.message} A later retry was refused (${error.codeLabel}): ${error.message}`,
+      }
+      return
+    }
     entry.error = error
   }
 

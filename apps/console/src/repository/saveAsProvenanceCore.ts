@@ -101,7 +101,9 @@ export function mergeRenditionsWithProvenance(
       ? false
       : prov !== undefined
         ? prov.authoritativeProtobuf
-        : row.name === 'parsed' || isProtobufMediaType(row.mediaType)
+        // With no provenance to go on, only the parsed slot is the entry's authoritative
+        // protobuf. A media type says what a file claims to be, not where it came from.
+        : row.name === 'parsed'
     const isDerived = prov !== undefined ? !prov.authoritativeProtobuf || hasProvider : false
 
     const sourceRevision = prov?.sourceRevision ?? 0n
@@ -150,7 +152,7 @@ export function mergeRenditionsWithProvenance(
       !unknownProvenance
       && row.readable
       && !isDerived
-      && (authoritativeProtobuf || row.name === 'parsed' || isProtobufMediaType(row.mediaType))
+      && (authoritativeProtobuf || row.name === 'parsed')
 
     return {
       ...row,

@@ -51,6 +51,7 @@ import {
 import {
   classifySinkRpcError,
   commitFollowUp,
+  documentBacksEntry,
   describeSinkJob,
   enteredSucceeded,
 } from './saveAsJobCore'
@@ -740,5 +741,58 @@ describe('saveAsCore', () => {
     expect(evaluateSaveAsSessionAccess(writer, ' acct-a ').readOnly).toBe(false)
     // "acct-a" is a different account from " acct-a ".
     expect(evaluateSaveAsSessionAccess(writer, 'acct-a').readOnly).toBe(true)
+  })
+
+  it('treats a publish cancelled by the server side as an outcome still unknown', () => {
+    // Cancellation can arrive after the job was admitted; only the console's own abort is ours.
+    const cancelled = classifySinkRpcError(new ConnectError('stream reset', Code.Canceled))
+    expect(cancelled.kind).toBe('unsettled')
+    expect(cancelled.canReconcile).toBe(true)
+  })
+
+  it('refuses a mask strategy with no sensitivity classes, as the renderer would', () => {
+    for (const maskStrategy of [ParquetMaskStrategy.REDACT, ParquetMaskStrategy.REMOVE]) {
+      expect(() =>
+        encodeParquetRendererOptions({
+          columnsText: '', maskedSensitivityClassesText: '', maskStrategy,
+          maxOutputBytesText: '', mappingId: '', policyId: '',
+        }),
+      ).toThrow(SaveAsInputError)
+    }
+  })
+
+  it('does not call a rendition authoritative on its media type alone', () => {
+    const entryAddr = create(EntryAddressSchema, { accountId: 'acct-a', archive: 'datasets', entryId: 'e-1' })
+    const manifest = create(VersionManifestSchema, {
+      address: entryAddr,
+      version: 1n,
+      renditions: [
+        create(RenditionManifestEntrySchema, {
+          rendition: create(RenditionDescriptorSchema, { name: 'parsed', mediaType: 'application/x-protobuf' }),
+          state: RenditionState.PRESENT,
+        }),
+        // An upload that merely says it is protobuf: no retained schema, no provenance.
+        create(RenditionManifestEntrySchema, {
+          rendition: create(RenditionDescriptorSchema, { name: 'upload', mediaType: 'application/x-protobuf' }),
+          state: RenditionState.PRESENT,
+        }),
+      ],
+    })
+    const rows = mergeRenditionsWithProvenance(renditionRows(manifest), null, { viewedEntryVersion: 1n })
+    const upload = rows.find((row) => row.name === 'upload')!
+    expect(upload.authoritativeProtobuf).toBe(false)
+    expect(upload.canSaveAsSource).toBe(false)
+    // It is still shown as a protobuf file.
+    expect(upload.format.family).toBe('protobuf')
+    expect(rows.find((row) => row.name === 'parsed')!.authoritativeProtobuf).toBe(true)
+  })
+
+  it('recognizes the document behind an archive entry', () => {
+    const dest = create(EntryAddressSchema, { accountId: 'acct-a', archive: 'datasets', entryId: 'e-1' })
+    const doc = { accountId: 'acct-a', graphId: 'archive:acct-a', graphAddressId: 'datasets', docId: 'e-1' }
+    expect(documentBacksEntry(doc, dest)).toBe(true)
+    expect(documentBacksEntry({ ...doc, docId: 'e-2' }, dest)).toBe(false)
+    expect(documentBacksEntry({ ...doc, graphId: 'intake:acct-a' }, dest)).toBe(false)
+    expect(documentBacksEntry(doc, undefined)).toBe(false)
   })
 })

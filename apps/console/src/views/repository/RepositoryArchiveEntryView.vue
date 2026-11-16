@@ -1250,6 +1250,7 @@ function resetRenditionUpload() {
 
 const provenanceResponse = shallowRef<ListRenditionProvenanceResponse | null>(null)
 const provenanceFailure = ref<RpcFailure | null>(null)
+const provenanceSettled = ref(false)
 const sessionStatus = shallowRef<ConsoleSessionStatus | null>(null)
 let sessionLoaded = false
 const saveAsDialogOpen = ref(false)
@@ -1266,7 +1267,8 @@ const renditions = computed<EnrichedRenditionRow[]>(() =>
         viewedEntryVersion: pinned.value ?? undefined,
         originalFilename: info.value?.filename,
         sourceUri: info.value?.sourceUri,
-        provenanceUnavailable: provenanceFailure.value !== null,
+        // Unknown while the call is still out, as well as when it failed.
+        provenanceUnavailable: !provenanceSettled.value || provenanceFailure.value !== null,
       })
     : [],
 )
@@ -1536,6 +1538,7 @@ async function ensureSessionLoaded() {
 
 async function loadProvenance(target: EntryAddress, version: bigint, signal: AbortSignal) {
   provenanceFailure.value = null
+  provenanceSettled.value = false
   try {
     const resp = await clients.repositorySink.listRenditionProvenance(
       buildListRenditionProvenanceRequest(target, version),
@@ -1543,9 +1546,11 @@ async function loadProvenance(target: EntryAddress, version: bigint, signal: Abo
     )
     if (!signal.aborted) {
       provenanceResponse.value = resp
+      provenanceSettled.value = true
     }
   } catch (error) {
     if (signal.aborted) return
+    provenanceSettled.value = true
     if (error instanceof ConnectError && error.code === Code.Unimplemented) {
       provenanceResponse.value = null
       return
