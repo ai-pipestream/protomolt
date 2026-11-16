@@ -5,6 +5,7 @@ import ai.protomolt.proto.repo.v1.NodeAddress;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.util.Base64;
+import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
@@ -530,12 +531,56 @@ public final class ExternalPublicationCoordinates {
                     throw new IllegalArgumentException(
                             "Forbidden credential/token query parameter in URL: " + key);
                 }
+                if (keyEnd < paramEnd && isCredentialMaterial(raw.substring(keyEnd + 1, paramEnd))) {
+                    throw new IllegalArgumentException(
+                            "Credential material in the value of URL parameter: " + key);
+                }
             }
             if (amp < 0 || amp >= end) {
                 break;
             }
             pos = amp + 1;
         }
+    }
+
+    /**
+     * Recognizes a parameter value that is itself a credential, whatever its key is called:
+     * an HTTP {@code Bearer} or {@code Basic} authorization value, a PEM block, or a compact
+     * JWT. This catches the plain cases; it cannot prove a value is not a secret.
+     */
+    static boolean isCredentialMaterial(String rawValue) {
+        String value = percentDecodeAsciiKey(rawValue.replace('+', ' '));
+        String lower = value.toLowerCase(Locale.ROOT);
+        if (lower.contains("-----begin ")) {
+            return true;
+        }
+        for (String scheme : List.of("bearer ", "basic ")) {
+            // A scheme word followed by one token with no further spaces: an Authorization value.
+            if (lower.startsWith(scheme)) {
+                String token = value.substring(scheme.length());
+                if (!token.isEmpty() && token.indexOf(' ') < 0 && token.length() >= 8) {
+                    return true;
+                }
+            }
+        }
+        return looksLikeCompactJwt(value);
+    }
+
+    /** Three dot-separated base64url segments, the first beginning as an encoded JSON object. */
+    private static boolean looksLikeCompactJwt(String value) {
+        if (!value.startsWith("eyJ")) {
+            return false;
+        }
+        int segments = 1;
+        for (int i = 0; i < value.length(); i++) {
+            char ch = value.charAt(i);
+            if (ch == '.') {
+                segments++;
+            } else if (!(Character.isLetterOrDigit(ch) && ch < 0x80) && ch != '-' && ch != '_') {
+                return false;
+            }
+        }
+        return segments == 3;
     }
 
     private static String percentDecodeAsciiKey(String key) {

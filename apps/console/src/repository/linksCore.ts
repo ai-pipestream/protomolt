@@ -80,10 +80,43 @@ export function safeExternalHref(raw: string): string | null {
 }
 
 function carriesCredentialKey(params: URLSearchParams): boolean {
-  for (const [key] of params) {
+  for (const [key, value] of params) {
     if (FORBIDDEN_EXTERNAL_QUERY_KEYS.has(key.toLowerCase())) return true
+    if (isCredentialMaterial(value)) return true
   }
   return false
+}
+
+/**
+ * Recognizes a parameter value that is itself a credential, whatever its key is called: an HTTP
+ * Bearer or Basic authorization value, a PEM block, or a compact JWT. This catches the plain
+ * cases; it cannot prove a value is not a secret. Mirrors the server's display URL validator.
+ */
+function isCredentialMaterial(value: string): boolean {
+  const lower = value.toLowerCase()
+  if (lower.includes('-----begin ')) return true
+  for (const scheme of ['bearer ', 'basic ']) {
+    if (lower.startsWith(scheme)) {
+      const token = value.slice(scheme.length)
+      if (token !== '' && !token.includes(' ') && token.length >= 8) return true
+    }
+  }
+  return looksLikeCompactJwt(value)
+}
+
+/** Three dot-separated base64url segments, the first beginning as an encoded JSON object. */
+function looksLikeCompactJwt(value: string): boolean {
+  if (!value.startsWith('eyJ')) return false
+  const segments = value.split('.')
+  if (segments.length !== 3) return false
+  return segments.every((segment) => {
+    for (let i = 0; i < segment.length; i++) {
+      const c = segment.charCodeAt(i)
+      const alphaNum = (c >= 0x30 && c <= 0x39) || (c >= 0x41 && c <= 0x5a) || (c >= 0x61 && c <= 0x7a)
+      if (!alphaNum && c !== 0x2d && c !== 0x5f) return false
+    }
+    return true
+  })
 }
 
 /**

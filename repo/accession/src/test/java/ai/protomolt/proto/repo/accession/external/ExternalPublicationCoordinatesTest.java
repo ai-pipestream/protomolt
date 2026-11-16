@@ -147,6 +147,10 @@ class ExternalPublicationCoordinatesTest {
                 "http://[::1]:8080/items/42"))
                 .doesNotThrowAnyException();
 
+        // A value that merely mentions the words is not credential material.
+        assertThatCode(() -> ExternalPublicationCoordinates.validateDisplayUrl(
+                "https://search.example.com/item?q=bearer+bonds&sort=basic"))
+                .doesNotThrowAnyException();
         // A fragment that is plain navigation is not a credential.
         assertThatCode(() -> ExternalPublicationCoordinates.validateDisplayUrl(
                 "https://search.example.com/item#section-2"))
@@ -165,6 +169,12 @@ class ExternalPublicationCoordinatesTest {
                 "https://search.example.com/item#access_token=secret123",
                 "https://search.example.com/item?view=full#a=1&Api_Key=secret123",
                 "https://search.example.com/app#/callback?id_token=secret123",
+                "https://search.example.com/item?next=Bearer%20secret123",
+                "https://search.example.com/item?next=bearer+secret123",
+                "https://search.example.com/item?auth=Basic%20dXNlcjpwYXNz",
+                "https://search.example.com/item?k=-----BEGIN%20PRIVATE%20KEY-----",
+                "https://search.example.com/item?j=eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.c2lnbmF0dXJl",
+                "https://search.example.com/item#state=Bearer%20secret123",
                 "https://search.example.com/item with space",
                 "https:///missing-host",
                 "https://host:99999/item");

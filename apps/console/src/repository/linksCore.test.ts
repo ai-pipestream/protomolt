@@ -71,6 +71,9 @@ describe('safeExternalHref', () => {
       'https://console.example.org/search?collection=claims&page=2',
     )
     expect(safeExternalHref('https://example.org/docs#section-2')).toBe('https://example.org/docs#section-2')
+    expect(safeExternalHref('https://example.org/search?q=bearer+bonds&sort=basic')).toBe(
+      'https://example.org/search?q=bearer+bonds&sort=basic',
+    )
   })
 
   it.each([
@@ -90,6 +93,12 @@ describe('safeExternalHref', () => {
     'https://example.org/items/1#access_token=eyJ0eXAi',
     'https://example.org/items/1?view=full#a=1&Api_Key=12345',
     'https://example.org/app#/callback?id_token=eyJ0eXAi',
+    'https://example.org/items/1?next=Bearer%20secret123',
+    'https://example.org/items/1?next=bearer+secret123',
+    'https://example.org/items/1?auth=Basic%20dXNlcjpwYXNz',
+    'https://example.org/items/1?k=-----BEGIN%20PRIVATE%20KEY-----',
+    'https://example.org/items/1?j=eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.c2lnbmF0dXJl',
+    'https://example.org/items/1#state=Bearer%20secret123',
     'references',
     '/relative/path',
     '//example.org/scheme-relative',
