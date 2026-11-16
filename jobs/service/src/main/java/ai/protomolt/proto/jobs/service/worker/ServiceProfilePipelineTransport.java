@@ -20,7 +20,6 @@ import com.google.protobuf.DynamicMessage;
 import io.grpc.CallOptions;
 import io.grpc.Channel;
 import io.grpc.ChannelCredentials;
-import io.grpc.ManagedChannel;
 import io.grpc.Metadata;
 import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
@@ -129,12 +128,12 @@ final class ServiceProfilePipelineTransport implements PipelineTransport, AutoCl
         long callDeadlineMs = remainingAfterResolution(
                 effectiveDeadlineMs, startedNanos, profileMethodName(method));
         if (customTls != null) {
-            ManagedChannel dedicated = channelCache.openDedicated(target, customTls);
+            PipelineChannelCache.Lease dedicated = channelCache.openDedicated(target, customTls);
             try {
-                return executeCall(dedicated, method, requests, callDeadlineMs, maxResponses,
-                        headers, credentialed);
+                return executeCall(dedicated.channel(), method, requests, callDeadlineMs,
+                        maxResponses, headers, credentialed);
             } finally {
-                dedicated.shutdownNow();
+                dedicated.release();
             }
         }
         PipelineChannelCache.Lease lease = channelCache.acquireShared(target, tls);

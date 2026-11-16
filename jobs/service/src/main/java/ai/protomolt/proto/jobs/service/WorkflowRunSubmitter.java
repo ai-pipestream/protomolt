@@ -220,8 +220,12 @@ public final class WorkflowRunSubmitter {
         record.workflowName = explicitName != null && !explicitName.isBlank()
                 ? explicitName
                 : pipeline.getName();
-        record.pipelineDefinition = PipelineRunCodec.encodeDefinition(
-                pipeline, files, canonicalInput).toByteArray();
+        try {
+            record.pipelineDefinition = PipelineRunCodec.encodeDefinition(
+                    pipeline, files, canonicalInput).toByteArray();
+        } catch (PipelineJobCoordinator.PipelineDefinitionException unstorable) {
+            return fail(unstorable.step(), unstorable.getMessage());
+        }
         // A pipeline run keeps its state in the protobuf columns and leaves the workflow
         // JSON columns empty.
         record.checkpoints = null;

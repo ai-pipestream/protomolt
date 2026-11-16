@@ -1,5 +1,6 @@
 package ai.protomolt.proto.jobs.service.worker;
 
+import ai.protomolt.proto.grpc.workflow.v1.StepCompletion;
 import ai.protomolt.proto.pipeline.v1.Pipeline;
 import ai.protomolt.proto.actions.ActionContext;
 import ai.protomolt.proto.grpc.invoke.ChannelFactory;
@@ -386,6 +387,36 @@ class PipelineOutboundPolicyTest {
             WorkflowRunRecord requeued = store.get(UUID.fromString(jobId)).orElseThrow();
             assertThat(requeued.status).isEqualTo(WorkflowRunRecord.STATUS_QUEUED);
             assertThat(requeued.attempt).isEqualTo(1);
+            assertThat(plainCalls.get()).isZero();
+        }
+    }
+
+    @Test
+    void anExternalCompletionStepParksWithoutReadingItsProfileOrTakingAPermit() throws Exception {
+        ServiceProfileRepository unreadable = profilesFailingFrom(1);
+        InMemoryWorkflowRunStore store = new InMemoryWorkflowRunStore();
+        WorkflowRunSubmitter submitter = new WorkflowRunSubmitter(store, null, 4);
+        OutboundChannelPolicy allowLoopback = OutboundChannelPolicy.builder()
+                .allowedHosts(Set.of("127.0.0.1"))
+                .build();
+        Pipeline live = echoPipeline(schema, "echo", "plain");
+        Pipeline external = live.toBuilder()
+                .setSteps(0, live.getSteps(0).toBuilder()
+                        .setGrpcCall(live.getSteps(0).getGrpcCall().toBuilder()
+                                .clearEdge()
+                                .clearEdgeCardinality()
+                                .setCompletion(StepCompletion.STEP_COMPLETION_EXTERNAL)))
+                .build();
+        try (WorkflowRunWorker worker = new WorkflowRunWorker(
+                store, context, null, new WorkflowRunner(allowLoopback),
+                allowLoopback, unreadable, null, workerConfig("external-parks", 4, 1))) {
+            String jobId = submitPipeline(submitter, schema, external, "hello");
+            assertThat(worker.workOnce()).isTrue();
+
+            // The step calls nothing, so an unreadable profile cannot hold the run back.
+            WorkflowRunRecord parked = store.get(UUID.fromString(jobId)).orElseThrow();
+            assertThat(parked.status).isEqualTo(WorkflowRunRecord.STATUS_WAITING);
+            assertThat(parked.attempt).isEqualTo(1);
             assertThat(plainCalls.get()).isZero();
         }
     }

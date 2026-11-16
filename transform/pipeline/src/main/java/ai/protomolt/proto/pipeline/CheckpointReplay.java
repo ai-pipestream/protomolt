@@ -55,6 +55,8 @@ final class CheckpointReplay {
         requireIdentity(step, saved, context);
         Shape shape = declaredShape(step, scope, context);
         requireOutcome(step, saved, shape, context.streamLimit());
+        requireGateAgreement(step, saved, shape, scope);
+        requireRequestCount(step, saved, shape, scope);
         requireBranchEvidence(step, saved, shape.fanOut(), context.streamLimit());
         List<DynamicMessage> values = decodeMessages(step, saved, shape);
         if (shape.fanOut() != null && !saved.outcome().skipped()) {
@@ -135,6 +137,51 @@ final class CheckpointReplay {
                 && cardinality == EdgeCardinality.EDGE_CARDINALITY_MANY
                 && !saved.messages().isEmpty()) {
             throw invalid(step, "skipped stream checkpoint must be empty");
+        }
+    }
+
+    /**
+     * A gate is a pure function of the bindings in scope, so replay evaluates it again: a
+     * checkpoint may claim a skip only where the gate is false, and a response only where it
+     * is true.
+     */
+    private static void requireGateAgreement(PipelineStep step, Checkpoint saved, Shape shape,
+                                             Map<String, PipelineBinding> scope)
+            throws PipelineExecutionException {
+        if (!step.hasGrpcCall() || step.getWhen().isBlank()) {
+            return;
+        }
+        boolean gatePasses = EdgeMapping.evaluateGate(
+                step, scope, shape.method().getInputType());
+        if (saved.outcome().skipped() == gatePasses) {
+            throw invalid(step, gatePasses
+                    ? "checkpoint claims a skip but the step's gate passes"
+                    : "checkpoint claims a response but the step's gate is false");
+        }
+    }
+
+    /**
+     * A called step sends one request per item of its request stream, or exactly one when no
+     * source is a stream. Fan-out counts are checked against the branch evidence instead.
+     */
+    private static void requireRequestCount(PipelineStep step, Checkpoint saved, Shape shape,
+                                            Map<String, PipelineBinding> scope)
+            throws PipelineExecutionException {
+        if (!step.hasGrpcCall() || saved.outcome().skipped() || shape.fanOut() != null
+                || step.getGrpcCall().getCompletion()
+                        == StepCompletion.STEP_COMPLETION_EXTERNAL) {
+            return;
+        }
+        int expected = 1;
+        for (String source : step.getGrpcCall().getEdge().getSourcesList()) {
+            PipelineBinding binding = scope.get(source);
+            if (binding.cardinality() == EdgeCardinality.EDGE_CARDINALITY_MANY) {
+                expected = binding.values().size();
+            }
+        }
+        if (saved.outcome().requestCount() != expected) {
+            throw invalid(step, "checkpoint request count " + saved.outcome().requestCount()
+                    + " does not match the " + expected + " request(s) the step sends");
         }
     }
 

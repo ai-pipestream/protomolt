@@ -1,6 +1,7 @@
 package ai.protomolt.proto.jobs.service.worker;
 
 import ai.protomolt.proto.grpc.workflow.v1.ServiceDependency;
+import ai.protomolt.proto.grpc.workflow.v1.StepCompletion;
 import ai.protomolt.proto.jobs.service.PipelineJobCoordinator;
 import ai.protomolt.proto.jobs.service.PipelineJobCoordinator.PipelineDefinitionException;
 import ai.protomolt.proto.jobs.service.events.WorkflowRunEventFactory;
@@ -160,12 +161,18 @@ final class PipelineSegmentRunner {
                 && e.getCause() instanceof WorkflowRunStoreException;
     }
 
+    /** An external-completion step calls no service: it parks, or its gate skips it. */
+    private static boolean completesExternally(PipelineStep step) {
+        return step.hasGrpcCall() && step.getGrpcCall().getCompletion()
+                == StepCompletion.STEP_COMPLETION_EXTERNAL;
+    }
+
     private Semaphore acquirePipelinePermit(Pipeline pipeline, int nextStepIndex) {
         if (nextStepIndex >= pipeline.getStepsCount()) {
             return null;
         }
         PipelineStep step = pipeline.getSteps(nextStepIndex);
-        if (step.getDependency().isEmpty()) {
+        if (step.getDependency().isEmpty() || completesExternally(step)) {
             return null;
         }
         String target = step.getDependency();

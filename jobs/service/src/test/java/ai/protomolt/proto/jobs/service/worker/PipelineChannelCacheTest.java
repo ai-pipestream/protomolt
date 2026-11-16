@@ -1,8 +1,12 @@
 package ai.protomolt.proto.jobs.service.worker;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import ai.protomolt.proto.grpc.invoke.ChannelFactory;
+import io.grpc.ChannelCredentials;
+import io.grpc.InsecureChannelCredentials;
+import io.grpc.ManagedChannel;
 import io.grpc.inprocess.InProcessChannelBuilder;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
@@ -50,5 +54,42 @@ class PipelineChannelCacheTest {
             b.release();
             assertThat(b.channel().isShutdown()).isTrue();
         }
+    }
+
+    @Test
+    void aDedicatedChannelIsClosedWithTheCacheAndNoneOpensAfterClose() {
+        AtomicInteger dedicatedOpens = new AtomicInteger();
+        ChannelFactory factory = new ChannelFactory() {
+            @Override
+            public ManagedChannel open(String target, boolean tls) {
+                throw new AssertionError("only dedicated channels are opened here");
+            }
+
+            @Override
+            public ManagedChannel open(String target, ChannelCredentials credentials) {
+                dedicatedOpens.incrementAndGet();
+                return InProcessChannelBuilder.forName("cache-test-dedicated").build();
+            }
+        };
+        ChannelCredentials customTls = InsecureChannelCredentials.create();
+        PipelineChannelCache cache = new PipelineChannelCache(factory);
+
+        // A call that finishes shuts its own dedicated channel down.
+        PipelineChannelCache.Lease finished = cache.openDedicated("127.0.0.1:1", customTls);
+        finished.release();
+        assertThat(finished.channel().isShutdown()).isTrue();
+
+        // A call still in flight when the cache closes loses its channel with the cache.
+        PipelineChannelCache.Lease inFlight = cache.openDedicated("127.0.0.1:1", customTls);
+        assertThat(inFlight.channel().isShutdown()).isFalse();
+        cache.close();
+        assertThat(inFlight.channel().isShutdown()).isTrue();
+        inFlight.release();
+
+        // A closed cache opens nothing more.
+        assertThatThrownBy(() -> cache.openDedicated("127.0.0.1:1", customTls))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("closed");
+        assertThat(dedicatedOpens.get()).isEqualTo(2);
     }
 }

@@ -7,7 +7,7 @@ import ai.protomolt.proto.grpc.profile.ServiceProfileValidation;
 import ai.protomolt.proto.grpc.workflow.v1.ServiceDependency;
 import ai.protomolt.proto.grpc.workflow.v1.StepCompletion;
 import ai.protomolt.proto.grpc.workflow.v1.TypedEdge;
-import ai.protomolt.proto.http.json.ProtobufJsonTranscoder;
+import ai.protomolt.proto.http.json.ProtobufJsonException;
 import ai.protomolt.proto.jobs.service.PipelineJobCoordinator.PipelineDefinitionException;
 import ai.protomolt.proto.jobs.service.actions.CompleteStepAction;
 import ai.protomolt.proto.jobs.service.events.WorkflowRunEventFactory;
@@ -33,6 +33,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.google.protobuf.Any;
 import com.google.protobuf.ByteString;
+import com.google.protobuf.DescriptorProtos.FileDescriptorProto;
 import com.google.protobuf.DescriptorProtos.FileDescriptorSet;
 import com.google.protobuf.Descriptors.Descriptor;
 import com.google.protobuf.Descriptors.FileDescriptor;
@@ -49,6 +50,8 @@ import org.junit.jupiter.api.Test;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 import java.util.UUID;
 
@@ -167,11 +170,11 @@ class PipelineRunCodecTest {
         assertThatThrownBy(() -> PipelineRunCodec.readDefinition(
                         valid.toBuilder().clearPipeline().build()))
                 .isInstanceOf(PipelineDefinitionException.class)
-                .hasMessageStartingWith("stored pipeline definition is invalid at pipeline");
+                .hasMessageStartingWith("pipeline run definition is invalid at pipeline");
         assertThatThrownBy(() -> PipelineRunCodec.readDefinition(
                         valid.toBuilder().clearRootFiles().build()))
                 .isInstanceOf(PipelineDefinitionException.class)
-                .hasMessageStartingWith("stored pipeline definition is invalid at root_files");
+                .hasMessageStartingWith("pipeline run definition is invalid at root_files");
         assertThatThrownBy(() -> PipelineRunCodec.readDefinition(
                         valid.toBuilder().setRootFiles(0, "absent.proto").build()))
                 .isInstanceOf(PipelineDefinitionException.class)
@@ -346,18 +349,95 @@ class PipelineRunCodecTest {
     }
 
     @Test
+    void submitRefusesADefinitionThatWouldNotReadBackAndStoresNothing() throws Exception {
+        // 4097 root files: one past the stored definition's root_files bound.
+        List<FileDescriptor> tooMany = new ArrayList<>();
+        tooMany.add(file);
+        for (int i = 0; i < 4096; i++) {
+            tooMany.add(FileDescriptor.buildFrom(FileDescriptorProto.newBuilder()
+                    .setName(String.format("extra/f%04d.proto", i))
+                    .setSyntax("proto3")
+                    .build(), new FileDescriptor[0]));
+        }
+        String descriptorFp = ServiceProfileValidation.sha256(FileDescriptorSet.newBuilder()
+                .addAllFile(tooMany.stream()
+                        .map(FileDescriptor::toProto)
+                        .sorted(Comparator.comparing(FileDescriptorProto::getName))
+                        .toList())
+                .build().toByteArray());
+        Pipeline wide = pipeline.toBuilder()
+                .setDescriptorFingerprint(descriptorFp)
+                .setDependencies(0, pipeline.getDependencies(0).toBuilder()
+                        .setDescriptorFingerprint(descriptorFp))
+                .build();
+
+        assertThatThrownBy(() -> PipelineRunCodec.encodeDefinition(wide, tooMany, validInput))
+                .isInstanceOf(PipelineDefinitionException.class)
+                .hasMessageContaining("root_files");
+
+        InMemoryWorkflowRunStore store = new InMemoryWorkflowRunStore();
+        WorkflowRunSubmitter.Outcome refused = new WorkflowRunSubmitter(store, null, 3)
+                .submitPipeline(wide, tooMany, validInput, UUID.randomUUID().toString());
+        assertThat(refused.ok()).isFalse();
+        assertThat(refused.error()).contains("root_files");
+        assertThat(store.list(null, null, 10, 0)).isEmpty();
+
+        // At the bound the same submission is stored and reads back.
+        List<FileDescriptor> atBound = tooMany.subList(0, 4096);
+        String boundFp = ServiceProfileValidation.sha256(FileDescriptorSet.newBuilder()
+                .addAllFile(atBound.stream()
+                        .map(FileDescriptor::toProto)
+                        .sorted(Comparator.comparing(FileDescriptorProto::getName))
+                        .toList())
+                .build().toByteArray());
+        Pipeline bounded = pipeline.toBuilder()
+                .setDescriptorFingerprint(boundFp)
+                .setDependencies(0, pipeline.getDependencies(0).toBuilder()
+                        .setDescriptorFingerprint(boundFp))
+                .build();
+        WorkflowRunSubmitter.Outcome accepted = new WorkflowRunSubmitter(store, null, 3)
+                .submitPipeline(bounded, atBound, validInput, UUID.randomUUID().toString());
+        assertThat(accepted.error()).isNull();
+        assertThat(accepted.ok()).isTrue();
+        WorkflowRunRecord stored = store.get(UUID.fromString(accepted.jobId())).orElseThrow();
+        assertThat(PipelineRunCodec.readDefinition(stored).files()).hasSize(4096);
+    }
+
+    @Test
+    void viewFailsOnAMessageThatCannotPrintForAReasonOtherThanAnUnknownAnyType()
+            throws Exception {
+        Descriptor inputType = file.findMessageTypeByName("EnvelopeInput");
+        // The Any names a type the run does define, but its bytes are not that type.
+        Any corruptKnownAny = Any.newBuilder()
+                .setTypeUrl("type.googleapis.com/jobs.pipeline.codec.EnvelopeOutput")
+                .setValue(ByteString.copyFrom(new byte[] {(byte) 0xFF}))
+                .build();
+        DynamicMessage withCorruptAny = DynamicMessage.newBuilder(inputType)
+                .setField(inputType.findFieldByName("request_id"), "req-corrupt")
+                .setField(inputType.findFieldByName("detail"),
+                        DynamicMessage.parseFrom(Any.getDescriptor(),
+                                corruptKnownAny.toByteString()))
+                .build();
+        WorkflowRunRecord row = pipelineRow(PipelineRunCodec.encodeDefinition(
+                pipeline, files, withCorruptAny).toByteArray());
+
+        assertThatThrownBy(() -> PipelineJobCoordinator.view(row))
+                .isInstanceOf(ProtobufJsonException.class);
+    }
+
+    @Test
     void viewCarriesAMessageThatDoesNotPrintAsAnObjectUnderValue() throws Exception {
-        ProtobufJsonTranscoder transcoder =
-                new ProtobufJsonTranscoder(PipelineRunCodec.buildRegistry(files, null));
+        PipelineRunView.Printer printer =
+                PipelineRunView.Printer.over(PipelineRunCodec.buildRegistry(files, null));
         DynamicMessage text = DynamicMessage.parseFrom(
                 StringValue.getDescriptor(), StringValue.of("plain").toByteString());
-        assertThat(PipelineRunView.message(text, transcoder).asText()).isEqualTo("plain");
-        assertThat(PipelineRunView.asObject(text, transcoder).get("value").asText())
+        assertThat(PipelineRunView.message(text, printer).asText()).isEqualTo("plain");
+        assertThat(PipelineRunView.asObject(text, printer).get("value").asText())
                 .isEqualTo("plain");
 
         DynamicMessage instant = DynamicMessage.parseFrom(Timestamp.getDescriptor(),
                 Timestamp.newBuilder().setSeconds(1).build().toByteString());
-        assertThat(PipelineRunView.asObject(instant, transcoder).get("value").asText())
+        assertThat(PipelineRunView.asObject(instant, printer).get("value").asText())
                 .isEqualTo("1970-01-01T00:00:01Z");
 
         DynamicMessage list = DynamicMessage.parseFrom(ListValue.getDescriptor(),
@@ -365,7 +445,7 @@ class PipelineRunCodecTest {
                         .addValues(Value.newBuilder().setStringValue("a"))
                         .addValues(Value.newBuilder().setNumberValue(2))
                         .build().toByteString());
-        assertThat(PipelineRunView.asObject(list, transcoder).get("value")).hasSize(2);
+        assertThat(PipelineRunView.asObject(list, printer).get("value")).hasSize(2);
 
         // A Value that happens to hold an object is still carried under "value": the rule
         // goes by type, so a reader never has to guess.
@@ -374,11 +454,11 @@ class PipelineRunCodecTest {
                         .setStructValue(com.google.protobuf.Struct.newBuilder()
                                 .putFields("k", Value.newBuilder().setBoolValue(true).build()))
                         .build().toByteString());
-        assertThat(PipelineRunView.asObject(structValue, transcoder).get("value").get("k")
+        assertThat(PipelineRunView.asObject(structValue, printer).get("value").get("k")
                 .asBoolean()).isTrue();
 
         // An ordinary message is its own object.
-        assertThat(PipelineRunView.asObject(validInput, transcoder).get("requestId").asText())
+        assertThat(PipelineRunView.asObject(validInput, printer).get("requestId").asText())
                 .isEqualTo("req-1");
     }
 

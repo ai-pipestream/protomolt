@@ -680,6 +680,103 @@ class PipelineSegmentsTest {
         assertThat(resumed).isInstanceOf(Segment.Completed.class);
     }
 
+    @Test
+    void replayRejectsACheckpointWhoseSkipOutcomeDisagreesWithTheGate() throws Exception {
+        PipelineStep gated = externalStep("approval", "pipeline.test.Lookup", FETCH,
+                MethodShape.METHOD_SHAPE_UNARY, EdgeCardinality.EDGE_CARDINALITY_ONE, false)
+                .setWhen("input.title == 'require-approval'")
+                .build();
+        Pipeline pipeline = PipelineFixtures.base("gated-replay", TICKET)
+                .addDependencies(PipelineFixtures.dependency("pipeline.test.Lookup"))
+                .addSteps(gated)
+                .build();
+        List<FileDescriptor> files = PipelineFixtures.files();
+        PipelineExecutor executor = new PipelineExecutor((dep, method, reqs, deadline, max) ->
+                List.of());
+        String pipelineFp = PipelineExecutor.pipelineFingerprint(pipeline, files);
+        DynamicMessage completion = lookupResult("d-1", "approved", "");
+        DynamicMessage empty = DynamicMessage.getDefaultInstance(
+                completion.getDescriptorForType());
+
+        // The gate is true for this input, so the step ran: a skip is a forgery.
+        DynamicMessage gateTrue = ticket("require-approval");
+        Checkpoint forgedSkip = new Checkpoint(pipelineFp,
+                PipelineExecutor.inputFingerprint(gateTrue),
+                new StepOutcome("approval", true, 0, 0),
+                EdgeCardinality.EDGE_CARDINALITY_ONE, List.of(empty), List.of());
+        assertThatThrownBy(() -> executor.runSegment(
+                pipeline, files, gateTrue, List.of(forgedSkip), cp -> { }))
+                .isInstanceOfSatisfying(PipelineExecutionException.class, e -> {
+                    assertThat(e.kind()).isEqualTo(FailureKind.PIPELINE);
+                    assertThat(e.getMessage()).contains("gate");
+                });
+
+        // The gate is false for this input, so the step was skipped: a response is a forgery.
+        DynamicMessage gateFalse = ticket("fast-path");
+        Checkpoint forgedRun = new Checkpoint(pipelineFp,
+                PipelineExecutor.inputFingerprint(gateFalse),
+                new StepOutcome("approval", false, 0, 1),
+                EdgeCardinality.EDGE_CARDINALITY_ONE, List.of(completion), List.of());
+        assertThatThrownBy(() -> executor.runSegment(
+                pipeline, files, gateFalse, List.of(forgedRun), cp -> { }))
+                .isInstanceOfSatisfying(PipelineExecutionException.class, e -> {
+                    assertThat(e.kind()).isEqualTo(FailureKind.PIPELINE);
+                    assertThat(e.getMessage()).contains("gate");
+                });
+
+        // The honest outcomes replay.
+        Checkpoint honestSkip = new Checkpoint(pipelineFp,
+                PipelineExecutor.inputFingerprint(gateFalse),
+                new StepOutcome("approval", true, 0, 0),
+                EdgeCardinality.EDGE_CARDINALITY_ONE, List.of(empty), List.of());
+        assertThat(executor.runSegment(
+                pipeline, files, gateFalse, List.of(honestSkip), cp -> { }))
+                .isInstanceOf(Segment.Completed.class);
+        Checkpoint honestRun = new Checkpoint(pipelineFp,
+                PipelineExecutor.inputFingerprint(gateTrue),
+                new StepOutcome("approval", false, 0, 1),
+                EdgeCardinality.EDGE_CARDINALITY_ONE, List.of(completion), List.of());
+        assertThat(executor.runSegment(
+                pipeline, files, gateTrue, List.of(honestRun), cp -> { }))
+                .isInstanceOf(Segment.Completed.class);
+    }
+
+    @Test
+    void replayRejectsALiveUnaryCheckpointWhoseRequestCountIsNotOne() throws Exception {
+        PipelineStep finish = PipelineFixtures.grpcStep("finish", "pipeline.test.Worker", PROCESS,
+                MethodShape.METHOD_SHAPE_UNARY, EdgeCardinality.EDGE_CARDINALITY_ONE,
+                EdgeCardinality.EDGE_CARDINALITY_ONE,
+                PipelineFixtures.edge(TICKET, List.of("input"), "title = input.title")).build();
+        Pipeline pipeline = PipelineFixtures.base("live-unary", TICKET)
+                .addDependencies(PipelineFixtures.dependency("pipeline.test.Worker"))
+                .addSteps(finish)
+                .build();
+        List<FileDescriptor> files = PipelineFixtures.files();
+        DynamicMessage input = ticket("in");
+        PipelineExecutor executor = new PipelineExecutor((dep, method, reqs, deadline, max) ->
+                List.of(ticket("out")));
+        List<Checkpoint> written = new ArrayList<>();
+        executor.runSegment(pipeline, files, input, List.of(), written::add);
+        Checkpoint honest = written.getFirst();
+        assertThat(honest.outcome()).isEqualTo(new StepOutcome("finish", false, 1, 1));
+
+        for (int forgedCount : new int[] {0, 2, 7}) {
+            Checkpoint forged = new Checkpoint(honest.pipelineFingerprint(),
+                    honest.inputFingerprint(),
+                    new StepOutcome("finish", false, forgedCount, 1),
+                    honest.cardinality(), honest.messages(), honest.branches());
+            assertThatThrownBy(() -> executor.runSegment(
+                    pipeline, files, input, List.of(forged), cp -> { }))
+                    .as("requestCount %d", forgedCount)
+                    .isInstanceOfSatisfying(PipelineExecutionException.class, e -> {
+                        assertThat(e.kind()).isEqualTo(FailureKind.PIPELINE);
+                        assertThat(e.getMessage()).contains("request count");
+                    });
+        }
+        assertThat(executor.runSegment(pipeline, files, input, List.of(honest), cp -> { }))
+                .isInstanceOf(Segment.Completed.class);
+    }
+
     private static PipelineStep.Builder externalStep(String name, String service, String method,
                                                      MethodShape shape,
                                                      EdgeCardinality outputCardinality,

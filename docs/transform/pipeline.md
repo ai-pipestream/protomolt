@@ -81,8 +81,12 @@ completed steps in order without re-invoking upstream services after verifying:
   binary input message;
 - ordered step identity, output `Descriptor` full name and structural
   fingerprint, cardinality (`ONE` or `MANY`), and `max_stream_messages` bounds;
-- `StepOutcome` request/response counts, fan-out `BranchOutcome` evidence,
-  declared `validate_response` constraints, and linear stream consumption.
+- `StepOutcome` request/response counts (a called step's request count must
+  equal what its edge sends), fan-out `BranchOutcome` evidence, declared
+  `validate_response` constraints, and linear stream consumption;
+- the step's `when` gate, evaluated again over the replayed bindings: a
+  checkpoint may record a skip only where the gate is false and a response
+  only where it is true.
 
 When an `ExecutionIdentity` (`jobId` + `attempt`) is supplied,
 `DynamicPipelineTransport` stamps `x-protomolt-job-id`,

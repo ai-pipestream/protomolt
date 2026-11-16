@@ -62,7 +62,10 @@ final class PipelineRunCodec {
         for (FileDescriptor file : sortedRootFiles) {
             definition.addRootFiles(file.getName());
         }
-        return definition.build();
+        PipelineRunDefinition encoded = definition.build();
+        // Refuse here what readDefinition would refuse, so nothing unreadable is stored.
+        requireValid(encoded);
+        return encoded;
     }
 
     static Definition readDefinition(WorkflowRunRecord job) {
@@ -159,7 +162,7 @@ final class PipelineRunCodec {
         if (!result.valid()) {
             ValidationResult.Violation first = result.violations().getFirst();
             throw new PipelineDefinitionException("",
-                    "stored pipeline definition is invalid at " + first.path() + ": "
+                    "pipeline run definition is invalid at " + first.path() + ": "
                             + first.message());
         }
     }

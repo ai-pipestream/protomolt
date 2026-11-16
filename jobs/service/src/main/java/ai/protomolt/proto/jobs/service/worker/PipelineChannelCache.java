@@ -8,9 +8,11 @@ import io.grpc.Status;
 
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Supplier;
 
@@ -19,7 +21,11 @@ import java.util.function.Supplier;
  * it. A channel is opened for the first call and closed when its last call finishes, so an
  * {@code OutboundChannelPolicy} slot is held only while a call needs it and never by an idle
  * channel that other users of the policy could not reclaim. A channel is never shut down
- * underneath an in-flight call.
+ * underneath an in-flight call while the cache is open.
+ *
+ * <p>A call with its own TLS credentials gets a dedicated channel that is not shared. The
+ * cache still owns it: it is opened under the same lock, refused once the cache is closed,
+ * and shut down with the cache if its call has not finished.
  */
 final class PipelineChannelCache implements AutoCloseable {
 
@@ -29,12 +35,14 @@ final class PipelineChannelCache implements AutoCloseable {
     static final class Lease {
         private final PipelineChannelCache owner;
         private final ManagedChannel channel;
+        private final boolean dedicated;
         private int activeCalls;
         private boolean evicted;
 
-        private Lease(PipelineChannelCache owner, ManagedChannel channel) {
+        private Lease(PipelineChannelCache owner, ManagedChannel channel, boolean dedicated) {
             this.owner = owner;
             this.channel = channel;
+            this.dedicated = dedicated;
         }
 
         ManagedChannel channel() {
@@ -42,7 +50,11 @@ final class PipelineChannelCache implements AutoCloseable {
         }
 
         void release() {
-            owner.releaseShared(this);
+            if (dedicated) {
+                owner.releaseDedicated(this);
+            } else {
+                owner.releaseShared(this);
+            }
         }
 
         private boolean isUsable() {
@@ -53,6 +65,7 @@ final class PipelineChannelCache implements AutoCloseable {
     private final ChannelFactory channels;
     private final Object lock = new Object();
     private final Map<ChannelKey, Lease> openChannels = new HashMap<>();
+    private final Set<Lease> dedicatedChannels = new HashSet<>();
     private volatile boolean closed;
 
     PipelineChannelCache(ChannelFactory channels) {
@@ -68,9 +81,17 @@ final class PipelineChannelCache implements AutoCloseable {
         channels.validateDeadline(deadlineMillis);
     }
 
-    ManagedChannel openDedicated(String target, ChannelCredentials customTls) {
-        return open(() -> Objects.requireNonNull(
-                channels.open(target, customTls), "channel factory returned null"));
+    /** A channel for one call with its own TLS credentials; released when the call ends. */
+    Lease openDedicated(String target, ChannelCredentials customTls) {
+        synchronized (lock) {
+            if (closed) {
+                throw new IllegalStateException("pipeline transport is closed");
+            }
+            Lease opened = new Lease(this, open(() -> Objects.requireNonNull(
+                    channels.open(target, customTls), "channel factory returned null")), true);
+            dedicatedChannels.add(opened);
+            return opened;
+        }
     }
 
     /**
@@ -100,7 +121,8 @@ final class PipelineChannelCache implements AutoCloseable {
                 }
             }
             acquired = new Lease(this, open(() -> Objects.requireNonNull(
-                    channels.open(key.target(), key.tls()), "channel factory returned null")));
+                    channels.open(key.target(), key.tls()), "channel factory returned null")),
+                    false);
             acquired.activeCalls = 1;
             openChannels.put(key, acquired);
         }
@@ -139,6 +161,13 @@ final class PipelineChannelCache implements AutoCloseable {
         }
     }
 
+    private void releaseDedicated(Lease entry) {
+        synchronized (lock) {
+            dedicatedChannels.remove(entry);
+        }
+        entry.channel.shutdownNow();
+    }
+
     private static RuntimeException translateOpenRejection(OutboundChannelPolicyException error) {
         if (error.channelLimitExhausted()) {
             return Status.RESOURCE_EXHAUSTED
@@ -160,6 +189,10 @@ final class PipelineChannelCache implements AutoCloseable {
                 channelsToClose.add(entry.channel);
             }
             openChannels.clear();
+            for (Lease entry : dedicatedChannels) {
+                channelsToClose.add(entry.channel);
+            }
+            dedicatedChannels.clear();
         }
         for (ManagedChannel channel : channelsToClose) {
             channel.shutdownNow();

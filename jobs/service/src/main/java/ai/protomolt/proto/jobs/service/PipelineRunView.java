@@ -1,5 +1,6 @@
 package ai.protomolt.proto.jobs.service;
 
+import ai.protomolt.proto.descriptors.DescriptorRegistry;
 import ai.protomolt.proto.http.json.ProtobufJsonException;
 import ai.protomolt.proto.http.json.ProtobufJsonTranscoder;
 import ai.protomolt.proto.jobs.service.PipelineJobCoordinator.Definition;
@@ -43,28 +44,36 @@ final class PipelineRunView {
     record Documents(ObjectNode input, ArrayNode checkpoints, ObjectNode result) {
     }
 
+    /** Prints a run's messages as proto3 JSON, resolving {@code Any} against its registry. */
+    record Printer(DescriptorRegistry registry, ProtobufJsonTranscoder transcoder) {
+
+        static Printer over(DescriptorRegistry registry) {
+            return new Printer(registry, new ProtobufJsonTranscoder(registry));
+        }
+    }
+
     static Documents render(WorkflowRunRecord job) {
         Definition definition = PipelineRunCodec.readDefinition(job);
-        ProtobufJsonTranscoder transcoder = new ProtobufJsonTranscoder(
+        Printer printer = Printer.over(
                 PipelineRunCodec.buildRegistry(definition.files(), null));
         ArrayNode checkpoints = JSON.createArrayNode();
         for (Checkpoint checkpoint : PipelineCheckpointCodec.readCheckpoints(job, definition)) {
-            checkpoints.add(checkpoint(checkpoint, transcoder));
+            checkpoints.add(checkpoint(checkpoint, printer));
         }
         return new Documents(
-                asObject(definition.input(), transcoder),
+                asObject(definition.input(), printer),
                 checkpoints,
-                job.pipelineResult == null ? null : result(job, definition, transcoder));
+                job.pipelineResult == null ? null : result(job, definition, printer));
     }
 
     private static ObjectNode checkpoint(Checkpoint checkpoint,
-                                         ProtobufJsonTranscoder transcoder) {
+                                         Printer printer) {
         ObjectNode entry = JSON.createObjectNode();
         entry.put("name", checkpoint.outcome().name());
         entry.put("skipped", checkpoint.outcome().skipped());
         if (!checkpoint.outcome().skipped()) {
             entry.set("response",
-                    binding(checkpoint.cardinality(), checkpoint.messages(), transcoder));
+                    binding(checkpoint.cardinality(), checkpoint.messages(), printer));
         }
         entry.put("cardinality", checkpoint.cardinality().name());
         entry.put("requestCount", checkpoint.outcome().requestCount());
@@ -84,7 +93,7 @@ final class PipelineRunView {
     }
 
     private static ObjectNode result(WorkflowRunRecord job, Definition definition,
-                                   ProtobufJsonTranscoder transcoder) {
+                                   Printer printer) {
         PipelineRunResult stored;
         try {
             stored = PipelineRunResult.parseFrom(job.pipelineResult);
@@ -93,20 +102,20 @@ final class PipelineRunView {
                     "stored result is not a readable PipelineRunResult: " + e.getMessage(), e);
         }
         return binding(stored.getCardinality(),
-                PipelineCheckpointCodec.readResultMessages(stored, definition), transcoder);
+                PipelineCheckpointCodec.readResultMessages(stored, definition), printer);
     }
 
     /** One message as an object, or a stream as {@code {"items": [...]}}. */
     private static ObjectNode binding(EdgeCardinality cardinality,
                                       List<DynamicMessage> messages,
-                                      ProtobufJsonTranscoder transcoder) {
+                                      Printer printer) {
         if (cardinality == EdgeCardinality.EDGE_CARDINALITY_ONE) {
-            return asObject(messages.getFirst(), transcoder);
+            return asObject(messages.getFirst(), printer);
         }
         ObjectNode stream = JSON.createObjectNode();
         ArrayNode items = stream.putArray(ITEMS_KEY);
         for (DynamicMessage message : messages) {
-            items.add(message(message, transcoder));
+            items.add(message(message, printer));
         }
         return stream;
     }
@@ -115,8 +124,8 @@ final class PipelineRunView {
      * One message where the reply needs an object: its proto3 JSON when that is an object,
      * and {@code {"value": <its proto3 JSON>}} for a type that prints as anything else.
      */
-    static ObjectNode asObject(DynamicMessage message, ProtobufJsonTranscoder transcoder) {
-        JsonNode printed = message(message, transcoder);
+    static ObjectNode asObject(DynamicMessage message, Printer printer) {
+        JsonNode printed = message(message, printer);
         if (printed instanceof ObjectNode object
                 && (Proto3JsonShape.printsAsObject(message.getDescriptorForType())
                         || object.has(UNRENDERABLE_TYPE_KEY))) {
@@ -128,13 +137,17 @@ final class PipelineRunView {
     }
 
     /** A message's proto3 JSON, whatever JSON type its message type prints as. */
-    static JsonNode message(DynamicMessage message, ProtobufJsonTranscoder transcoder) {
+    static JsonNode message(DynamicMessage message, Printer printer) {
         String printed;
         try {
-            printed = transcoder.toJson(message);
-        } catch (ProtobufJsonException unrenderable) {
+            printed = printer.transcoder().toJson(message);
+        } catch (ProtobufJsonException unprintable) {
+            if (!UnresolvedAnyTypes.presentIn(message, printer.registry())) {
+                throw unprintable;
+            }
             // proto3 JSON cannot print an Any whose type is outside the run's descriptor set.
-            // The view says so; the stored bytes are unaffected.
+            // The view says so; the stored bytes are unaffected. Any other printing failure
+            // is raised.
             ObjectNode marker = JSON.createObjectNode();
             marker.put(UNRENDERABLE_TYPE_KEY, message.getDescriptorForType().getFullName());
             return marker;
