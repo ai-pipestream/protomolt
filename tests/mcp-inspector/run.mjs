@@ -394,14 +394,18 @@ function selfTest() {
         },
       }],
     ];
+    expect(checkManifestAlignment(manifest, lock) === pinned,
+      "unmodified manifest and lockfile were not accepted, so the mismatch cases prove nothing");
     for (const [message, driftedManifest, driftedLock] of cases) {
-      let caught = false;
+      let refusal = null;
       try {
         checkManifestAlignment(driftedManifest, driftedLock);
-      } catch {
-        caught = true;
+      } catch (error) {
+        refusal = error;
       }
-      expect(caught, message);
+      expect(refusal !== null, message);
+      expect(refusal instanceof Error && refusal.message.includes("versions disagree"),
+        `${message}: refused for another reason: ${refusal?.message}`);
     }
   });
   let ok = baseline.failed.length === 0;
