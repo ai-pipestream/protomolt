@@ -25,6 +25,7 @@ import io.grpc.Metadata;
 import io.grpc.StatusRuntimeException;
 
 import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
@@ -66,8 +67,11 @@ final class ServiceProfilePipelineTransport implements PipelineTransport, AutoCl
                         return found.get().getName() + "/" + endpoint.getName();
                     }
                 }
-            } catch (IOException ignored) {
-                // invoke() surfaces repository I/O faults when the step runs.
+            } catch (IOException unreadable) {
+                // A guessed key would let the permit and the call disagree about the target.
+                throw new UncheckedIOException(
+                        "could not read service profile '" + dependency.getServiceProfile()
+                                + "' to resolve the call target", unreadable);
             }
         }
         return staticDependencyKey(dependency);

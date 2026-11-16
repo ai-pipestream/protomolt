@@ -17,6 +17,7 @@ import io.grpc.Status;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.io.UncheckedIOException;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
@@ -58,7 +59,14 @@ final class PipelineSegmentRunner {
             return;
         }
         List<PipelineExecutor.Checkpoint> accumulated = new ArrayList<>(prior);
-        Semaphore permit = acquirePipelinePermit(definition.pipeline(), prior.size());
+        Semaphore permit;
+        try {
+            permit = acquirePipelinePermit(definition.pipeline(), prior.size());
+        } catch (UncheckedIOException unreadableProfile) {
+            // Nothing was called, so the run can be retried as it stands.
+            retryOrDead(job, claim, "PIPELINE: " + unreadableProfile.getMessage());
+            return;
+        }
         PipelineExecutor.ExecutionIdentity identity =
                 new PipelineExecutor.ExecutionIdentity(job.jobId.toString(), job.attempt);
         try {
@@ -114,17 +122,24 @@ final class PipelineSegmentRunner {
             PipelineExecutor.PipelineExecutionException e) {
         boolean retryable = isPipelineRetryable(e);
         String detail = e.kind() + ": " + e.getMessage();
-        if (retryable && job.attempt < job.maxAttempts) {
+        if (retryable) {
+            retryOrDead(job, claim, detail);
+        } else {
+            worker.failJob(job, claim, e.step(), detail);
+        }
+    }
+
+    /** Requeue with backoff while attempts remain; otherwise the run is DEAD. */
+    private void retryOrDead(WorkflowRunRecord job, WorkerClaim claim, String detail) {
+        if (job.attempt < job.maxAttempts) {
             Duration backoff = worker.backoff(job.attempt);
             store.requeue(claim, backoff);
             LOG.info("pipeline run {} attempt {}/{} failed retryably ({}); requeued in {}s",
                     job.jobId, job.attempt, job.maxAttempts, detail, backoff.toSeconds());
-        } else if (retryable) {
+        } else {
             store.markDead(claim, detail, WorkflowRunEventFactory.dead(job, detail));
             LOG.warn("pipeline run {} is DEAD after {} attempt(s): {}",
                     job.jobId, job.attempt, detail);
-        } else {
-            worker.failJob(job, claim, e.step(), detail);
         }
     }
 

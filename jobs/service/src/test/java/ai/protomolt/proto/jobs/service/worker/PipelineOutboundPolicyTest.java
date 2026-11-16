@@ -3,7 +3,9 @@ package ai.protomolt.proto.jobs.service.worker;
 import ai.protomolt.proto.actions.ActionContext;
 import ai.protomolt.proto.grpc.invoke.ChannelFactory;
 import ai.protomolt.proto.grpc.policy.OutboundChannelPolicy;
+import ai.protomolt.proto.grpc.profile.ServiceProfileRepository;
 import ai.protomolt.proto.grpc.profile.FileSystemServiceProfileRepository;
+import ai.protomolt.proto.grpc.profile.v1.DescriptorArtifact;
 import ai.protomolt.proto.grpc.profile.v1.MethodPolicy;
 import ai.protomolt.proto.grpc.profile.v1.Operation;
 import ai.protomolt.proto.grpc.profile.v1.ServiceEndpoint;
@@ -33,6 +35,11 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import java.nio.file.Path;
+import java.io.IOException;
+import java.io.UncheckedIOException;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.Optional;
+import java.util.List;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
@@ -51,6 +58,7 @@ import static ai.protomolt.proto.jobs.service.worker.PipelinePolicyTestFixture.p
 import static ai.protomolt.proto.jobs.service.worker.PipelinePolicyTestFixture.submitPipeline;
 import static ai.protomolt.proto.jobs.service.worker.PipelinePolicyTestFixture.workerConfig;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
  * Verifies that durable pipeline execution in {@link WorkflowRunWorker} enforces
@@ -322,6 +330,62 @@ class PipelineOutboundPolicyTest {
             }
             assertThat(store.get(UUID.fromString(inFlightA)).orElseThrow().status)
                     .isEqualTo(WorkflowRunRecord.STATUS_COMPLETED);
+        }
+    }
+
+    @Test
+    void profileReadFailureRequeuesTheRunWithoutCallingOutOrGuessingATarget() throws Exception {
+        AtomicBoolean failReads = new AtomicBoolean(true);
+        ServiceProfileRepository flaky = new ServiceProfileRepository() {
+            @Override
+            public Optional<ServiceProfile> find(String name) throws IOException {
+                if (failReads.get()) {
+                    throw new IOException("profile store unreachable");
+                }
+                return serviceProfiles.find(name);
+            }
+
+            @Override
+            public List<ServiceProfile> list() throws IOException {
+                return serviceProfiles.list();
+            }
+
+            @Override
+            public void save(ServiceProfile profile) throws IOException {
+                serviceProfiles.save(profile);
+            }
+
+            @Override
+            public Optional<DescriptorArtifact> findDescriptorArtifact(String fingerprint)
+                    throws IOException {
+                return serviceProfiles.findDescriptorArtifact(fingerprint);
+            }
+
+            @Override
+            public void saveDescriptorArtifact(DescriptorArtifact artifact) throws IOException {
+                serviceProfiles.saveDescriptorArtifact(artifact);
+            }
+        };
+        InMemoryWorkflowRunStore store = new InMemoryWorkflowRunStore();
+        WorkflowRunSubmitter submitter = new WorkflowRunSubmitter(store, null, 4);
+        OutboundChannelPolicy allowLoopback = OutboundChannelPolicy.builder()
+                .allowedHosts(Set.of("127.0.0.1"))
+                .build();
+        try (WorkflowRunWorker worker = new WorkflowRunWorker(
+                store, context, null, new WorkflowRunner(allowLoopback),
+                allowLoopback, flaky, null, workerConfig("flaky-profiles", 4, 1))) {
+            assertThatThrownBy(() -> worker.resolvePipelineTarget(ServiceDependency.newBuilder()
+                    .setAlias("echo").setServiceProfile(PROFILE_NAME).build()))
+                    .isInstanceOf(UncheckedIOException.class)
+                    .hasMessageContaining(PROFILE_NAME);
+
+            String jobId = submitPipeline(
+                    submitter, schema, echoPipeline(schema, "echo", "plain"), "hello");
+            assertThat(worker.workOnce()).isTrue();
+            WorkflowRunRecord requeued = store.get(UUID.fromString(jobId)).orElseThrow();
+            assertThat(requeued.status).isEqualTo(WorkflowRunRecord.STATUS_QUEUED);
+            assertThat(requeued.attempt).isEqualTo(1);
+            assertThat(plainCalls.get()).isZero();
         }
     }
 
