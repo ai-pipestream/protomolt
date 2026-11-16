@@ -48,6 +48,23 @@ class HadoopFreeParquetTest {
                     .setField(descriptor.findFieldByName("name"), "isolated")
                     .build();
             byte[] bytes = ParquetEmitter.toBytes(descriptor, List.of(message, message));
+            var provider = java.util.ServiceLoader.load(
+                            ai.protomolt.proto.emit.renderer.RendererProvider.class,
+                            Runner.class.getClassLoader())
+                    .stream()
+                    .map(java.util.ServiceLoader.Provider::get)
+                    .filter(p -> ParquetRendererProvider.PROVIDER_ID.equals(
+                            p.capability().getProviderId()))
+                    .findFirst()
+                    .orElseThrow();
+            var defaultOptions = com.google.protobuf.DynamicMessage.getDefaultInstance(
+                    provider.optionsDescriptor());
+            provider.check(message, defaultOptions);
+            var rendered = new java.io.ByteArrayOutputStream();
+            provider.render(message, defaultOptions, rendered, () -> false);
+            if (rendered.size() <= 100) {
+                throw new AssertionError("Expected rendered Parquet bytes, got " + rendered.size());
+            }
             return bytes.length;
         }
     }

@@ -172,19 +172,11 @@ final class WorkflowSegmentRunner {
                         + "'; the workflow definition changed under the job");
             }
             boolean skipped = entry.path("skipped").asBoolean(false);
-            JsonNode response = entry.get("response");
-            if (skipped || response == null || response.isNull()) {
-                prior.add(new WorkflowRunner.Checkpoint(name, skipped, null));
-                continue;
-            }
             try {
-                prior.add(new WorkflowRunner.Checkpoint(name, false,
-                        context.transcoder().fromJsonDynamic(response.toString(),
-                                step.method().getOutputType())));
-            } catch (MalformedProtobufJsonException e) {
-                throw new CorruptJobException("checkpoint '" + name + "' response is not "
-                        + "valid proto3 JSON for " + step.method().getOutputType().getFullName()
-                        + ": " + e.getMessage());
+                prior.add(WorkflowCheckpointCodec.readCheckpoint(
+                        name, skipped, entry, step.method().getOutputType(), context));
+            } catch (WorkflowCheckpointCodec.CorruptCheckpointException e) {
+                throw new CorruptJobException(e.getMessage());
             }
         }
         return prior;
@@ -234,15 +226,7 @@ final class WorkflowSegmentRunner {
             ObjectNode entry = array.addObject();
             entry.put("name", checkpoint.name());
             entry.put("skipped", checkpoint.skipped());
-            if (checkpoint.response() != null) {
-                String preview = context.transcoder().toJson(checkpoint.response());
-                try {
-                    entry.set("response", context.objectMapper().readTree(preview));
-                } catch (JsonProcessingException e) {
-                    throw new IllegalStateException("could not render the checkpoint for '"
-                            + checkpoint.name() + "' as JSON", e);
-                }
-            }
+            WorkflowCheckpointCodec.writeResponse(entry, checkpoint, context);
         }
         return array.toString();
     }
