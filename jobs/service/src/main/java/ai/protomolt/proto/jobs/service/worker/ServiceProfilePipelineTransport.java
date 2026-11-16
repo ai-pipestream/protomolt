@@ -93,7 +93,8 @@ final class ServiceProfilePipelineTransport implements PipelineTransport, AutoCl
 
         ServiceProfile profile = resolveProfile(dependency);
         ServiceEndpoint endpoint = resolveEndpoint(profile, dependency.getEndpoint());
-        long effectiveDeadlineMs = applyMethodPolicy(profile, method.getFullName(), deadlineMillis);
+        long effectiveDeadlineMs =
+                applyMethodPolicy(profile, profileMethodName(method), deadlineMillis);
         String target = formatTarget(endpoint);
         boolean tls = endpoint.getTransport() == Transport.TRANSPORT_TLS;
         if ((!endpoint.getTrustRef().isBlank() || !endpoint.getClientCertificateRef().isBlank())
@@ -170,6 +171,11 @@ final class ServiceProfilePipelineTransport implements PipelineTransport, AutoCl
         }
         throw new IllegalArgumentException("endpoint '" + requested
                 + "' is not in service profile '" + profile.getName() + "'");
+    }
+
+    /** A method as service profiles name it: {@code package.Service/Method}. */
+    private static String profileMethodName(MethodDescriptor method) {
+        return method.getService().getFullName() + "/" + method.getName();
     }
 
     private static long applyMethodPolicy(ServiceProfile profile, String methodFullName,

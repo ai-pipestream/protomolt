@@ -7,6 +7,8 @@ import ai.protomolt.proto.grpc.policy.OutboundChannelPolicy;
 import ai.protomolt.proto.grpc.profile.FileSystemServiceProfileRepository;
 import ai.protomolt.proto.grpc.profile.ServiceProfileValidation;
 import ai.protomolt.proto.grpc.profile.v1.SchemaSource;
+import ai.protomolt.proto.grpc.profile.v1.MethodPolicy;
+import ai.protomolt.proto.grpc.profile.v1.Operation;
 import ai.protomolt.proto.grpc.profile.v1.ServiceEndpoint;
 import ai.protomolt.proto.grpc.profile.v1.ServiceProfile;
 import ai.protomolt.proto.grpc.profile.v1.SourceKind;
@@ -421,6 +423,35 @@ class PipelineOutboundPolicyTest {
                 return policy;
             }
         };
+    }
+
+    @Test
+    void approvalRequiredMethodPolicyStopsThePipelineCallBeforeConnecting() throws Exception {
+        ServiceProfile base = serviceProfiles.find(PROFILE_NAME).orElseThrow();
+        serviceProfiles.save(base.toBuilder()
+                .addMethodPolicies(MethodPolicy.newBuilder()
+                        .setMethod("jobs.pipeline.policy.EchoService/Echo")
+                        .addOperation(Operation.OPERATION_APPROVAL_REQUIRED)
+                        .setApprovalRequired(true)
+                        .build())
+                .build());
+
+        InMemoryWorkflowRunStore store = new InMemoryWorkflowRunStore();
+        WorkflowRunSubmitter submitter = new WorkflowRunSubmitter(store, null, 4);
+        OutboundChannelPolicy allowLoopback = OutboundChannelPolicy.builder()
+                .allowedHosts(Set.of("127.0.0.1"))
+                .build();
+        try (WorkflowRunWorker worker = new WorkflowRunWorker(
+                store, context, null, new WorkflowRunner(allowLoopback),
+                allowLoopback, serviceProfiles, null, workerConfig("approval-required"))) {
+            String jobId = submitPipeline(submitter, echoPipeline("plain"), "hello");
+            assertThat(worker.workOnce()).isTrue();
+
+            WorkflowRunRecord failed = store.get(UUID.fromString(jobId)).orElseThrow();
+            assertThat(failed.status).isEqualTo(WorkflowRunRecord.STATUS_FAILED);
+            assertThat(failed.error).contains("requires approval");
+            assertThat(plainCalls.get()).isZero();
+        }
     }
 
     private static String submitPipeline(WorkflowRunSubmitter submitter, Pipeline pipeline,

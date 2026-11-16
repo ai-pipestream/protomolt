@@ -1,14 +1,13 @@
 package ai.protomolt.proto.pipeline;
 
+import ai.protomolt.proto.descriptors.MessageFingerprints;
 import ai.protomolt.proto.pipeline.PipelineExecutor.FailureKind;
 import ai.protomolt.proto.pipeline.PipelineExecutor.PipelineExecutionException;
 import ai.protomolt.proto.validate.ProtoValidator;
 import ai.protomolt.proto.validate.ValidationResult;
-import com.google.protobuf.CodedOutputStream;
 import com.google.protobuf.DynamicMessage;
 import com.google.protobuf.InvalidProtocolBufferException;
 import com.google.protobuf.Message;
-import java.io.IOException;
 
 /** Binary-faithful conversion, canonical encoding and declared-rule validation of step values. */
 final class StepValues {
@@ -29,16 +28,7 @@ final class StepValues {
     }
 
     static byte[] canonicalBytes(Message message) {
-        byte[] bytes = new byte[message.getSerializedSize()];
-        CodedOutputStream out = CodedOutputStream.newInstance(bytes);
-        out.useDeterministicSerialization();
-        try {
-            message.writeTo(out);
-            out.checkNoSpaceLeft();
-        } catch (IOException e) {
-            throw new IllegalStateException("in-memory protobuf serialization failed", e);
-        }
-        return bytes;
+        return MessageFingerprints.deterministicBytes(message);
     }
 
     static void validate(DynamicMessage value, String step, String label)

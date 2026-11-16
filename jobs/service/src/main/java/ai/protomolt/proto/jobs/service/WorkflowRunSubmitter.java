@@ -2,6 +2,7 @@ package ai.protomolt.proto.jobs.service;
 
 import ai.protomolt.proto.actions.ActionContext;
 import ai.protomolt.proto.descriptors.DescriptorRegistry;
+import ai.protomolt.proto.descriptors.MessageFingerprints;
 import ai.protomolt.proto.http.json.MalformedProtobufJsonException;
 import ai.protomolt.proto.jobs.service.PipelineJobCoordinator.PipelineDefinitionException;
 import ai.protomolt.proto.jobs.service.events.WorkflowRunEventFactory;
@@ -219,7 +220,7 @@ public final class WorkflowRunSubmitter {
         DynamicMessage canonicalInput;
         try {
             canonicalInput = DynamicMessage.parseFrom(
-                    inputType, PipelineRunCodec.canonicalBytes(input));
+                    inputType, MessageFingerprints.deterministicBytes(input));
         } catch (InvalidProtocolBufferException e) {
             return fail("", "pipeline input cannot be decoded as "
                     + inputType.getFullName() + ": " + e.getMessage());
@@ -242,7 +243,7 @@ public final class WorkflowRunSubmitter {
                 ? explicitName
                 : pipeline.getName();
         record.workflowDefinition = definitionEnvelope.toString();
-        record.input = PipelineRunCodec.renderInputJson(canonicalInput, files);
+        record.input = PipelineCheckpointCodec.renderInputJson(canonicalInput, files);
         record.status = WorkflowRunRecord.STATUS_QUEUED;
         record.maxAttempts = maxAttemptsDefault;
         record.runAfter = Instant.now();

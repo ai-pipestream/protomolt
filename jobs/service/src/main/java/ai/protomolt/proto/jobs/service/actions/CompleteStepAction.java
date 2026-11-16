@@ -103,7 +103,7 @@ public final class CompleteStepAction implements ProtoAction {
                     .build();
         }
         WorkflowRunRecord job = found.get();
-        if (PipelineJobCoordinator.isPipelineJob(job)) {
+        if (isPipelineJob(job)) {
             return executePipelineCompletion(jobId, stepName, response, context);
         }
 
@@ -155,6 +155,18 @@ public final class CompleteStepAction implements ProtoAction {
                 validationError == null ? WorkflowRunEventFactory.stepCheckpoint(job, stepName)
                         : WorkflowRunEventFactory.failed(job, stepName, validationError), validationError),
                 stepName, jobId);
+    }
+
+    private static boolean isPipelineJob(WorkflowRunRecord job) throws ActionException {
+        try {
+            return PipelineJobCoordinator.isPipelineJob(job);
+        } catch (PipelineDefinitionException e) {
+            throw new ActionException("job-corrupt",
+                    "the job's stored pipeline definition is not valid: " + e.getMessage());
+        } catch (IllegalArgumentException e) {
+            throw new ActionException("job-corrupt",
+                    "the job's stored workflow definition is not readable: " + e.getMessage());
+        }
     }
 
     private Message executePipelineCompletion(UUID jobId, String stepName,

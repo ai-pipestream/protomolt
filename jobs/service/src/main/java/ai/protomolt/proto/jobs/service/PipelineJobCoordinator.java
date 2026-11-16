@@ -1,6 +1,7 @@
 package ai.protomolt.proto.jobs.service;
 
 import ai.protomolt.proto.descriptors.DescriptorRegistry;
+import ai.protomolt.proto.descriptors.MessageFingerprints;
 import ai.protomolt.proto.grpc.workflow.v1.StepCompletion;
 import ai.protomolt.proto.http.json.MalformedProtobufJsonException;
 import ai.protomolt.proto.jobs.service.events.WorkflowRunEventFactory;
@@ -8,7 +9,6 @@ import ai.protomolt.proto.jobs.service.store.ParkedCompletion;
 import ai.protomolt.proto.jobs.service.store.WorkflowRunRecord;
 import ai.protomolt.proto.jobs.service.store.WorkflowRunStore;
 import ai.protomolt.proto.jobs.service.store.WorkflowRunStoreException;
-import ai.protomolt.proto.pipeline.PipelineExecutor;
 import ai.protomolt.proto.pipeline.PipelineExecutor.Checkpoint;
 import ai.protomolt.proto.pipeline.PipelineExecutor.Result;
 import ai.protomolt.proto.pipeline.PipelineExecutor.StepOutcome;
@@ -17,6 +17,7 @@ import ai.protomolt.proto.pipeline.v1.Pipeline;
 import ai.protomolt.proto.pipeline.v1.PipelineStep;
 import ai.protomolt.proto.validate.ProtoValidator;
 import ai.protomolt.proto.validate.ValidationResult;
+import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
@@ -156,7 +157,7 @@ public final class PipelineJobCoordinator {
     public static List<Checkpoint> readCheckpoints(WorkflowRunRecord job, Definition definition) {
         Objects.requireNonNull(job, "job");
         Objects.requireNonNull(definition, "definition");
-        return PipelineRunCodec.readCheckpoints(job, definition);
+        return PipelineCheckpointCodec.readCheckpoints(job, definition);
     }
 
     /** Encodes an ordered checkpoint prefix for persistence on {@code workflow_run.checkpoints}. */
@@ -164,14 +165,14 @@ public final class PipelineJobCoordinator {
                                           List<FileDescriptor> files) {
         Objects.requireNonNull(checkpoints, "checkpoints");
         Objects.requireNonNull(files, "files");
-        return PipelineRunCodec.writeCheckpoints(checkpoints, files);
+        return PipelineCheckpointCodec.writeCheckpoints(checkpoints, files);
     }
 
     /** Encodes a completed pipeline result as a JSON object for {@code workflow_run.result}. */
     public static String writeResult(Result result, List<FileDescriptor> files) {
         Objects.requireNonNull(result, "result");
         Objects.requireNonNull(files, "files");
-        return PipelineRunCodec.writeResult(result, files);
+        return PipelineCheckpointCodec.writeResult(result, files);
     }
 
     /**
@@ -267,71 +268,17 @@ public final class PipelineJobCoordinator {
             return new ParkedCompletion.WrongState(job.status, job.outstandingStep);
         }
 
-        PipelineStep step = findStep(definition.pipeline(), stepName);
-        if (step == null) {
-            throw new IllegalArgumentException(
-                    "the pipeline has no step named '" + stepName + "'");
-        }
-        if (!step.hasGrpcCall()
-                || step.getGrpcCall().getCompletion() != StepCompletion.STEP_COMPLETION_EXTERNAL) {
-            throw new IllegalArgumentException(
-                    "pipeline step '" + stepName + "' is not an external-completion step");
-        }
-
+        PipelineStep step = requireExternalStep(definition.pipeline(), stepName);
         MethodDescriptor method = PipelineRunCodec.resolveMethod(
                 definition.files(), step.getGrpcCall().getMethod());
         Descriptor outputType = method.getOutputType();
         EdgeCardinality cardinality = step.getGrpcCall().getOutputCardinality();
-        if (cardinality == EdgeCardinality.EDGE_CARDINALITY_ONE && responses.size() != 1) {
-            throw new IllegalArgumentException("external pipeline step '" + stepName
-                    + "' expects exactly 1 response; got " + responses.size());
-        }
-        int limit = definition.pipeline().getMaxStreamMessages();
-        if (responses.size() > limit) {
-            throw new IllegalArgumentException("external pipeline step '" + stepName
-                    + "' responses (" + responses.size()
-                    + ") exceed max_stream_messages " + limit);
-        }
-
-        List<DynamicMessage> canonicalResponses = new ArrayList<>(responses.size());
-        for (Message response : responses) {
-            Objects.requireNonNull(response, "response element");
-            if (!PipelineRunCodec.matchesDescriptor(response.getDescriptorForType(), outputType)) {
-                throw new IllegalArgumentException("external pipeline step '" + stepName
-                        + "' expects " + outputType.getFullName() + "; got "
-                        + response.getDescriptorForType().getFullName());
-            }
-            try {
-                canonicalResponses.add(DynamicMessage.parseFrom(
-                        outputType, PipelineRunCodec.canonicalBytes(response)));
-            } catch (InvalidProtocolBufferException e) {
-                throw new IllegalArgumentException("external pipeline step '" + stepName
-                        + "' response cannot be decoded as " + outputType.getFullName(), e);
-            }
-        }
-
-        String validationError = null;
-        if (step.getGrpcCall().getValidateResponse()) {
-            ProtoValidator validator = ProtoValidator.forMessageType(outputType);
-            StringBuilder violations = new StringBuilder();
-            for (DynamicMessage response : canonicalResponses) {
-                ValidationResult validation = validator.validate(response);
-                if (!validation.valid()) {
-                    for (ValidationResult.Violation violation : validation.violations()) {
-                        if (!violations.isEmpty()) {
-                            violations.append("; ");
-                        }
-                        violations.append(violation.path())
-                                .append(": ")
-                                .append(violation.message());
-                    }
-                }
-            }
-            if (!violations.isEmpty()) {
-                validationError = "VALIDATION: complete-step response failed validation: "
-                        + violations;
-            }
-        }
+        List<DynamicMessage> canonicalResponses = canonicalizeResponses(
+                responses, cardinality, definition.pipeline().getMaxStreamMessages(),
+                outputType, stepName);
+        String validationError = step.getGrpcCall().getValidateResponse()
+                ? validateResponses(outputType, canonicalResponses)
+                : null;
 
         Checkpoint candidate = new Checkpoint(
                 definition.pipelineFingerprint(),
@@ -340,7 +287,8 @@ public final class PipelineJobCoordinator {
                 cardinality,
                 canonicalResponses,
                 List.of());
-        String entryJson = PipelineRunCodec.writeCheckpointEntry(candidate, definition.files());
+        String entryJson = PipelineCheckpointCodec.writeCheckpointEntry(
+                candidate, definition.files());
         return store.completeParkedStep(
                 jobId,
                 stepName,
@@ -371,7 +319,22 @@ public final class PipelineJobCoordinator {
             return new ParkedCompletion.WrongState(job.status, job.outstandingStep);
         }
 
-        PipelineStep step = findStep(definition.pipeline(), stepName);
+        PipelineStep step = requireExternalStep(definition.pipeline(), stepName);
+        MethodDescriptor method = PipelineRunCodec.resolveMethod(
+                definition.files(), step.getGrpcCall().getMethod());
+        List<DynamicMessage> parsed = PipelineExternalCompletionParser.parseResponses(
+                response,
+                step.getGrpcCall().getOutputCardinality(),
+                method.getOutputType(),
+                definition.pipeline().getMaxStreamMessages(),
+                stepName,
+                definition.files(),
+                extraRegistry);
+        return completeStep(jobId, stepName, parsed);
+    }
+
+    private static PipelineStep requireExternalStep(Pipeline pipeline, String stepName) {
+        PipelineStep step = findStep(pipeline, stepName);
         if (step == null) {
             throw new IllegalArgumentException(
                     "the pipeline has no step named '" + stepName + "'");
@@ -381,17 +344,62 @@ public final class PipelineJobCoordinator {
             throw new IllegalArgumentException(
                     "pipeline step '" + stepName + "' is not an external-completion step");
         }
-        MethodDescriptor method = PipelineRunCodec.resolveMethod(
-                definition.files(), step.getGrpcCall().getMethod());
-        List<DynamicMessage> parsed = PipelineRunCodec.parseExternalJsonResponses(
-                response,
-                step.getGrpcCall().getOutputCardinality(),
-                method.getOutputType(),
-                definition.pipeline().getMaxStreamMessages(),
-                stepName,
-                definition.files(),
-                extraRegistry);
-        return completeStep(jobId, stepName, parsed);
+        return step;
+    }
+
+    private static List<DynamicMessage> canonicalizeResponses(List<? extends Message> responses,
+                                                              EdgeCardinality cardinality,
+                                                              int limit,
+                                                              Descriptor outputType,
+                                                              String stepName) {
+        if (cardinality == EdgeCardinality.EDGE_CARDINALITY_ONE && responses.size() != 1) {
+            throw new IllegalArgumentException("external pipeline step '" + stepName
+                    + "' expects exactly 1 response; got " + responses.size());
+        }
+        if (responses.size() > limit) {
+            throw new IllegalArgumentException("external pipeline step '" + stepName
+                    + "' responses (" + responses.size()
+                    + ") exceed max_stream_messages " + limit);
+        }
+        List<DynamicMessage> canonical = new ArrayList<>(responses.size());
+        for (Message response : responses) {
+            Objects.requireNonNull(response, "response element");
+            if (!PipelineRunCodec.matchesDescriptor(response.getDescriptorForType(), outputType)) {
+                throw new IllegalArgumentException("external pipeline step '" + stepName
+                        + "' expects " + outputType.getFullName() + "; got "
+                        + response.getDescriptorForType().getFullName());
+            }
+            try {
+                canonical.add(DynamicMessage.parseFrom(
+                        outputType, MessageFingerprints.deterministicBytes(response)));
+            } catch (InvalidProtocolBufferException e) {
+                throw new IllegalArgumentException("external pipeline step '" + stepName
+                        + "' response cannot be decoded as " + outputType.getFullName(), e);
+            }
+        }
+        return canonical;
+    }
+
+    private static String validateResponses(Descriptor outputType,
+                                            List<DynamicMessage> canonicalResponses) {
+        ProtoValidator validator = ProtoValidator.forMessageType(outputType);
+        StringBuilder violations = new StringBuilder();
+        for (DynamicMessage response : canonicalResponses) {
+            ValidationResult validation = validator.validate(response);
+            if (!validation.valid()) {
+                for (ValidationResult.Violation violation : validation.violations()) {
+                    if (!violations.isEmpty()) {
+                        violations.append("; ");
+                    }
+                    violations.append(violation.path())
+                            .append(": ")
+                            .append(violation.message());
+                }
+            }
+        }
+        return violations.isEmpty()
+                ? null
+                : "VALIDATION: complete-step response failed validation: " + violations;
     }
 
     private static PipelineStep findStep(Pipeline pipeline, String stepName) {
@@ -421,8 +429,9 @@ public final class PipelineJobCoordinator {
                     }
                 }
             }
-        } catch (Exception e) {
-            return false;
+        } catch (JsonProcessingException e) {
+            throw new PipelineDefinitionException(stepName,
+                    "stored checkpoints are not readable JSON: " + e.getMessage(), e);
         }
         return false;
     }
