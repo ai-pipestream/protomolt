@@ -5,9 +5,14 @@ import ai.protomolt.proto.registry.ConfigSupport;
 import ai.protomolt.proto.registry.InvalidConfigException;
 import ai.protomolt.proto.registry.RegistryStoreException;
 import ai.protomolt.proto.repo.external.v1.ExternalSystemBinding;
+import ai.protomolt.proto.validate.ProtoValidator;
+import ai.protomolt.proto.validate.ValidationResult;
+import com.google.protobuf.Descriptors.Descriptor;
+import com.google.protobuf.DynamicMessage;
 import com.google.protobuf.InvalidProtocolBufferException;
 import com.google.protobuf.util.JsonFormat;
 import io.grpc.Status;
+import java.util.stream.Collectors;
 
 /**
  * The optional config-lane copy of binding revisions. The canonical record is the binding
@@ -16,6 +21,8 @@ import io.grpc.Status;
  * mirroring do nothing.
  */
 final class ExternalBindingConfigLane {
+
+    private static final ProtoValidator VALIDATOR = ProtoValidator.create();
 
     private final ConfigDocumentStore configStore;
 
@@ -29,24 +36,66 @@ final class ExternalBindingConfigLane {
     }
 
     /**
-     * Checks the config-lane envelope before the canonical save, so a binding the config
-     * lane would refuse is never committed. Writes nothing.
+     * Checks, before the canonical save, that the config lane will take this binding, so a
+     * binding the lane would refuse is never committed. Writes nothing.
+     *
+     * <p>The check is made on the protobuf itself: the binding's bytes are read with the type
+     * the lane serves, and that message is validated against the lane's own rules. Nothing is
+     * turned into JSON to be read back.
      */
     void gate(ExternalSystemBinding binding) {
         if (configStore == null) {
             return;
         }
+        String typeName = ExternalSystemBinding.getDescriptor().getFullName();
+        Descriptor laneType;
         try {
-            ConfigSupport.gate(configStore, toConfigEnvelopeJson(binding));
-        } catch (InvalidConfigException invalid) {
-            throw Status.INVALID_ARGUMENT
-                    .withDescription("Config-lane gate rejected binding: " + invalid.getMessage())
-                    .withCause(invalid)
-                    .asRuntimeException();
+            laneType = ConfigSupport.resolveType(configStore, typeName)
+                    .orElseThrow(() -> Status.INVALID_ARGUMENT
+                            .withDescription("Config-lane gate rejected binding: type '" + typeName
+                                    + "' is not served by the config lane; register its schema first")
+                            .asRuntimeException());
         } catch (RegistryStoreException storeFailure) {
             throw Status.UNAVAILABLE
                     .withDescription("ConfigDocumentStore unavailable: " + storeFailure.getMessage())
                     .withCause(storeFailure)
+                    .asRuntimeException();
+        }
+        requireAdmissible(binding, laneType);
+    }
+
+    /**
+     * Refuses a binding the lane's schema cannot hold in full or whose rules it breaks. A field
+     * the lane's type does not declare would be dropped from the mirrored document, so it is
+     * refused instead of silently lost.
+     */
+    static void requireAdmissible(ExternalSystemBinding binding, Descriptor laneType) {
+        DynamicMessage asLaneType;
+        try {
+            asLaneType = DynamicMessage.parseFrom(laneType, binding.toByteString());
+        } catch (InvalidProtocolBufferException unreadable) {
+            throw Status.INVALID_ARGUMENT
+                    .withDescription("Config-lane gate rejected binding: it is not a valid "
+                            + laneType.getFullName() + " in the config lane's schema: "
+                            + unreadable.getMessage())
+                    .withCause(unreadable)
+                    .asRuntimeException();
+        }
+        if (!asLaneType.getUnknownFields().asMap().isEmpty()) {
+            throw Status.INVALID_ARGUMENT
+                    .withDescription("Config-lane gate rejected binding: the config lane's schema for "
+                            + laneType.getFullName() + " does not declare field number(s) "
+                            + asLaneType.getUnknownFields().asMap().keySet()
+                            + "; register the current schema first")
+                    .asRuntimeException();
+        }
+        ValidationResult validated = VALIDATOR.validate(asLaneType);
+        if (!validated.valid()) {
+            throw Status.INVALID_ARGUMENT
+                    .withDescription("Config-lane gate rejected binding: "
+                            + validated.violations().stream()
+                                    .map(violation -> violation.path() + ": " + violation.message())
+                                    .collect(Collectors.joining("; ")))
                     .asRuntimeException();
         }
     }
@@ -80,6 +129,10 @@ final class ExternalBindingConfigLane {
         }
     }
 
+    /**
+     * The config lane stores JSON documents, so the mirror is written as one. This is output
+     * only: the canonical binding is the protobuf document, and nothing reads the mirror back.
+     */
     private static String toConfigEnvelopeJson(ExternalSystemBinding binding) {
         try {
             String configJson = JsonFormat.printer()
