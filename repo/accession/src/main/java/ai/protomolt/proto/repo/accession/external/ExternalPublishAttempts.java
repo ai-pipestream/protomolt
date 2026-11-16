@@ -63,6 +63,7 @@ final class ExternalPublishAttempts {
         int attemptNumber = priorOp.getAttemptsCount() + 1;
         Timestamp startedAt = timestamp(clock.instant());
 
+        final boolean[] fenced = new boolean[] {false};
         ExternalPublicationLedger preUpdated = ledgers.updateLedgerWithCas(
                 ledgerAddr,
                 intent.getSourceAddress(),
@@ -76,26 +77,12 @@ final class ExternalPublishAttempts {
                         return current;
                     }
                     if (isSourceRevisionFenced(current, intent.getSourceRevision())) {
-                        ExternalPublicationAttempt fencedAttempt = ExternalPublicationAttempt.newBuilder()
-                                .setAttemptNumber(attemptNumber)
-                                .setTrigger(ExternalAttemptTrigger.EXTERNAL_ATTEMPT_TRIGGER_RETRY)
-                                .setOutcome(ExternalPublicationOutcome.EXTERNAL_PUBLICATION_OUTCOME_FAILED)
-                                .setStartedAt(startedAt)
-                                .setFinishedAt(startedAt)
-                                .setDiagnosticCode("FENCED_BY_NEWER_STATE")
-                                .setDiagnosticMessage(
-                                        "Retry fenced because a newer source revision, tombstone, or purge superseded revision "
-                                                + intent.getSourceRevision())
-                                .build();
-                        ExternalPublicationOperationRecord failedOp = latestOp.toBuilder()
-                                .setOutcome(ExternalPublicationOutcome.EXTERNAL_PUBLICATION_OUTCOME_FAILED)
-                                .setPendingPhase(ExternalPendingPhase.EXTERNAL_PENDING_PHASE_UNSPECIFIED)
-                                .addAttempts(fencedAttempt)
-                                .setFailureCode("FENCED_BY_NEWER_STATE")
-                                .setFailureMessage(fencedAttempt.getDiagnosticMessage())
-                                .setUpdatedAt(startedAt)
-                                .build();
-                        return replaceOperation(current, failedOp);
+                        // A newer revision, tombstone or purge fences this one, so it is not
+                        // sent again. It is not declared failed either: an earlier attempt
+                        // was dispatched and nobody knows what the provider did with it.
+                        // The operation stays as it is for reconciliation to settle.
+                        fenced[0] = true;
+                        return current;
                     }
                     ExternalPublicationAttempt retryDispatch = ExternalPublicationAttempt.newBuilder()
                             .setAttemptNumber(attemptNumber)
@@ -114,7 +101,7 @@ final class ExternalPublishAttempts {
 
         ExternalPublicationOperationRecord latestAfterPre =
                 findOperation(preUpdated, operationId).orElseThrow();
-        if (isTerminalOutcome(latestAfterPre.getOutcome())) {
+        if (isTerminalOutcome(latestAfterPre.getOutcome()) || fenced[0]) {
             return new ExternalPublicationCoordinator.OperationResult(
                     latestAfterPre, optionalCurrentLink(preUpdated), false, false);
         }

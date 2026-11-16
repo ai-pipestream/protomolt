@@ -32,6 +32,7 @@ import ai.protomolt.proto.repo.v2.PurgeDocumentRequest;
 import com.google.protobuf.Message;
 import com.google.protobuf.Timestamp;
 import java.time.Clock;
+import java.util.HashSet;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
@@ -422,8 +423,15 @@ final class ExternalReceiptSettlement {
 
     private static boolean isDeletionTarget(
             ExternalLink link, ExternalPublicationOperationRecord deletedOp) {
-        return link.getExternalObjectId().equals(deletedOp.getIntent().getExternalObjectId())
-                && link.getBindingRevision() == deletedOp.getIntent().getBindingRevision();
+        ExternalPublicationIntent deletion = deletedOp.getIntent();
+        // A tombstone deletion removes what was published up to that tombstone. Anything
+        // published for a later revision came after it and is not what it deleted. A purge
+        // deletion (source revision 0) is for every revision.
+        boolean publishedBeforeDeletion = deletion.getSourceRevision() == 0L
+                || link.getSourceRevision() <= deletion.getSourceRevision();
+        return publishedBeforeDeletion
+                && link.getExternalObjectId().equals(deletion.getExternalObjectId())
+                && link.getBindingRevision() == deletion.getBindingRevision();
     }
 
     private static ExternalLink retired(ExternalLink link,
@@ -436,6 +444,41 @@ final class ExternalReceiptSettlement {
                 .build();
     }
 
+    /**
+     * True when the ledger records nothing still owed: no operation is pending, and every
+     * external object any link names has verified deletion evidence. The ledger is the only
+     * record of an object's identity and of what is owed for it, so it is purged with its
+     * source only once this holds.
+     */
+    static boolean nothingOutstanding(ExternalPublicationLedger ledger) {
+        for (ExternalPublicationOperationRecord operation : ledger.getOperationsList()) {
+            if (!isTerminalOutcome(operation.getOutcome())) {
+                return false;
+            }
+        }
+        Set<String> deletedObjects = new HashSet<>();
+        for (ExternalLink link : ledger.getHistoricalLinksList()) {
+            if (link.getProjectionLifecycle()
+                    == ExternalProjectionLifecycle.EXTERNAL_PROJECTION_LIFECYCLE_DELETED) {
+                deletedObjects.add(objectKey(link));
+            }
+        }
+        if (ledger.hasCurrentLink()) {
+            return false;
+        }
+        for (ExternalLink link : ledger.getHistoricalLinksList()) {
+            if (!deletedObjects.contains(objectKey(link))) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /** One external object: an ID within the dataset and namespace of a binding revision. */
+    private static String objectKey(ExternalLink link) {
+        return link.getBindingRevision() + ":" + link.getExternalObjectId();
+    }
+
     boolean maybePurgeLedgerIfEligible(
             NodeAddress ledgerAddr,
             ExternalPublicationLedger ledger,
@@ -443,7 +486,8 @@ final class ExternalReceiptSettlement {
         if (!ledger.getSourcePurged()
                 || settledOp.getOutcome() != ExternalPublicationOutcome.EXTERNAL_PUBLICATION_OUTCOME_DELETED
                 || settledOp.getBindingSnapshot().getRetentionPolicy()
-                        != ExternalRetentionPolicy.EXTERNAL_RETENTION_POLICY_PURGE_WITH_SOURCE) {
+                        != ExternalRetentionPolicy.EXTERNAL_RETENTION_POLICY_PURGE_WITH_SOURCE
+                || !nothingOutstanding(ledger)) {
             return false;
         }
         String purgeKey = "ext-ledger-purge:" + ledger.getBindingId() + ":" + ledger.getLastPurgeId();

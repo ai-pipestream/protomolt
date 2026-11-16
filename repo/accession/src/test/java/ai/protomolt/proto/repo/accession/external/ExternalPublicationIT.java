@@ -570,6 +570,59 @@ class ExternalPublicationIT {
     }
 
     @Test
+    void retryingAFencedOperationWithAnUnknownOutcomeKeepsItReconcilable(
+            @TempDir Path tempDir) throws Exception {
+        SimulatedManagedSearchProvider provider = new SimulatedManagedSearchProvider();
+        try (Harness h = Harness.boot(tempDir, provider)) {
+            h.saveActiveBinding(
+                    "tenant-alpha",
+                    "rust-search",
+                    "search-profile-v1",
+                    "ingest",
+                    "corpus-main",
+                    "ns-alpha",
+                    ExternalRetentionPolicy.EXTERNAL_RETENTION_POLICY_RETAIN_HISTORY,
+                    "op-bind-1");
+            NodeAddress doc = sourceAddress("tenant-alpha", "doc-fenced-retry");
+            h.saveSourceDocument("save-fr-1", doc, 0L, "Revision one", "alice");
+            h.saveSourceDocument("save-fr-2", doc, 1L, "Revision two", "alice");
+
+            // Revision 1 commits at the provider, and the reply is lost.
+            provider.nextExecuteBehavior = ctx -> {
+                provider.recordPublishedSilently(ctx, 1L, 101L, 15L, SHA_MANIFEST);
+                return new ExternalProviderGateway.ProviderCallResult.Unresolved(
+                        "DEADLINE_EXCEEDED", "Transport deadline expired after commit");
+            };
+            ExternalPublicationCoordinator.PublishRequest r1 =
+                    new ExternalPublicationCoordinator.PublishRequest(
+                            "op-fr-r1", doc, 1L, "rust-search", 1L, "ext-fr", null, null);
+            assertThat(h.coordinator.publish(r1).operation().getOutcome())
+                    .isEqualTo(ExternalPublicationOutcome.EXTERNAL_PUBLICATION_OUTCOME_PENDING);
+
+            // Revision 2 is published, which fences revision 1.
+            assertThat(h.coordinator.publish(new ExternalPublicationCoordinator.PublishRequest(
+                            "op-fr-r2", doc, 2L, "rust-search", 1L, "ext-fr", null, null))
+                    .operation().getOutcome())
+                    .isEqualTo(ExternalPublicationOutcome.EXTERNAL_PUBLICATION_OUTCOME_CONFIRMED);
+            int callsBeforeRetry = provider.executeCalls.get();
+
+            // Retrying revision 1 must not send it again, and must not declare it failed:
+            // nobody knows yet what the provider did with it.
+            ExternalPublicationCoordinator.OperationResult retried = h.coordinator.publish(r1);
+            assertThat(provider.executeCalls.get()).isEqualTo(callsBeforeRetry);
+            assertThat(retried.operation().getOutcome())
+                    .isEqualTo(ExternalPublicationOutcome.EXTERNAL_PUBLICATION_OUTCOME_PENDING);
+
+            // So reconciliation can still fetch the receipt and record what happened.
+            ExternalPublicationCoordinator.OperationResult reconciled =
+                    h.coordinator.reconcileOperation(doc, "rust-search", "op-fr-r1", false);
+            assertThat(reconciled.operation().getOutcome())
+                    .isEqualTo(ExternalPublicationOutcome.EXTERNAL_PUBLICATION_OUTCOME_CONFIRMED);
+            assertThat(reconciled.currentLink().orElseThrow().getSourceRevision()).isEqualTo(2L);
+        }
+    }
+
+    @Test
     void sameIntentRetryIsIdempotentWhileAlteredIntentUnderSameOperationKeyRefusesConflict(
             @TempDir Path tempDir) throws Exception {
         SimulatedManagedSearchProvider provider = new SimulatedManagedSearchProvider();

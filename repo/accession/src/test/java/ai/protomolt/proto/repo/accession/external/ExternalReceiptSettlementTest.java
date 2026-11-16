@@ -211,4 +211,70 @@ class ExternalReceiptSettlementTest {
                 assertThat(old.getProjectionLifecycle()).isEqualTo(
                         ExternalProjectionLifecycle.EXTERNAL_PROJECTION_LIFECYCLE_SUPERSEDED));
     }
+
+    @Test
+    void aDeletionFromBeforeARepublicationDoesNotRetireTheNewerPublication() {
+        // Deleted at tombstone revision 2; the reply was lost. The source was then restored
+        // and published again at revision 3 under the same object ID and binding.
+        ExternalPublicationOperationRecord deleteAtR2 = operation("op-del-r2",
+                ExternalPublicationAction.EXTERNAL_PUBLICATION_ACTION_DELETE, "object-a", 1L, 2L);
+        ExternalPublicationLedger republished = ExternalPublicationLedger.newBuilder()
+                .setTombstonedAtSourceRevision(2L).setHighestFencedSourceRevision(3L)
+                .setCurrentLink(link("object-a", 1L, 3L,
+                        ExternalProjectionLifecycle.EXTERNAL_PROJECTION_LIFECYCLE_ACTIVE))
+                .addHistoricalLinks(link("object-a", 1L, 1L,
+                        ExternalProjectionLifecycle.EXTERNAL_PROJECTION_LIFECYCLE_DELETION_PENDING))
+                .addOperations(deleteAtR2)
+                .build();
+
+        ExternalPublicationLedger after = deleted(republished, deleteAtR2);
+        // Revision 3 was published after that deletion ran: it is still live and current.
+        assertThat(after.getCurrentLink().getSourceRevision()).isEqualTo(3L);
+        assertThat(after.getCurrentLink().getProjectionLifecycle())
+                .isEqualTo(ExternalProjectionLifecycle.EXTERNAL_PROJECTION_LIFECYCLE_ACTIVE);
+        // The revision-1 projection is what the deletion removed.
+        assertThat(after.getHistoricalLinksList()).singleElement().satisfies(old -> {
+            assertThat(old.getSourceRevision()).isEqualTo(1L);
+            assertThat(old.getProjectionLifecycle())
+                    .isEqualTo(ExternalProjectionLifecycle.EXTERNAL_PROJECTION_LIFECYCLE_DELETED);
+        });
+    }
+
+    @Test
+    void aPurgedLedgerIsKeptWhileAnyExternalObjectOrOperationIsOutstanding() {
+        ExternalPublicationOperationRecord deleteB = operation("op-del-b",
+                ExternalPublicationAction.EXTERNAL_PUBLICATION_ACTION_DELETE, "object-b", 1L, 0L)
+                .toBuilder()
+                .setOutcome(ExternalPublicationOutcome.EXTERNAL_PUBLICATION_OUTCOME_DELETED)
+                .build();
+        ExternalLink deletedB = link("object-b", 1L, 2L,
+                ExternalProjectionLifecycle.EXTERNAL_PROJECTION_LIFECYCLE_DELETED);
+        ExternalPublicationLedger.Builder purged = ExternalPublicationLedger.newBuilder()
+                .setSourcePurged(true).setLastPurgeId("purge-1")
+                .addHistoricalLinks(deletedB).addOperations(deleteB);
+
+        // Everything recorded has been deleted: nothing is owed.
+        assertThat(ExternalReceiptSettlement.nothingOutstanding(purged.build())).isTrue();
+
+        // Object A was published for an earlier revision and never deleted.
+        assertThat(ExternalReceiptSettlement.nothingOutstanding(purged.clone()
+                .addHistoricalLinks(link("object-a", 1L, 1L,
+                        ExternalProjectionLifecycle.EXTERNAL_PROJECTION_LIFECYCLE_SUPERSEDED))
+                .build())).isFalse();
+        // An earlier projection of the same object the deletion removed is not owed anything.
+        assertThat(ExternalReceiptSettlement.nothingOutstanding(purged.clone()
+                .addHistoricalLinks(link("object-b", 1L, 1L,
+                        ExternalProjectionLifecycle.EXTERNAL_PROJECTION_LIFECYCLE_SUPERSEDED))
+                .build())).isTrue();
+        // A projection still current, or an operation still pending, is outstanding.
+        assertThat(ExternalReceiptSettlement.nothingOutstanding(purged.clone()
+                .setCurrentLink(link("object-c", 1L, 3L,
+                        ExternalProjectionLifecycle.EXTERNAL_PROJECTION_LIFECYCLE_DELETION_PENDING))
+                .build())).isFalse();
+        assertThat(ExternalReceiptSettlement.nothingOutstanding(purged.clone()
+                .addOperations(operation("op-pending",
+                        ExternalPublicationAction.EXTERNAL_PUBLICATION_ACTION_DELETE,
+                        "object-d", 1L, 0L))
+                .build())).isFalse();
+    }
 }
