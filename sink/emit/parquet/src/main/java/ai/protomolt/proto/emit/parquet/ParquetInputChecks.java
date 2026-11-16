@@ -1,0 +1,306 @@
+package ai.protomolt.proto.emit.parquet;
+
+import ai.protomolt.proto.emit.parquet.v1.ParquetRendererOptions;
+import ai.protomolt.proto.emit.renderer.RenderFailure;
+import ai.protomolt.proto.emit.renderer.RendererProvider.Cancellation;
+import ai.protomolt.proto.projection.MessageProjection;
+import ai.protomolt.proto.validate.ProtoValidator;
+import ai.protomolt.proto.validate.RuleCompilationException;
+import ai.protomolt.proto.validate.RuleEvaluationException;
+import ai.protomolt.proto.validate.ValidationResult;
+import com.google.protobuf.Descriptors.Descriptor;
+import com.google.protobuf.Descriptors.EnumValueDescriptor;
+import com.google.protobuf.Descriptors.FieldDescriptor;
+import com.google.protobuf.Message;
+import java.util.ArrayDeque;
+import java.util.ArrayList;
+import java.util.Deque;
+import java.util.List;
+import java.util.Set;
+
+/**
+ * Fail-closed input and row checks shared by every {@link ParquetRowMode}: row schema and selected
+ * columns, unknown wire fields, unrecognized enum values in emitted columns, and declared
+ * constraint/CEL rules.
+ */
+final class ParquetInputChecks {
+    static final String ANY_FULL_NAME = "google.protobuf.Any";
+    static final int MAX_MESSAGE_WALK_DEPTH = 128;
+
+    private ParquetInputChecks() {}
+
+    static void verifyFieldsCompatible(Descriptor expected, Descriptor actual)
+            throws RenderFailure {
+        for (FieldDescriptor expectedField : expected.getFields()) {
+            FieldDescriptor actualField = actual.findFieldByNumber(expectedField.getNumber());
+            if (actualField == null
+                    || !actualField.getName().equals(expectedField.getName())
+                    || actualField.getType() != expectedField.getType()
+                    || actualField.isRepeated() != expectedField.isRepeated()
+                    || actualField.isMapField() != expectedField.isMapField()) {
+                throw new RenderFailure(
+                        RenderFailure.Kind.UNSUPPORTED,
+                        "Source descriptor '" + actual.getFullName()
+                                + "' is structurally incompatible on field '"
+                                + expectedField.getName() + "' (#" + expectedField.getNumber()
+                                + ")");
+            }
+            if (expectedField.getJavaType() == FieldDescriptor.JavaType.MESSAGE
+                    && !actualField.getMessageType().getFullName()
+                            .equals(expectedField.getMessageType().getFullName())) {
+                throw new RenderFailure(
+                        RenderFailure.Kind.UNSUPPORTED,
+                        "Source descriptor '" + actual.getFullName()
+                                + "' differs in message type for field '"
+                                + expectedField.getName() + "'");
+            }
+        }
+    }
+
+    static void validateRowSchemaAndColumns(
+            Descriptor rowDescriptor, Set<String> selectedColumns) throws RenderFailure {
+        if (rowDescriptor.getFields().isEmpty()) {
+            throw new RenderFailure(
+                    RenderFailure.Kind.UNSUPPORTED,
+                    "Empty message schema '" + rowDescriptor.getFullName()
+                            + "' has zero columns and cannot be rendered as Parquet");
+        }
+        List<FieldDescriptor> topFields;
+        if (selectedColumns.isEmpty()) {
+            topFields = rowDescriptor.getFields();
+        } else {
+            topFields = new ArrayList<>(selectedColumns.size());
+            for (String column : selectedColumns) {
+                FieldDescriptor field = rowDescriptor.findFieldByName(column);
+                if (field == null) {
+                    throw new RenderFailure(
+                            RenderFailure.Kind.INVALID,
+                            "Unknown column '" + column + "' on row schema '"
+                                    + rowDescriptor.getFullName() + "'");
+                }
+                topFields.add(field);
+            }
+            if (topFields.isEmpty()) {
+                throw new RenderFailure(
+                        RenderFailure.Kind.INVALID,
+                        "Selected column list produced zero columns on '"
+                                + rowDescriptor.getFullName() + "'");
+            }
+        }
+
+        Deque<String> ancestry = new ArrayDeque<>();
+        ancestry.push(rowDescriptor.getFullName());
+        for (FieldDescriptor field : topFields) {
+            inspectFieldSchema(field, field.getName(), ancestry);
+        }
+        ancestry.pop();
+
+        try {
+            ProtoParquetSchemas.schema(
+                    rowDescriptor, ProtoParquetSchemas.FieldIdResolver.NONE, selectedColumns);
+        } catch (IllegalArgumentException schemaFailure) {
+            throw new RenderFailure(
+                    RenderFailure.Kind.UNSUPPORTED, schemaFailure.getMessage(), schemaFailure);
+        }
+    }
+
+    static void inspectFieldSchema(
+            FieldDescriptor field, String path, Deque<String> ancestry) throws RenderFailure {
+        if (field.getType() == FieldDescriptor.Type.GROUP) {
+            throw new RenderFailure(
+                    RenderFailure.Kind.UNSUPPORTED,
+                    "Proto2 group field '" + path + "' is not supported for Parquet");
+        }
+        if (field.isMapField()) {
+            FieldDescriptor valueField = field.getMessageType().findFieldByName("value");
+            inspectFieldSchema(valueField, path + ".value", ancestry);
+            return;
+        }
+        if (field.getJavaType() != FieldDescriptor.JavaType.MESSAGE) {
+            return;
+        }
+        Descriptor nested = field.getMessageType();
+        String fullName = nested.getFullName();
+        if (ANY_FULL_NAME.equals(fullName)) {
+            throw new RenderFailure(
+                    RenderFailure.Kind.UNSUPPORTED,
+                    "Opaque google.protobuf.Any field '" + path
+                            + "' cannot be rendered directly to Parquet; select an unpacked Any "
+                            + "occurrence source, exclude the column via ParquetRendererOptions."
+                            + "columns, or configure a declared MessageProjection profile");
+        }
+        if (ProtoParquetSchemas.TIMESTAMP.equals(fullName)
+                || ProtoParquetSchemas.JSON_TYPES.contains(fullName)) {
+            return;
+        }
+        if (ancestry.contains(fullName)) {
+            throw new RenderFailure(
+                    RenderFailure.Kind.UNSUPPORTED,
+                    "Recursive message schema at '" + path + "' ("
+                            + String.join(" -> ", ancestry.reversed()) + " -> " + fullName
+                            + ") cannot be rendered as a columnar Parquet file");
+        }
+        if (nested.getFields().isEmpty()) {
+            throw new RenderFailure(
+                    RenderFailure.Kind.UNSUPPORTED,
+                    "Empty nested message schema '" + fullName + "' at '" + path
+                            + "' has zero columns and cannot be rendered as Parquet");
+        }
+        ancestry.push(fullName);
+        for (FieldDescriptor child : nested.getFields()) {
+            inspectFieldSchema(child, path + "." + child.getName(), ancestry);
+        }
+        ancestry.pop();
+    }
+
+    static void requireNoUnknownWireFields(Message root, Cancellation cancellation)
+            throws RenderFailure {
+        record Frame(Message message, int depth) {}
+        Deque<Frame> stack = new ArrayDeque<>();
+        stack.push(new Frame(root, 0));
+        while (!stack.isEmpty()) {
+            cancellation.check();
+            Frame frame = stack.pop();
+            if (frame.depth() > MAX_MESSAGE_WALK_DEPTH) {
+                throw new RenderFailure(
+                        RenderFailure.Kind.LIMIT,
+                        "Input message exceeds maximum nesting depth ("
+                                + MAX_MESSAGE_WALK_DEPTH + ")");
+            }
+            Message current = frame.message();
+            if (!current.getUnknownFields().asMap().isEmpty()) {
+                throw new RenderFailure(
+                        RenderFailure.Kind.UNSUPPORTED,
+                        "Source message '" + current.getDescriptorForType().getFullName()
+                                + "' contains unknown wire fields "
+                                + current.getUnknownFields().asMap().keySet()
+                                + " which would be lost in Parquet conversion");
+            }
+            for (var entry : current.getAllFields().entrySet()) {
+                FieldDescriptor field = entry.getKey();
+                if (field.getJavaType() != FieldDescriptor.JavaType.MESSAGE) {
+                    continue;
+                }
+                if (field.isRepeated()) {
+                    List<?> items = (List<?>) entry.getValue();
+                    for (int i = items.size() - 1; i >= 0; i--) {
+                        stack.push(new Frame((Message) items.get(i), frame.depth() + 1));
+                    }
+                } else {
+                    stack.push(new Frame((Message) entry.getValue(), frame.depth() + 1));
+                }
+            }
+        }
+    }
+
+    static void requireRecognizedEnumsInSelectedColumns(
+            Message root, Set<String> selectedTopColumns, Cancellation cancellation)
+            throws RenderFailure {
+        record EnumFrame(Message message, String pathPrefix, boolean rootLevel, int depth) {}
+        Deque<EnumFrame> stack = new ArrayDeque<>();
+        stack.push(new EnumFrame(root, "", true, 0));
+        while (!stack.isEmpty()) {
+            cancellation.check();
+            EnumFrame frame = stack.pop();
+            if (frame.depth() > MAX_MESSAGE_WALK_DEPTH) {
+                throw new RenderFailure(
+                        RenderFailure.Kind.LIMIT,
+                        "Message exceeds maximum nesting depth (" + MAX_MESSAGE_WALK_DEPTH + ")");
+            }
+            Message msg = frame.message();
+            for (var entry : msg.getAllFields().entrySet()) {
+                FieldDescriptor field = entry.getKey();
+                if (frame.rootLevel()
+                        && !selectedTopColumns.isEmpty()
+                        && !selectedTopColumns.contains(field.getName())) {
+                    continue;
+                }
+                String path = frame.pathPrefix().isEmpty()
+                        ? field.getName()
+                        : frame.pathPrefix() + "." + field.getName();
+                if (field.getJavaType() == FieldDescriptor.JavaType.ENUM) {
+                    if (field.isRepeated()) {
+                        List<?> values = (List<?>) entry.getValue();
+                        for (int i = 0; i < values.size(); i++) {
+                            checkEnumValue(
+                                    field,
+                                    (EnumValueDescriptor) values.get(i),
+                                    path + "[" + i + "]");
+                        }
+                    } else {
+                        checkEnumValue(field, (EnumValueDescriptor) entry.getValue(), path);
+                    }
+                } else if (field.getJavaType() == FieldDescriptor.JavaType.MESSAGE) {
+                    if (ANY_FULL_NAME.equals(field.getMessageType().getFullName())) {
+                        continue;
+                    }
+                    if (field.isRepeated()) {
+                        List<?> items = (List<?>) entry.getValue();
+                        for (int i = items.size() - 1; i >= 0; i--) {
+                            stack.push(new EnumFrame(
+                                    (Message) items.get(i),
+                                    path + "[" + i + "]",
+                                    false,
+                                    frame.depth() + 1));
+                        }
+                    } else {
+                        stack.push(new EnumFrame(
+                                (Message) entry.getValue(), path, false, frame.depth() + 1));
+                    }
+                }
+            }
+        }
+    }
+
+    static void checkEnumValue(
+            FieldDescriptor field, EnumValueDescriptor value, String path) throws RenderFailure {
+        if (value.getIndex() < 0
+                || field.getEnumType().findValueByNumber(value.getNumber()) == null) {
+            throw new RenderFailure(
+                    RenderFailure.Kind.UNSUPPORTED,
+                    "Unrecognized enum number " + value.getNumber() + " at '" + path
+                            + "' for enum " + field.getEnumType().getFullName());
+        }
+    }
+
+    static void validateMessageRules(
+            Descriptor descriptor, Message message, int rowIndex) throws RenderFailure {
+        ValidationResult result =
+                evaluateRules(ProtoValidator.forMessageType(descriptor), message);
+        if (!result.valid()) {
+            throw new RenderFailure(
+                    RenderFailure.Kind.INVALID,
+                    formatValidationFailure(descriptor, rowIndex, result));
+        }
+    }
+
+    static ValidationResult evaluateRules(ProtoValidator validator, Message message)
+            throws RenderFailure {
+        try {
+            return validator.validate(message);
+        } catch (RuleCompilationException | RuleEvaluationException failure) {
+            throw new RenderFailure(
+                    RenderFailure.Kind.INVALID,
+                    "Validation rule evaluation failed on "
+                            + message.getDescriptorForType().getFullName() + ": "
+                            + failure.getMessage(),
+                    failure);
+        }
+    }
+
+    static String formatValidationFailure(
+            Descriptor descriptor, int rowIndex, ValidationResult result) {
+        StringBuilder sb = new StringBuilder();
+        if (rowIndex >= 0) {
+            sb.append("Row ").append(rowIndex).append(" of type ");
+        } else {
+            sb.append("Message of type ");
+        }
+        sb.append(descriptor.getFullName()).append(" failed validation:");
+        for (ValidationResult.Violation violation : result.violations()) {
+            sb.append(" [").append(violation.path()).append("] ")
+                    .append(violation.ruleId()).append(": ").append(violation.message());
+        }
+        return sb.toString();
+    }
+}
