@@ -78,10 +78,8 @@ final class ExternalServingObservation {
         }
         ExternalProviderGateway.ProviderStatusResult.Receipt receipt =
                 (ExternalProviderGateway.ProviderStatusResult.Receipt) statusResult;
-        if (!receipt.evidence().hasManagedSearch()) {
-            // The provider answered and reports no serving-layer identity: nothing to refresh.
-            return new ExternalPublicationCoordinator.OperationResult(op, optionalCurrentLink(ledger), true, false);
-        }
+        // Every receipt is verified, including one that carries no serving identity: a
+        // receipt that does not verify is not a successful refresh of anything.
         verifier.verifyEvidence(
                 receipt.evidence(),
                 op.getBindingSnapshot(),
@@ -137,6 +135,12 @@ final class ExternalServingObservation {
             throw Status.FAILED_PRECONDITION
                     .withDescription("Serving observation requires PUBLISHED evidence; provider "
                             + "returned " + refreshed.getSettlement())
+                    .asRuntimeException();
+        }
+        if (!refreshed.hasManagedSearch()) {
+            throw Status.FAILED_PRECONDITION
+                    .withDescription("Serving observation carries no managed-search identity for a "
+                            + "publication that was confirmed with one")
                     .asRuntimeException();
         }
         ManagedSearchIdentity observed = refreshed.getManagedSearch();

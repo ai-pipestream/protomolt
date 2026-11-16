@@ -61,7 +61,9 @@ final class ExternalPublishAttempts {
             ExternalPublicationIntent intent,
             String intentSha256) {
         String operationId = priorOp.getOperationId();
-        int attemptNumber = priorOp.getAttemptsCount() + 1;
+        // The attempt number is taken inside the ledger update, from the operation as it is
+        // then, so two retries that overlap never share one.
+        final int[] attemptHolder = new int[] {priorOp.getAttemptsCount() + 1};
         Timestamp startedAt = timestamp(clock.instant());
 
         final boolean[] fenced = new boolean[] {false};
@@ -70,7 +72,7 @@ final class ExternalPublishAttempts {
                 intent.getSourceAddress(),
                 intent.getBindingId(),
                 retainedSecurity,
-                "ext-retry-pre:" + operationId + ":" + attemptNumber + ":" + UUID.randomUUID(),
+                "ext-retry-pre:" + operationId + ":" + UUID.randomUUID(),
                 current -> {
                     ExternalPublicationOperationRecord latestOp =
                             findOperation(current, operationId).orElseThrow();
@@ -78,6 +80,8 @@ final class ExternalPublishAttempts {
                         return current;
                     }
                     ExternalLedgerStore.requireRoomForRetry(latestOp);
+                    int attemptNumber = latestOp.getAttemptsCount() + 1;
+                    attemptHolder[0] = attemptNumber;
                     if (isSourceRevisionFenced(current, intent.getSourceRevision())) {
                         // A newer revision, tombstone or purge fences this one, so it is not
                         // sent again. It is not declared failed either: an earlier attempt
@@ -114,7 +118,7 @@ final class ExternalPublishAttempts {
                 ledgerAddr,
                 retainedSecurity,
                 operationId,
-                attemptNumber,
+                attemptHolder[0],
                 intent,
                 intentSha256,
                 latestAfterPre.getBindingSnapshot(),

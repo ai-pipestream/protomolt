@@ -329,7 +329,13 @@ final class ExternalReceiptSettlement {
                         && intent.getSourceRevision() <= current.getTombstonedAtSourceRevision());
         boolean superseded = current.getHighestFencedSourceRevision() > intent.getSourceRevision()
                 || (current.hasCurrentLink()
-                        && current.getCurrentLink().getSourceRevision() > intent.getSourceRevision());
+                        && current.getCurrentLink().getSourceRevision() > intent.getSourceRevision())
+                // The same source revision, published since under a newer binding revision:
+                // the older binding's projection arrives late and does not take its place.
+                || (current.hasCurrentLink()
+                        && current.getCurrentLink().getSourceRevision() == intent.getSourceRevision()
+                        && current.getCurrentLink().getBindingRevision()
+                                > intent.getBindingRevision());
 
         ExternalPublicationLedger withOp = replaceOperation(current, confirmedOp);
         ExternalPublicationLedger.Builder ledgerBuilder = withOp.toBuilder();

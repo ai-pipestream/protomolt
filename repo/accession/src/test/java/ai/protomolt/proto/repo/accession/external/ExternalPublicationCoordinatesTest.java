@@ -261,7 +261,10 @@ class ExternalPublicationCoordinatesTest {
                 "redirected to https://search.internal/cb?access_token=abc123def456",
                 "bad client_secret=s3cr3t-value in request",
                 "key rejected -----BEGIN PRIVATE KEY----- MIIB",
-                "token eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.c2lnbmF0dXJl expired")) {
+                "token eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.c2lnbmF0dXJl expired",
+                // A token made only of letters is still a token.
+                "Authorization: Bearer deadbeef",
+                "sent Basic abcdefgh to upstream")) {
             assertThat(ExternalPublicationCoordinates.containsCredentialMaterial(leaking))
                     .as(leaking).isTrue();
             assertThat(ExternalLedgerStore.sanitizeMessage(leaking))
@@ -271,7 +274,7 @@ class ExternalPublicationCoordinatesTest {
                 "Missing mandatory facet field",
                 "token revoked",
                 "quota exceeded for dataset corpus-main at https://search.internal/status?page=2",
-                "basic validation failed: bearer of bad news")) {
+                "a basic check failed: bearer of bad news")) {
             assertThat(ExternalPublicationCoordinates.containsCredentialMaterial(plain))
                     .as(plain).isFalse();
             assertThat(ExternalLedgerStore.sanitizeMessage(plain)).isEqualTo(plain);

@@ -190,9 +190,17 @@ class ExternalDeleteTargetTest {
                 ExternalDeletionLifecycle.recordedTarget(Optional.of(ledger), 0L, "", 2L)
                         .orElseThrow();
         assertThat(atTombstone.externalObjectId()).isEqualTo("object-a");
-        // Naming B does not help: the tombstone does not cover it.
+        // Naming B does not help: the tombstone does not cover it, and since the ledger
+        // knows B it is refused outright instead of being treated as an unrecorded object.
+        assertThatThrownBy(() -> ExternalDeletionLifecycle.recordedTarget(
+                Optional.of(ledger), 0L, "object-b", 2L))
+                .isInstanceOfSatisfying(StatusRuntimeException.class, e -> {
+                    assertThat(e.getStatus().getCode()).isEqualTo(Status.Code.FAILED_PRECONDITION);
+                    assertThat(e.getStatus().getDescription()).contains("does not cover");
+                });
+        // An object the ledger has never seen is still simply unrecorded.
         assertThat(ExternalDeletionLifecycle.recordedTarget(
-                Optional.of(ledger), 0L, "object-b", 2L)).isEmpty();
+                Optional.of(ledger), 0L, "object-never", 2L)).isEmpty();
         // A purge covers every revision, newest first.
         assertThat(recorded(ledger, 0L, "").orElseThrow().externalObjectId())
                 .isEqualTo("object-b");
@@ -224,10 +232,18 @@ class ExternalDeleteTargetTest {
         assertThat(replay.externalObjectId()).isEqualTo("object-b");
         assertThat(replay.binding().getDataset()).isEqualTo("dataset-two");
 
-        // A request that names its own target is not a blind replay: it is resolved as given,
+        // A request that names its own object is not a blind replay: it is resolved as given,
         // and a changed target under the same operation ID is refused later as a conflict.
         assertThat(ExternalDeletionLifecycle.replayedTarget(
                 Optional.of(ledger), "op-d", "object-a", 0L)).isEmpty();
+        // Naming only the binding revision still replays, when it is the recorded one.
+        assertThat(ExternalDeletionLifecycle.replayedTarget(
+                Optional.of(ledger), "op-d", "", 2L).orElseThrow().externalObjectId())
+                .isEqualTo("object-b");
+        assertThatThrownBy(() -> ExternalDeletionLifecycle.replayedTarget(
+                Optional.of(ledger), "op-d", "", 1L))
+                .isInstanceOfSatisfying(StatusRuntimeException.class, e ->
+                        assertThat(e.getStatus().getCode()).isEqualTo(Status.Code.ALREADY_EXISTS));
         assertThat(ExternalDeletionLifecycle.replayedTarget(
                 Optional.of(ledger), "op-unknown", "", 0L)).isEmpty();
     }

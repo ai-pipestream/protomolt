@@ -84,4 +84,18 @@ class ExternalServingObservationTest {
                     });
         }
     }
+
+    @Test
+    void aRefreshReceiptWithoutTheIdentityTheLinkWasConfirmedWithIsRefused() {
+        ExternalProviderEvidence bare = ExternalProviderEvidence.newBuilder()
+                .setSettlement(ExternalProviderSettlement.EXTERNAL_PROVIDER_SETTLEMENT_PUBLISHED)
+                .build();
+        assertThatThrownBy(() -> ExternalServingObservation.withServingObservation(confirmed(), bare))
+                .isInstanceOfSatisfying(StatusRuntimeException.class, refused -> {
+                    assertThat(refused.getStatus().getCode())
+                            .isEqualTo(Status.Code.FAILED_PRECONDITION);
+                    assertThat(refused.getStatus().getDescription())
+                            .contains("no managed-search identity");
+                });
+    }
 }

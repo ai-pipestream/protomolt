@@ -296,4 +296,26 @@ class ExternalReceiptSettlementTest {
                         ExternalProjectionLifecycle.EXTERNAL_PROJECTION_LIFECYCLE_SUPERSEDED))
                 .build())).isFalse();
     }
+
+    @Test
+    void anOlderBindingsLatePublicationDoesNotDisplaceANewerBindingsLink() {
+        // The same source revision was sent under binding v1 (reply lost), the binding rotated
+        // to v2 and published it. v1's receipt is only now reconciled.
+        ExternalPublicationOperationRecord lateV1 = operation("op-v1",
+                ExternalPublicationAction.EXTERNAL_PUBLICATION_ACTION_PUBLISH, "object-a", 1L, 5L);
+        ExternalPublicationLedger ledger = ExternalPublicationLedger.newBuilder()
+                .setHighestFencedSourceRevision(5L)
+                .setCurrentLink(link("object-a", 2L, 5L,
+                        ExternalProjectionLifecycle.EXTERNAL_PROJECTION_LIFECYCLE_ACTIVE))
+                .addOperations(lateV1)
+                .build();
+
+        ExternalPublicationLedger after = published(ledger, lateV1);
+        assertThat(after.getCurrentLink().getBindingRevision()).isEqualTo(2L);
+        assertThat(after.getHistoricalLinksList()).singleElement().satisfies(old -> {
+            assertThat(old.getBindingRevision()).isEqualTo(1L);
+            assertThat(old.getProjectionLifecycle()).isEqualTo(
+                    ExternalProjectionLifecycle.EXTERNAL_PROJECTION_LIFECYCLE_SUPERSEDED);
+        });
+    }
 }

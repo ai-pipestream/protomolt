@@ -437,17 +437,25 @@ final class ExternalDeletionLifecycle {
             String operationId,
             String explicitExternalObjectId,
             long explicitBindingRevision) {
-        boolean namesTarget = (explicitExternalObjectId != null && !explicitExternalObjectId.isEmpty())
-                || explicitBindingRevision > 0L;
-        if (ledgerOpt.isEmpty() || operationId == null || operationId.isEmpty() || namesTarget) {
+        boolean namesObject = explicitExternalObjectId != null && !explicitExternalObjectId.isEmpty();
+        if (ledgerOpt.isEmpty() || operationId == null || operationId.isEmpty() || namesObject) {
             return Optional.empty();
         }
-        return findOperation(ledgerOpt.get(), operationId)
-                .filter(operation -> operation.getIntent().getAction()
-                        == ExternalPublicationAction.EXTERNAL_PUBLICATION_ACTION_DELETE)
-                .map(operation -> new ResolvedDeleteTarget(
-                        operation.getBindingSnapshot(),
-                        operation.getIntent().getExternalObjectId()));
+        Optional<ExternalPublicationOperationRecord> recorded =
+                findOperation(ledgerOpt.get(), operationId)
+                        .filter(operation -> operation.getIntent().getAction()
+                                == ExternalPublicationAction.EXTERNAL_PUBLICATION_ACTION_DELETE);
+        if (recorded.isPresent() && explicitBindingRevision > 0L
+                && recorded.get().getIntent().getBindingRevision() != explicitBindingRevision) {
+            throw Status.ALREADY_EXISTS
+                    .withDescription("Operation '" + operationId + "' deleted under binding revision "
+                            + recorded.get().getIntent().getBindingRevision() + ", not "
+                            + explicitBindingRevision)
+                    .asRuntimeException();
+        }
+        return recorded.map(operation -> new ResolvedDeleteTarget(
+                operation.getBindingSnapshot(),
+                operation.getIntent().getExternalObjectId()));
     }
 
     ResolvedDeleteTarget resolveDeleteTarget(
@@ -511,9 +519,23 @@ final class ExternalDeletionLifecycle {
         List<ExternalLink> candidates =
                 linksInDeletionOrder(ledgerOpt.get(), coveredUpToSourceRevision);
         if (explicitExternalObjectId != null && !explicitExternalObjectId.isEmpty()) {
-            return recordedSnapshotFor(
+            Optional<ResolvedDeleteTarget> covered = recordedSnapshotFor(
                     ledgerOpt.get(), candidates, explicitBindingRevision, explicitExternalObjectId,
                     coveredUpToSourceRevision);
+            if (covered.isEmpty() && coveredUpToSourceRevision != ALL_REVISIONS
+                    && recordedSnapshotFor(ledgerOpt.get(),
+                            linksInDeletionOrder(ledgerOpt.get(), ALL_REVISIONS),
+                            explicitBindingRevision, explicitExternalObjectId, ALL_REVISIONS)
+                    .isPresent()) {
+                // The ledger knows this object, and it was published after the tombstone:
+                // that is not an unrecorded object to delete on the caller's word.
+                throw Status.FAILED_PRECONDITION
+                        .withDescription("External object '" + explicitExternalObjectId
+                                + "' was published after source revision "
+                                + coveredUpToSourceRevision + "; this tombstone does not cover it")
+                        .asRuntimeException();
+            }
+            return covered;
         }
         if (candidates.isEmpty()) {
             return unsettledPublication(

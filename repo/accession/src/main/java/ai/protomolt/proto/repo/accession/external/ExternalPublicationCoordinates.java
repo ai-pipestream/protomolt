@@ -602,7 +602,10 @@ public final class ExternalPublicationCoordinates {
         String scheme = previousWord.toLowerCase(Locale.ROOT);
         if ((scheme.equals("bearer") || scheme.equals("basic")
                         || scheme.endsWith(":bearer") || scheme.endsWith(":basic"))
-                && word.length() >= 8 && !isPlainWord(word)) {
+                && word.length() >= 8) {
+            // Any word of token length after an authorization scheme, letters-only included:
+            // a message such as "basic validation" is withheld too, which costs a diagnostic
+            // and never a credential.
             return true;
         }
         if (looksLikeCompactJwt(trimPunctuation(word))) {
@@ -630,16 +633,6 @@ public final class ExternalPublicationCoordinates {
             from = eq + 1;
         }
         return false;
-    }
-
-    /** Letters only, as in ordinary prose ("basic validation"); a token is rarely that. */
-    private static boolean isPlainWord(String word) {
-        for (int i = 0; i < word.length(); i++) {
-            if (!Character.isLetter(word.charAt(i))) {
-                return false;
-            }
-        }
-        return true;
     }
 
     private static boolean isKeyChar(char ch) {
