@@ -12,6 +12,7 @@ import io.grpc.ChannelCredentials;
 import io.grpc.ManagedChannel;
 import io.grpc.TlsChannelCredentials;
 import java.io.IOException;
+import java.lang.ref.Reference;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.NoSuchFileException;
@@ -235,7 +236,8 @@ class FileProfileTlsResolverTest {
                 FileProfileTlsResolver.DEFAULT_MAX_PEM_BYTES,
                 churningFileOps);
         List<ChannelCredentials> evicted = new ArrayList<>();
-        resolver.registerEvictionTarget(new ChannelFactory() {
+        // The resolver holds eviction targets weakly, so the test keeps this one reachable.
+        ChannelFactory recorder = new ChannelFactory() {
             @Override
             public ManagedChannel open(String target, boolean tls) {
                 throw new UnsupportedOperationException();
@@ -245,7 +247,8 @@ class FileProfileTlsResolverTest {
             public void evict(ChannelCredentials credentials) {
                 evicted.add(credentials);
             }
-        });
+        };
+        resolver.registerEvictionTarget(recorder);
         ServiceEndpoint endpoint = endpoint(TRUST_REF, CLIENT_REF);
 
         // 1. Warm the cache with rev-0 (materialOne).
@@ -276,6 +279,7 @@ class FileProfileTlsResolverTest {
         assertThat(resolver.pemReads())
                 .isEqualTo(3 + FileProfileTlsResolver.MAX_STABLE_READ_ATTEMPTS);
         assertThat(evicted).containsExactly(initial);
+        Reference.reachabilityFence(recorder);
 
         // 3. Stop churning on rev-3 (materialTwo); subsequent read recovers on an unpoisoned cache.
         churnDuringRead.set(false);

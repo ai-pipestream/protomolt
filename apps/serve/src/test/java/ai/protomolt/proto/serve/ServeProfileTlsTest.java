@@ -50,7 +50,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 /**
- * End-to-end verification for {@code protomolt-serve --profile-tls-config} (#881, #875):
+ * End-to-end verification for {@code protomolt-serve --profile-tls-config}:
  * stock {@link ProtoMoltServe} dials an external mTLS service across REST and MCP, composes
  * cleanly with {@link CorrectionStarter}'s bearer {@code EnvProfileCredentialResolver}, closes
  * pooled outbound TLS channels on shutdown, and preserves {@code unsupported-transport} refusal
