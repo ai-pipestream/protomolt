@@ -59,27 +59,31 @@ message PipelineRunDefinition {
 enum PipelineFailureKind {
   // A succeeded branch carries no kind.
   PIPELINE_FAILURE_KIND_UNSPECIFIED = 0;
-  // The pipeline or its descriptors failed checking before any step ran.
+  // The pipeline, its descriptors, its input or a declared deadline failed
+  // checking.
   PIPELINE_FAILURE_KIND_PREFLIGHT = 1;
   // A step's `when` expression could not be evaluated.
   PIPELINE_FAILURE_KIND_GATE = 2;
-  // An edge's rules could not build the step's request.
+  // Mapping rules could not build an edge value or the pipeline output.
   PIPELINE_FAILURE_KIND_MAPPING = 3;
   // An edge's projection could not be applied.
   PIPELINE_FAILURE_KIND_PROJECTION = 4;
   // A request or response broke its declared validation rules.
   PIPELINE_FAILURE_KIND_VALIDATION = 5;
-  // The pipeline or step deadline passed.
+  // The pipeline or step deadline passed, or structured generation was
+  // interrupted.
   PIPELINE_FAILURE_KIND_DEADLINE = 6;
   // The call to the step's service failed.
   PIPELINE_FAILURE_KIND_GRPC = 7;
   // Structured generation failed.
   PIPELINE_FAILURE_KIND_STRUCTURED = 8;
-  // A fan-out exceeded its bounds or a branch was interrupted or abandoned.
+  // A fan-out exceeded its bounds, or a branch failed unexpectedly, was
+  // interrupted or was abandoned.
   PIPELINE_FAILURE_KIND_FAN_OUT = 9;
   // An external-completion step was run without a durable coordinator.
   PIPELINE_FAILURE_KIND_EXTERNAL = 10;
-  // A checkpoint, the stored run, or the engine's own state was invalid.
+  // A checkpoint or the stored run was invalid, saving a checkpoint failed, a
+  // stream exceeded its bound, or an engine invariant broke.
   PIPELINE_FAILURE_KIND_PIPELINE = 11;
 }
 
