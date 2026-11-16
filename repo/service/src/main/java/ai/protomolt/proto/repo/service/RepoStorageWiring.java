@@ -61,8 +61,8 @@ final class RepoStorageWiring {
                         config.managedStorage().retentionQualified(), owned);
                 var backing = selectedBacking.handle();
                 var cache = owned.add(providers.open(config.redisCompatibleProvider(), redisOptions(config)));
-                String cacheNamespace = DriveBackingPool.s3CacheNamespace(
-                        DriveBackingPool.s3Endpoint(config.s3Endpoint(), config.s3Region(), config.s3Endpoint() != null),
+                String cacheNamespace = DriveStoreIdentities.s3CacheNamespace(
+                        DriveStoreIdentities.s3Endpoint(config.s3Endpoint(), config.s3Region(), config.s3Endpoint() != null),
                         config.s3Region(),
                         config.s3Endpoint() != null);
                 blobStore = new CachingBlobStore(backing.store(), cache.store(),

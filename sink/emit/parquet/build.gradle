@@ -22,3 +22,12 @@ dependencies {
     // Configuration; the writer under test never does.
     testRuntimeOnly libs.hadoop.client.runtime
 }
+
+ext.forbiddenRuntimeModules = [
+    'hadoop-client-api',
+    'hadoop-client-runtime',
+    'parquet-protobuf',
+    'protomolt-emit-parquet-s3',
+    's3',
+]
+apply from: rootProject.file('gradle/runtime-boundaries.gradle')
