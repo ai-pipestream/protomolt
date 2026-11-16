@@ -484,6 +484,15 @@ public final class RepositorySink implements AutoCloseable {
         RepositorySinkJobStore.StoredJob stored = leases.find(accountId, operationId)
                 .orElseThrow(() -> ArchiveErrors.notFound(
                         "Repository sink job " + operationId + " does not exist"));
+        // Cancelling stops a write, so it takes the same authority on the stored destination
+        // as the publication it stops.
+        SinkDestination destination = stored.request().getDestination();
+        ArchiveBinding destinationBinding =
+                caller.callForRead(accountId, () -> archive.binding(destination.getAddress()));
+        authorizer.checkWriteAccess(
+                destination.getAddress(),
+                destinationBinding.datasourceId(),
+                destination.getWrittenBy());
         if (isTerminalState(stored.job().getState())) {
             return validCancelResponse(stored.job());
         }
