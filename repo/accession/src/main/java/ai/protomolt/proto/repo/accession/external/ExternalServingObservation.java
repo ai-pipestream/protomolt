@@ -5,6 +5,9 @@ import static ai.protomolt.proto.repo.accession.external.ExternalLedgerStore.opt
 import static ai.protomolt.proto.repo.accession.external.ExternalLedgerStore.sanitizeMessage;
 
 import ai.protomolt.proto.repo.external.v1.ExternalLink;
+import ai.protomolt.proto.repo.external.v1.ExternalProviderEvidence;
+import ai.protomolt.proto.repo.external.v1.ExternalProviderSettlement;
+import ai.protomolt.proto.repo.external.v1.ManagedSearchIdentity;
 import ai.protomolt.proto.repo.external.v1.ExternalPublicationLedger;
 import ai.protomolt.proto.repo.external.v1.ExternalPublicationOperationRecord;
 import ai.protomolt.proto.repo.v1.Document;
@@ -99,8 +102,15 @@ final class ExternalServingObservation {
                                     .equals(op.getOperationId())) {
                         return current;
                     }
+                    if (!current.getCurrentLink().hasManagedSearch()) {
+                        // The link was confirmed without a managed-search identity, so there
+                        // is no confirmed identity for a serving observation to belong to.
+                        return current;
+                    }
                     ExternalLink updatedLink = current.getCurrentLink().toBuilder()
-                            .setManagedSearch(receipt.evidence().getManagedSearch())
+                            .setManagedSearch(withServingObservation(
+                                    current.getCurrentLink().getManagedSearch(),
+                                    receipt.evidence()))
                             .build();
                     return current.toBuilder().setCurrentLink(updatedLink).build();
                 });
@@ -109,5 +119,38 @@ final class ExternalServingObservation {
                 optionalCurrentLink(updated),
                 true,
                 false);
+    }
+
+    /**
+     * The confirmed identity with only its serving observation replaced. The refreshed receipt
+     * must be a PUBLISHED one that names exactly the identity the link was confirmed with: an
+     * accepted-only or otherwise different receipt would overwrite proof of publication with
+     * something weaker, so it is refused.
+     *
+     * @throws io.grpc.StatusRuntimeException FAILED_PRECONDITION when the receipt is not
+     *         PUBLISHED or its durable identity differs from {@code confirmed}
+     */
+    static ManagedSearchIdentity withServingObservation(
+            ManagedSearchIdentity confirmed, ExternalProviderEvidence refreshed) {
+        if (refreshed.getSettlement()
+                != ExternalProviderSettlement.EXTERNAL_PROVIDER_SETTLEMENT_PUBLISHED) {
+            throw Status.FAILED_PRECONDITION
+                    .withDescription("Serving observation requires PUBLISHED evidence; provider "
+                            + "returned " + refreshed.getSettlement())
+                    .asRuntimeException();
+        }
+        ManagedSearchIdentity observed = refreshed.getManagedSearch();
+        ManagedSearchIdentity observedDurable = observed.toBuilder()
+                .setServingVisibility(confirmed.getServingVisibility())
+                .build();
+        if (!observedDurable.equals(confirmed)) {
+            throw Status.FAILED_PRECONDITION
+                    .withDescription("Serving observation names a different durable identity than "
+                            + "the one the publication was confirmed with")
+                    .asRuntimeException();
+        }
+        return confirmed.toBuilder()
+                .setServingVisibility(observed.getServingVisibility())
+                .build();
     }
 }
