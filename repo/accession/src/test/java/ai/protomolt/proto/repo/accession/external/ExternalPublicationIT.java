@@ -139,7 +139,7 @@ import software.amazon.awssdk.services.s3.S3Client;
 import software.amazon.awssdk.services.s3.model.CreateBucketRequest;
 
 /**
- * End-to-end public-path integration tests for Issue #814: versioned
+ * End-to-end public-path integration tests for versioned
  * {@link ExternalSystemBinding} configurations, {@link ExternalLink} publication receipts,
  * provider receipt verification, reconciliation, monotonic fencing, authorization,
  * tombstone/purge retention, and coordinator restart recovery over real PostgreSQL,
@@ -280,6 +280,30 @@ class ExternalPublicationIT {
             assertThat(withServing.currentLink().orElseThrow().getManagedSearch().getServingVisibility())
                     .isEqualTo(ExternalServingVisibility.EXTERNAL_SERVING_VISIBILITY_CURRENT_ROWS);
             assertThat(provider.executeCalls.get()).isEqualTo(execCallsBeforeReconcile);
+
+            // A failed serving refresh is reported, never answered as a replay of stale state:
+            // a provider refusal keeps its status code, and an unreachable status endpoint or an
+            // UNAVAILABLE answer is UNAVAILABLE. The ledger keeps the last observed visibility.
+            provider.nextStatusBehavior = query -> {
+                throw Status.PERMISSION_DENIED.withDescription("token revoked").asRuntimeException();
+            };
+            assertGrpcCode(
+                    () -> h.coordinator.reconcileOperation(sourceAddr, "rust-search", "pub-doc-1-r1", true),
+                    Status.Code.PERMISSION_DENIED);
+            provider.nextStatusBehavior = query -> {
+                throw Status.UNAVAILABLE.withDescription("status endpoint down").asRuntimeException();
+            };
+            assertGrpcCode(
+                    () -> h.coordinator.reconcileOperation(sourceAddr, "rust-search", "pub-doc-1-r1", true),
+                    Status.Code.UNAVAILABLE);
+            provider.nextStatusBehavior = query -> new ExternalProviderGateway.ProviderStatusResult.Unavailable(
+                    "SERVING_LAYER_DOWN", "serving catalog unreachable");
+            assertGrpcCode(
+                    () -> h.coordinator.reconcileOperation(sourceAddr, "rust-search", "pub-doc-1-r1", true),
+                    Status.Code.UNAVAILABLE);
+            assertThat(h.coordinator.getLedgerView(sourceAddr, "rust-search").orElseThrow()
+                    .currentLink().orElseThrow().getManagedSearch().getServingVisibility())
+                    .isEqualTo(ExternalServingVisibility.EXTERNAL_SERVING_VISIBILITY_CURRENT_ROWS);
 
             // Circular-update prevention proof: source document was NEVER modified or re-accessioned,
             // and every new outbox event belongs exclusively to internal graphs filtered by consumers.
@@ -650,10 +674,19 @@ class ExternalPublicationIT {
             assertThat(historicalSnapshot.getNamespace()).isEqualTo("ns-v1");
 
             // Verify config-lane JSON and persisted protobuf payloads contain ZERO secret material!
-            String configName = ExternalPublicationCoordinates.configDocumentName(
-                    "tenant-alpha", "rust-search");
-            String configJson = h.gitRegistry.config(configName).orElseThrow();
-            assertThat(configJson).doesNotContain(SECRET_TOKEN_V1).doesNotContain(SECRET_TOKEN_V2);
+            // Each committed revision has its own immutable mirror; none is overwritten.
+            assertThat(h.gitRegistry.config(ExternalPublicationCoordinates.configDocumentName(
+                    "tenant-alpha", "rust-search"))).isEmpty();
+            for (long revision = 1L; revision <= 3L; revision++) {
+                String configJson = h.gitRegistry.config(
+                        ExternalPublicationCoordinates.configRevisionDocumentName(
+                                "tenant-alpha", "rust-search", revision)).orElseThrow();
+                assertThat(configJson)
+                        .contains("\"bindingRevision\":\"" + revision + "\"")
+                        .doesNotContain(SECRET_TOKEN_V1)
+                        .doesNotContain(SECRET_TOKEN_V2);
+            }
+            assertThat(h.bindingStore.mirrorRevision("tenant-alpha", "rust-search", 2L)).isEqualTo(v2);
             String v1BytesUtf8 = new String(v1.toByteArray(), StandardCharsets.ISO_8859_1);
             String v2BytesUtf8 = new String(v2.toByteArray(), StandardCharsets.ISO_8859_1);
             assertThat(v1BytesUtf8).doesNotContain(SECRET_TOKEN_V1);
@@ -778,6 +811,32 @@ class ExternalPublicationIT {
             assertThat(bobVisibleLinks)
                     .extracting(ExternalLink::getSourceAddress)
                     .containsExactly(sharedDoc);
+
+            // Bob is an account member with a writer grant for the bindings datasource, but not a
+            // binding writer: he reads the binding and cannot rotate or retire it, and a refused
+            // rotation leaves no config-lane mirror behind.
+            ExternalSystemBinding beforeBob =
+                    h.bindingStore.getCurrentBinding("tenant-alpha", "rust-search").orElseThrow();
+            assertGrpcCode(
+                    () -> h.saveActiveBinding(
+                            "tenant-alpha",
+                            "rust-search",
+                            "search-profile-v2",
+                            "ingest-tls",
+                            "corpus-bob",
+                            "ns-bob",
+                            ExternalRetentionPolicy.EXTERNAL_RETENTION_POLICY_RETAIN_HISTORY,
+                            "op-bind-bob"),
+                    Status.Code.PERMISSION_DENIED);
+            assertGrpcCode(
+                    () -> h.bindingStore.retireBinding(
+                            "tenant-alpha", "rust-search", "bob retires", "op-retire-bob"),
+                    Status.Code.PERMISSION_DENIED);
+            assertThat(h.bindingStore.getCurrentBinding("tenant-alpha", "rust-search"))
+                    .contains(beforeBob);
+            assertThat(h.gitRegistry.config(ExternalPublicationCoordinates.configRevisionDocumentName(
+                    "tenant-alpha", "rust-search", beforeBob.getBindingRevision() + 1L)))
+                    .isEmpty();
         }
     }
 
@@ -1399,7 +1458,8 @@ class ExternalPublicationIT {
                     secretEnv::get);
 
             ExternalBindingStore bindingStore = new ExternalBindingStore(
-                    channel, profileRepo, credentialResolver, gitRegistry, "default", clock);
+                    channel, profileRepo, credentialResolver, gitRegistry, "default",
+                    alice.repoCaller().identities(), clock);
             ExternalProviderVerifier verifier = new ExternalProviderVerifier(
                     provider.trustSnapshot, true);
             ExternalPublicationCoordinator coordinator = new ExternalPublicationCoordinator(
@@ -1623,6 +1683,7 @@ class ExternalPublicationIT {
         final Map<String, ExternalProviderEvidence> recordedByOperation = new ConcurrentHashMap<>();
         final Map<String, ProviderCallRequest> requestByOperation = new ConcurrentHashMap<>();
         volatile Function<ProviderCallRequest, ProviderCallResult> nextExecuteBehavior;
+        volatile Function<ProviderStatusQuery, ProviderStatusResult> nextStatusBehavior;
 
         SimulatedManagedSearchProvider() {
             KeyPair pair = RecordKeys.generate();
@@ -1684,6 +1745,11 @@ class ExternalPublicationIT {
                 throw Status.UNAUTHENTICATED
                         .withDescription("Missing outbound Bearer credential header")
                         .asRuntimeException();
+            }
+            Function<ProviderStatusQuery, ProviderStatusResult> customStatus = nextStatusBehavior;
+            if (customStatus != null) {
+                nextStatusBehavior = null;
+                return customStatus.apply(query);
             }
             ExternalProviderEvidence recorded = recordedByOperation.get(query.operationId());
             if (recorded == null) {

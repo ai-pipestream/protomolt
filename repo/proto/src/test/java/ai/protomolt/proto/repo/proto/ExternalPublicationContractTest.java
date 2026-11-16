@@ -59,7 +59,6 @@ class ExternalPublicationContractTest {
                         .setTlsEnabled(true))
                 .setLifecycle(ExternalBindingLifecycle.EXTERNAL_BINDING_LIFECYCLE_ACTIVE)
                 .setRetentionPolicy(ExternalRetentionPolicy.EXTERNAL_RETENTION_POLICY_RETAIN_HISTORY)
-                .setConfigLaneVersion(3L)
                 .putLabels("tier", "gold")
                 .setCreatedAt(TIME)
                 .build();

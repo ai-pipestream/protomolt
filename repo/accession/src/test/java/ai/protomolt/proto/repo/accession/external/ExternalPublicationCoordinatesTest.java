@@ -219,4 +219,18 @@ class ExternalPublicationCoordinatesTest {
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("bindingId");
     }
+
+    @Test
+    void configRevisionDocumentNameAppendsTheRevisionAndCannotCollideAcrossBindings() {
+        String base = ExternalPublicationCoordinates.configDocumentName("acct", "search");
+        assertThat(ExternalPublicationCoordinates.configRevisionDocumentName("acct", "search", 1L))
+                .isEqualTo(base + ".r1");
+        assertThat(ExternalPublicationCoordinates.configRevisionDocumentName("acct", "search", 12L))
+                .isEqualTo(base + ".r12");
+        // The base64url body never contains '.', so ".r<n>" cannot be part of another binding's name.
+        assertThat(base.substring("external-binding.".length())).doesNotContain(".");
+        assertThatThrownBy(() -> ExternalPublicationCoordinates.configRevisionDocumentName("acct", "search", 0L))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("bindingRevision");
+    }
 }

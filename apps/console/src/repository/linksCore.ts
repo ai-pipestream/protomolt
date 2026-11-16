@@ -471,7 +471,7 @@ export function buildLinkNeighborhoodGraph(
 }
 
 /**
- * One confirmed external-system derived artifact projection (#814).
+ * One confirmed external-system derived artifact projection.
  * Canonical identity comes exclusively from bindingId + bindingRevision +
  * externalObjectId (+ optional externalVersion) and exact sourceRevision.
  * displayHref is optional guarded navigation metadata, never identity or auth.

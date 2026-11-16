@@ -23,6 +23,7 @@ import ai.protomolt.proto.repo.v1.Document;
 import ai.protomolt.proto.repo.v1.DocumentSecurity;
 import ai.protomolt.proto.repo.v1.NodeAddress;
 import ai.protomolt.proto.repo.v1.OwnershipContext;
+import ai.protomolt.proto.repo.v1.Principal;
 import ai.protomolt.proto.repo.v1.SearchMetadata;
 import ai.protomolt.proto.repo.v2.DocumentPart;
 import ai.protomolt.proto.repo.v2.DocumentServiceGrpc;
@@ -64,6 +65,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 
 /**
  * Account-scoped versioned store for {@link ExternalSystemBinding} configurations,
@@ -110,23 +112,13 @@ public final class ExternalBindingStore {
             .setAction(WriteAction.WRITE_ACTION_PUT)
             .build();
 
-    private static final DocumentSecurity ACCOUNT_MEMBER_SECURITY = DocumentSecurity.newBuilder()
-            .addPermissions(AccessRule.newBuilder()
-                    .setIdentityType("public")
-                    .setIdentity("public")
-                    .setAccess(Access.ACCESS_READ))
-            .addPermissions(AccessRule.newBuilder()
-                    .setIdentityType("public")
-                    .setIdentity("public")
-                    .setAccess(Access.ACCESS_WRITE))
-            .build();
-
     private final DocumentServiceGrpc.DocumentServiceBlockingStub documents;
     private final ServiceProfileRepository profiles;
     private final ProfileCredentialResolver credentials;
     private final ConfigDocumentStore configStore;
     private final String drive;
     private final SaveOwner saveOwner;
+    private final DocumentSecurity bindingSecurity;
     private final Clock clock;
 
     /**
@@ -137,6 +129,7 @@ public final class ExternalBindingStore {
      * @param credentials host-owned outbound credential resolver
      * @param configStore optional config-lane store (may be {@code null})
      * @param drive named repository drive used for binding saves
+     * @param bindingWriters the only identities granted WRITE on binding documents
      * @param clock clock stamping binding revision creation and retirement instants
      */
     public ExternalBindingStore(
@@ -145,6 +138,7 @@ public final class ExternalBindingStore {
             ProfileCredentialResolver credentials,
             ConfigDocumentStore configStore,
             String drive,
+            Set<Principal> bindingWriters,
             Clock clock) {
         this(
                 documents,
@@ -159,6 +153,7 @@ public final class ExternalBindingStore {
                                                 ExternalPublicationCoordinates
                                                         .DEFAULT_BINDINGS_DATASOURCE_ID))
                         .build(),
+                bindingWriters,
                 clock);
     }
 
@@ -171,6 +166,9 @@ public final class ExternalBindingStore {
      * @param configStore optional config-lane store (may be {@code null})
      * @param drive named repository drive used for binding saves
      * @param saveOwner explicit repository save owner
+     * @param bindingWriters the only identities granted WRITE on binding documents; account
+     *        members read them. A binding redirects publication routing, so write access is
+     *        never granted to every account member.
      * @param clock clock stamping binding revision creation and retirement instants
      */
     public ExternalBindingStore(
@@ -180,6 +178,7 @@ public final class ExternalBindingStore {
             ConfigDocumentStore configStore,
             String drive,
             SaveOwner saveOwner,
+            Set<Principal> bindingWriters,
             Clock clock) {
         this.documents = DocumentServiceGrpc.newBlockingStub(
                 Objects.requireNonNull(documents, "documents"));
@@ -189,7 +188,44 @@ public final class ExternalBindingStore {
         ExternalPublicationCoordinates.requireNonBlankCoordinate(drive, "drive");
         this.drive = drive;
         this.saveOwner = Objects.requireNonNull(saveOwner, "saveOwner");
+        this.bindingSecurity = bindingSecurity(bindingWriters);
         this.clock = Objects.requireNonNull(clock, "clock");
+    }
+
+    /**
+     * The ACL written on every binding revision: READ for account members, WRITE only for
+     * the named writers. A {@code public} writer would hand routing control to every account
+     * member and is refused, as is an empty writer set.
+     */
+    static DocumentSecurity bindingSecurity(Set<Principal> bindingWriters) {
+        Objects.requireNonNull(bindingWriters, "bindingWriters");
+        if (bindingWriters.isEmpty()) {
+            throw new IllegalArgumentException("bindingWriters must name at least one identity");
+        }
+        DocumentSecurity.Builder security = DocumentSecurity.newBuilder()
+                .addPermissions(AccessRule.newBuilder()
+                        .setIdentityType("public")
+                        .setIdentity("public")
+                        .setAccess(Access.ACCESS_READ));
+        List<Principal> ordered = new ArrayList<>(bindingWriters);
+        ordered.sort((a, b) -> {
+            int byType = a.getIdentityType().compareTo(b.getIdentityType());
+            return byType != 0 ? byType : a.getIdentity().compareTo(b.getIdentity());
+        });
+        for (Principal writer : ordered) {
+            if (writer.getIdentityType().isBlank() || writer.getIdentity().isBlank()) {
+                throw new IllegalArgumentException("binding writer identity must not be blank");
+            }
+            if (writer.getIdentityType().equalsIgnoreCase("public")) {
+                throw new IllegalArgumentException(
+                        "binding writers cannot be public: every account member would control routing");
+            }
+            security.addPermissions(AccessRule.newBuilder()
+                    .setIdentityType(writer.getIdentityType())
+                    .setIdentity(writer.getIdentity())
+                    .setAccess(Access.ACCESS_WRITE));
+        }
+        return security.build();
     }
 
     /**
@@ -365,9 +401,11 @@ public final class ExternalBindingStore {
                 .putAllLabels(spec.labels())
                 .setCreatedAt(createdAt);
 
-        ExternalSystemBinding candidate = mirrorToConfigLaneIfConfigured(builder.build());
+        ExternalSystemBinding candidate = builder.build();
         validateBindingContract(candidate);
+        gateConfigLaneIfConfigured(candidate);
         persistBindingDocument(address, expected, candidate, spec.operationId());
+        mirrorToConfigLaneIfConfigured(candidate);
         return candidate;
     }
 
@@ -407,16 +445,16 @@ public final class ExternalBindingStore {
                 .setRetiredReason(retiredReason)
                 .setRetiredAt(now)
                 .setCreatedAt(now)
-                .clearConfigLaneVersion()
                 .build();
 
-        ExternalSystemBinding mirrored = mirrorToConfigLaneIfConfigured(retired);
-        validateBindingContract(mirrored);
+        validateBindingContract(retired);
+        gateConfigLaneIfConfigured(retired);
         ExpectedRevision expected = ExpectedRevision.newBuilder()
                 .setRevision(existing.documentRevision())
                 .build();
-        persistBindingDocument(address, expected, mirrored, operationId);
-        return mirrored;
+        persistBindingDocument(address, expected, retired, operationId);
+        mirrorToConfigLaneIfConfigured(retired);
+        return retired;
     }
 
     /**
@@ -603,23 +641,16 @@ public final class ExternalBindingStore {
         return new ResolvedEndpoint(profile, selected, resolvedHeaders, credentialBindingSha256);
     }
 
-    private ExternalSystemBinding mirrorToConfigLaneIfConfigured(ExternalSystemBinding binding) {
+    /**
+     * Checks the config-lane envelope before the canonical save, so a binding the config
+     * lane would refuse is never committed. Writes nothing.
+     */
+    private void gateConfigLaneIfConfigured(ExternalSystemBinding binding) {
         if (configStore == null) {
-            return binding;
+            return;
         }
-        String configName = ExternalPublicationCoordinates.configDocumentName(
-                binding.getAccountId(), binding.getBindingId());
         try {
-            String initialEnvelope = toConfigEnvelopeJson(binding);
-            ConfigSupport.gate(configStore, initialEnvelope);
-            String versionText = configStore.putConfig(configName, initialEnvelope);
-            Optional<Long> numericVersion = parsePositiveLong(versionText);
-            if (numericVersion.isPresent()) {
-                return binding.toBuilder()
-                        .setConfigLaneVersion(numericVersion.get())
-                        .build();
-            }
-            return binding;
+            ConfigSupport.gate(configStore, toConfigEnvelopeJson(binding));
         } catch (InvalidConfigException invalid) {
             throw Status.INVALID_ARGUMENT
                     .withDescription("Config-lane gate rejected binding: " + invalid.getMessage())
@@ -631,6 +662,62 @@ public final class ExternalBindingStore {
                     .withCause(storeFailure)
                     .asRuntimeException();
         }
+    }
+
+    /**
+     * Mirrors one committed binding revision to its own immutable config-lane document,
+     * named by {@link ExternalPublicationCoordinates#configRevisionDocumentName}. Runs only
+     * after the canonical save succeeded, so a refused or lost save never leaves a mirror,
+     * and two revisions never overwrite each other. A mirror failure leaves the canonical
+     * revision in place and is reported as {@code UNAVAILABLE}; {@link #mirrorRevision}
+     * repairs it from the canonical revision.
+     */
+    private void mirrorToConfigLaneIfConfigured(ExternalSystemBinding committed) {
+        if (configStore == null) {
+            return;
+        }
+        String configName = ExternalPublicationCoordinates.configRevisionDocumentName(
+                committed.getAccountId(), committed.getBindingId(), committed.getBindingRevision());
+        try {
+            String envelope = toConfigEnvelopeJson(committed);
+            ConfigSupport.gate(configStore, envelope);
+            configStore.putConfig(configName, envelope);
+        } catch (InvalidConfigException | RegistryStoreException mirrorFailure) {
+            throw Status.UNAVAILABLE
+                    .withDescription("ExternalSystemBinding '" + committed.getBindingId()
+                            + "' revision " + committed.getBindingRevision()
+                            + " is saved, but its config-lane mirror failed; call mirrorRevision"
+                            + " to repair it: " + mirrorFailure.getMessage())
+                    .withCause(mirrorFailure)
+                    .asRuntimeException();
+        }
+    }
+
+    /**
+     * Writes the config-lane mirror of an already committed binding revision, read back from
+     * the canonical {@code DocumentService} revision. Repeating it writes the same document.
+     *
+     * @param accountId owning account ID
+     * @param bindingId binding ID
+     * @param bindingRevision committed binding revision to mirror
+     * @return the mirrored canonical revision
+     * @throws StatusRuntimeException {@code NOT_FOUND} when the revision does not exist,
+     *         {@code FAILED_PRECONDITION} when no config lane is configured
+     */
+    public ExternalSystemBinding mirrorRevision(
+            String accountId, String bindingId, long bindingRevision) {
+        if (configStore == null) {
+            throw Status.FAILED_PRECONDITION
+                    .withDescription("No config-lane store is configured")
+                    .asRuntimeException();
+        }
+        ExternalSystemBinding committed = getBindingRevision(accountId, bindingId, bindingRevision)
+                .orElseThrow(() -> Status.NOT_FOUND
+                        .withDescription("ExternalSystemBinding '" + bindingId + "' revision "
+                                + bindingRevision + " not found")
+                        .asRuntimeException());
+        mirrorToConfigLaneIfConfigured(committed);
+        return committed;
     }
 
     private static String toConfigEnvelopeJson(ExternalSystemBinding binding) {
@@ -677,7 +764,7 @@ public final class ExternalBindingStore {
                 .setOwnership(OwnershipContext.newBuilder()
                         .setAccountId(binding.getAccountId())
                         .setDatasourceId(datasourceId)
-                        .setSecurity(ACCOUNT_MEMBER_SECURITY))
+                        .setSecurity(bindingSecurity))
                 .setSearchMetadata(SearchMetadata.newBuilder()
                         .setTitle(binding.getProvider() + ":" + binding.getBindingId()
                                 + "@v" + binding.getBindingRevision())
@@ -729,24 +816,6 @@ public final class ExternalBindingStore {
         ExternalPublicationCoordinates.requireNonSecretText(binding.getDataset(), "dataset", 256);
         ExternalPublicationCoordinates.requireNonSecretText(
                 binding.getNamespace(), "namespace", 256);
-    }
-
-    private static Optional<Long> parsePositiveLong(String raw) {
-        if (raw == null || raw.isEmpty() || raw.length() > 19) {
-            return Optional.empty();
-        }
-        for (int i = 0; i < raw.length(); i++) {
-            char ch = raw.charAt(i);
-            if (ch < '0' || ch > '9') {
-                return Optional.empty();
-            }
-        }
-        try {
-            long parsed = Long.parseLong(raw);
-            return parsed > 0L ? Optional.of(parsed) : Optional.empty();
-        } catch (NumberFormatException overflow) {
-            return Optional.empty();
-        }
     }
 
     private static String readClasspathResource(String resourcePath) {

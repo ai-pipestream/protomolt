@@ -142,6 +142,24 @@ public final class ExternalPublicationCoordinates {
     }
 
     /**
+     * The config-lane document name for one binding revision: {@link #configDocumentName}
+     * followed by {@code .r<revision>}. Base64url never emits {@code .}, so the suffix cannot
+     * collide with another binding's name.
+     *
+     * @param accountId owning tenant account identifier
+     * @param bindingId path-safe binding identifier
+     * @param bindingRevision positive binding revision
+     * @return the per-revision config document name in {@code ConfigDocumentStore}
+     */
+    public static String configRevisionDocumentName(
+            String accountId, String bindingId, long bindingRevision) {
+        if (bindingRevision <= 0L) {
+            throw new IllegalArgumentException("bindingRevision must be > 0");
+        }
+        return configDocumentName(accountId, bindingId) + ".r" + bindingRevision;
+    }
+
+    /**
      * Encodes all four {@link NodeAddress} coordinates into a versioned, length-delimited
      * binary tuple {@code [version=1][account_len][account][graph_len][graph][node_len][node][doc_len][doc]}.
      *

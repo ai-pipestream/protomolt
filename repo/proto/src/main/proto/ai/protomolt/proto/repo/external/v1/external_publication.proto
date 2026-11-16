@@ -241,11 +241,11 @@ message ExternalSystemBinding {
       enum: {defined_only: true, not_in: [0]}
     }
   ];
-  // Optional config-lane document version recorded when mirrored to ConfigDocumentStore.
-  optional int64 config_lane_version = 13 [
-    (ai.protomolt.proto.validate.v1.field).int64 = {gt: 0},
-    (buf.validate.field).int64 = {gt: 0}
-  ];
+  // Field 13 held a config-lane version that could only be known before the canonical
+  // revision was saved. The config-lane mirror is now written after the save, one
+  // immutable document per binding revision, so the binding does not record it.
+  reserved 13;
+  reserved "config_lane_version";
   // Non-secret operator labels; forbidden from holding credentials or bearer tokens.
   map<string, string> labels = 14 [
     (ai.protomolt.proto.validate.v1.field).map = {

@@ -289,7 +289,7 @@ describe('buildLinkNeighborhoodGraph (#695)', () => {
   })
 })
 
-describe('externalLinkRow (#814)', () => {
+describe('externalLinkRow', () => {
   function sampleExternalLink(overrides: { displayUrl?: string; externalVersion?: string; retired?: boolean } = {}) {
     const retired = overrides.retired ?? false
     return create(ExternalLinkSchema, {

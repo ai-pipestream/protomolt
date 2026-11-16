@@ -48,7 +48,7 @@ captures:
 - `service_profile_id` and `service_endpoint_id`, validated against the live
   `ServiceProfile` via `ServiceProfileValidation`
 - `dataset`, `namespace`, and `contract_version`
-- monotonic `binding_revision` (`>= 1`) and optional `config_lane_version`
+- monotonic `binding_revision` (`>= 1`)
 - `lifecycle` (`ACTIVE` or `RETIRED`) and `retention_policy`
   (`RETAIN_HISTORY` or `PURGE_WITH_SOURCE`)
 - non-secret `ExternalEndpointSummary` (`host`, `port`, `tls_enabled`) derived
@@ -73,19 +73,32 @@ parameters, or private key material:
 
 ### Dual config-lane and repository storage
 
-`ExternalBindingStore` writes each binding revision to two aligned stores:
+`ExternalBindingStore` writes each binding revision to the canonical store first and
+then to the config lane:
 
 1. **Selected-part `DocumentService`**: graph `external-bindings:<account_id>`,
    `graph_address_id = "bindings"`, `doc_id = <binding_id>`, using `SaveDocument`
    with `ExpectedRevision` compare-and-swap so every binding rotation or
    retirement creates an immutable repository revision `1, 2, ...` readable via
    `ReadDocument(RevisionSelector.revision = binding_revision)`.
-2. **Config lane (`ConfigDocumentStore` + `ConfigSupport.gate`)**: validated with
-   both house `validate.v1` and `buf.validate` rules and published under the
-   collision-free config name
-   `ExternalPublicationCoordinates.configDocumentName(accountId, bindingId)`
-   (`external-binding.<base64url(len(account_id) || account_id || len(binding_id) || binding_id)>`),
-   recording the resulting `config_lane_version` on the saved binding.
+2. **Config lane (`ConfigDocumentStore` + `ConfigSupport.gate`)**: the envelope is
+   gated with both house `validate.v1` and `buf.validate` rules before the
+   canonical save, and written only after that save commits, as one immutable
+   document per revision named
+   `ExternalPublicationCoordinates.configRevisionDocumentName(accountId, bindingId, revision)`
+   (`external-binding.<base64url(len(account_id) || account_id || len(binding_id) || binding_id)>.r<revision>`).
+   A refused or lost canonical save never leaves a mirror, and concurrent
+   rotations never overwrite each other's mirror. If the mirror write fails after
+   the canonical save, the call returns `UNAVAILABLE` naming the committed
+   revision, and `ExternalBindingStore.mirrorRevision` rewrites the mirror from
+   the canonical revision.
+
+Binding documents carry an ACL of `READ` for account members and `WRITE` only for
+the `bindingWriters` identities the store is constructed with. A binding decides
+where publications go and which credentials they use, so an account member with
+a writer grant for the bindings datasource still cannot rotate or retire a
+binding unless named as a binding writer. The store refuses an empty writer set
+and a `public` writer.
 
 When an endpoint changes or a binding is rotated or retired:
 
@@ -133,6 +146,14 @@ For `MANAGED_SEARCH` bindings, source acceptance (`accepted_version` +
 `published_catalog_epoch` and `after_manifest_sha256` confirms the operation as
 `CONFIRMED` and activates `current_link`. Serving visibility remains a separate
 observation and never substitutes for publication proof.
+
+Refreshing serving visibility (`reconcileOperation(..., includeServingObservation = true)`
+on a confirmed operation) never reports a failed refresh as a replay. An unreachable
+status endpoint (`UNAVAILABLE`, `DEADLINE_EXCEEDED`) or an `Unavailable` provider
+answer fails the call with `UNAVAILABLE`; any other provider status, such as
+`PERMISSION_DENIED`, is returned with its own code; a provider with no record of the
+confirmed operation fails it with `FAILED_PRECONDITION`. In each case the ledger keeps
+the last observed visibility.
 
 ## Operation identity, attempt lifecycle, and provider verification
 
