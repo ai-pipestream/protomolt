@@ -153,9 +153,8 @@ final class PipelineSegmentRunner {
         }
         String target = step.getDependency();
         for (ServiceDependency dependency : pipeline.getDependenciesList()) {
-            if (dependency.getAlias().equals(step.getDependency())
-                    && !dependency.getEndpoint().isEmpty()) {
-                target = dependency.getServiceProfile() + "/" + dependency.getEndpoint();
+            if (dependency.getAlias().equals(step.getDependency())) {
+                target = worker.resolvePipelineTarget(dependency);
                 break;
             }
         }

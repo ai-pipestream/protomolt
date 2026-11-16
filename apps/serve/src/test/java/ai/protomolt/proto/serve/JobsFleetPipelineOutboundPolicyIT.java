@@ -2,73 +2,31 @@ package ai.protomolt.proto.serve;
 
 import ai.protomolt.proto.actions.ActionContext;
 import ai.protomolt.proto.actions.ActionException;
-import ai.protomolt.proto.grpc.invoke.DynamicGrpcCalls;
 import ai.protomolt.proto.grpc.policy.OutboundChannelPolicy;
 import ai.protomolt.proto.grpc.profile.FileSystemServiceProfileRepository;
-import ai.protomolt.proto.grpc.profile.ServiceProfileValidation;
 import ai.protomolt.proto.grpc.profile.v1.SchemaSource;
 import ai.protomolt.proto.grpc.profile.v1.ServiceEndpoint;
 import ai.protomolt.proto.grpc.profile.v1.ServiceProfile;
 import ai.protomolt.proto.grpc.profile.v1.SourceKind;
 import ai.protomolt.proto.grpc.profile.v1.Transport;
-import ai.protomolt.proto.grpc.workflow.v1.ServiceDependency;
-import ai.protomolt.proto.grpc.workflow.v1.StepCompletion;
-import ai.protomolt.proto.grpc.workflow.v1.TypedEdge;
 import ai.protomolt.proto.grpc.workspace.ProfileCredentialResolver;
 import ai.protomolt.proto.jobs.service.WorkflowRunSubmitter;
 import ai.protomolt.proto.jobs.service.store.JdbcWorkflowRunStore;
 import ai.protomolt.proto.jobs.service.store.WorkflowRunDatabase;
 import ai.protomolt.proto.jobs.service.store.WorkflowRunRecord;
 import ai.protomolt.proto.jobs.service.store.WorkflowRunStoreConfig;
-import ai.protomolt.proto.pipeline.DynamicPipelineTransport;
-import ai.protomolt.proto.pipeline.v1.EdgeCardinality;
-import ai.protomolt.proto.pipeline.v1.GrpcCallStep;
-import ai.protomolt.proto.pipeline.v1.MethodShape;
-import ai.protomolt.proto.pipeline.v1.Pipeline;
-import ai.protomolt.proto.pipeline.v1.PipelineStep;
-import ai.protomolt.proto.sources.CompiledProtos;
-import ai.protomolt.proto.sources.ProtoSourceCompiler;
-import ai.protomolt.proto.sources.ProtoSourceSet;
+import ai.protomolt.proto.serve.JobsFleetTlsTestFixture.CompiledSchema;
+import ai.protomolt.proto.serve.JobsFleetTlsTestFixture.IssuedPki;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.google.protobuf.DescriptorProtos.FileDescriptorSet;
-import com.google.protobuf.Descriptors.Descriptor;
 import com.google.protobuf.Descriptors.FileDescriptor;
-import com.google.protobuf.Descriptors.MethodDescriptor;
-import com.google.protobuf.Duration;
-import com.google.protobuf.DynamicMessage;
-import io.grpc.Attributes;
 import io.grpc.ChannelCredentials;
-import io.grpc.Context;
-import io.grpc.Contexts;
 import io.grpc.Grpc;
 import io.grpc.InsecureServerCredentials;
 import io.grpc.Metadata;
 import io.grpc.Server;
-import io.grpc.ServerCall;
-import io.grpc.ServerCallHandler;
-import io.grpc.ServerInterceptor;
-import io.grpc.ServerInterceptors;
-import io.grpc.ServerServiceDefinition;
-import io.grpc.ServerTransportFilter;
 import io.grpc.TlsChannelCredentials;
 import io.grpc.TlsServerCredentials;
-import io.grpc.stub.ServerCalls;
-import java.io.InputStream;
-import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.security.KeyStore;
-import java.security.PrivateKey;
-import java.util.ArrayList;
-import java.util.Base64;
-import java.util.List;
-import java.util.Set;
-import java.util.UUID;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.atomic.AtomicReference;
-import javax.net.ssl.SSLSession;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
@@ -80,37 +38,33 @@ import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.utility.DockerImageName;
 
+import java.nio.file.Path;
+import java.util.List;
+import java.util.Set;
+import java.util.UUID;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
+
+import static ai.protomolt.proto.serve.JobsFleetTlsTestFixture.PROFILE_NAME;
+import static ai.protomolt.proto.serve.JobsFleetTlsTestFixture.awaitTerminal;
+import static ai.protomolt.proto.serve.JobsFleetTlsTestFixture.countingFilter;
+import static ai.protomolt.proto.serve.JobsFleetTlsTestFixture.echoPipeline;
+import static ai.protomolt.proto.serve.JobsFleetTlsTestFixture.echoService;
+import static ai.protomolt.proto.serve.JobsFleetTlsTestFixture.submitPipeline;
+import static ai.protomolt.proto.serve.JobsFleetTlsTestFixture.writeProfileTlsConfig;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
  * Integration tests for {@link JobsFleetMount} and {@link ProtoMoltServe} proving that durable
- * pipeline jobs honor the configured {@link OutboundChannelPolicy}: denied endpoints and plaintext
- * targets under TLS-required policy are refused before connecting, while allowed TLS endpoints
- * connect over TLS and complete cleanly.
+ * pipeline jobs honor {@link OutboundChannelPolicy} and {@code --profile-tls-config} mTLS
+ * credentials in stock {@link ProtoMoltServe}.
  */
 @Tag("integration")
 @Testcontainers
 class JobsFleetPipelineOutboundPolicyIT {
 
     private static final ObjectMapper JSON = new ObjectMapper();
-    private static final String PROFILE_NAME = "serve-pipeline-echo";
-    private static final Context.Key<String> OP_ID_CTX = Context.key("serve-op-id");
-
-    private static final String SCHEMA = """
-            syntax = "proto3";
-            package serve.jobs.pipeline;
-
-            message EchoRequest {
-              string message = 1;
-            }
-            message EchoResponse {
-              string echoed = 1;
-              string operation_id = 2;
-            }
-            service EchoService {
-              rpc Echo(EchoRequest) returns (EchoResponse);
-            }
-            """;
 
     @Container
     @SuppressWarnings("resource")
@@ -125,12 +79,8 @@ class JobsFleetPipelineOutboundPolicyIT {
     @TempDir
     static Path pkiDir;
 
-    private static List<FileDescriptor> files;
-    private static FileDescriptor echoFile;
-    private static String descriptorFp;
-    private static Path caCertPem;
-    private static Path serverCertPem;
-    private static Path serverKeyPem;
+    private static CompiledSchema schema;
+    private static IssuedPki pki;
 
     @TempDir
     Path workspaceDir;
@@ -139,49 +89,21 @@ class JobsFleetPipelineOutboundPolicyIT {
     private final AtomicInteger plainCalls = new AtomicInteger();
     private final AtomicInteger tlsTransports = new AtomicInteger();
     private final AtomicInteger tlsCalls = new AtomicInteger();
+    private final AtomicInteger mtlsCalls = new AtomicInteger();
     private final AtomicReference<String> tlsProtocol = new AtomicReference<>();
+    private final AtomicReference<String> mtlsPeerSubject = new AtomicReference<>();
 
     private Server plainServer;
     private int plainPort;
     private Server tlsServer;
     private int tlsPort;
+    private Server mtlsServer;
+    private int mtlsPort;
 
     @BeforeAll
     static void compileSchemaAndIssueCertificates() throws Exception {
-        CompiledProtos compiled = new ProtoSourceCompiler().compile(ProtoSourceSet.builder()
-                .add("serve_echo.proto", SCHEMA, "test")
-                .build());
-        echoFile = compiled.descriptorFor("serve_echo.proto").orElseThrow();
-        files = List.of(echoFile);
-        FileDescriptorSet set = FileDescriptorSet.newBuilder()
-                .addAllFile(files.stream().map(FileDescriptor::toProto)
-                        .sorted((a, b) -> a.getName().compareTo(b.getName()))
-                        .toList())
-                .build();
-        descriptorFp = ServiceProfileValidation.sha256(set.toByteArray());
-
-        String password = "test-only-password";
-        Path caStore = pkiDir.resolve("ca.p12");
-        keytool("-genkeypair", "-alias", "ca", "-keyalg", "EC", "-groupname", "secp256r1",
-                "-dname", "CN=serve-jobs-ca", "-ext", "bc:c", "-validity", "2",
-                "-keystore", caStore.toString(), "-storetype", "PKCS12", "-storepass", password);
-        caCertPem = pkiDir.resolve("ca.pem");
-        keytool("-exportcert", "-rfc", "-alias", "ca", "-file", caCertPem.toString(),
-                "-keystore", caStore.toString(), "-storepass", password);
-
-        Path serverStore = pkiDir.resolve("server.p12");
-        keytool("-genkeypair", "-alias", "server", "-keyalg", "EC", "-groupname", "secp256r1",
-                "-dname", "CN=127.0.0.1", "-validity", "2",
-                "-keystore", serverStore.toString(), "-storetype", "PKCS12",
-                "-storepass", password);
-        Path serverCsr = pkiDir.resolve("server.csr");
-        keytool("-certreq", "-alias", "server", "-file", serverCsr.toString(),
-                "-keystore", serverStore.toString(), "-storepass", password);
-        serverCertPem = pkiDir.resolve("server.pem");
-        keytool("-gencert", "-rfc", "-alias", "ca", "-infile", serverCsr.toString(),
-                "-outfile", serverCertPem.toString(), "-ext", "SAN=dns:localhost,ip:127.0.0.1",
-                "-validity", "2", "-keystore", caStore.toString(), "-storepass", password);
-        serverKeyPem = exportKey(serverStore, "server", password, pkiDir.resolve("server.key"));
+        schema = JobsFleetTlsTestFixture.compileSchema();
+        pki = JobsFleetTlsTestFixture.issueCertificates(pkiDir);
     }
 
     @BeforeEach
@@ -190,22 +112,34 @@ class JobsFleetPipelineOutboundPolicyIT {
         plainCalls.set(0);
         tlsTransports.set(0);
         tlsCalls.set(0);
+        mtlsCalls.set(0);
         tlsProtocol.set(null);
+        mtlsPeerSubject.set(null);
 
         plainServer = Grpc.newServerBuilderForPort(0, InsecureServerCredentials.create())
                 .addTransportFilter(countingFilter(plainTransports))
-                .addService(echoService(plainCalls, null))
+                .addService(echoService(schema, plainCalls, null, null))
                 .build()
                 .start();
         plainPort = plainServer.getPort();
 
-        tlsServer = Grpc.newServerBuilderForPort(
-                        0, TlsServerCredentials.create(serverCertPem.toFile(), serverKeyPem.toFile()))
+        tlsServer = Grpc.newServerBuilderForPort(0, TlsServerCredentials.create(
+                        pki.serverCertPem().toFile(), pki.serverKeyPem().toFile()))
                 .addTransportFilter(countingFilter(tlsTransports))
-                .addService(echoService(tlsCalls, tlsProtocol))
+                .addService(echoService(schema, tlsCalls, tlsProtocol, null))
                 .build()
                 .start();
         tlsPort = tlsServer.getPort();
+
+        mtlsServer = Grpc.newServerBuilderForPort(0, TlsServerCredentials.newBuilder()
+                        .keyManager(pki.serverCertPem().toFile(), pki.serverKeyPem().toFile())
+                        .trustManager(pki.caCertPem().toFile())
+                        .clientAuth(TlsServerCredentials.ClientAuth.REQUIRE)
+                        .build())
+                .addService(echoService(schema, mtlsCalls, null, mtlsPeerSubject))
+                .build()
+                .start();
+        mtlsPort = mtlsServer.getPort();
 
         FileSystemServiceProfileRepository repository =
                 new FileSystemServiceProfileRepository(workspaceDir);
@@ -214,8 +148,8 @@ class JobsFleetPipelineOutboundPolicyIT {
                 .setSchemaSource(SchemaSource.newBuilder()
                         .setKind(SourceKind.SOURCE_KIND_ARTIFACT)
                         .setSourceRef("serve_echo.proto")
-                        .setDescriptorFingerprint(descriptorFp)
-                        .setDescriptorArtifactRef("sha256:" + descriptorFp)
+                        .setDescriptorFingerprint(schema.descriptorFingerprint())
+                        .setDescriptorArtifactRef("sha256:" + schema.descriptorFingerprint())
                         .build())
                 .addEndpoints(ServiceEndpoint.newBuilder()
                         .setName("plain")
@@ -230,16 +164,23 @@ class JobsFleetPipelineOutboundPolicyIT {
                         .setTransport(Transport.TRANSPORT_TLS)
                         .setTrustRef("tls:serve-ca")
                         .build())
+                .addEndpoints(ServiceEndpoint.newBuilder()
+                        .setName("mtls")
+                        .setHost("127.0.0.1")
+                        .setPort(mtlsPort)
+                        .setTransport(Transport.TRANSPORT_TLS)
+                        .setTrustRef("tls:serve-ca")
+                        .setClientCertificateRef("tls:serve-client")
+                        .build())
                 .build());
     }
 
     @AfterEach
     void stopTargetServers() throws Exception {
-        if (plainServer != null) {
-            plainServer.shutdownNow().awaitTermination(5, TimeUnit.SECONDS);
-        }
-        if (tlsServer != null) {
-            tlsServer.shutdownNow().awaitTermination(5, TimeUnit.SECONDS);
+        for (Server srv : new Server[] {plainServer, tlsServer, mtlsServer}) {
+            if (srv != null) {
+                srv.shutdownNow().awaitTermination(5, TimeUnit.SECONDS);
+            }
         }
     }
 
@@ -258,7 +199,8 @@ class JobsFleetPipelineOutboundPolicyIT {
                         jobsOptions.jdbcUrl(), jobsOptions.username(), jobsOptions.password()))) {
             JdbcWorkflowRunStore store = new JdbcWorkflowRunStore(db);
             WorkflowRunSubmitter submitter = new WorkflowRunSubmitter(store, null, 4);
-            String jobId = submitPipeline(submitter, echoPipeline("plain"), "denied");
+            String jobId = submitPipeline(
+                    submitter, schema, echoPipeline(schema, "plain"), "denied");
 
             WorkflowRunRecord settled = awaitTerminal(store, UUID.fromString(jobId));
             assertThat(settled.status).isEqualTo(WorkflowRunRecord.STATUS_FAILED);
@@ -266,6 +208,42 @@ class JobsFleetPipelineOutboundPolicyIT {
             assertThat(settled.error).contains("gRPC target host is not allowed: 127.0.0.1");
             assertThat(plainTransports.get()).isZero();
             assertThat(plainCalls.get()).isZero();
+        }
+    }
+
+    @Test
+    void stockProtoMoltServeWithProfileTlsConfigCompletesDurableMtlsPipelineJob()
+            throws Exception {
+        Path tlsConfigFile = writeProfileTlsConfig(
+                workspaceDir.resolve("profile-tls.json"), pki, mtlsPort);
+        ProtoMoltServe.JobsOptions jobsOptions = jobsOptions();
+        ProtoMoltServe.Options parsed = ProtoMoltServe.Options.parse(new String[] {
+                "--host", "127.0.0.1",
+                "--grpc-port", "0",
+                "--http-port", "0",
+                "--jobs-jdbc", jobsOptions.jdbcUrl(),
+                "--jobs-user", jobsOptions.username(),
+                "--jobs-password", jobsOptions.password(),
+                "--service-workspace", workspaceDir.toString(),
+                "--profile-tls-config", tlsConfigFile.toString()
+        });
+
+        try (ProtoMoltServe ignored = ProtoMoltServe.start(parsed);
+                WorkflowRunDatabase db = new WorkflowRunDatabase(new WorkflowRunStoreConfig(
+                        jobsOptions.jdbcUrl(), jobsOptions.username(), jobsOptions.password()))) {
+            JdbcWorkflowRunStore store = new JdbcWorkflowRunStore(db);
+            WorkflowRunSubmitter submitter = new WorkflowRunSubmitter(store, null, 4);
+            String jobId = submitPipeline(
+                    submitter, schema, echoPipeline(schema, "mtls"), "mtls-pipeline");
+
+            WorkflowRunRecord settled = awaitTerminal(store, UUID.fromString(jobId));
+            assertThat(settled.status).as("error: %s", settled.error)
+                    .isEqualTo(WorkflowRunRecord.STATUS_COMPLETED);
+            assertThat(mtlsCalls.get()).isEqualTo(1);
+            assertThat(mtlsPeerSubject.get()).isEqualTo("CN=serve-jobs-mtls-client");
+            JsonNode result = JSON.readTree(settled.result);
+            assertThat(result.path("echoed").asText()).isEqualTo("echo:mtls-pipeline");
+            assertThat(result.path("operationId").asText()).isEqualTo(jobId + "/call_echo");
         }
     }
 
@@ -280,7 +258,7 @@ class JobsFleetPipelineOutboundPolicyIT {
                 .maxActiveChannels(1)
                 .build();
         ChannelCredentials caCredentials = TlsChannelCredentials.newBuilder()
-                .trustManager(caCertPem.toFile())
+                .trustManager(pki.caCertPem().toFile())
                 .build();
         ProfileCredentialResolver credentials = new ProfileCredentialResolver() {
             @Override
@@ -301,7 +279,7 @@ class JobsFleetPipelineOutboundPolicyIT {
         };
 
         ActionContext context = ActionContext.create();
-        for (FileDescriptor fd : files) {
+        for (FileDescriptor fd : schema.files()) {
             context.registry().registerFile(fd);
         }
         var serviceProfiles = WorkspaceMount.serviceProfiles(workspaceDir);
@@ -311,8 +289,8 @@ class JobsFleetPipelineOutboundPolicyIT {
         try {
             WorkflowRunSubmitter submitter = new WorkflowRunSubmitter(fleet.store(), null, 4);
 
-            // 1. Plaintext endpoint is refused before opening a socket.
-            String plainJobId = submitPipeline(submitter, echoPipeline("plain"), "plain-blocked");
+            String plainJobId = submitPipeline(
+                    submitter, schema, echoPipeline(schema, "plain"), "plain-blocked");
             assertThat(fleet.worker().workOnce()).isTrue();
             WorkflowRunRecord plainFailed = fleet.store()
                     .get(UUID.fromString(plainJobId)).orElseThrow();
@@ -322,8 +300,8 @@ class JobsFleetPipelineOutboundPolicyIT {
             assertThat(plainTransports.get()).isZero();
             assertThat(plainCalls.get()).isZero();
 
-            // 2. TLS endpoint connects with TLS credentials under the same policy and completes.
-            String tlsJobId = submitPipeline(submitter, echoPipeline("secure"), "serve-tls");
+            String tlsJobId = submitPipeline(
+                    submitter, schema, echoPipeline(schema, "secure"), "serve-tls");
             assertThat(fleet.worker().workOnce()).isTrue();
             WorkflowRunRecord completed = fleet.store()
                     .get(UUID.fromString(tlsJobId)).orElseThrow();
@@ -347,137 +325,5 @@ class JobsFleetPipelineOutboundPolicyIT {
                 + POSTGRES.getMappedPort(5432) + "/protomolt";
         return new ProtoMoltServe.JobsOptions(
                 jdbcUrl, "protomolt", "protomolt-test", null, null, 1, 4);
-    }
-
-    private static WorkflowRunRecord awaitTerminal(JdbcWorkflowRunStore store, UUID jobId)
-            throws InterruptedException {
-        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
-        while (System.nanoTime() < deadline) {
-            WorkflowRunRecord record = store.get(jobId).orElseThrow();
-            if (WorkflowRunRecord.STATUS_COMPLETED.equals(record.status)
-                    || WorkflowRunRecord.STATUS_FAILED.equals(record.status)
-                    || WorkflowRunRecord.STATUS_DEAD.equals(record.status)) {
-                return record;
-            }
-            Thread.sleep(25);
-        }
-        return store.get(jobId).orElseThrow();
-    }
-
-    private static String submitPipeline(WorkflowRunSubmitter submitter, Pipeline pipeline,
-                                         String text) {
-        Descriptor reqType = echoFile.findMessageTypeByName("EchoRequest");
-        DynamicMessage input = DynamicMessage.newBuilder(reqType)
-                .setField(reqType.findFieldByName("message"), text)
-                .build();
-        WorkflowRunSubmitter.Outcome outcome = submitter.submitPipeline(pipeline, files, input, null);
-        assertThat(outcome.ok()).as(outcome.error()).isTrue();
-        return outcome.jobId();
-    }
-
-    private static Pipeline echoPipeline(String endpointName) {
-        return Pipeline.newBuilder()
-                .setName("serve-policy-pipeline")
-                .setInputType("serve.jobs.pipeline.EchoRequest")
-                .setDescriptorFingerprint(descriptorFp)
-                .setMaxStreamMessages(8)
-                .setDeadline(Duration.newBuilder().setSeconds(15).build())
-                .addDependencies(ServiceDependency.newBuilder()
-                        .setAlias("echo")
-                        .setServiceProfile(PROFILE_NAME)
-                        .setEndpoint(endpointName)
-                        .setDescriptorFingerprint(descriptorFp)
-                        .build())
-                .addSteps(PipelineStep.newBuilder()
-                        .setName("call_echo")
-                        .setDependency("echo")
-                        .setGrpcCall(GrpcCallStep.newBuilder()
-                                .setMethod("serve.jobs.pipeline.EchoService/Echo")
-                                .setMethodShape(MethodShape.METHOD_SHAPE_UNARY)
-                                .setEdge(TypedEdge.newBuilder()
-                                        .addSources("input")
-                                        .setProduceType("serve.jobs.pipeline.EchoRequest")
-                                        .addRules("message = input.message")
-                                        .build())
-                                .setEdgeCardinality(EdgeCardinality.EDGE_CARDINALITY_ONE)
-                                .setOutputCardinality(EdgeCardinality.EDGE_CARDINALITY_ONE)
-                                .setCompletion(StepCompletion.STEP_COMPLETION_LIVE)
-                                .build())
-                        .build())
-                .build();
-    }
-
-    private static ServerTransportFilter countingFilter(AtomicInteger counter) {
-        return new ServerTransportFilter() {
-            @Override
-            public Attributes transportReady(Attributes transportAttrs) {
-                counter.incrementAndGet();
-                return transportAttrs;
-            }
-        };
-    }
-
-    private static ServerServiceDefinition echoService(AtomicInteger callCounter,
-                                                       AtomicReference<String> tlsProtocolSink) {
-        MethodDescriptor md = echoFile.findServiceByName("EchoService").findMethodByName("Echo");
-        io.grpc.MethodDescriptor<DynamicMessage, DynamicMessage> grpcMethod =
-                DynamicGrpcCalls.methodDescriptor(md);
-        ServerInterceptor interceptor = new ServerInterceptor() {
-            @Override
-            public <ReqT, RespT> ServerCall.Listener<ReqT> interceptCall(
-                    ServerCall<ReqT, RespT> call, Metadata headers,
-                    ServerCallHandler<ReqT, RespT> next) {
-                if (tlsProtocolSink != null) {
-                    SSLSession session = call.getAttributes().get(Grpc.TRANSPORT_ATTR_SSL_SESSION);
-                    if (session != null) {
-                        tlsProtocolSink.set(session.getProtocol());
-                    }
-                }
-                String opId = headers.get(DynamicPipelineTransport.OPERATION_ID_HEADER);
-                Context ctx = Context.current().withValue(OP_ID_CTX, opId == null ? "" : opId);
-                return Contexts.interceptCall(ctx, call, headers, next);
-            }
-        };
-        ServerServiceDefinition raw = ServerServiceDefinition.builder(
-                        "serve.jobs.pipeline.EchoService")
-                .addMethod(grpcMethod, ServerCalls.asyncUnaryCall((req, obs) -> {
-                    callCounter.incrementAndGet();
-                    Descriptor outType = echoFile.findMessageTypeByName("EchoResponse");
-                    String msg = (String) req.getField(
-                            req.getDescriptorForType().findFieldByName("message"));
-                    obs.onNext(DynamicMessage.newBuilder(outType)
-                            .setField(outType.findFieldByName("echoed"), "echo:" + msg)
-                            .setField(outType.findFieldByName("operation_id"), OP_ID_CTX.get())
-                            .build());
-                    obs.onCompleted();
-                }))
-                .build();
-        return ServerInterceptors.intercept(raw, interceptor);
-    }
-
-    private static Path exportKey(Path store, String alias, String password, Path outFile)
-            throws Exception {
-        KeyStore ks = KeyStore.getInstance("PKCS12");
-        try (InputStream in = Files.newInputStream(store)) {
-            ks.load(in, password.toCharArray());
-        }
-        PrivateKey key = (PrivateKey) ks.getKey(alias, password.toCharArray());
-        Files.writeString(outFile, "-----BEGIN PRIVATE KEY-----\n"
-                + Base64.getMimeEncoder(64, "\n".getBytes(StandardCharsets.US_ASCII))
-                        .encodeToString(key.getEncoded())
-                + "\n-----END PRIVATE KEY-----\n", StandardCharsets.US_ASCII);
-        return outFile;
-    }
-
-    private static void keytool(String... args) throws Exception {
-        List<String> command = new ArrayList<>();
-        command.add(Path.of(System.getProperty("java.home"), "bin", "keytool").toString());
-        command.add("-noprompt");
-        command.addAll(List.of(args));
-        Process process = new ProcessBuilder(command).redirectErrorStream(true).start();
-        String output = new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
-        if (!process.waitFor(60, TimeUnit.SECONDS) || process.exitValue() != 0) {
-            throw new IllegalStateException("keytool failed: " + output);
-        }
     }
 }

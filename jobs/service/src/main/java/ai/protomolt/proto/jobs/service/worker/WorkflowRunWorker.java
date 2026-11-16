@@ -287,6 +287,12 @@ public final class WorkflowRunWorker implements AutoCloseable {
         requestConsumer.submitRequest(value);
     }
 
+    String resolvePipelineTarget(ServiceDependency dependency) {
+        return pipelineTransport != null
+                ? pipelineTransport.resolveTargetKey(dependency)
+                : ServiceProfilePipelineTransport.staticDependencyKey(dependency);
+    }
+
     Semaphore acquireTargetPermit(String target) {
         Semaphore semaphore = targetPermits.computeIfAbsent(target,
                 key -> new Semaphore(config.maxConcurrentPerTarget()));

@@ -22,12 +22,12 @@ import io.grpc.Channel;
 import io.grpc.ChannelCredentials;
 import io.grpc.ManagedChannel;
 import io.grpc.Metadata;
-import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
+
 import java.io.IOException;
 import java.util.List;
 import java.util.Objects;
-import java.util.concurrent.ConcurrentHashMap;
+import java.util.Optional;
 import java.util.concurrent.TimeUnit;
 
 /**
@@ -40,22 +40,46 @@ import java.util.concurrent.TimeUnit;
  */
 final class ServiceProfilePipelineTransport implements PipelineTransport, AutoCloseable {
 
-    private record ChannelKey(String target, boolean tls) {
-    }
-
-    private final ChannelFactory channels;
+    private final PipelineChannelCache channelCache;
     private final ServiceProfileRepository serviceProfiles;
     private final WorkflowRunWorker.EndpointCredentials credentials;
-    private final ConcurrentHashMap<ChannelKey, ManagedChannel> openChannels =
-            new ConcurrentHashMap<>();
-    private volatile boolean closed;
 
     ServiceProfilePipelineTransport(ChannelFactory channels,
                                     ServiceProfileRepository serviceProfiles,
                                     WorkflowRunWorker.EndpointCredentials credentials) {
-        this.channels = Objects.requireNonNull(channels, "channels");
+        this.channelCache = new PipelineChannelCache(channels);
         this.serviceProfiles = serviceProfiles;
         this.credentials = Objects.requireNonNull(credentials, "credentials");
+    }
+
+    String resolveTargetKey(ServiceDependency dependency) {
+        if (serviceProfiles != null) {
+            try {
+                Optional<ServiceProfile> found = serviceProfiles.find(
+                        dependency.getServiceProfile());
+                if (found.isPresent()) {
+                    ServiceEndpoint endpoint = findEndpoint(found.get(), dependency.getEndpoint());
+                    if (endpoint != null) {
+                        if (!endpoint.getHost().isBlank() && endpoint.getPort() > 0) {
+                            return formatTarget(endpoint);
+                        }
+                        return found.get().getName() + "/" + endpoint.getName();
+                    }
+                }
+            } catch (IOException ignored) {
+                // invoke() surfaces repository I/O faults when the step runs.
+            }
+        }
+        return staticDependencyKey(dependency);
+    }
+
+    static String staticDependencyKey(ServiceDependency dependency) {
+        String profile = dependency.getServiceProfile();
+        String endpoint = dependency.getEndpoint();
+        if (!profile.isBlank()) {
+            return endpoint.isBlank() ? profile : profile + "/" + endpoint;
+        }
+        return endpoint.isBlank() ? dependency.getAlias() : endpoint;
     }
 
     @Override
@@ -74,22 +98,7 @@ final class ServiceProfilePipelineTransport implements PipelineTransport, AutoCl
                                        List<DynamicMessage> requests,
                                        long deadlineMillis,
                                        int maxResponses) {
-        Objects.requireNonNull(dependency, "dependency");
-        Objects.requireNonNull(method, "method");
-        Objects.requireNonNull(requests, "requests");
-        if (deadlineMillis <= 0) {
-            throw new IllegalArgumentException("deadlineMillis must be positive");
-        }
-        if (maxResponses <= 0) {
-            throw new IllegalArgumentException("maxResponses must be positive");
-        }
-        if (!method.isClientStreaming() && requests.size() != 1) {
-            throw new IllegalArgumentException(method.getFullName()
-                    + " takes exactly one request; got " + requests.size());
-        }
-        if (closed) {
-            throw new IllegalStateException("pipeline transport is closed");
-        }
+        validateInvokeArguments(dependency, method, requests, deadlineMillis, maxResponses);
 
         ServiceProfile profile = resolveProfile(dependency);
         ServiceEndpoint endpoint = resolveEndpoint(profile, dependency.getEndpoint());
@@ -108,12 +117,11 @@ final class ServiceProfilePipelineTransport implements PipelineTransport, AutoCl
         ChannelCredentials customTls = credentials.channelCredentials(profile, endpoint);
         boolean credentialed = !endpoint.getCredentialRef().isBlank() || customTls != null;
 
-        channels.validateTarget(target, tls);
-        channels.validateDeadline(effectiveDeadlineMs);
+        channelCache.validateTargetAndDeadline(target, tls, effectiveDeadlineMs);
 
         Metadata headers = buildHeaders(hostHeaders, context);
         if (customTls != null) {
-            ManagedChannel dedicated = openDedicatedChannel(target, customTls);
+            ManagedChannel dedicated = channelCache.openDedicated(target, customTls);
             try {
                 return executeCall(dedicated, method, requests, effectiveDeadlineMs, maxResponses,
                         headers, credentialed);
@@ -121,9 +129,36 @@ final class ServiceProfilePipelineTransport implements PipelineTransport, AutoCl
                 dedicated.shutdownNow();
             }
         }
-        ManagedChannel shared = acquireSharedChannel(new ChannelKey(target, tls));
-        return executeCall(shared, method, requests, effectiveDeadlineMs, maxResponses,
-                headers, credentialed);
+        PipelineChannelCache.Lease lease = channelCache.acquireShared(target, tls);
+        try {
+            return executeCall(lease.channel(), method, requests, effectiveDeadlineMs,
+                    maxResponses, headers, credentialed);
+        } finally {
+            lease.release();
+        }
+    }
+
+    private void validateInvokeArguments(ServiceDependency dependency,
+                                         MethodDescriptor method,
+                                         List<DynamicMessage> requests,
+                                         long deadlineMillis,
+                                         int maxResponses) {
+        Objects.requireNonNull(dependency, "dependency");
+        Objects.requireNonNull(method, "method");
+        Objects.requireNonNull(requests, "requests");
+        if (deadlineMillis <= 0) {
+            throw new IllegalArgumentException("deadlineMillis must be positive");
+        }
+        if (maxResponses <= 0) {
+            throw new IllegalArgumentException("maxResponses must be positive");
+        }
+        if (!method.isClientStreaming() && requests.size() != 1) {
+            throw new IllegalArgumentException(method.getFullName()
+                    + " takes exactly one request; got " + requests.size());
+        }
+        if (channelCache.isClosed()) {
+            throw new IllegalStateException("pipeline transport is closed");
+        }
     }
 
     private ServiceProfile resolveProfile(ServiceDependency dependency) {
@@ -156,10 +191,9 @@ final class ServiceProfilePipelineTransport implements PipelineTransport, AutoCl
         return profile;
     }
 
-    private static ServiceEndpoint resolveEndpoint(ServiceProfile profile, String requested) {
+    private static ServiceEndpoint findEndpoint(ServiceProfile profile, String requested) {
         if (profile.getEndpointsCount() == 0) {
-            throw new IllegalArgumentException(
-                    "service profile '" + profile.getName() + "' defines no endpoints");
+            return null;
         }
         if (requested == null || requested.isBlank()) {
             return profile.getEndpoints(0);
@@ -169,8 +203,20 @@ final class ServiceProfilePipelineTransport implements PipelineTransport, AutoCl
                 return candidate;
             }
         }
-        throw new IllegalArgumentException("endpoint '" + requested
-                + "' is not in service profile '" + profile.getName() + "'");
+        return null;
+    }
+
+    private static ServiceEndpoint resolveEndpoint(ServiceProfile profile, String requested) {
+        if (profile.getEndpointsCount() == 0) {
+            throw new IllegalArgumentException(
+                    "service profile '" + profile.getName() + "' defines no endpoints");
+        }
+        ServiceEndpoint found = findEndpoint(profile, requested);
+        if (found == null) {
+            throw new IllegalArgumentException("endpoint '" + requested
+                    + "' is not in service profile '" + profile.getName() + "'");
+        }
+        return found;
     }
 
     /** A method as service profiles name it: {@code package.Service/Method}. */
@@ -227,45 +273,6 @@ final class ServiceProfilePipelineTransport implements PipelineTransport, AutoCl
         return headers;
     }
 
-    private ManagedChannel openDedicatedChannel(String target, ChannelCredentials customTls) {
-        try {
-            return Objects.requireNonNull(channels.open(target, customTls),
-                    "channel factory returned null");
-        } catch (OutboundChannelPolicyException e) {
-            throw translateOpenRejection(e);
-        }
-    }
-
-    private synchronized ManagedChannel acquireSharedChannel(ChannelKey key) {
-        if (closed) {
-            throw new IllegalStateException("pipeline transport is closed");
-        }
-        ManagedChannel existing = openChannels.get(key);
-        if (existing != null && !existing.isShutdown() && !existing.isTerminated()) {
-            return existing;
-        }
-        ManagedChannel opened;
-        try {
-            opened = Objects.requireNonNull(channels.open(key.target(), key.tls()),
-                    "channel factory returned null");
-        } catch (OutboundChannelPolicyException e) {
-            throw translateOpenRejection(e);
-        }
-        openChannels.put(key, opened);
-        return opened;
-    }
-
-    private static RuntimeException translateOpenRejection(OutboundChannelPolicyException error) {
-        String message = error.getMessage();
-        if (message != null && message.contains("concurrency limit")) {
-            return Status.RESOURCE_EXHAUSTED
-                    .withDescription("outbound channel policy rejected step: " + message)
-                    .withCause(error)
-                    .asRuntimeException();
-        }
-        return error;
-    }
-
     private static List<DynamicMessage> executeCall(Channel channel,
                                                     MethodDescriptor method,
                                                     List<DynamicMessage> requests,
@@ -295,19 +302,7 @@ final class ServiceProfilePipelineTransport implements PipelineTransport, AutoCl
     }
 
     @Override
-    public synchronized void close() {
-        closed = true;
-        for (ManagedChannel channel : openChannels.values()) {
-            channel.shutdownNow();
-        }
-        for (ManagedChannel channel : openChannels.values()) {
-            try {
-                channel.awaitTermination(5, TimeUnit.SECONDS);
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-                break;
-            }
-        }
-        openChannels.clear();
+    public void close() {
+        channelCache.close();
     }
 }
