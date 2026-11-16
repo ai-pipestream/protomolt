@@ -50,7 +50,7 @@ import org.junit.jupiter.api.Test;
 
 /**
  * Contract validation, descriptor closure, and JSON Schema tests for
- * {@code ai.protomolt.proto.repo.sink.v1.repository_sink.proto} (#818).
+ * {@code ai.protomolt.proto.repo.sink.v1.repository_sink.proto}.
  */
 class RepositorySinkContractTest {
     private static final String SHA = "a".repeat(64);

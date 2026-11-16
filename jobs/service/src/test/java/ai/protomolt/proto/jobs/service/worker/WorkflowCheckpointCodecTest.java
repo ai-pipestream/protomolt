@@ -24,7 +24,7 @@ import org.junit.jupiter.api.Test;
 
 /**
  * Verifies binary-faithful checkpoint round-tripping for step responses carrying unknown fields,
- * raw bytes, unsigned 64-bit values, and unregistered {@code google.protobuf.Any} payloads (#818).
+ * raw bytes, unsigned 64-bit values, and unregistered {@code google.protobuf.Any} payloads.
  */
 class WorkflowCheckpointCodecTest {
     private static final ObjectMapper MAPPER = new ObjectMapper();

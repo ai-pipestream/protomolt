@@ -109,7 +109,10 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
+import java.sql.Connection;
 import java.sql.PreparedStatement;
+import java.sql.ResultSet;
+import java.sql.Statement;
 import java.time.Duration;
 import java.util.Base64;
 import java.util.HashSet;
@@ -1106,9 +1109,146 @@ class RepositorySinkServiceIT {
         }
     }
 
+    @Test
+    void ownerStalledAfterItsFinalLeaseCheckCommitsOnceAndARetryReplaysThatCommit()
+            throws Exception {
+        JdbcRepositorySinkJobStore directStore =
+                new JdbcRepositorySinkJobStore(services.ledgerDataSource());
+        RendererProvider renderer = immediateMarkdownProvider();
+        RepositorySinkRenderers mounted = RepositorySinkRenderers.of(
+                List.of(renderer), Set.of(renderer.capability().getProviderId()));
+        // A heartbeat interval far above the lease duration leaves owner A with only its
+        // pre-commit and final-commit renewals, so the lease lapses while its commit is held.
+        services.withRenderers(mounted)
+                .withSinkLeaseConfig(new RepositorySink.LeaseConfig(
+                        Duration.ofMillis(1500), Duration.ofSeconds(30), Duration.ofMillis(100)));
+
+        EntryAddress dest = entry("multi-instance-post-fence-stall");
+        String opId = "op-multi-post-fence-stall";
+        PublishRepositorySinkRequest request = PublishRepositorySinkRequest.newBuilder()
+                .setOperationId(opId)
+                .setAsync(true)
+                .setSource(processingSource(
+                        buildDomainRecord("rec-post-fence", "Post Fence Stall"),
+                        "run-post-fence",
+                        "render"))
+                .setConversion(markdownConversionSpec(renderer.capability()))
+                .setDestination(SinkDestination.newBuilder()
+                        .setAddress(dest)
+                        .setRendition(RenditionDescriptor.newBuilder()
+                                .setName("readme_md")
+                                .setMediaType("text/markdown")))
+                .build();
+
+        try (PeerHost instanceB = bootPeerHost(
+                        defaultAccountBindings(true), mounted, RepositorySink.LeaseConfig.DEFAULT);
+                Connection holder = services.ledgerDataSource().getConnection()) {
+            // Holding the outcome table against writers stalls owner A inside the repository
+            // commit, after its final lease renewal, while peer outcome lookups still read.
+            String outcomeTable = outcomeTableName(holder);
+            holder.setAutoCommit(false);
+            try (Statement lock = holder.createStatement()) {
+                lock.execute("LOCK TABLE " + outcomeTable + " IN EXCLUSIVE MODE");
+            }
+            try {
+                as(WRITER_TOKEN, RepositorySinkServiceGrpc.newBlockingStub(repoChannel))
+                        .publishRepositorySink(request);
+                awaitPreCommitRecorded(directStore, opId);
+                // Owner A's last renewal is at most this old once its lease duration has passed.
+                Thread.sleep(2200L);
+
+                RepositorySinkJob fencedByB = as(
+                                READER_TOKEN,
+                                RepositorySinkServiceGrpc.newBlockingStub(instanceB.channel))
+                        .withDeadlineAfter(10, TimeUnit.SECONDS)
+                        .getRepositorySinkJob(GetRepositorySinkJobRequest.newBuilder()
+                                .setAccountId(accountId)
+                                .setOperationId(opId)
+                                .build())
+                        .getJob();
+                assertThat(fencedByB.getState())
+                        .isEqualTo(RepositorySinkJobState.REPOSITORY_SINK_JOB_STATE_FAILED);
+                assertThat(fencedByB.getFailure().getReasonCode()).isEqualTo("COMMIT_NOT_RECORDED");
+                assertThat(fencedByB.getFailure().getRetryable()).isTrue();
+                assertThat(directStore.find(accountId, opId).orElseThrow().lease().leaseEpoch())
+                        .isEqualTo(2L);
+            } finally {
+                holder.rollback();
+            }
+
+            // Owner A, already past its final lease check, completes the repository commit.
+            assertThat(awaitCommittedVersion(dest)).isEqualTo(1L);
+
+            // Its stale epoch-1 SUCCEEDED write is refused; the peer's settlement stands.
+            RepositorySinkJobStore.StoredJob afterStaleCommit =
+                    directStore.find(accountId, opId).orElseThrow();
+            assertThat(afterStaleCommit.lease().leaseEpoch()).isEqualTo(2L);
+            assertThat(afterStaleCommit.job().getState())
+                    .isEqualTo(RepositorySinkJobState.REPOSITORY_SINK_JOB_STATE_FAILED);
+
+            // The retry the failure invites replays the one commit instead of adding a version.
+            RepositorySinkJob retried = as(
+                            WRITER_TOKEN,
+                            RepositorySinkServiceGrpc.newBlockingStub(instanceB.channel))
+                    .publishRepositorySink(request.toBuilder().setAsync(false).build())
+                    .getJob();
+            assertThat(retried.getState())
+                    .isEqualTo(RepositorySinkJobState.REPOSITORY_SINK_JOB_STATE_SUCCEEDED);
+            assertThat(retried.getDestinationVersion()).isEqualTo(1L);
+            assertThat(retried.getReplayed()).isTrue();
+            assertThat(awaitCommittedVersion(dest)).isEqualTo(1L);
+        }
+    }
+
     // -------------------------------------------------------------------------
     // Helpers & Fixtures
     // -------------------------------------------------------------------------
+
+    private static String outcomeTableName(Connection connection) throws Exception {
+        try (Statement statement = connection.createStatement();
+                ResultSet tables = statement.executeQuery(
+                        "SELECT schemaname FROM pg_tables"
+                                + " WHERE tablename = 'catalog_operation_outcomes'")) {
+            assertThat(tables.next()).isTrue();
+            String schema = tables.getString(1);
+            assertThat(tables.next()).isFalse();
+            return schema + ".catalog_operation_outcomes";
+        }
+    }
+
+    private void awaitPreCommitRecorded(JdbcRepositorySinkJobStore store, String operationId)
+            throws Exception {
+        long deadlineNanos = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+        while (System.nanoTime() < deadlineNanos) {
+            if (store.find(accountId, operationId)
+                    .map(stored -> stored.pendingProvenance() != null)
+                    .orElse(false)) {
+                return;
+            }
+            Thread.sleep(25L);
+        }
+        throw new AssertionError("Timed out waiting for the pre-commit record: " + operationId);
+    }
+
+    private long awaitCommittedVersion(EntryAddress address) throws Exception {
+        long deadlineNanos = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+        while (System.nanoTime() < deadlineNanos) {
+            try {
+                return as(READER_TOKEN, ArchiveServiceGrpc.newBlockingStub(repoChannel))
+                        .getEntryManifest(GetEntryManifestRequest.newBuilder()
+                                .setAddress(address)
+                                .build())
+                        .getManifest()
+                        .getVersion();
+            } catch (StatusRuntimeException notYet) {
+                if (notYet.getStatus().getCode() != Status.Code.NOT_FOUND) {
+                    throw notYet;
+                }
+                Thread.sleep(25L);
+            }
+        }
+        throw new AssertionError("Timed out waiting for a committed entry version");
+    }
 
     private void bootRepoHost(
             AccountBindings bindings, RepositorySinkRenderers renderers) {

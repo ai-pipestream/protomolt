@@ -31,6 +31,7 @@ import java.time.LocalDate;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -44,16 +45,43 @@ import java.util.Set;
  * <p>Every CEL row filter is parsed and type-checked through
  * {@link CelEnvironmentFactory} against the target {@link MetricMapping}'s
  * declared members and backing protobuf descriptor before being lowered into an
- * engine-neutral {@link RowPredicate}. Any unknown field or member, type
- * mismatch, non-boolean result type, or untranslatable construct is refused
- * closed with {@link MetricRefusal}.
+ * engine-neutral {@link RowPredicate}. Both the synthetic row-context
+ * {@link FileDescriptor} / {@link Cel} environment per {@link MetricMapping}
+ * and compiled per-expression predicates (plus referenced member sets) are
+ * cached in bounded thread-safe tables so member collection, access-policy
+ * validation, and query compilation share one build and one CEL check. Any
+ * unknown field or member, type mismatch, non-boolean result type, or
+ * untranslatable construct is refused closed with {@link MetricRefusal}.
  */
 public final class MetricRowPredicates {
 
     private static final String TIMESTAMP_FULL_NAME = "google.protobuf.Timestamp";
     private static final String TREE_PATH_FULL_NAME = "ai.protomolt.proto.types.v1.TreePath";
+    private static final String CEL_SOURCE_DESCRIPTION = "row_filter";
+    private static final int MAX_SCHEMA_CACHE_SIZE = 256;
+    private static final int MAX_EXPRESSION_CACHE_SIZE = 512;
+
+    private static final BoundedFifoCache<SchemaKey, SchemaContext> SCHEMA_CACHE =
+            new BoundedFifoCache<>(MAX_SCHEMA_CACHE_SIZE);
 
     private MetricRowPredicates() {
+    }
+
+    /** Schema cache entry count, for bounded-eviction tests. */
+    static int schemaCacheSize() {
+        return SCHEMA_CACHE.size();
+    }
+
+    /** Expression cache entry count on {@code mapping}, for bounded-eviction tests. */
+    static int expressionCacheSize(MetricMapping mapping) {
+        SchemaContext context = SCHEMA_CACHE.getIfPresent(new SchemaKey(mapping, mapping.memberNames()));
+        return context == null ? 0 : context.expressions().size();
+    }
+
+    /** Drops cached schemas and resets {@link MetricRowPredicateStats}, for deterministic tests. */
+    static void resetCacheAndStats() {
+        SCHEMA_CACHE.clear();
+        MetricRowPredicateStats.reset();
     }
 
     /**
@@ -92,20 +120,12 @@ public final class MetricRowPredicates {
                     "CEL row filter on '" + mapping.subject() + "' must not be blank",
                     List.of());
         }
-        SchemaContext context = SchemaContext.forMapping(mapping);
-        CelAbstractSyntaxTree ast;
-        try {
-            ast = context.cel().compile(expression).getAst();
-        } catch (CelValidationException e) {
-            throw classifyValidationFailure(mapping, expression, e);
+        CachedExpression resolved =
+                SchemaContext.forMapping(mapping).resolveExpression(mapping, expression);
+        if (resolved.refusal() != null) {
+            throw resolved.refusal().toException();
         }
-        if (ast.getResultType().kind() != CelKind.BOOL) {
-            throw new MetricRefusal(MetricRefusal.UNSUPPORTED_FILTER,
-                    "CEL row filter '" + expression + "' on '" + mapping.subject()
-                            + "' must return bool, got " + ast.getResultType().kind(),
-                    List.of());
-        }
-        return translate(mapping, expression, context, ast.getExpr());
+        return resolved.predicate();
     }
 
     /**
@@ -118,16 +138,12 @@ public final class MetricRowPredicates {
         if (expression == null || expression.isBlank()) {
             return Set.of();
         }
-        SchemaContext context = SchemaContext.forMapping(mapping);
-        CelExpr root;
-        try {
-            root = context.cel().parse(expression, "row_filter").getAst().getExpr();
-        } catch (CelValidationException e) {
-            return Set.of();
+        if (mapping == null) {
+            throw new IllegalArgumentException("mapping must not be null");
         }
-        Set<String> referenced = new LinkedHashSet<>();
-        collectReferencedMembers(mapping, context, root, referenced);
-        return Set.copyOf(referenced);
+        return SchemaContext.forMapping(mapping)
+                .resolveExpression(mapping, expression)
+                .referencedMembers();
     }
 
     private static void collectReferencedMembers(
@@ -736,9 +752,85 @@ public final class MetricRowPredicates {
                 List.of());
     }
 
-    private record SchemaContext(Cel cel, Map<String, ResolvedTarget> targets) {
+    private record SchemaKey(MetricMapping mapping, List<String> memberOrder) {
+    }
+
+    private record RefusalSpec(String code, String message, List<String> legal) {
+        RefusalSpec {
+            legal = List.copyOf(legal);
+        }
+
+        static RefusalSpec from(MetricRefusal refusal) {
+            return new RefusalSpec(refusal.code(), refusal.getMessage(), refusal.legal());
+        }
+
+        MetricRefusal toException() {
+            return new MetricRefusal(code, message, legal);
+        }
+    }
+
+    private record CachedExpression(
+            Set<String> referencedMembers,
+            RowPredicate predicate,
+            RefusalSpec refusal) {
+    }
+
+    private record SchemaContext(
+            Cel cel,
+            Map<String, ResolvedTarget> targets,
+            BoundedFifoCache<String, CachedExpression> expressions) {
 
         static SchemaContext forMapping(MetricMapping mapping) {
+            return SCHEMA_CACHE.computeIfAbsent(
+                    new SchemaKey(mapping, mapping.memberNames()), key -> build(key.mapping()));
+        }
+
+        CachedExpression resolveExpression(MetricMapping mapping, String expression) {
+            return expressions.computeIfAbsent(expression, expr -> analyze(mapping, expr));
+        }
+
+        private CachedExpression analyze(MetricMapping mapping, String expression) {
+            MetricRowPredicateStats.recordCelCompilation();
+            CelAbstractSyntaxTree parsedAst;
+            try {
+                parsedAst = cel.parse(expression, CEL_SOURCE_DESCRIPTION).getAst();
+            } catch (CelValidationException e) {
+                return new CachedExpression(
+                        Set.of(),
+                        null,
+                        RefusalSpec.from(classifyValidationFailure(mapping, expression, e)));
+            }
+            Set<String> referenced = new LinkedHashSet<>();
+            collectReferencedMembers(mapping, this, parsedAst.getExpr(), referenced);
+            Set<String> members = Set.copyOf(referenced);
+
+            CelAbstractSyntaxTree checkedAst;
+            try {
+                checkedAst = cel.check(parsedAst).getAst();
+            } catch (CelValidationException e) {
+                return new CachedExpression(
+                        members,
+                        null,
+                        RefusalSpec.from(classifyValidationFailure(mapping, expression, e)));
+            }
+            if (checkedAst.getResultType().kind() != CelKind.BOOL) {
+                MetricRefusal nonBool = new MetricRefusal(
+                        MetricRefusal.UNSUPPORTED_FILTER,
+                        "CEL row filter '" + expression + "' on '" + mapping.subject()
+                                + "' must return bool, got " + checkedAst.getResultType().kind(),
+                        List.of());
+                return new CachedExpression(members, null, RefusalSpec.from(nonBool));
+            }
+            try {
+                RowPredicate predicate =
+                        translate(mapping, expression, this, checkedAst.getExpr());
+                return new CachedExpression(members, predicate, null);
+            } catch (MetricRefusal refusal) {
+                return new CachedExpression(members, null, RefusalSpec.from(refusal));
+            }
+        }
+
+        private static SchemaContext build(MetricMapping mapping) {
             Map<String, ResolvedTarget> targets = new LinkedHashMap<>();
             Map<String, CelType> topLevelTypes = new LinkedHashMap<>();
             Set<String> untypedNumericNames = new LinkedHashSet<>();
@@ -805,7 +897,10 @@ public final class MetricRowPredicates {
             }
             CelBuilder compiler = env.advisoryBuilder();
             addNumericComparisonOverloads(compiler);
-            return new SchemaContext(compiler.build(), targets);
+            return new SchemaContext(
+                    compiler.build(),
+                    Collections.unmodifiableMap(new LinkedHashMap<>(targets)),
+                    new BoundedFifoCache<>(MAX_EXPRESSION_CACHE_SIZE));
         }
 
         private static void collectDescriptorTargets(
@@ -948,6 +1043,7 @@ public final class MetricRowPredicates {
                 file.addDependency(base.getFile().getName());
             }
             try {
+                MetricRowPredicateStats.recordDescriptorBuild();
                 FileDescriptor built = FileDescriptor.buildFrom(
                         file.build(), deps.toArray(FileDescriptor[]::new));
                 return built.findMessageTypeByName("CelRowContext");
