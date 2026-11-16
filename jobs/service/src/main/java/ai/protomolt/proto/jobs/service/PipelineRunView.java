@@ -40,7 +40,7 @@ final class PipelineRunView {
      * @param checkpoints one entry per executed step
      * @param result the final output, or null until the run completes
      */
-    record Documents(JsonNode input, ArrayNode checkpoints, JsonNode result) {
+    record Documents(ObjectNode input, ArrayNode checkpoints, ObjectNode result) {
     }
 
     static Documents render(WorkflowRunRecord job) {
@@ -52,7 +52,7 @@ final class PipelineRunView {
             checkpoints.add(checkpoint(checkpoint, transcoder));
         }
         return new Documents(
-                message(definition.input(), transcoder),
+                asObject(definition.input(), transcoder),
                 checkpoints,
                 job.pipelineResult == null ? null : result(job, definition, transcoder));
     }
@@ -83,7 +83,7 @@ final class PipelineRunView {
         return entry;
     }
 
-    private static JsonNode result(WorkflowRunRecord job, Definition definition,
+    private static ObjectNode result(WorkflowRunRecord job, Definition definition,
                                    ProtobufJsonTranscoder transcoder) {
         PipelineRunResult stored;
         try {
@@ -96,12 +96,12 @@ final class PipelineRunView {
                 PipelineCheckpointCodec.readResultMessages(stored, definition), transcoder);
     }
 
-    /** One message as its proto3 JSON, or a stream as {@code {"items": [...]}}. */
-    private static JsonNode binding(EdgeCardinality cardinality,
+    /** One message as an object, or a stream as {@code {"items": [...]}}. */
+    private static ObjectNode binding(EdgeCardinality cardinality,
                                       List<DynamicMessage> messages,
                                       ProtobufJsonTranscoder transcoder) {
         if (cardinality == EdgeCardinality.EDGE_CARDINALITY_ONE) {
-            return message(messages.getFirst(), transcoder);
+            return asObject(messages.getFirst(), transcoder);
         }
         ObjectNode stream = JSON.createObjectNode();
         ArrayNode items = stream.putArray(ITEMS_KEY);
@@ -111,6 +111,23 @@ final class PipelineRunView {
         return stream;
     }
 
+    /**
+     * One message where the reply needs an object: its proto3 JSON when that is an object,
+     * and {@code {"value": <its proto3 JSON>}} for a type that prints as anything else.
+     */
+    static ObjectNode asObject(DynamicMessage message, ProtobufJsonTranscoder transcoder) {
+        JsonNode printed = message(message, transcoder);
+        if (printed instanceof ObjectNode object
+                && (Proto3JsonShape.printsAsObject(message.getDescriptorForType())
+                        || object.has(UNRENDERABLE_TYPE_KEY))) {
+            return object;
+        }
+        ObjectNode carried = JSON.createObjectNode();
+        carried.set(Proto3JsonShape.VALUE_KEY, printed);
+        return carried;
+    }
+
+    /** A message's proto3 JSON, whatever JSON type its message type prints as. */
     static JsonNode message(DynamicMessage message, ProtobufJsonTranscoder transcoder) {
         String printed;
         try {
@@ -122,8 +139,6 @@ final class PipelineRunView {
             marker.put(UNRENDERABLE_TYPE_KEY, message.getDescriptorForType().getFullName());
             return marker;
         }
-        // A message's proto3 JSON is whatever its type says: an object for most messages, a
-        // string for StringValue or Timestamp, an array for ListValue. All of them are shown.
         try {
             return JSON.readTree(printed);
         } catch (JsonProcessingException notJson) {

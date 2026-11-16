@@ -148,6 +148,10 @@ final class PipelineSegmentRunner {
             return true;
         }
         if (e.kind() == PipelineExecutor.FailureKind.GRPC) {
+            if (e.getCause() instanceof UncheckedIOException) {
+                // The service profile could not be read; the call was never made.
+                return true;
+            }
             return e.grpcCode() == Status.Code.UNAVAILABLE
                     || e.grpcCode() == Status.Code.DEADLINE_EXCEEDED
                     || e.grpcCode() == Status.Code.RESOURCE_EXHAUSTED;

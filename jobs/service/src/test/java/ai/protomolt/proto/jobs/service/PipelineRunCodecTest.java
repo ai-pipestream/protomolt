@@ -346,16 +346,18 @@ class PipelineRunCodecTest {
     }
 
     @Test
-    void viewRendersMessagesWhoseProto3JsonIsNotAnObject() throws Exception {
+    void viewCarriesAMessageThatDoesNotPrintAsAnObjectUnderValue() throws Exception {
         ProtobufJsonTranscoder transcoder =
                 new ProtobufJsonTranscoder(PipelineRunCodec.buildRegistry(files, null));
         DynamicMessage text = DynamicMessage.parseFrom(
                 StringValue.getDescriptor(), StringValue.of("plain").toByteString());
         assertThat(PipelineRunView.message(text, transcoder).asText()).isEqualTo("plain");
+        assertThat(PipelineRunView.asObject(text, transcoder).get("value").asText())
+                .isEqualTo("plain");
 
         DynamicMessage instant = DynamicMessage.parseFrom(Timestamp.getDescriptor(),
                 Timestamp.newBuilder().setSeconds(1).build().toByteString());
-        assertThat(PipelineRunView.message(instant, transcoder).asText())
+        assertThat(PipelineRunView.asObject(instant, transcoder).get("value").asText())
                 .isEqualTo("1970-01-01T00:00:01Z");
 
         DynamicMessage list = DynamicMessage.parseFrom(ListValue.getDescriptor(),
@@ -363,8 +365,60 @@ class PipelineRunCodecTest {
                         .addValues(Value.newBuilder().setStringValue("a"))
                         .addValues(Value.newBuilder().setNumberValue(2))
                         .build().toByteString());
-        assertThat(PipelineRunView.message(list, transcoder)).hasSize(2);
-        assertThat(PipelineRunView.message(list, transcoder).isArray()).isTrue();
+        assertThat(PipelineRunView.asObject(list, transcoder).get("value")).hasSize(2);
+
+        // A Value that happens to hold an object is still carried under "value": the rule
+        // goes by type, so a reader never has to guess.
+        DynamicMessage structValue = DynamicMessage.parseFrom(Value.getDescriptor(),
+                Value.newBuilder()
+                        .setStructValue(com.google.protobuf.Struct.newBuilder()
+                                .putFields("k", Value.newBuilder().setBoolValue(true).build()))
+                        .build().toByteString());
+        assertThat(PipelineRunView.asObject(structValue, transcoder).get("value").get("k")
+                .asBoolean()).isTrue();
+
+        // An ordinary message is its own object.
+        assertThat(PipelineRunView.asObject(validInput, transcoder).get("requestId").asText())
+                .isEqualTo("req-1");
+    }
+
+    @Test
+    void externalCompletionAcceptsTypesThatDoNotPrintAsObjects() throws Exception {
+        ObjectNode unary = JSON.createObjectNode().put("value", "approved");
+        assertThat(PipelineExternalCompletionParser.parseResponses(
+                        unary, EdgeCardinality.EDGE_CARDINALITY_ONE, StringValue.getDescriptor(),
+                        8, "approve", files, null))
+                .singleElement()
+                .satisfies(m -> assertThat(m.toByteString())
+                        .isEqualTo(StringValue.of("approved").toByteString()));
+
+        ObjectNode stream = JSON.createObjectNode();
+        stream.putArray("items").add("a").add("b");
+        assertThat(PipelineExternalCompletionParser.parseResponses(
+                        stream, EdgeCardinality.EDGE_CARDINALITY_MANY, StringValue.getDescriptor(),
+                        8, "approve", files, null))
+                .extracting(m -> m.toByteString())
+                .containsExactly(StringValue.of("a").toByteString(),
+                        StringValue.of("b").toByteString());
+
+        // Without the "value" key there is no way to tell what was meant.
+        assertThatThrownBy(() -> PipelineExternalCompletionParser.parseResponses(
+                        JSON.createObjectNode().put("text", "approved"),
+                        EdgeCardinality.EDGE_CARDINALITY_ONE, StringValue.getDescriptor(),
+                        8, "approve", files, null))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("google.protobuf.StringValue")
+                .hasMessageContaining("{\"value\": ...}");
+
+        // A stream of an ordinary message type still refuses an item that is not an object.
+        ObjectNode badStream = JSON.createObjectNode();
+        badStream.putArray("items").add("not-an-object");
+        assertThatThrownBy(() -> PipelineExternalCompletionParser.parseResponses(
+                        badStream, EdgeCardinality.EDGE_CARDINALITY_MANY,
+                        file.findMessageTypeByName("EnvelopeOutput"),
+                        8, "approve", files, null))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("item 0 must be a JSON object");
     }
 
     private static WorkflowRunRecord pipelineRow(byte[] definition) {

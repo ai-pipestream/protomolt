@@ -133,6 +133,11 @@ state machine, lease sweeper, `WorkerClaim` fencing, and outbox relay:
 - `complete-step` settles both unary (`ONE`) and server-streaming (`MANY`, via
   `{"items": [...]}`) external pipeline steps, enforcing `max_stream_messages`
   and `validate_response` before requeuing.
+- A message type that does not print as a JSON object (the wrapper types,
+  `Timestamp`, `Duration`, `FieldMask`, `ListValue`, `Value`) is carried as
+  `{"value": <its proto3 JSON>}` wherever these verbs need an object: a run's
+  input and result in `get-job`, and a unary `complete-step` response. Stream
+  items are carried as they print.
 - `JobsModule` contributes all four job verbs (`submit-workflow`, `get-job`,
   `list-jobs`, and `complete-step`).
 

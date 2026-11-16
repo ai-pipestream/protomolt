@@ -39,7 +39,6 @@ import org.junit.jupiter.api.io.TempDir;
 import java.nio.file.Path;
 import java.io.IOException;
 import java.io.UncheckedIOException;
-import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.Optional;
 import java.util.List;
 import java.util.Set;
@@ -366,11 +365,72 @@ class PipelineOutboundPolicyTest {
 
     @Test
     void profileReadFailureRequeuesTheRunWithoutCallingOutOrGuessingATarget() throws Exception {
-        AtomicBoolean failReads = new AtomicBoolean(true);
-        ServiceProfileRepository flaky = new ServiceProfileRepository() {
+        ServiceProfileRepository flaky = profilesFailingFrom(1);
+        InMemoryWorkflowRunStore store = new InMemoryWorkflowRunStore();
+        WorkflowRunSubmitter submitter = new WorkflowRunSubmitter(store, null, 4);
+        OutboundChannelPolicy allowLoopback = OutboundChannelPolicy.builder()
+                .allowedHosts(Set.of("127.0.0.1"))
+                .build();
+        try (WorkflowRunWorker worker = new WorkflowRunWorker(
+                store, context, null, new WorkflowRunner(allowLoopback),
+                allowLoopback, flaky, null, workerConfig("flaky-profiles", 4, 1))) {
+            assertThatThrownBy(() -> worker.resolvePipelineTarget(ServiceDependency.newBuilder()
+                    .setAlias("echo").setServiceProfile(PROFILE_NAME).build()))
+                    .isInstanceOf(UncheckedIOException.class)
+                    .hasMessageContaining(PROFILE_NAME);
+
+            String jobId = submitPipeline(
+                    submitter, schema, echoPipeline(schema, "echo", "plain"), "hello");
+            assertThat(worker.workOnce()).isTrue();
+            WorkflowRunRecord requeued = store.get(UUID.fromString(jobId)).orElseThrow();
+            assertThat(requeued.status).isEqualTo(WorkflowRunRecord.STATUS_QUEUED);
+            assertThat(requeued.attempt).isEqualTo(1);
+            assertThat(plainCalls.get()).isZero();
+        }
+    }
+
+    @Test
+    void profileReadFailureAtCallTimeRequeuesTheRunAndTheRetrySucceeds() throws Exception {
+        // The first read (target permit) succeeds and the second (the call) fails once.
+        ServiceProfileRepository flaky = profilesFailingBetween(2, 2);
+        InMemoryWorkflowRunStore store = new InMemoryWorkflowRunStore();
+        WorkflowRunSubmitter submitter = new WorkflowRunSubmitter(store, null, 4);
+        OutboundChannelPolicy allowLoopback = OutboundChannelPolicy.builder()
+                .allowedHosts(Set.of("127.0.0.1"))
+                .build();
+        try (WorkflowRunWorker worker = new WorkflowRunWorker(
+                store, context, null, new WorkflowRunner(allowLoopback),
+                allowLoopback, flaky, null, workerConfig("flaky-call-read", 4, 1))) {
+            String jobId = submitPipeline(
+                    submitter, schema, echoPipeline(schema, "echo", "plain"), "hello");
+            assertThat(worker.workOnce()).isTrue();
+            WorkflowRunRecord requeued = store.get(UUID.fromString(jobId)).orElseThrow();
+            assertThat(requeued.status).as("error: %s", requeued.error)
+                    .isEqualTo(WorkflowRunRecord.STATUS_QUEUED);
+            assertThat(plainCalls.get()).isZero();
+
+            requeued.runAfter = java.time.Instant.now();
+            assertThat(worker.workOnce()).isTrue();
+            assertThat(store.get(UUID.fromString(jobId)).orElseThrow().status)
+                    .isEqualTo(WorkflowRunRecord.STATUS_COMPLETED);
+            assertThat(plainCalls.get()).isEqualTo(1);
+        }
+    }
+
+    /** The fixture's profiles, with reads from {@code firstFailingRead} on failing. */
+    private ServiceProfileRepository profilesFailingFrom(int firstFailingRead) {
+        return profilesFailingBetween(firstFailingRead, Integer.MAX_VALUE);
+    }
+
+    /** The fixture's profiles, with {@code find} failing on the given 1-based reads. */
+    private ServiceProfileRepository profilesFailingBetween(int firstFailingRead,
+                                                            int lastFailingRead) {
+        AtomicInteger reads = new AtomicInteger();
+        return new ServiceProfileRepository() {
             @Override
             public Optional<ServiceProfile> find(String name) throws IOException {
-                if (failReads.get()) {
+                int read = reads.incrementAndGet();
+                if (read >= firstFailingRead && read <= lastFailingRead) {
                     throw new IOException("profile store unreachable");
                 }
                 return serviceProfiles.find(name);
@@ -397,27 +457,6 @@ class PipelineOutboundPolicyTest {
                 serviceProfiles.saveDescriptorArtifact(artifact);
             }
         };
-        InMemoryWorkflowRunStore store = new InMemoryWorkflowRunStore();
-        WorkflowRunSubmitter submitter = new WorkflowRunSubmitter(store, null, 4);
-        OutboundChannelPolicy allowLoopback = OutboundChannelPolicy.builder()
-                .allowedHosts(Set.of("127.0.0.1"))
-                .build();
-        try (WorkflowRunWorker worker = new WorkflowRunWorker(
-                store, context, null, new WorkflowRunner(allowLoopback),
-                allowLoopback, flaky, null, workerConfig("flaky-profiles", 4, 1))) {
-            assertThatThrownBy(() -> worker.resolvePipelineTarget(ServiceDependency.newBuilder()
-                    .setAlias("echo").setServiceProfile(PROFILE_NAME).build()))
-                    .isInstanceOf(UncheckedIOException.class)
-                    .hasMessageContaining(PROFILE_NAME);
-
-            String jobId = submitPipeline(
-                    submitter, schema, echoPipeline(schema, "echo", "plain"), "hello");
-            assertThat(worker.workOnce()).isTrue();
-            WorkflowRunRecord requeued = store.get(UUID.fromString(jobId)).orElseThrow();
-            assertThat(requeued.status).isEqualTo(WorkflowRunRecord.STATUS_QUEUED);
-            assertThat(requeued.attempt).isEqualTo(1);
-            assertThat(plainCalls.get()).isZero();
-        }
     }
 
     @Test

@@ -73,52 +73,39 @@ final class PipelineChannelCache implements AutoCloseable {
                 channels.open(target, customTls), "channel factory returned null"));
     }
 
+    /**
+     * The channel for {@code target}, shared with any call already in flight to it. The first
+     * call opens it while holding the cache lock, so two first calls cannot both open one;
+     * opening builds the channel and takes a policy slot without waiting on the network.
+     */
     Lease acquireShared(String target, boolean tls) {
         ChannelKey key = new ChannelKey(target, tls);
         ManagedChannel stale = null;
+        Lease acquired;
         synchronized (lock) {
             if (closed) {
                 throw new IllegalStateException("pipeline transport is closed");
             }
             Lease existing = openChannels.get(key);
+            if (existing != null && existing.isUsable()) {
+                existing.activeCalls++;
+                return existing;
+            }
             if (existing != null) {
-                if (existing.isUsable()) {
-                    existing.activeCalls++;
-                    return existing;
-                }
+                // Shut down from outside while calls still hold it; they release it as they end.
                 openChannels.remove(key);
                 existing.evicted = true;
                 if (existing.activeCalls == 0) {
                     stale = existing.channel;
                 }
             }
+            acquired = new Lease(this, open(() -> Objects.requireNonNull(
+                    channels.open(key.target(), key.tls()), "channel factory returned null")));
+            acquired.activeCalls = 1;
+            openChannels.put(key, acquired);
         }
         if (stale != null) {
             stale.shutdownNow();
-        }
-
-        ManagedChannel opened = open(() -> Objects.requireNonNull(
-                channels.open(key.target(), key.tls()), "channel factory returned null"));
-        ManagedChannel duplicate = null;
-        Lease acquired;
-        synchronized (lock) {
-            if (closed) {
-                opened.shutdownNow();
-                throw new IllegalStateException("pipeline transport is closed");
-            }
-            Lease existing = openChannels.get(key);
-            if (existing != null && existing.isUsable()) {
-                existing.activeCalls++;
-                duplicate = opened;
-                acquired = existing;
-            } else {
-                acquired = new Lease(this, opened);
-                acquired.activeCalls = 1;
-                openChannels.put(key, acquired);
-            }
-        }
-        if (duplicate != null) {
-            duplicate.shutdownNow();
         }
         return acquired;
     }

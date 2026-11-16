@@ -19,7 +19,6 @@ import ai.protomolt.proto.pipeline.v1.PipelineRunCheckpoints;
 import ai.protomolt.proto.pipeline.v1.PipelineStep;
 import ai.protomolt.proto.validate.ProtoValidator;
 import ai.protomolt.proto.validate.ValidationResult;
-import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.google.protobuf.Descriptors.Descriptor;
@@ -180,7 +179,7 @@ public final class PipelineJobCoordinator {
      * @param checkpoints one entry per executed step
      * @param result the final output, or null until the run completes
      */
-    public record RunView(JsonNode input, ArrayNode checkpoints, JsonNode result) {
+    public record RunView(ObjectNode input, ArrayNode checkpoints, ObjectNode result) {
     }
 
     /** Renders {@code job}, a pipeline run, for the get-job and list-jobs replies. */

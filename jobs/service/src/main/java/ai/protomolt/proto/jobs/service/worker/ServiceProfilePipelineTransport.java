@@ -179,7 +179,7 @@ final class ServiceProfilePipelineTransport implements PipelineTransport, AutoCl
                             "service profile '" + dependency.getServiceProfile()
                                     + "' was not found"));
         } catch (IOException e) {
-            throw new IllegalStateException(
+            throw new UncheckedIOException(
                     "failed to read service profile '" + dependency.getServiceProfile() + "'", e);
         }
         ServiceProfileValidation.validateConnectionProfile(profile);
