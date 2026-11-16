@@ -6,6 +6,10 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import ai.protomolt.proto.repo.external.v1.ExternalLink;
 import ai.protomolt.proto.repo.external.v1.ExternalProjectionLifecycle;
 import ai.protomolt.proto.repo.external.v1.ExternalPublicationLedger;
+import ai.protomolt.proto.repo.external.v1.ExternalPublicationOutcome;
+import ai.protomolt.proto.repo.external.v1.ExternalPublicationOperationRecord;
+import ai.protomolt.proto.repo.external.v1.ExternalPublicationIntent;
+import ai.protomolt.proto.repo.external.v1.ExternalPublicationAction;
 import ai.protomolt.proto.repo.external.v1.ExternalSystemBinding;
 import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
@@ -99,5 +103,35 @@ class ExternalDeleteTargetTest {
                     assertThat(e.getStatus().getCode()).isEqualTo(Status.Code.FAILED_PRECONDITION);
                     assertThat(e.getStatus().getDescription()).contains("object-new");
                 });
+    }
+
+    @Test
+    void aPublicationThatWasOnlyAcceptedIsStillADeletionTarget() {
+        // The provider accepted the object (or its reply was lost), so it may hold it, but
+        // no link was ever confirmed. A tombstone that names no object must still find it.
+        ExternalPublicationOperationRecord pendingPublish = ExternalPublicationOperationRecord.newBuilder()
+                .setOperationId("op-accepted")
+                .setIntent(ExternalPublicationIntent.newBuilder()
+                        .setAction(ExternalPublicationAction.EXTERNAL_PUBLICATION_ACTION_PUBLISH)
+                        .setExternalObjectId("object-pending").setBindingRevision(2L))
+                .setBindingSnapshot(binding(2L, "dataset-two"))
+                .setOutcome(ExternalPublicationOutcome.EXTERNAL_PUBLICATION_OUTCOME_PENDING)
+                .build();
+        ExternalPublicationOperationRecord failedPublish = pendingPublish.toBuilder()
+                .setOperationId("op-failed")
+                .setIntent(pendingPublish.getIntent().toBuilder().setExternalObjectId("object-refused"))
+                .setOutcome(ExternalPublicationOutcome.EXTERNAL_PUBLICATION_OUTCOME_FAILED)
+                .build();
+        ExternalPublicationLedger ledger = ExternalPublicationLedger.newBuilder()
+                .addOperations(pendingPublish).addOperations(failedPublish).build();
+
+        ExternalDeletionLifecycle.ResolvedDeleteTarget target =
+                recorded(ledger, 0L, "").orElseThrow();
+        assertThat(target.externalObjectId()).isEqualTo("object-pending");
+        assertThat(target.binding().getDataset()).isEqualTo("dataset-two");
+
+        // A publication the provider refused left nothing to delete.
+        assertThat(recorded(ExternalPublicationLedger.newBuilder()
+                .addOperations(failedPublish).build(), 0L, "")).isEmpty();
     }
 }

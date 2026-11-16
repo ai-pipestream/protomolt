@@ -445,7 +445,8 @@ final class ExternalDeletionLifecycle {
      * object ID alone means nothing outside the dataset and namespace of its binding revision.
      *
      * <p>With no object named, the target is the current link, else the newest historical link
-     * that is not yet deleted, else the newest historical link. With an object named, it is
+     * that is not yet deleted, else the newest historical link, else (with no link at all) the
+     * newest publication still pending. With an object named, it is
      * that object's link, restricted to {@code explicitBindingRevision} when one is given.
      *
      * @return the recorded target, or empty when the named object has no link in the ledger
@@ -470,7 +471,7 @@ final class ExternalDeletionLifecycle {
                             link.getBindingSnapshot(), link.getExternalObjectId()));
         }
         if (candidates.isEmpty()) {
-            return Optional.empty();
+            return unsettledPublication(ledgerOpt.get(), explicitBindingRevision);
         }
         ExternalLink chosen = candidates.getFirst();
         if (explicitBindingRevision > 0L && chosen.getBindingRevision() != explicitBindingRevision) {
@@ -482,6 +483,31 @@ final class ExternalDeletionLifecycle {
         }
         return Optional.of(new ResolvedDeleteTarget(
                 chosen.getBindingSnapshot(), chosen.getExternalObjectId()));
+    }
+
+    /**
+     * With no link recorded, the newest publication still pending: accepted but not yet
+     * confirmed, or sent with the reply lost. The provider may hold that object, so it is what
+     * a deletion that names no object must reach. A publication that failed left nothing.
+     */
+    private static Optional<ResolvedDeleteTarget> unsettledPublication(
+            ExternalPublicationLedger ledger, long explicitBindingRevision) {
+        for (int i = ledger.getOperationsCount() - 1; i >= 0; i--) {
+            ExternalPublicationOperationRecord operation = ledger.getOperations(i);
+            if (operation.getIntent().getAction()
+                            != ExternalPublicationAction.EXTERNAL_PUBLICATION_ACTION_PUBLISH
+                    || operation.getOutcome()
+                            != ExternalPublicationOutcome.EXTERNAL_PUBLICATION_OUTCOME_PENDING) {
+                continue;
+            }
+            if (explicitBindingRevision > 0L
+                    && operation.getIntent().getBindingRevision() != explicitBindingRevision) {
+                continue;
+            }
+            return Optional.of(new ResolvedDeleteTarget(
+                    operation.getBindingSnapshot(), operation.getIntent().getExternalObjectId()));
+        }
+        return Optional.empty();
     }
 
     /** Current link first, then live historical links newest first, then deleted ones. */
