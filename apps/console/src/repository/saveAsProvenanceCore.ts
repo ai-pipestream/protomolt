@@ -31,9 +31,9 @@ import { typeNameOf } from './partReadCore'
 export function buildListRenditionProvenanceRequest(address: EntryAddress, version: bigint) {
   return create(ListRenditionProvenanceRequestSchema, {
     address: create(EntryAddressSchema, {
-      accountId: address.accountId.trim(),
-      archive: address.archive.trim(),
-      entryId: address.entryId.trim(),
+      accountId: address.accountId,
+      archive: address.archive,
+      entryId: address.entryId,
     }),
     version: version > 0n ? version : 0n,
   })

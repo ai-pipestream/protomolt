@@ -302,6 +302,7 @@ import {
   type SaveAsDestinationInput,
 } from '@/repository/saveAsCore'
 import {
+  enteredSucceeded,
   type ClassifiedSinkError,
   type SinkJobSummary,
 } from '@/repository/saveAsJobCore'
@@ -675,12 +676,13 @@ watch(
   { immediate: true },
 )
 
-// Emit `saved` once per observed commit; a cancel that finds the job already committed does not.
+// Emit `saved` once per commit, whichever call reported it: a cancel that finds the job
+// already committed has still left a new rendition for the view to load.
 watch(
-  () => [activeJob.value?.summary?.phase, activeJob.value?.updatedBy] as const,
-  ([phase, updatedBy], [previousPhase]) => {
+  () => activeJob.value?.summary?.phase,
+  (phase, previousPhase) => {
     const summary = jobSummary.value
-    if (phase === 'succeeded' && previousPhase !== 'succeeded' && updatedBy !== 'cancel' && summary !== null) {
+    if (enteredSucceeded(previousPhase, phase) && summary !== null) {
       emit('saved', summary)
     }
   },

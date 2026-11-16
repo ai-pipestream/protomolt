@@ -18,15 +18,15 @@ import { sanitizeDisplayMetadata } from './formatIcons'
 
 export function buildGetRepositorySinkJobRequest(accountId: string, operationId: string) {
   return create(GetRepositorySinkJobRequestSchema, {
-    accountId: accountId.trim(),
-    operationId: operationId.trim(),
+    accountId,
+    operationId,
   })
 }
 
 export function buildCancelRepositorySinkJobRequest(accountId: string, operationId: string, reason = '') {
   return create(CancelRepositorySinkJobRequestSchema, {
-    accountId: accountId.trim(),
-    operationId: operationId.trim(),
+    accountId,
+    operationId,
     reason: reason.trim(),
   })
 }
@@ -61,6 +61,14 @@ export interface SinkJobSummary {
   updatedAt: string
 }
 
+/** True when a job's phase has just become succeeded, whichever call reported it. */
+export function enteredSucceeded(
+  previous: SinkJobPhase | undefined,
+  next: SinkJobPhase | undefined,
+): boolean {
+  return next === 'succeeded' && previous !== 'succeeded'
+}
+
 export function describeSinkJob(job: RepositorySinkJob): SinkJobSummary {
   let phase: SinkJobPhase
   let stateLabel: string
@@ -86,9 +94,14 @@ export function describeSinkJob(job: RepositorySinkJob): SinkJobSummary {
       stateLabel = 'Outcome unresolved'
       break
     case RepositorySinkJobState.FAILED:
-    default:
       phase = 'failed'
       stateLabel = 'Failed'
+      break
+    default:
+      // UNSPECIFIED, or a state this console does not know. What the job is doing is unknown,
+      // so it is not treated as ended: it stays reconcilable and is never evicted as settled.
+      phase = 'unresolved'
+      stateLabel = 'State not recognized'
       break
   }
 
@@ -139,6 +152,8 @@ export function classifySinkRpcError(error: unknown): ClassifiedSinkError {
       error.code === Code.Unavailable
       || error.code === Code.DeadlineExceeded
       || error.code === Code.Unknown
+      // The sink answers INTERNAL when a commit may or may not have gone through.
+      || error.code === Code.Internal
     ) {
       return {
         kind: 'unsettled',

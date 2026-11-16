@@ -328,4 +328,40 @@ describe('Save-as job store', () => {
     expect(jobs.find('op-banner')!.dialogOpen).toBe(false)
     jobs.dispose()
   })
+
+  it('drops a status answer that describes the attempt before a retry', async () => {
+    let releaseGet = () => {}
+    const getGate = new Promise<void>((resolve) => {
+      releaseGet = resolve
+    })
+    let publishes = 0
+    const client = routerClients((r) =>
+      r.service(RepositorySinkService, {
+        publishRepositorySink(req) {
+          publishes += 1
+          if (publishes === 1) throw new ConnectError('lost', Code.Unavailable)
+          // The server restarts a failed job when the same operation is retried.
+          return create(PublishRepositorySinkResponseSchema, {
+            job: job(req.operationId, RepositorySinkJobState.RUNNING),
+          })
+        },
+        async getRepositorySinkJob(req) {
+          await getGate
+          return create(GetRepositorySinkJobResponseSchema, {
+            job: job(req.operationId, RepositorySinkJobState.FAILED),
+          })
+        },
+      }),
+    ).repositorySink
+    const jobs = createSaveAsJobStore()
+    await jobs.publish(client, request('op-requeue'), true)
+    const beforeRetry = jobs.refresh('op-requeue')
+    await jobs.retry('op-requeue')
+    expect(jobs.find('op-requeue')!.summary?.phase).toBe('running')
+    releaseGet()
+    await beforeRetry
+    // The FAILED answer is about the attempt the retry replaced.
+    expect(jobs.find('op-requeue')!.summary?.phase).toBe('running')
+    jobs.dispose()
+  })
 })

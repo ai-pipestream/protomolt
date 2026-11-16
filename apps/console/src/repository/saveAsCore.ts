@@ -42,6 +42,16 @@ export const PARQUET_OPTIONS_TYPE = 'ai.protomolt.proto.emit.parquet.v1.ParquetR
 export const EMPTY_OPTIONS_TYPE = 'google.protobuf.Empty'
 export const ZERO_PROVIDERS_MESSAGE = 'No Save-as conversion providers are enabled on this server.'
 
+/**
+ * The mask strategies as the Parquet renderer applies them (see `ParquetMaskStrategy`). Neither
+ * removes a column: leaving a column out of the output is done with the column list.
+ */
+export const PARQUET_MASK_STRATEGY_CHOICES: readonly { title: string; value: ParquetMaskStrategy }[] = [
+  { title: 'Unspecified (redact when classes are set, otherwise no masking)', value: ParquetMaskStrategy.UNSPECIFIED },
+  { title: 'Redact (strings become "***", other values are cleared)', value: ParquetMaskStrategy.REDACT },
+  { title: 'Remove (values are cleared; the column stays unless left out of the column list)', value: ParquetMaskStrategy.REMOVE },
+]
+
 export class SaveAsInputError extends Error {
   constructor(message: string) {
     super(message)
@@ -126,19 +136,20 @@ export function buildArchiveRenditionSinkSource(input: ArchiveRenditionSourceInp
           case: 'archiveRendition',
           value: create(ArchiveRenditionSourceSchema, {
             address: create(EntryAddressSchema, {
-              accountId: input.address.accountId.trim(),
-              archive: input.address.archive.trim(),
-              entryId: input.address.entryId.trim(),
+              // The viewed entry's own coordinates, exactly: " foo " and "foo" are two entries.
+              accountId: input.address.accountId,
+              archive: input.address.archive,
+              entryId: input.address.entryId,
             }),
             revision: create(RevisionSelectorSchema, {
               selector: { case: 'revision', value: input.revision },
             }),
             rendition: create(RenditionDescriptorSchema, {
-              name: input.rendition.name.trim(),
-              subKey: (input.rendition.subKey ?? '').trim(),
-              mediaType: (input.rendition.mediaType ?? '').trim(),
+              name: input.rendition.name,
+              subKey: input.rendition.subKey ?? '',
+              mediaType: input.rendition.mediaType ?? '',
             }),
-            expectedSchemaFingerprint: (input.expectedSchemaFingerprint ?? '').trim(),
+            expectedSchemaFingerprint: input.expectedSchemaFingerprint ?? '',
           }),
         },
       }),
@@ -159,17 +170,17 @@ export function buildDocumentPartSinkSource(input: DocumentPartSourceInput): Sin
           case: 'documentPart',
           value: create(DocumentPartSourceSchema, {
             address: create(NodeAddressSchema, {
-              accountId: input.address.accountId.trim(),
-              graphId: input.address.graphId.trim(),
-              graphAddressId: input.address.graphAddressId.trim(),
-              docId: input.address.docId.trim(),
+              accountId: input.address.accountId,
+              graphId: input.address.graphId,
+              graphAddressId: input.address.graphAddressId,
+              docId: input.address.docId,
             }),
             revision: create(RevisionSelectorSchema, {
               selector: { case: 'revision', value: input.revision },
             }),
             selector: input.selector,
-            occurrenceFieldPath: (input.occurrenceFieldPath ?? '').trim(),
-            expectedSchemaFingerprint: (input.expectedSchemaFingerprint ?? '').trim(),
+            occurrenceFieldPath: input.occurrenceFieldPath ?? '',
+            expectedSchemaFingerprint: input.expectedSchemaFingerprint ?? '',
           }),
         },
       }),
@@ -510,11 +521,16 @@ export interface BuildPublishSaveAsInput {
   async?: boolean
 }
 
+/**
+ * Checks one destination coordinate and returns it unchanged. Names are compared exactly by the
+ * repository, so nothing is trimmed: a value that is only whitespace is refused, and any other
+ * value is the name it will be written under.
+ */
 function validateSafeSegment(value: string, label: string, maxLen = 128): string {
-  const trimmed = value.trim()
-  if (trimmed === '') {
+  if (value.trim() === '') {
     throw new SaveAsInputError(`${label}: required.`)
   }
+  const trimmed = value
   if (trimmed.length > maxLen) {
     throw new SaveAsInputError(`${label}: must be at most ${maxLen} characters.`)
   }
@@ -551,7 +567,7 @@ export function buildPublishSaveAsRequest(input: BuildPublishSaveAsInput): Publi
   if (renditionName === 'parsed' && !isProtobufMediaType(input.capability.mediaType)) {
     throw new SaveAsInputError("Rendition name: converted non-protobuf renditions cannot overwrite the 'parsed' protobuf slot.")
   }
-  const subKeyRaw = (input.destination.subKey ?? '').trim()
+  const subKeyRaw = input.destination.subKey ?? ''
   const subKey = subKeyRaw !== '' ? validateSafeSegment(subKeyRaw, 'Rendition sub-key', 128) : ''
 
   let expectedDestinationVersion = 0n

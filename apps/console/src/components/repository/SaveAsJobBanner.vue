@@ -26,6 +26,13 @@
           {{ item.summary.stateLabel }}<template v-if="item.summary.failureMessage">: {{ item.summary.failureMessage }}</template>.
         </template>
       </div>
+      <div
+        v-if="item.summary !== null && item.error !== null"
+        class="text-caption"
+        data-testid="save-as-job-banner-error"
+      >
+        The last call for this job failed ({{ item.error.codeLabel }}): {{ item.error.message }}
+      </div>
       <div v-if="item.summary === null || item.summary.phase === 'unresolved'" class="text-caption">
         Keep this operation ID: retrying the same request with it never commits twice.
       </div>

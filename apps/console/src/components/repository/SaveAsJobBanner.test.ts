@@ -80,4 +80,47 @@ describe('Save-as job banner', () => {
     banner.unmount()
     jobs.dispose()
   })
+
+  it('shows a failed cancel or status call beside the last known job state', async () => {
+    const client = routerClients((r) =>
+      r.service(RepositorySinkService, {
+        publishRepositorySink(req) {
+          return create(PublishRepositorySinkResponseSchema, {
+            job: create(RepositorySinkJobSchema, {
+              operationId: req.operationId,
+              accountId: 'acct-a',
+              state: RepositorySinkJobState.RUNNING,
+            }),
+          })
+        },
+        cancelRepositorySinkJob() {
+          throw new ConnectError('not allowed to cancel', Code.PermissionDenied)
+        },
+      }),
+    ).repositorySink
+    const jobs = createSaveAsJobStore()
+    await jobs.publish(
+      client,
+      create(PublishRepositorySinkRequestSchema, {
+        operationId: 'op-denied',
+        destination: create(SinkDestinationSchema, {
+          address: create(EntryAddressSchema, { accountId: 'acct-a', archive: 'datasets', entryId: 'e-1' }),
+        }),
+      }),
+      false,
+    )
+    const banner = mount(SaveAsJobBanner, {
+      global: { plugins: [vuetifyForTests()], provide: { [SAVE_AS_JOBS as symbol]: jobs } },
+      attachTo: document.body,
+    })
+    await banner.get('[data-testid="save-as-job-banner-cancel"]').trigger('click')
+    await flushPromises()
+    const shown = banner.get('[data-testid="save-as-job-banner"]')
+    expect(shown.attributes('data-job-phase')).toBe('running')
+    const failure = banner.get('[data-testid="save-as-job-banner-error"]')
+    expect(failure.text()).toContain('PermissionDenied')
+    expect(failure.text()).toContain('not allowed to cancel')
+    banner.unmount()
+    jobs.dispose()
+  })
 })

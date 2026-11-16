@@ -86,8 +86,7 @@
 </template>
 
 <script setup lang="ts">
-import { ParquetMaskStrategy } from '@/gen/ai/protomolt/proto/emit/parquet/v1/parquet_renderer_pb'
-import type { ParquetOptionsFormInput } from '@/repository/saveAsCore'
+import { PARQUET_MASK_STRATEGY_CHOICES, type ParquetOptionsFormInput } from '@/repository/saveAsCore'
 
 /**
  * Parquet projection and masking fields of the Save-as draft. The dialog owns the form; any edit
@@ -96,9 +95,5 @@ import type { ParquetOptionsFormInput } from '@/repository/saveAsCore'
 defineProps<{ form: ParquetOptionsFormInput; disabled: boolean }>()
 const emit = defineEmits<{ edited: [] }>()
 
-const maskStrategyItems = [
-  { title: 'Unspecified (none unless classes set)', value: ParquetMaskStrategy.UNSPECIFIED },
-  { title: 'Redact (null out masked columns)', value: ParquetMaskStrategy.REDACT },
-  { title: 'Remove (omit masked columns)', value: ParquetMaskStrategy.REMOVE },
-]
+const maskStrategyItems = PARQUET_MASK_STRATEGY_CHOICES
 </script>

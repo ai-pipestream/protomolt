@@ -96,6 +96,8 @@ interface JobCalls {
   started: number
   /** Sequence number of the call whose job summary the entry currently shows. */
   shown: number
+  /** Sequence number of the most recently started publish (a retry starts a new attempt). */
+  publishStarted: number
   /** Status calls that have failed in a row. */
   failedPolls: number
 }
@@ -111,7 +113,7 @@ export function createSaveAsJobStore(): SaveAsJobStore {
   function callsFor(operationId: string): JobCalls {
     let state = calls.get(operationId)
     if (state === undefined) {
-      state = { started: 0, shown: 0, failedPolls: 0 }
+      state = { started: 0, shown: 0, publishStarted: 0, failedPolls: 0 }
       calls.set(operationId, state)
     }
     return state
@@ -128,11 +130,15 @@ export function createSaveAsJobStore(): SaveAsJobStore {
    * Whether the summary from call `sequence` replaces the one shown. Calls overlap, and the
    * order they start in is not the order the server answered them in, so two rules decide:
    * a summary from a later call replaces an earlier call's, and a terminal summary always
-   * replaces a non-terminal one, because a job that has ended does not start running again
-   * under an older call.
+   * replaces a non-terminal one, because within one attempt a job that has ended does not
+   * start running again. Answers from before the latest publish are dropped: see below.
    */
   function supersedes(entry: SaveAsJobEntry, summary: SinkJobSummary, sequence: number): boolean {
-    if (sequence >= callsFor(entry.operationId).shown) return true
+    const state = callsFor(entry.operationId)
+    // A retry restarts the job on the server. A status or cancel call that began before it
+    // describes the attempt it replaced, whatever that answer says.
+    if (sequence < state.publishStarted) return false
+    if (sequence >= state.shown) return true
     return summary.terminal && entry.summary !== null && !entry.summary.terminal
   }
 
@@ -195,7 +201,8 @@ export function createSaveAsJobStore(): SaveAsJobStore {
 
   /** True when a call that started after `sequence` has already shown the job's state. */
   function answeredSince(operationId: string, sequence: number): boolean {
-    return sequence < callsFor(operationId).shown
+    const state = callsFor(operationId)
+    return sequence < state.shown || sequence < state.publishStarted
   }
 
   /** Records that the publish call itself failed, unless a later call has shown the job. */
@@ -264,6 +271,7 @@ export function createSaveAsJobStore(): SaveAsJobStore {
     clearTimer(entry.operationId)
     const signal = signalFor(entry.operationId)
     const sequence = beginCall(entry.operationId)
+    callsFor(entry.operationId).publishStarted = sequence
     entry.submitting = true
     entry.error = null
     try {

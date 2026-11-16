@@ -42,6 +42,7 @@ import {
   describeSaveAsCapabilities,
   encodeParquetRendererOptions,
   evaluateSaveAsSessionAccess,
+  PARQUET_MASK_STRATEGY_CHOICES,
   PARQUET_OPTIONS_TYPE,
   SaveAsInputError,
   ZERO_PROVIDERS_MESSAGE,
@@ -49,8 +50,10 @@ import {
 import {
   classifySinkRpcError,
   describeSinkJob,
+  enteredSucceeded,
 } from './saveAsJobCore'
 import {
+  buildListRenditionProvenanceRequest,
   listPartOccurrenceOptions,
   mergeRenditionsWithProvenance,
 } from './saveAsProvenanceCore'
@@ -568,5 +571,77 @@ describe('saveAsCore', () => {
     // The lookup is told which occurrence it is resolving: the Any at field 4.
     expect(asked).toEqual([['fieldNumber:4']])
     expect(options.map((option) => option.fieldPath)).toEqual(['structured_data.structured_data'])
+  })
+
+  it('addresses the selected source and destination exactly, including surrounding spaces', () => {
+    // " foo " and "foo" are different entries; trimming would act on one the operator did not pick.
+    const spaced = create(EntryAddressSchema, { accountId: 'acct-a', archive: 'datasets', entryId: ' foo ' })
+    const source = buildArchiveRenditionSinkSource({ address: spaced, rendition: { name: 'original' }, revision: 1n })
+    const target = source.kind.case === 'repositoryRevision' ? source.kind.value.target : undefined
+    expect(target?.case === 'archiveRendition' ? target.value.address?.entryId : undefined).toBe(' foo ')
+    expect(buildListRenditionProvenanceRequest(spaced, 1n).address?.entryId).toBe(' foo ')
+
+    const view = describeSaveAsCapabilities(
+      create(ListSaveAsCapabilitiesResponseSchema, {
+        capabilities: [
+          create(SaveAsCapabilitySchema, {
+            status: SaveAsCompatibilityStatus.COMPATIBLE,
+            capability: create(RendererCapabilitySchema, {
+              providerId: 'csv', providerVersion: '1', sourceProfile: 'row', mediaType: 'text/csv',
+            }),
+          }),
+        ],
+      }),
+    )
+    const destination = {
+      accountId: 'acct-a',
+      archive: 'datasets',
+      entryId: ' foo ',
+      renditionName: 'csv',
+      preconditionMode: 'unconditional' as const,
+    }
+    const published = buildPublishSaveAsRequest({
+      operationId: 'op-spaced', source, capability: view.compatible[0], destination,
+    })
+    expect(published.destination?.address?.entryId).toBe(' foo ')
+    expect(() =>
+      buildPublishSaveAsRequest({
+        operationId: 'op-blank', source, capability: view.compatible[0],
+        destination: { ...destination, entryId: '   ' },
+      }),
+    ).toThrow(SaveAsInputError)
+  })
+
+  it('treats an Internal error and an unrecognized job state as outcomes still unknown', () => {
+    // The sink reports INTERNAL when a commit may or may not have happened.
+    const internal = classifySinkRpcError(new ConnectError('commit interrupted', Code.Internal))
+    expect(internal.kind).toBe('unsettled')
+    expect(internal.canReconcile).toBe(true)
+
+    for (const state of [RepositorySinkJobState.UNSPECIFIED, 99 as RepositorySinkJobState]) {
+      const unknown = describeSinkJob(create(RepositorySinkJobSchema, { operationId: 'op-odd', state }))
+      expect(unknown.phase).toBe('unresolved')
+      expect(unknown.terminal).toBe(false)
+      expect(unknown.canReconcile).toBe(true)
+      expect(unknown.stateLabel).toContain('not recognized')
+    }
+  })
+
+  it('counts every arrival at succeeded as a commit to announce, whichever call reported it', () => {
+    expect(enteredSucceeded('running', 'succeeded')).toBe(true)
+    expect(enteredSucceeded(undefined, 'succeeded')).toBe(true)
+    expect(enteredSucceeded('unresolved', 'succeeded')).toBe(true)
+    expect(enteredSucceeded('succeeded', 'succeeded')).toBe(false)
+    expect(enteredSucceeded('running', 'cancelled')).toBe(false)
+  })
+
+  it('describes each mask strategy as the Parquet renderer applies it', () => {
+    const titles = new Map(PARQUET_MASK_STRATEGY_CHOICES.map((choice) => [choice.value, choice.title]))
+    // REDACT writes "***" into strings and clears everything else; nothing is nulled out.
+    expect(titles.get(ParquetMaskStrategy.REDACT)).toContain('"***"')
+    expect(titles.get(ParquetMaskStrategy.REDACT)).not.toContain('null')
+    // REMOVE clears values; the column stays unless it is left out of the column list.
+    expect(titles.get(ParquetMaskStrategy.REMOVE)).toContain('column stays')
+    expect(titles.get(ParquetMaskStrategy.REMOVE)).not.toContain('omit')
   })
 })
