@@ -114,17 +114,65 @@ for pattern, reason in forbidden_patterns:
         print(f"{patch_path}: {reason}")
         sys.exit(1)
 
-required_snippets = [
-    "ADD --checksum=sha256:",
-    "ca-certificates_",
-    "test -s /etc/ssl/certs/ca-certificates.crt",
-    "https://snapshot.ubuntu.com/ubuntu/",
-    "apt-get --error-on=any update",
-]
-for snippet in required_snippets:
-    if snippet not in added:
-        print(f"{patch_path}: missing required provenance step: {snippet}")
+SOURCES_REWRITE_SED = "sed -i"
+ARCHIVE_HOST_REWRITE = "s|http://archive.ubuntu.com/ubuntu/|https://snapshot.ubuntu.com/ubuntu/"
+SECURITY_HOST_REWRITE = "s|http://security.ubuntu.com/ubuntu/|https://snapshot.ubuntu.com/ubuntu/"
+UBUNTU_SOURCES_FILE = "/etc/apt/sources.list.d/ubuntu.sources"
+LEFTOVER_HOST_GREP = "! grep -q -e 'archive.ubuntu.com' -e 'security.ubuntu.com' -e 'ports.ubuntu.com' -e '^URIs:.*http://'"
+
+def provenance_gap(text):
+    required_snippets = [
+        "ADD --checksum=sha256:",
+        "ca-certificates_",
+        "test -s /etc/ssl/certs/ca-certificates.crt",
+        "https://snapshot.ubuntu.com/ubuntu/",
+        "apt-get --error-on=any update",
+        SOURCES_REWRITE_SED,
+        ARCHIVE_HOST_REWRITE,
+        SECURITY_HOST_REWRITE,
+        UBUNTU_SOURCES_FILE,
+        LEFTOVER_HOST_GREP,
+    ]
+    for snippet in required_snippets:
+        if snippet not in text:
+            return f"missing required provenance step: {snippet}"
+    update_at = text.find("apt-get --error-on=any update")
+    archive_at = text.find(ARCHIVE_HOST_REWRITE)
+    # The sed must be the one whose arguments start with the archive rewrite; an unrelated
+    # sed -i elsewhere in the patch (patch_protobuf.sh has one) does not count.
+    sed_at = text.rfind(SOURCES_REWRITE_SED, 0, archive_at)
+    if sed_at < 0 or any(ch not in " \t\r\n\\-e'" for ch in text[sed_at + len(SOURCES_REWRITE_SED):archive_at]):
+        return f"missing required provenance step: {SOURCES_REWRITE_SED} on {UBUNTU_SOURCES_FILE}"
+    security_at = text.find(SECURITY_HOST_REWRITE)
+    sources_at = text.find(UBUNTU_SOURCES_FILE)
+    grep_at = text.find(LEFTOVER_HOST_GREP)
+    if not (sed_at < archive_at < security_at < sources_at < grep_at < update_at):
+        return "ubuntu.sources rewrite and leftover-host grep must run before apt-get update"
+    return None
+
+gap = provenance_gap(added)
+if gap:
+    print(f"{patch_path}: {gap}")
+    sys.exit(1)
+
+def without_line(text, needle):
+    return "\n".join(line for line in text.splitlines() if needle not in line)
+
+for needle in (SOURCES_REWRITE_SED, LEFTOVER_HOST_GREP):
+    if provenance_gap(without_line(added, needle)) is None:
+        print(f"negative fixture still passed after removing the line containing {needle!r}")
         sys.exit(1)
+
+# Removing only the ubuntu.sources sed must be refused even though another sed -i remains.
+only_rewrite_sed_removed = "\n".join(
+    line for line in added.splitlines() if line.strip() != "&& sed -i \\")
+if only_rewrite_sed_removed == added or SOURCES_REWRITE_SED not in only_rewrite_sed_removed:
+    print("negative fixture for the ubuntu.sources sed did not remove exactly that line")
+    sys.exit(1)
+if provenance_gap(only_rewrite_sed_removed) is None:
+    print("negative fixture still passed after removing only the ubuntu.sources sed")
+    sys.exit(1)
+
 print(f"wasm provenance patch OK ({hunks} hunks, CA bundle pinned, apt TLS and Check-Valid-Until intact)")
 PYEOF
 

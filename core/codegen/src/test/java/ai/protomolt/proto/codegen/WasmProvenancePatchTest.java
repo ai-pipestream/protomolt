@@ -44,6 +44,15 @@ class WasmProvenancePatchTest {
     private static final String HTTPS_SNAPSHOT_PREFIX = "https://snapshot.ubuntu.com/ubuntu/";
     private static final String HTTP_SNAPSHOT_PREFIX = "http://snapshot.ubuntu.com/";
     private static final String APT_UPDATE_STRICT = "apt-get --error-on=any update";
+    private static final String SOURCES_REWRITE_SED = "sed -i";
+    private static final String ARCHIVE_HOST_REWRITE =
+            "s|http://archive.ubuntu.com/ubuntu/|https://snapshot.ubuntu.com/ubuntu/";
+    private static final String SECURITY_HOST_REWRITE =
+            "s|http://security.ubuntu.com/ubuntu/|https://snapshot.ubuntu.com/ubuntu/";
+    private static final String UBUNTU_SOURCES_SED_LINE = "&& sed -i \\";
+    private static final String UBUNTU_SOURCES_FILE = "/etc/apt/sources.list.d/ubuntu.sources";
+    private static final String LEFTOVER_HOST_GREP =
+            "! grep -q -e 'archive.ubuntu.com' -e 'security.ubuntu.com' -e 'ports.ubuntu.com' -e '^URIs:.*http://'";
 
     /**
      * One file entry parsed from {@code diff --git} and {@code index} lines in the provenance patch.
@@ -191,6 +200,59 @@ class WasmProvenancePatchTest {
                 .hasMessageContaining(CA_BUNDLE_CHECK);
     }
 
+    @Test
+    void validatorRefusesDockerfileMissingSourcesRewriteOrLeftoverHostGrep(@TempDir Path tempDir)
+            throws IOException, InterruptedException {
+        String validDockerfile = applyAndReadDockerfile(tempDir);
+        assertThatCode(() -> validateAptTlsAndSnapshotConfig("", validDockerfile))
+                .doesNotThrowAnyException();
+
+        String missingSed = removeLineContaining(validDockerfile, SOURCES_REWRITE_SED);
+        assertThat(missingSed).doesNotContain(SOURCES_REWRITE_SED);
+        assertThatThrownBy(() -> validateAptTlsAndSnapshotConfig("", missingSed))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining(SOURCES_REWRITE_SED);
+
+        String unrelatedSedOnly = "RUN sed -i 's|a|b|' /etc/unrelated.conf\n"
+                + removeLineEqualTo(validDockerfile, UBUNTU_SOURCES_SED_LINE);
+        assertThat(unrelatedSedOnly).contains(SOURCES_REWRITE_SED).contains(ARCHIVE_HOST_REWRITE);
+        assertThatThrownBy(() -> validateAptTlsAndSnapshotConfig("", unrelatedSedOnly))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining(SOURCES_REWRITE_SED);
+
+        String missingArchiveRewrite = validDockerfile.replace(ARCHIVE_HOST_REWRITE, "s|http://archive.ubuntu.com/ubuntu/|http://archive.ubuntu.com/ubuntu/|");
+        assertThatThrownBy(() -> validateAptTlsAndSnapshotConfig("", missingArchiveRewrite))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining(ARCHIVE_HOST_REWRITE);
+
+        String missingSecurityRewrite = validDockerfile.replace(SECURITY_HOST_REWRITE, "s|http://security.ubuntu.com/ubuntu/|http://security.ubuntu.com/ubuntu/|");
+        assertThatThrownBy(() -> validateAptTlsAndSnapshotConfig("", missingSecurityRewrite))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining(SECURITY_HOST_REWRITE);
+
+        String missingGrep = removeLineContaining(validDockerfile, LEFTOVER_HOST_GREP);
+        assertThat(missingGrep).doesNotContain(LEFTOVER_HOST_GREP);
+        assertThatThrownBy(() -> validateAptTlsAndSnapshotConfig("", missingGrep))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining(LEFTOVER_HOST_GREP);
+    }
+
+    private static String removeLineEqualTo(String text, String trimmedLine) {
+        String removed = text.lines()
+                .filter(line -> !line.strip().equals(trimmedLine))
+                .reduce((left, right) -> left + "\n" + right)
+                .orElse("");
+        assertThat(removed).isNotEqualTo(text);
+        return removed;
+    }
+
+    private static String removeLineContaining(String text, String needle) {
+        return text.lines()
+                .filter(line -> !line.contains(needle))
+                .reduce((left, right) -> left + "\n" + right)
+                .orElse("");
+    }
+
     private static String applyAndReadDockerfile(Path tempDir)
             throws IOException, InterruptedException {
         Path patchFile = resolveProvenanceDir().resolve(PATCH_FILENAME);
@@ -204,8 +266,10 @@ class WasmProvenancePatchTest {
     /**
      * Validates that neither the provenance patch nor the resulting {@code Dockerfile} disables
      * {@code Verify-Peer}, {@code Verify-Host}, or {@code Check-Valid-Until}, and that the
-     * {@code Dockerfile} installs a checksum-pinned CA bundle before querying
-     * {@code https://snapshot.ubuntu.com}.
+     * {@code Dockerfile} installs a checksum-pinned CA bundle, rewrites
+     * {@code /etc/apt/sources.list.d/ubuntu.sources} onto the HTTPS snapshot, and rejects
+     * leftover archive hosts and plain-HTTP {@code URIs:} entries before
+     * {@code apt-get update}.
      */
     static void validateAptTlsAndSnapshotConfig(String patchText, String dockerfileText) {
         refuseDisabledOption(patchText, "Verify-Peer");
@@ -262,6 +326,47 @@ class WasmProvenancePatchTest {
             throw new IllegalArgumentException(
                     "CA bundle must be checksum-fetched and verified before apt-get update runs");
         }
+        int archiveRewritePos = requireBeforeUpdate(dockerfileText, ARCHIVE_HOST_REWRITE, aptUpdatePos);
+        int sedPos = rewritingSed(dockerfileText, archiveRewritePos);
+        int securityRewritePos = requireBeforeUpdate(dockerfileText, SECURITY_HOST_REWRITE, aptUpdatePos);
+        int sourcesFilePos = requireBeforeUpdate(dockerfileText, UBUNTU_SOURCES_FILE, aptUpdatePos);
+        int leftoverGrepPos = requireBeforeUpdate(dockerfileText, LEFTOVER_HOST_GREP, aptUpdatePos);
+        if (!(sedPos < archiveRewritePos
+                && archiveRewritePos < securityRewritePos
+                && securityRewritePos < sourcesFilePos
+                && sourcesFilePos < leftoverGrepPos)) {
+            throw new IllegalArgumentException(
+                    "Dockerfile must rewrite ubuntu.sources onto the HTTPS snapshot and then reject leftover archive hosts");
+        }
+    }
+
+    /**
+     * The position of the {@code sed -i} whose arguments start with the archive rewrite: only
+     * whitespace, line continuations and {@code -e '} may sit between the two. An unrelated
+     * {@code sed -i} elsewhere in the file does not satisfy the requirement.
+     */
+    private static int rewritingSed(String text, int archiveRewritePos) {
+        int pos = text.lastIndexOf(SOURCES_REWRITE_SED, archiveRewritePos);
+        if (pos < 0) {
+            throw new IllegalArgumentException(
+                    "Dockerfile must rewrite ubuntu.sources before apt-get update, missing " + SOURCES_REWRITE_SED);
+        }
+        for (int i = pos + SOURCES_REWRITE_SED.length(); i < archiveRewritePos; i++) {
+            if (" \t\r\n\\-e'".indexOf(text.charAt(i)) < 0) {
+                throw new IllegalArgumentException("Dockerfile must apply the archive rewrite with "
+                        + SOURCES_REWRITE_SED + " on ubuntu.sources, found other text in between");
+            }
+        }
+        return pos;
+    }
+
+    private static int requireBeforeUpdate(String text, String snippet, int aptUpdatePos) {
+        int pos = text.indexOf(snippet);
+        if (pos < 0 || pos > aptUpdatePos) {
+            throw new IllegalArgumentException(
+                    "Dockerfile must rewrite ubuntu.sources before apt-get update, missing " + snippet);
+        }
+        return pos;
     }
 
     private static void refuseDisabledOption(String text, String optionName) {
