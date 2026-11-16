@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import ai.protomolt.proto.actions.ActionContext;
 import ai.protomolt.proto.workflow.WorkflowRunner;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.google.protobuf.AnyProto;
@@ -84,6 +85,27 @@ class WorkflowCheckpointCodecTest {
                 .isEqualTo(maxUnsigned);
         assertThat(restored.response().getField(stepOutput.findFieldByName("raw_bytes")))
                 .isEqualTo(ByteString.copyFrom(rawBinary));
+    }
+
+    @Test void previewFailureOtherThanUnrenderableProtobufStopsTheCheckpointWrite() throws Exception {
+        Descriptor stepOutput = buildStepOutputDescriptor();
+        DynamicMessage renderable = DynamicMessage.newBuilder(stepOutput)
+                .setField(stepOutput.findFieldByName("unsigned_seq"), 7L)
+                .build();
+        ObjectMapper brokenMapper = new ObjectMapper() {
+            @Override
+            public JsonNode readTree(String content) {
+                throw new IllegalStateException("mapper fault");
+            }
+        };
+        ActionContext brokenContext = ActionContext.builder().objectMapper(brokenMapper).build();
+
+        ObjectNode entry = MAPPER.createObjectNode();
+        assertThatThrownBy(() -> WorkflowCheckpointCodec.writeResponse(
+                        entry, new WorkflowRunner.Checkpoint("enrich", false, renderable),
+                        brokenContext))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage("mapper fault");
     }
 
     @Test void fallsBackToLegacyJsonCheckpointsAndHandlesSkippedSteps() throws Exception {
