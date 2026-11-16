@@ -188,6 +188,9 @@ public final class SkosConverter {
      * Validates and exports a protobuf scheme. Unsupported or unknown protobuf fields
      * fail before any output is written. A sink failure propagates and may leave a prefix.
      * RDF does not preserve protobuf field ordering or unknown fields.
+     * Turtle hands each triple to a stream writer as it is emitted.
+     * RDF/XML uses a graph writer: one graph holds exactly the emitted triples and is
+     * closed before this method returns.
      *
      * @param scheme validated config document to export
      * @param output destination for the selected RDF syntax
@@ -206,7 +209,15 @@ public final class SkosConverter {
         } else {
             var graph = GraphMemFactory.createDefaultGraph();
             try {
-                emitTriples(scheme, iris, graph::add);
+                int[] emitted = {0};
+                emitTriples(scheme, iris, triple -> {
+                    graph.add(triple);
+                    emitted[0]++;
+                });
+                if (graph.size() != emitted[0]) {
+                    throw new IllegalStateException(
+                            "RDF/XML graph holds " + graph.size() + " triples, emitted " + emitted[0]);
+                }
                 RDFDataMgr.write(output, graph, RDFFormat.RDFXML_PLAIN);
             } finally {
                 graph.close();
@@ -217,7 +228,8 @@ public final class SkosConverter {
     /**
      * Exports a scheme as triples into {@code destination}, the same triples
      * {@link #write(ConceptScheme, OutputStream, Format)} serializes, with no text syntax in
-     * between. The destination is started and finished here.
+     * between. Each triple is delivered as it is emitted. {@code finish} runs only after the
+     * last triple. The destination is started and finished here.
      *
      * @param scheme validated config document to export
      * @param destination receiver of the exported triples

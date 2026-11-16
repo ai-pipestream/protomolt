@@ -1,6 +1,7 @@
 package ai.protomolt.proto.grpc.workspace;
 
 import ai.protomolt.proto.actions.ActionException;
+import ai.protomolt.proto.grpc.invoke.ChannelFactory;
 import ai.protomolt.proto.grpc.profile.v1.ServiceEndpoint;
 import ai.protomolt.proto.grpc.profile.v1.ServiceProfile;
 import ai.protomolt.proto.grpc.profile.v1.Transport;
@@ -8,9 +9,13 @@ import io.grpc.ChannelCredentials;
 import io.grpc.TlsChannelCredentials;
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
+import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.nio.file.NoSuchFileException;
 import java.nio.file.Path;
+import java.nio.file.attribute.BasicFileAttributes;
+import java.nio.file.attribute.FileTime;
 import java.security.GeneralSecurityException;
 import java.security.KeyFactory;
 import java.security.KeyStore;
@@ -21,30 +26,74 @@ import java.security.spec.PKCS8EncodedKeySpec;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.Collection;
+import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.WeakHashMap;
+import java.util.concurrent.atomic.AtomicInteger;
+import javax.net.ssl.KeyManager;
 import javax.net.ssl.KeyManagerFactory;
+import javax.net.ssl.TrustManager;
 import javax.net.ssl.TrustManagerFactory;
 
 /**
  * TLS material from PEM files the host names, constrained to exact host-approved endpoints.
  *
  * <p>A profile's {@code trust_ref} and {@code client_certificate_ref} are opaque names; this
- * resolver maps each name to files through host configuration, never through the profile. The
- * files are read every time a channel opens, so replacing them rotates the material for the
- * next call. A trust reference replaces the system roots with its bundle. Non-TLS endpoints
- * are refused with {@code unsupported-transport}; every unapproved reference or unreadable or
- * malformed file is a {@code credential-unavailable} refusal whose wire message names neither
- * the files nor their contents.
+ * resolver maps each name to files through host configuration, never through the profile. Every
+ * PEM file is bounded to {@link #DEFAULT_MAX_PEM_BYTES} (unless overridden for testing) before
+ * bytes are read or parsed. Parsed key/trust managers and {@link ChannelCredentials} are cached by
+ * canonical file identity, modification timestamp, and byte length so repeated inspections and
+ * RPCs reuse warm material until a referenced file changes on disk, at which point stale pooled
+ * channels are evicted. Each PEM read verifies that the file's stamp is unchanged before and after
+ * reading and across a profile's configured bundle, retrying bounded concurrent rotations before
+ * failing closed. A trust reference replaces the system roots with its bundle. Non-TLS endpoints
+ * are refused with {@code unsupported-transport}; every unapproved reference or unreadable,
+ * oversized, concurrently changing, or malformed file is a {@code credential-unavailable} refusal
+ * whose wire message names neither the files nor their contents.
  */
-public final class FileProfileTlsResolver implements ProfileTlsResolver {
+public final class FileProfileTlsResolver implements ProfileTlsResolver, EvictableTlsResolver {
 
+    /** Maximum byte size accepted for a single PEM certificate bundle or PKCS#8 key file (1 MiB). */
+    public static final int DEFAULT_MAX_PEM_BYTES = 1_048_576;
+
+    static final int MAX_STABLE_READ_ATTEMPTS = 3;
+    static final String CODE_CREDENTIAL_UNAVAILABLE = "credential-unavailable";
+
+    private static final String CODE_UNSUPPORTED_TRANSPORT = "unsupported-transport";
     private static final String KEY_BEGIN = "-----BEGIN PRIVATE KEY-----";
     private static final String KEY_END = "-----END PRIVATE KEY-----";
     private static final List<String> KEY_ALGORITHMS = List.of("EC", "RSA", "Ed25519");
     private static final char[] TRANSIENT_STORE_PASSWORD = new char[0];
+
+    static final PemFileOps DEFAULT_FILE_OPS = new PemFileOps() {
+        @Override
+        public FileStamp stamp(Path file, int maxPemBytes) throws IOException {
+            Path real = file.toRealPath();
+            BasicFileAttributes attrs = Files.readAttributes(real, BasicFileAttributes.class);
+            if (!attrs.isRegularFile()) {
+                throw new IOException("TLS PEM path is not a regular file");
+            }
+            if (attrs.size() > maxPemBytes) {
+                throw new PemSizeLimitException(maxPemBytes);
+            }
+            return new FileStamp(real, attrs.fileKey(), attrs.lastModifiedTime(), attrs.size());
+        }
+
+        @Override
+        public byte[] readBounded(Path realPath, int maxPemBytes) throws IOException {
+            try (InputStream in = Files.newInputStream(realPath)) {
+                byte[] bytes = in.readNBytes(maxPemBytes + 1);
+                if (bytes.length > maxPemBytes) {
+                    throw new PemSizeLimitException(maxPemBytes);
+                }
+                return bytes;
+            }
+        }
+    };
 
     /** One approved endpoint and the exact TLS references it may present. */
     public record Binding(String profile, String endpoint, String host, int port,
@@ -76,9 +125,69 @@ public final class FileProfileTlsResolver implements ProfileTlsResolver {
         }
     }
 
+    interface PemFileOps {
+        FileStamp stamp(Path file, int maxPemBytes) throws IOException;
+
+        byte[] readBounded(Path realPath, int maxPemBytes) throws IOException;
+    }
+
+    record FileStamp(Path realPath, Object fileKey, FileTime lastModifiedTime, long size) {
+    }
+
+    static final class PemSizeLimitException extends IOException {
+        PemSizeLimitException(int maxBytes) {
+            super("PEM file exceeds maximum allowed size of " + maxBytes + " bytes");
+        }
+    }
+
+    static final class ConcurrentPemChangeException extends IOException {
+        ConcurrentPemChangeException() {
+            super("TLS PEM file stamp changed concurrently during read");
+        }
+    }
+
+    private record StablePem(FileStamp stamp, byte[] bytes) {
+    }
+
+    private record SnapshotRequest(Path bundle, KeyPairFiles files, FileStamp initialTrust,
+                                   FileStamp initialCert, FileStamp initialKey) {
+    }
+
+    private record ResolvedMaterial(FileStamp trustStamp, TrustManager[] trustManagers,
+                                    FileStamp certStamp, FileStamp keyStamp,
+                                    KeyManager[] keyManagers) {
+    }
+
+    private record CredentialsKey(String trustRef, String clientCertificateRef) {
+    }
+
+    private record CachedTrust(FileStamp stamp, TrustManager[] trustManagers) {
+    }
+
+    private record CachedKeyPair(FileStamp certStamp, FileStamp keyStamp, KeyManager[] keyManagers) {
+    }
+
+    private record CachedCredentials(FileStamp trustStamp, FileStamp certStamp, FileStamp keyStamp,
+                                     ChannelCredentials credentials) {
+    }
+
     private final Set<Binding> allowed;
     private final Map<String, Path> trustBundles;
     private final Map<String, KeyPairFiles> clientCertificates;
+    private final int maxPemBytes;
+    private final PemFileOps fileOps;
+
+    private final Object cacheLock = new Object();
+    private final Map<Path, CachedTrust> trustCache = new HashMap<>();
+    private final Map<KeyPairFiles, CachedKeyPair> keyPairCache = new HashMap<>();
+    private final Map<CredentialsKey, CachedCredentials> credentialsCache = new HashMap<>();
+    private final Set<ChannelFactory> evictionTargets =
+            Collections.synchronizedSet(Collections.newSetFromMap(new WeakHashMap<>()));
+
+    private final AtomicInteger pemReads = new AtomicInteger();
+    private final AtomicInteger trustFactoryBuilds = new AtomicInteger();
+    private final AtomicInteger keyFactoryBuilds = new AtomicInteger();
+    private final AtomicInteger credentialsBuilds = new AtomicInteger();
 
     /**
      * @param allowed endpoints that may present TLS material, with their exact references
@@ -87,18 +196,132 @@ public final class FileProfileTlsResolver implements ProfileTlsResolver {
      */
     public FileProfileTlsResolver(Set<Binding> allowed, Map<String, Path> trustBundles,
                                   Map<String, KeyPairFiles> clientCertificates) {
+        this(allowed, trustBundles, clientCertificates, DEFAULT_MAX_PEM_BYTES, DEFAULT_FILE_OPS);
+    }
+
+    FileProfileTlsResolver(Set<Binding> allowed, Map<String, Path> trustBundles,
+                           Map<String, KeyPairFiles> clientCertificates, int maxPemBytes) {
+        this(allowed, trustBundles, clientCertificates, maxPemBytes, DEFAULT_FILE_OPS);
+    }
+
+    FileProfileTlsResolver(Set<Binding> allowed, Map<String, Path> trustBundles,
+                           Map<String, KeyPairFiles> clientCertificates, int maxPemBytes,
+                           PemFileOps fileOps) {
+        if (maxPemBytes <= 0) {
+            throw new IllegalArgumentException("maxPemBytes must be positive");
+        }
         this.allowed = Set.copyOf(Objects.requireNonNull(allowed, "allowed"));
         this.trustBundles = Map.copyOf(Objects.requireNonNull(trustBundles, "trustBundles"));
         this.clientCertificates =
                 Map.copyOf(Objects.requireNonNull(clientCertificates, "clientCertificates"));
+        this.maxPemBytes = maxPemBytes;
+        this.fileOps = Objects.requireNonNull(fileOps, "fileOps");
+    }
+
+    @Override
+    public void registerEvictionTarget(ChannelFactory channels) {
+        if (channels != null) {
+            evictionTargets.add(channels);
+        }
+    }
+
+    int pemReads() {
+        return pemReads.get();
+    }
+
+    int trustFactoryBuilds() {
+        return trustFactoryBuilds.get();
+    }
+
+    int keyFactoryBuilds() {
+        return keyFactoryBuilds.get();
+    }
+
+    int credentialsBuilds() {
+        return credentialsBuilds.get();
     }
 
     @Override
     public ChannelCredentials channelCredentials(ServiceProfile profile,
                                                  ServiceEndpoint endpoint)
             throws ActionException {
+        Binding actual = validateBinding(profile, endpoint);
+        Path bundle = configuredTrustBundle(actual);
+        KeyPairFiles files = configuredClientCertificate(actual);
+        CredentialsKey credentialsKey =
+                new CredentialsKey(actual.trustRef(), actual.clientCertificateRef());
+        ChannelCredentials evicted = null;
+        ChannelCredentials resolved;
+        ActionException failure = null;
+
+        synchronized (cacheLock) {
+            CachedCredentials previous = credentialsCache.get(credentialsKey);
+            try {
+                FileStamp initialTrust = bundle == null ? null : stampOf(bundle);
+                FileStamp initialCert = files == null ? null : stampOf(files.certificateChain());
+                FileStamp initialKey = files == null ? null : stampOf(files.privateKey());
+
+                if (previous != null
+                        && Objects.equals(previous.trustStamp(), initialTrust)
+                        && Objects.equals(previous.certStamp(), initialCert)
+                        && Objects.equals(previous.keyStamp(), initialKey)) {
+                    return previous.credentials();
+                }
+
+                ResolvedMaterial material = resolveConsistentMaterial(new SnapshotRequest(
+                        bundle, files, initialTrust, initialCert, initialKey));
+                if (bundle != null) {
+                    trustCache.put(bundle,
+                            new CachedTrust(material.trustStamp(), material.trustManagers()));
+                }
+                if (files != null) {
+                    keyPairCache.put(files, new CachedKeyPair(
+                            material.certStamp(), material.keyStamp(), material.keyManagers()));
+                }
+
+                TlsChannelCredentials.Builder builder = TlsChannelCredentials.newBuilder();
+                if (material.trustManagers() != null) {
+                    builder.trustManager(material.trustManagers());
+                }
+                if (material.keyManagers() != null) {
+                    builder.keyManager(material.keyManagers());
+                }
+                resolved = builder.build();
+                credentialsBuilds.incrementAndGet();
+                credentialsCache.put(credentialsKey, new CachedCredentials(
+                        material.trustStamp(), material.certStamp(), material.keyStamp(),
+                        resolved));
+                if (previous != null) {
+                    evicted = previous.credentials();
+                }
+            } catch (PemSizeLimitException oversized) {
+                evicted = dropCached(credentialsKey, bundle, files, previous);
+                failure = unavailable("profile TLS material could not be loaded: exceeds "
+                        + maxPemBytes + "-byte limit", oversized);
+                resolved = null;
+            } catch (ConcurrentPemChangeException changed) {
+                evicted = dropCached(credentialsKey, bundle, files, previous);
+                failure = unavailable("TLS PEM file changed concurrently during read for profile '"
+                        + actual.profile() + "'", changed);
+                resolved = null;
+            } catch (IOException | GeneralSecurityException | IllegalArgumentException e) {
+                evicted = dropCached(credentialsKey, bundle, files, previous);
+                failure = unavailable("profile TLS material could not be loaded", e);
+                resolved = null;
+            }
+        }
+
+        notifyEvicted(evicted);
+        if (failure != null) {
+            throw failure;
+        }
+        return resolved;
+    }
+
+    private Binding validateBinding(ServiceProfile profile, ServiceEndpoint endpoint)
+            throws ActionException {
         if (endpoint.getTransport() != Transport.TRANSPORT_TLS) {
-            throw new ActionException("unsupported-transport",
+            throw new ActionException(CODE_UNSUPPORTED_TRANSPORT,
                     "trust and client-certificate references need TLS transport");
         }
         Binding actual;
@@ -112,31 +335,167 @@ public final class FileProfileTlsResolver implements ProfileTlsResolver {
         if (!allowed.contains(actual)) {
             throw unavailable("profile endpoint is not approved for TLS material");
         }
-        TlsChannelCredentials.Builder builder = TlsChannelCredentials.newBuilder();
-        try {
-            if (!actual.trustRef().isBlank()) {
-                Path bundle = trustBundles.get(actual.trustRef());
-                if (bundle == null) {
-                    throw unavailable("profile trust reference is not configured");
-                }
-                builder.trustManager(trustManagers(bundle).getTrustManagers());
-            }
-            if (!actual.clientCertificateRef().isBlank()) {
-                KeyPairFiles files = clientCertificates.get(actual.clientCertificateRef());
-                if (files == null) {
-                    throw unavailable("profile client-certificate reference is not configured");
-                }
-                builder.keyManager(keyManagers(files).getKeyManagers());
-            }
-        } catch (IOException | GeneralSecurityException | IllegalArgumentException e) {
-            throw unavailable("profile TLS material could not be loaded", e);
-        }
-        return builder.build();
+        return actual;
     }
 
-    private static TrustManagerFactory trustManagers(Path bundle)
+    private Path configuredTrustBundle(Binding actual) throws ActionException {
+        if (actual.trustRef().isBlank()) {
+            return null;
+        }
+        Path bundle = trustBundles.get(actual.trustRef());
+        if (bundle == null) {
+            throw unavailable("profile trust reference is not configured");
+        }
+        return bundle;
+    }
+
+    private KeyPairFiles configuredClientCertificate(Binding actual) throws ActionException {
+        if (actual.clientCertificateRef().isBlank()) {
+            return null;
+        }
+        KeyPairFiles files = clientCertificates.get(actual.clientCertificateRef());
+        if (files == null) {
+            throw unavailable("profile client-certificate reference is not configured");
+        }
+        return files;
+    }
+
+    private ResolvedMaterial resolveConsistentMaterial(SnapshotRequest request)
             throws IOException, GeneralSecurityException {
-        Collection<? extends Certificate> roots = certificates(bundle);
+        Path bundle = request.bundle();
+        KeyPairFiles files = request.files();
+        CachedTrust localTrust = null;
+        CachedKeyPair localKeyPair = null;
+
+        for (int attempt = 1; attempt <= MAX_STABLE_READ_ATTEMPTS; attempt++) {
+            FileStamp trustStamp = null;
+            TrustManager[] trustManagers = null;
+            if (bundle != null) {
+                FileStamp currentTrust = attempt == 1 ? request.initialTrust() : stampOf(bundle);
+                CachedTrust cachedTrust = trustCache.get(bundle);
+                if (cachedTrust != null && cachedTrust.stamp().equals(currentTrust)) {
+                    trustStamp = currentTrust;
+                    trustManagers = cachedTrust.trustManagers();
+                } else if (localTrust != null && localTrust.stamp().equals(currentTrust)) {
+                    trustStamp = currentTrust;
+                    trustManagers = localTrust.trustManagers();
+                } else {
+                    StablePem trustPem = readStablePem(bundle);
+                    trustStamp = trustPem.stamp();
+                    trustManagers = buildTrustManagers(trustPem.bytes());
+                    localTrust = new CachedTrust(trustStamp, trustManagers);
+                }
+            }
+
+            FileStamp certStamp = null;
+            FileStamp keyStamp = null;
+            KeyManager[] keyManagers = null;
+            if (files != null) {
+                FileStamp currentCert = attempt == 1
+                        ? request.initialCert() : stampOf(files.certificateChain());
+                FileStamp currentKey = attempt == 1
+                        ? request.initialKey() : stampOf(files.privateKey());
+                CachedKeyPair cachedKeyPair = keyPairCache.get(files);
+                if (cachedKeyPair != null
+                        && cachedKeyPair.certStamp().equals(currentCert)
+                        && cachedKeyPair.keyStamp().equals(currentKey)) {
+                    certStamp = currentCert;
+                    keyStamp = currentKey;
+                    keyManagers = cachedKeyPair.keyManagers();
+                } else if (localKeyPair != null
+                        && localKeyPair.certStamp().equals(currentCert)
+                        && localKeyPair.keyStamp().equals(currentKey)) {
+                    certStamp = currentCert;
+                    keyStamp = currentKey;
+                    keyManagers = localKeyPair.keyManagers();
+                } else {
+                    StablePem certPem = readStablePem(files.certificateChain());
+                    StablePem keyPem = readStablePem(files.privateKey());
+                    certStamp = certPem.stamp();
+                    keyStamp = keyPem.stamp();
+                    if (!certStamp.equals(stampOf(files.certificateChain()))
+                            || !keyStamp.equals(stampOf(files.privateKey()))) {
+                        continue;
+                    }
+                    keyManagers = buildKeyManagers(certPem.bytes(), keyPem.bytes());
+                    localKeyPair = new CachedKeyPair(certStamp, keyStamp, keyManagers);
+                }
+            }
+
+            if (bundleStampsUnchanged(bundle, trustStamp, files, certStamp, keyStamp)) {
+                return new ResolvedMaterial(
+                        trustStamp, trustManagers, certStamp, keyStamp, keyManagers);
+            }
+        }
+        throw new ConcurrentPemChangeException();
+    }
+
+    private boolean bundleStampsUnchanged(Path bundle, FileStamp trustStamp,
+                                          KeyPairFiles files, FileStamp certStamp,
+                                          FileStamp keyStamp) throws IOException {
+        return (bundle == null || trustStamp.equals(stampOf(bundle)))
+                && (files == null || (certStamp.equals(stampOf(files.certificateChain()))
+                        && keyStamp.equals(stampOf(files.privateKey()))));
+    }
+
+    private StablePem readStablePem(Path file) throws IOException {
+        for (int attempt = 1; attempt <= MAX_STABLE_READ_ATTEMPTS; attempt++) {
+            FileStamp before = stampOf(file);
+            byte[] bytes;
+            try {
+                bytes = readBoundedBytes(before.realPath());
+            } catch (NoSuchFileException disappeared) {
+                FileStamp afterMissing = stampOf(file);
+                if (!before.equals(afterMissing)) {
+                    continue;
+                }
+                throw disappeared;
+            }
+            FileStamp after = stampOf(file);
+            if (before.equals(after)) {
+                return new StablePem(before, bytes);
+            }
+        }
+        throw new ConcurrentPemChangeException();
+    }
+
+    private ChannelCredentials dropCached(CredentialsKey credentialsKey, Path bundle,
+                                          KeyPairFiles files, CachedCredentials previous) {
+        credentialsCache.remove(credentialsKey);
+        if (bundle != null) {
+            trustCache.remove(bundle);
+        }
+        if (files != null) {
+            keyPairCache.remove(files);
+        }
+        return previous == null ? null : previous.credentials();
+    }
+
+    private void notifyEvicted(ChannelCredentials evicted) {
+        if (evicted == null) {
+            return;
+        }
+        List<ChannelFactory> targets;
+        synchronized (evictionTargets) {
+            targets = List.copyOf(evictionTargets);
+        }
+        for (ChannelFactory target : targets) {
+            target.evict(evicted);
+        }
+    }
+
+    private FileStamp stampOf(Path file) throws IOException {
+        return fileOps.stamp(file, maxPemBytes);
+    }
+
+    private byte[] readBoundedBytes(Path realPath) throws IOException {
+        pemReads.incrementAndGet();
+        return fileOps.readBounded(realPath, maxPemBytes);
+    }
+
+    private TrustManager[] buildTrustManagers(byte[] bundleBytes)
+            throws IOException, GeneralSecurityException {
+        Collection<? extends Certificate> roots = certificates(bundleBytes);
         KeyStore store = KeyStore.getInstance(KeyStore.getDefaultType());
         store.load(null, null);
         int index = 0;
@@ -146,13 +505,14 @@ public final class FileProfileTlsResolver implements ProfileTlsResolver {
         TrustManagerFactory factory =
                 TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm());
         factory.init(store);
-        return factory;
+        trustFactoryBuilds.incrementAndGet();
+        return factory.getTrustManagers();
     }
 
-    private static KeyManagerFactory keyManagers(KeyPairFiles files)
+    private KeyManager[] buildKeyManagers(byte[] certificateChainBytes, byte[] privateKeyBytes)
             throws IOException, GeneralSecurityException {
-        List<Certificate> chain = new ArrayList<>(certificates(files.certificateChain()));
-        PrivateKey key = privateKey(files.privateKey());
+        List<Certificate> chain = new ArrayList<>(certificates(certificateChainBytes));
+        PrivateKey key = privateKey(privateKeyBytes);
         KeyStore store = KeyStore.getInstance("PKCS12");
         store.load(null, null);
         store.setKeyEntry("client", key, TRANSIENT_STORE_PASSWORD,
@@ -160,12 +520,12 @@ public final class FileProfileTlsResolver implements ProfileTlsResolver {
         KeyManagerFactory factory =
                 KeyManagerFactory.getInstance(KeyManagerFactory.getDefaultAlgorithm());
         factory.init(store, TRANSIENT_STORE_PASSWORD);
-        return factory;
+        keyFactoryBuilds.incrementAndGet();
+        return factory.getKeyManagers();
     }
 
-    private static Collection<? extends Certificate> certificates(Path file)
-            throws IOException, GeneralSecurityException {
-        byte[] bytes = Files.readAllBytes(file);
+    private static Collection<? extends Certificate> certificates(byte[] bytes)
+            throws GeneralSecurityException {
         Collection<? extends Certificate> certificates = CertificateFactory.getInstance("X.509")
                 .generateCertificates(new ByteArrayInputStream(bytes));
         if (certificates.isEmpty()) {
@@ -174,9 +534,9 @@ public final class FileProfileTlsResolver implements ProfileTlsResolver {
         return certificates;
     }
 
-    /** Reads one unencrypted PKCS#8 PEM key; the algorithm is taken from the key itself. */
-    private static PrivateKey privateKey(Path file) throws IOException, GeneralSecurityException {
-        String pem = Files.readString(file, StandardCharsets.US_ASCII);
+    /** Parses one unencrypted PKCS#8 PEM key from bounded bytes; the key's encoding selects the algorithm. */
+    private static PrivateKey privateKey(byte[] bytes) throws GeneralSecurityException {
+        String pem = new String(bytes, StandardCharsets.US_ASCII);
         int begin = pem.indexOf(KEY_BEGIN);
         if (begin < 0) {
             throw new GeneralSecurityException("expected exactly one PKCS#8 private key");
@@ -205,7 +565,7 @@ public final class FileProfileTlsResolver implements ProfileTlsResolver {
     }
 
     private static ActionException unavailable(String message) {
-        return new ActionException("credential-unavailable", message);
+        return new ActionException(CODE_CREDENTIAL_UNAVAILABLE, message);
     }
 
     /**
@@ -213,6 +573,6 @@ public final class FileProfileTlsResolver implements ProfileTlsResolver {
      * wire, and neither names a file or its contents.
      */
     private static ActionException unavailable(String message, Exception cause) {
-        return new ActionException("credential-unavailable", message, null, cause);
+        return new ActionException(CODE_CREDENTIAL_UNAVAILABLE, message, null, cause);
     }
 }
