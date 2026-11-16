@@ -114,15 +114,9 @@ final class RepositorySinkSettlement {
             return settleFromRecordedOutcome(stored, outcome.getCommitted());
         }
 
-        Status.Code code = originalFailure.getStatus().getCode();
-        RepositorySinkFailure notCommitted = failureOf(
-                code,
-                "COMMIT_NOT_RECORDED",
-                sanitizeMessage(
-                        originalFailure.getStatus().getDescription(),
-                        "Upload failed before repository commit"),
-                isTransientStatus(code),
-                code == Status.Code.ABORTED);
+        RepositorySinkFailure notCommitted = RepositorySinkFailures.commitNotRecorded(
+                originalFailure.getStatus().getCode(),
+                originalFailure.getStatus().getDescription());
         return persistFailure(
                 stored,
                 RepositorySinkJobState.REPOSITORY_SINK_JOB_STATE_FAILED,

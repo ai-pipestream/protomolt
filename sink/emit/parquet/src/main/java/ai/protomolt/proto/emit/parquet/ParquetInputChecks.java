@@ -27,6 +27,9 @@ final class ParquetInputChecks {
     static final String ANY_FULL_NAME = "google.protobuf.Any";
     static final int MAX_MESSAGE_WALK_DEPTH = 128;
 
+    /** The most schema fields one row schema may expand to, counted per column path. */
+    static final int MAX_SCHEMA_FIELDS = 4096;
+
     private ParquetInputChecks() {}
 
     static void verifyFieldsCompatible(Descriptor expected, Descriptor actual)
@@ -90,8 +93,9 @@ final class ParquetInputChecks {
 
         Deque<String> ancestry = new ArrayDeque<>();
         ancestry.push(rowDescriptor.getFullName());
+        int[] fieldsSeen = {0};
         for (FieldDescriptor field : topFields) {
-            inspectFieldSchema(field, field.getName(), ancestry);
+            inspectFieldSchema(field, field.getName(), ancestry, fieldsSeen);
         }
         ancestry.pop();
 
@@ -104,8 +108,29 @@ final class ParquetInputChecks {
         }
     }
 
+    /**
+     * Checks one field and everything under it. A Parquet schema has a column per path, so
+     * the same message type reached by two paths is walked twice; {@code fieldsSeen} counts
+     * every field on every path and stops the walk at {@link #MAX_SCHEMA_FIELDS}. Nesting
+     * stops at {@link #MAX_MESSAGE_WALK_DEPTH}, the same depth the message walks allow.
+     */
     static void inspectFieldSchema(
-            FieldDescriptor field, String path, Deque<String> ancestry) throws RenderFailure {
+            FieldDescriptor field, String path, Deque<String> ancestry, int[] fieldsSeen)
+            throws RenderFailure {
+        if (ancestry.size() > MAX_MESSAGE_WALK_DEPTH) {
+            throw new RenderFailure(
+                    RenderFailure.Kind.LIMIT,
+                    "Row schema nests deeper than " + MAX_MESSAGE_WALK_DEPTH
+                            + " messages (reached at '" + path + "')");
+        }
+        fieldsSeen[0]++;
+        if (fieldsSeen[0] > MAX_SCHEMA_FIELDS) {
+            throw new RenderFailure(
+                    RenderFailure.Kind.LIMIT,
+                    "Row schema expands to more than " + MAX_SCHEMA_FIELDS
+                            + " fields across its column paths (reached at '" + path
+                            + "'); select fewer columns or a declared projection");
+        }
         if (field.getType() == FieldDescriptor.Type.GROUP) {
             throw new RenderFailure(
                     RenderFailure.Kind.UNSUPPORTED,
@@ -113,7 +138,7 @@ final class ParquetInputChecks {
         }
         if (field.isMapField()) {
             FieldDescriptor valueField = field.getMessageType().findFieldByName("value");
-            inspectFieldSchema(valueField, path + ".value", ancestry);
+            inspectFieldSchema(valueField, path + ".value", ancestry, fieldsSeen);
             return;
         }
         if (field.getJavaType() != FieldDescriptor.JavaType.MESSAGE) {
@@ -148,7 +173,7 @@ final class ParquetInputChecks {
         }
         ancestry.push(fullName);
         for (FieldDescriptor child : nested.getFields()) {
-            inspectFieldSchema(child, path + "." + child.getName(), ancestry);
+            inspectFieldSchema(child, path + "." + child.getName(), ancestry, fieldsSeen);
         }
         ancestry.pop();
     }

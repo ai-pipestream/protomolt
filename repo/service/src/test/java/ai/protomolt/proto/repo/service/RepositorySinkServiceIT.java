@@ -54,6 +54,7 @@ import ai.protomolt.proto.repo.sink.v1.PublishRepositorySinkRequest;
 import ai.protomolt.proto.repo.sink.v1.PublishRepositorySinkResponse;
 import ai.protomolt.proto.repo.sink.v1.RenditionProvenance;
 import ai.protomolt.proto.repo.sink.v1.RepositoryRevisionSource;
+import ai.protomolt.proto.repo.sink.v1.RepositorySinkFailure;
 import ai.protomolt.proto.repo.sink.v1.RepositorySinkJob;
 import ai.protomolt.proto.repo.sink.v1.RepositorySinkJobState;
 import ai.protomolt.proto.repo.sink.v1.RepositorySinkServiceGrpc;
@@ -1107,6 +1108,122 @@ class RepositorySinkServiceIT {
             assertThat(reconciledRow.lease().leaseEpoch()).isEqualTo(2L);
             assertThat(directStore.transitionOwned(settledRow, "crashed-owner-A", 1L)).isFalse();
         }
+    }
+
+    @Test
+    void readOnlyCallerCannotRequeueARetryableFailedPublication() throws Exception {
+        JdbcRepositorySinkJobStore directStore =
+                new JdbcRepositorySinkJobStore(services.ledgerDataSource());
+        String opId = "op-reader-cannot-requeue";
+        PublishRepositorySinkRequest request = PublishRepositorySinkRequest.newBuilder()
+                .setOperationId(opId)
+                .setSource(processingSource(
+                        buildDomainRecord("rec-reader-requeue", "Reader Requeue"),
+                        "run-reader-requeue",
+                        "ingest"))
+                .setDestination(SinkDestination.newBuilder()
+                        .setAddress(entry("reader-cannot-requeue"))
+                        .setRendition(RenditionDescriptor.newBuilder()
+                                .setName("state")
+                                .setMediaType("application/x-protobuf")))
+                .build();
+        as(WRITER_TOKEN, RepositorySinkServiceGrpc.newBlockingStub(repoChannel))
+                .publishRepositorySink(request);
+
+        // The same row as a publication that failed before committing and may be retried.
+        RepositorySinkJobStore.StoredJob committed =
+                directStore.find(accountId, opId).orElseThrow();
+        RepositorySinkJob failedSnapshot = committed.job().toBuilder()
+                .setState(RepositorySinkJobState.REPOSITORY_SINK_JOB_STATE_FAILED)
+                .setDestinationVersion(0L)
+                .setBytesCommitted(0L)
+                .clearProvenance()
+                .setFailure(RepositorySinkFailure.newBuilder()
+                        .setGrpcCode(Status.Code.UNAVAILABLE.value())
+                        .setReasonCode("COMMIT_NOT_RECORDED")
+                        .setMessage("did not commit before interruption")
+                        .setRetryable(true))
+                .build();
+        try (var conn = services.ledgerDataSource().getConnection();
+                var ps = conn.prepareStatement(
+                        """
+                        UPDATE sink_jobs
+                           SET state = 'REPOSITORY_SINK_JOB_STATE_FAILED', job_pb = ?
+                         WHERE account_id = ? AND operation_id = ?
+                        """)) {
+            ps.setBytes(1, failedSnapshot.toByteArray());
+            ps.setString(2, accountId);
+            ps.setString(3, opId);
+            assertThat(ps.executeUpdate()).isEqualTo(1);
+        }
+        long epochBefore = directStore.find(accountId, opId).orElseThrow().lease().leaseEpoch();
+
+        assertThatThrownBy(() -> as(
+                                READER_TOKEN,
+                                RepositorySinkServiceGrpc.newBlockingStub(repoChannel))
+                        .publishRepositorySink(request))
+                .isInstanceOfSatisfying(StatusRuntimeException.class, refused ->
+                        assertThat(refused.getStatus().getCode())
+                                .isEqualTo(Status.Code.PERMISSION_DENIED));
+
+        RepositorySinkJobStore.StoredJob afterRefusal =
+                directStore.find(accountId, opId).orElseThrow();
+        assertThat(afterRefusal.job().getState())
+                .isEqualTo(RepositorySinkJobState.REPOSITORY_SINK_JOB_STATE_FAILED);
+        assertThat(afterRefusal.job().getFailure().getReasonCode())
+                .isEqualTo("COMMIT_NOT_RECORDED");
+        assertThat(afterRefusal.lease().leaseEpoch()).isEqualTo(epochBefore);
+    }
+
+    @Test
+    void readOnlyCallerCannotCancelAnotherCallersPublication() throws Exception {
+        JdbcRepositorySinkJobStore directStore =
+                new JdbcRepositorySinkJobStore(services.ledgerDataSource());
+        CountDownLatch renderStarted = new CountDownLatch(1);
+        CountDownLatch allowFinish = new CountDownLatch(1);
+        RendererProvider renderer =
+                gatedMarkdownProvider(renderStarted, allowFinish, new AtomicInteger());
+        services.withRenderers(RepositorySinkRenderers.of(
+                List.of(renderer), Set.of(renderer.capability().getProviderId())));
+
+        EntryAddress dest = entry("reader-cannot-cancel");
+        String opId = "op-reader-cannot-cancel";
+        as(WRITER_TOKEN, RepositorySinkServiceGrpc.newBlockingStub(repoChannel))
+                .publishRepositorySink(PublishRepositorySinkRequest.newBuilder()
+                        .setOperationId(opId)
+                        .setAsync(true)
+                        .setSource(processingSource(
+                                buildDomainRecord("rec-reader-cancel", "Reader Cancel"),
+                                "run-reader-cancel",
+                                "render"))
+                        .setConversion(markdownConversionSpec(renderer.capability()))
+                        .setDestination(SinkDestination.newBuilder()
+                                .setAddress(dest)
+                                .setRendition(RenditionDescriptor.newBuilder()
+                                        .setName("readme_md")
+                                        .setMediaType("text/markdown")))
+                        .build());
+        assertThat(renderStarted.await(10, TimeUnit.SECONDS)).isTrue();
+        try {
+            assertThatThrownBy(() -> as(
+                                    READER_TOKEN,
+                                    RepositorySinkServiceGrpc.newBlockingStub(repoChannel))
+                            .cancelRepositorySinkJob(CancelRepositorySinkJobRequest.newBuilder()
+                                    .setAccountId(accountId)
+                                    .setOperationId(opId)
+                                    .setReason("reader-abort")
+                                    .build()))
+                    .isInstanceOfSatisfying(StatusRuntimeException.class, refused ->
+                            assertThat(refused.getStatus().getCode())
+                                    .isEqualTo(Status.Code.PERMISSION_DENIED));
+            assertThat(directStore.find(accountId, opId).orElseThrow().cancelRequested())
+                    .isFalse();
+        } finally {
+            allowFinish.countDown();
+        }
+        RepositorySinkJob settled = awaitTerminalJob(READER_TOKEN, opId);
+        assertThat(settled.getState())
+                .isEqualTo(RepositorySinkJobState.REPOSITORY_SINK_JOB_STATE_SUCCEEDED);
     }
 
     @Test
