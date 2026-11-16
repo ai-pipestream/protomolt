@@ -30,6 +30,8 @@ import com.google.protobuf.Timestamp;
 import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
 import java.time.Clock;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
@@ -390,36 +392,93 @@ final class ExternalDeletionLifecycle {
             long explicitBindingRevision,
             String explicitExternalObjectId,
             Optional<ExternalPublicationLedger> ledgerOpt) {
-        ExternalSystemBinding binding;
-        if (explicitBindingRevision > 0L) {
-            binding = bindingStore.getBindingRevision(accountId, bindingId, explicitBindingRevision)
-                    .orElseThrow(() -> Status.NOT_FOUND
-                            .withDescription("ExternalSystemBinding '" + bindingId
-                                    + "' revision " + explicitBindingRevision + " not found")
-                            .asRuntimeException());
-        } else if (ledgerOpt.isPresent() && ledgerOpt.get().hasCurrentLink()) {
-            binding = ledgerOpt.get().getCurrentLink().getBindingSnapshot();
-        } else {
-            binding = bindingStore.getCurrentBinding(accountId, bindingId)
-                    .orElseThrow(() -> Status.NOT_FOUND
-                            .withDescription("ExternalSystemBinding '" + bindingId + "' not found")
-                            .asRuntimeException());
+        Optional<ResolvedDeleteTarget> recorded = recordedTarget(
+                ledgerOpt, explicitBindingRevision, explicitExternalObjectId);
+        if (recorded.isPresent()) {
+            return recorded.get();
         }
+        if (explicitExternalObjectId == null || explicitExternalObjectId.isEmpty()) {
+            throw Status.FAILED_PRECONDITION
+                    .withDescription("No externalObjectId supplied and no prior ExternalLink recorded")
+                    .asRuntimeException();
+        }
+        // The ledger holds no link for this object (for example a first publication that was
+        // only accepted), so the caller's coordinates are all there is to go on.
+        ExternalSystemBinding binding = explicitBindingRevision > 0L
+                ? bindingStore.getBindingRevision(accountId, bindingId, explicitBindingRevision)
+                        .orElseThrow(() -> Status.NOT_FOUND
+                                .withDescription("ExternalSystemBinding '" + bindingId
+                                        + "' revision " + explicitBindingRevision + " not found")
+                                .asRuntimeException())
+                : bindingStore.getCurrentBinding(accountId, bindingId)
+                        .orElseThrow(() -> Status.NOT_FOUND
+                                .withDescription("ExternalSystemBinding '" + bindingId + "' not found")
+                                .asRuntimeException());
+        return new ResolvedDeleteTarget(binding, explicitExternalObjectId);
+    }
 
-        String objectId = explicitExternalObjectId;
-        if (objectId == null || objectId.isEmpty()) {
-            if (ledgerOpt.isPresent() && ledgerOpt.get().hasCurrentLink()) {
-                objectId = ledgerOpt.get().getCurrentLink().getExternalObjectId();
-            } else if (ledgerOpt.isPresent() && ledgerOpt.get().getHistoricalLinksCount() > 0) {
-                objectId = ledgerOpt.get()
-                        .getHistoricalLinks(ledgerOpt.get().getHistoricalLinksCount() - 1)
-                        .getExternalObjectId();
+    /**
+     * The deletion target the ledger itself records: an object together with the binding
+     * snapshot it was published under, taken from one link so the two can never be mixed. An
+     * object ID alone means nothing outside the dataset and namespace of its binding revision.
+     *
+     * <p>With no object named, the target is the current link, else the newest historical link
+     * that is not yet deleted, else the newest historical link. With an object named, it is
+     * that object's link, restricted to {@code explicitBindingRevision} when one is given.
+     *
+     * @return the recorded target, or empty when the named object has no link in the ledger
+     * @throws io.grpc.StatusRuntimeException FAILED_PRECONDITION when no object is named and
+     *         {@code explicitBindingRevision} is not the revision the default link used
+     */
+    static Optional<ResolvedDeleteTarget> recordedTarget(
+            Optional<ExternalPublicationLedger> ledgerOpt,
+            long explicitBindingRevision,
+            String explicitExternalObjectId) {
+        if (ledgerOpt.isEmpty()) {
+            return Optional.empty();
+        }
+        List<ExternalLink> candidates = linksInDeletionOrder(ledgerOpt.get());
+        if (explicitExternalObjectId != null && !explicitExternalObjectId.isEmpty()) {
+            return candidates.stream()
+                    .filter(link -> link.getExternalObjectId().equals(explicitExternalObjectId))
+                    .filter(link -> explicitBindingRevision <= 0L
+                            || link.getBindingRevision() == explicitBindingRevision)
+                    .findFirst()
+                    .map(link -> new ResolvedDeleteTarget(
+                            link.getBindingSnapshot(), link.getExternalObjectId()));
+        }
+        if (candidates.isEmpty()) {
+            return Optional.empty();
+        }
+        ExternalLink chosen = candidates.getFirst();
+        if (explicitBindingRevision > 0L && chosen.getBindingRevision() != explicitBindingRevision) {
+            throw Status.FAILED_PRECONDITION
+                    .withDescription("No externalObjectId supplied, and the recorded object '"
+                            + chosen.getExternalObjectId() + "' was published under binding revision "
+                            + chosen.getBindingRevision() + ", not " + explicitBindingRevision)
+                    .asRuntimeException();
+        }
+        return Optional.of(new ResolvedDeleteTarget(
+                chosen.getBindingSnapshot(), chosen.getExternalObjectId()));
+    }
+
+    /** Current link first, then live historical links newest first, then deleted ones. */
+    private static List<ExternalLink> linksInDeletionOrder(ExternalPublicationLedger ledger) {
+        List<ExternalLink> ordered = new ArrayList<>(ledger.getHistoricalLinksCount() + 1);
+        if (ledger.hasCurrentLink()) {
+            ordered.add(ledger.getCurrentLink());
+        }
+        List<ExternalLink> deleted = new ArrayList<>();
+        for (int i = ledger.getHistoricalLinksCount() - 1; i >= 0; i--) {
+            ExternalLink historical = ledger.getHistoricalLinks(i);
+            if (historical.getProjectionLifecycle()
+                    == ExternalProjectionLifecycle.EXTERNAL_PROJECTION_LIFECYCLE_DELETED) {
+                deleted.add(historical);
             } else {
-                throw Status.FAILED_PRECONDITION
-                        .withDescription("No externalObjectId supplied and no prior ExternalLink recorded")
-                        .asRuntimeException();
+                ordered.add(historical);
             }
         }
-        return new ResolvedDeleteTarget(binding, objectId);
+        ordered.addAll(deleted);
+        return ordered;
     }
 }

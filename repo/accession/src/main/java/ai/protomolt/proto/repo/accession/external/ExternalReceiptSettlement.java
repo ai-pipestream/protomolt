@@ -309,25 +309,37 @@ final class ExternalReceiptSettlement {
             linkBuilder.setDisplayUrl(intent.getDisplayUrl());
         }
 
-        boolean supersededOrDeleted = current.getSourcePurged()
+        boolean sourceDeleted = current.getSourcePurged()
                 || (current.hasTombstonedAtSourceRevision()
-                        && intent.getSourceRevision() <= current.getTombstonedAtSourceRevision())
-                || current.getHighestFencedSourceRevision() > intent.getSourceRevision()
+                        && intent.getSourceRevision() <= current.getTombstonedAtSourceRevision());
+        boolean superseded = current.getHighestFencedSourceRevision() > intent.getSourceRevision()
                 || (current.hasCurrentLink()
                         && current.getCurrentLink().getSourceRevision() > intent.getSourceRevision());
 
         ExternalPublicationLedger withOp = replaceOperation(current, confirmedOp);
         ExternalPublicationLedger.Builder ledgerBuilder = withOp.toBuilder();
-        if (supersededOrDeleted) {
-            ExternalProjectionLifecycle historicalState =
-                    (current.getSourcePurged() || current.hasTombstonedAtSourceRevision())
-                            ? ExternalProjectionLifecycle.EXTERNAL_PROJECTION_LIFECYCLE_DELETED
-                            : ExternalProjectionLifecycle.EXTERNAL_PROJECTION_LIFECYCLE_SUPERSEDED;
+        if (sourceDeleted) {
+            // The provider published after the source was tombstoned or purged. The object is
+            // live there and nothing has deleted it, so it is recorded as owed a deletion and
+            // never as deleted: only verified deletion evidence for it does that.
+            ExternalLink owedDeletion = linkBuilder
+                    .setProjectionLifecycle(
+                            ExternalProjectionLifecycle.EXTERNAL_PROJECTION_LIFECYCLE_DELETION_PENDING)
+                    .build();
+            if (current.hasCurrentLink()) {
+                ledgerBuilder.addHistoricalLinks(owedDeletion);
+            } else {
+                ledgerBuilder.setCurrentLink(owedDeletion);
+            }
+            return ledgerBuilder.build();
+        }
+        if (superseded) {
             String retiringOpId = current.hasCurrentLink()
                     ? current.getCurrentLink().getConfirmedByOperationId()
                     : op.getOperationId();
             ledgerBuilder.addHistoricalLinks(linkBuilder
-                    .setProjectionLifecycle(historicalState)
+                    .setProjectionLifecycle(
+                            ExternalProjectionLifecycle.EXTERNAL_PROJECTION_LIFECYCLE_SUPERSEDED)
                     .setRetiredByOperationId(retiringOpId)
                     .build());
             return ledgerBuilder.build();
@@ -378,18 +390,50 @@ final class ExternalReceiptSettlement {
                 .build();
 
         ExternalPublicationLedger withOp = replaceOperation(current, deletedOp);
-        ExternalPublicationLedger.Builder next = withOp.toBuilder();
-        if (current.hasCurrentLink()) {
-            ExternalLink retiredLink = current.getCurrentLink().toBuilder()
-                    .setProjectionLifecycle(
-                            ExternalProjectionLifecycle.EXTERNAL_PROJECTION_LIFECYCLE_DELETED)
-                    .setRetiredByOperationId(op.getOperationId())
-                    .setDeletionEvidence(evidence)
-                    .build();
+        return retireDeletedProjection(withOp, deletedOp, evidence);
+    }
+
+    /**
+     * Marks as deleted the one projection the evidence is for: the link published under the
+     * deleted object's ID and the binding revision the deletion ran against. A deletion of
+     * anything else leaves every link as it was, because that evidence says nothing about them.
+     */
+    private static ExternalPublicationLedger retireDeletedProjection(
+            ExternalPublicationLedger ledger,
+            ExternalPublicationOperationRecord deletedOp,
+            ExternalProviderEvidence evidence) {
+        ExternalPublicationLedger.Builder next = ledger.toBuilder();
+        if (ledger.hasCurrentLink() && isDeletionTarget(ledger.getCurrentLink(), deletedOp)) {
             next.clearCurrentLink();
-            next.addHistoricalLinks(retiredLink);
+            next.addHistoricalLinks(retired(ledger.getCurrentLink(), deletedOp, evidence));
+            return next.build();
+        }
+        for (int i = ledger.getHistoricalLinksCount() - 1; i >= 0; i--) {
+            ExternalLink historical = ledger.getHistoricalLinks(i);
+            if (historical.getProjectionLifecycle()
+                            != ExternalProjectionLifecycle.EXTERNAL_PROJECTION_LIFECYCLE_DELETED
+                    && isDeletionTarget(historical, deletedOp)) {
+                next.setHistoricalLinks(i, retired(historical, deletedOp, evidence));
+                break;
+            }
         }
         return next.build();
+    }
+
+    private static boolean isDeletionTarget(
+            ExternalLink link, ExternalPublicationOperationRecord deletedOp) {
+        return link.getExternalObjectId().equals(deletedOp.getIntent().getExternalObjectId())
+                && link.getBindingRevision() == deletedOp.getIntent().getBindingRevision();
+    }
+
+    private static ExternalLink retired(ExternalLink link,
+            ExternalPublicationOperationRecord deletedOp, ExternalProviderEvidence evidence) {
+        return link.toBuilder()
+                .setProjectionLifecycle(
+                        ExternalProjectionLifecycle.EXTERNAL_PROJECTION_LIFECYCLE_DELETED)
+                .setRetiredByOperationId(deletedOp.getOperationId())
+                .setDeletionEvidence(evidence)
+                .build();
     }
 
     boolean maybePurgeLedgerIfEligible(
