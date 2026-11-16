@@ -227,11 +227,14 @@ is parsed with `Boolean.parseBoolean` and read once, on the first embed call.
 `normalize` is deliberately left unset on requests, so the TEI server's own
 default applies.
 
-`embedAll` issues one unary Embed RPC per text using at most the configured
-number of virtual-thread workers and futures per batch. Results retain input
-order; the first observed worker failure cancels the remaining workers. TEI
+`embedAll` acquires admission on the calling thread before starting each
+virtual-thread unary Embed worker, so waiting batches never queue extra workers
+in admission and active workers never exceed the permitted calls. Results retain
+input order; the first worker failure cancels the remaining active workers. TEI
 batches concurrent requests server side. `dimension()` embeds a fixed probe
-once and caches the vector length; that probe also uses admission below.
+once outside the provider lock (sharing one in-flight probe across concurrent
+cold callers) and caches the vector length; that probe also uses admission
+below without blocking channel setup or `close()`.
 
 ### Process-wide TEI and Turboembed admission
 
@@ -267,9 +270,10 @@ A timeout must be a positive whole number of seconds, at most 9223372036
 (the largest whole-second wait that fits in nanoseconds). The RPC then has its own
 30-second deadline. Permits are released on every return or failure. Turboembed
 keeps its sequential batches of at most 32 texts and acquires admission per RPC.
-TEI uses bounded worker futures rather than allocating one future per text;
-result storage still scales with the requested output. These limits bound local
-client RPCs; a remote server may take time to observe cancellation.
+TEI tracks only currently admitted workers rather than allocating one future or
+waiter per text; result storage still scales with the requested output. These
+limits bound local client RPCs; a remote server may take time to observe
+cancellation.
 
 ### OVMS
 

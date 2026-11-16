@@ -6,7 +6,10 @@ import java.net.URI;
 import java.util.Map;
 import java.util.Set;
 
-/** Redis factory; configuration is explicit, including zero limits, empty prefix and write policy. */
+/**
+ * Redis factory. Configuration is explicit, including zero limits, empty prefix and write policy.
+ * Dedicated streaming sockets use {@link RedisBlobStoreConfig#MAX_CONCURRENT_TRANSFERS}.
+ */
 public final class RedisBlobStoreProvider implements BlobStoreProvider {
     private static final Set<String> OPTIONS = Set.of(
             "uri", "ttl-seconds", "max-object-bytes", "key-prefix", "write-policy");
