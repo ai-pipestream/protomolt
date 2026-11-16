@@ -76,6 +76,7 @@ final class ExternalPublishAttempts {
                     if (isTerminalOutcome(latestOp.getOutcome())) {
                         return current;
                     }
+                    ExternalLedgerStore.requireRoomForRetry(latestOp);
                     if (isSourceRevisionFenced(current, intent.getSourceRevision())) {
                         // A newer revision, tombstone or purge fences this one, so it is not
                         // sent again. It is not declared failed either: an earlier attempt

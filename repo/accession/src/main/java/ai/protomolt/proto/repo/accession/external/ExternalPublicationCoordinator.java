@@ -499,6 +499,7 @@ public final class ExternalPublicationCoordinator {
                         }
                         return current;
                     }
+                    ExternalLedgerStore.requireRoomForNewOperation(current);
                     if (isSourceRevisionFenced(current, request.sourceRevision())) {
                         Timestamp now = timestamp(clock.instant());
                         ExternalPublicationAttempt fencedAttempt = dispatchingAttempt.toBuilder()
@@ -637,6 +638,12 @@ public final class ExternalPublicationCoordinator {
         }
 
         Timestamp finishedAt = timestamp(clock.instant());
+        if (statusResult instanceof ExternalProviderGateway.ProviderStatusResult.Unavailable
+                && !ExternalLedgerStore.hasRoomForUnsettledAttempt(op)) {
+            // Nothing was learned, and the one attempt slot left is for the receipt that
+            // settles the operation, so this lookup is not recorded.
+            return new OperationResult(op, optionalCurrentLink(ledger), false, false);
+        }
         if (statusResult instanceof ExternalProviderGateway.ProviderStatusResult.Unavailable unavailable) {
             ExternalPublicationAttempt attempt = ExternalPublicationAttempt.newBuilder()
                     .setAttemptNumber(nextAttemptNumber)

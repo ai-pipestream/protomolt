@@ -251,6 +251,7 @@ final class ExternalDeletionLifecycle {
                         if (isTerminalOutcome(op.getOutcome())) {
                             return next.build();
                         }
+                        ExternalLedgerStore.requireRoomForRetry(op);
                         int retryNum = op.getAttemptsCount() + 1;
                         attemptHolder[0] = retryNum;
                         ExternalPublicationAttempt retryAttempt = ExternalPublicationAttempt.newBuilder()
@@ -275,6 +276,7 @@ final class ExternalDeletionLifecycle {
                         return replaceOperation(next.build(), updatedOp);
                     }
 
+                    ExternalLedgerStore.requireRoomForNewOperation(current);
                     attemptHolder[0] = 1;
                     ExternalPublicationAttempt initialAttempt = ExternalPublicationAttempt.newBuilder()
                             .setAttemptNumber(1)

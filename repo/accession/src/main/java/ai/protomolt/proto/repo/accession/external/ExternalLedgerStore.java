@@ -362,6 +362,55 @@ final class ExternalLedgerStore {
                 .build();
     }
 
+    /** The ledger contract's bounds; see ExternalPublicationLedger and its operation record. */
+    static final int MAX_OPERATIONS = 1024;
+    static final int MAX_HISTORICAL_LINKS = 512;
+    static final int MAX_ATTEMPTS = 256;
+
+    /**
+     * Refuses a new operation the ledger could not record to its end. Registering it takes one
+     * operation slot, and settling it can add one historical link. Checked before anything is
+     * sent to the provider: an operation that ran externally and then could not be written
+     * down would be unrecoverable.
+     *
+     * @throws io.grpc.StatusRuntimeException RESOURCE_EXHAUSTED when either bound is reached
+     */
+    static void requireRoomForNewOperation(ExternalPublicationLedger ledger) {
+        if (ledger.getOperationsCount() >= MAX_OPERATIONS) {
+            throw Status.RESOURCE_EXHAUSTED
+                    .withDescription("External publication ledger holds " + MAX_OPERATIONS
+                            + " operations and cannot record another")
+                    .asRuntimeException();
+        }
+        if (ledger.getHistoricalLinksCount() >= MAX_HISTORICAL_LINKS) {
+            throw Status.RESOURCE_EXHAUSTED
+                    .withDescription("External publication ledger holds " + MAX_HISTORICAL_LINKS
+                            + " historical links and cannot record the outcome of another operation")
+                    .asRuntimeException();
+        }
+    }
+
+    /**
+     * Refuses to send an operation again when recording that attempt would leave no room for
+     * the attempt that finally settles it. The last slot is kept for reconciliation.
+     *
+     * @throws io.grpc.StatusRuntimeException RESOURCE_EXHAUSTED when only that slot is left
+     */
+    static void requireRoomForRetry(ExternalPublicationOperationRecord op) {
+        if (!hasRoomForUnsettledAttempt(op)) {
+            throw Status.RESOURCE_EXHAUSTED
+                    .withDescription("Operation '" + op.getOperationId() + "' has "
+                            + op.getAttemptsCount() + " attempts; it can only be reconciled now, "
+                            + "not sent again")
+                    .asRuntimeException();
+        }
+    }
+
+    /** True while an attempt that settles nothing may still be appended to {@code op}. */
+    static boolean hasRoomForUnsettledAttempt(ExternalPublicationOperationRecord op) {
+        return op.getAttemptsCount() < MAX_ATTEMPTS - 1;
+    }
+
     static Optional<ExternalLink> optionalCurrentLink(ExternalPublicationLedger ledger) {
         return ledger.hasCurrentLink() ? Optional.of(ledger.getCurrentLink()) : Optional.empty();
     }
