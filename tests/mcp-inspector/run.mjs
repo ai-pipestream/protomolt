@@ -362,6 +362,52 @@ function selfTest() {
     }
     expect(caughtLockDrift, "contradictory package-lock.json root engines.node was accepted");
   });
+  baseline.check("manifest version check rejects disagreeing inspector versions", () => {
+    const manifest = JSON.parse(readFileSync(join(HERE, "package.json"), "utf8"));
+    const lock = JSON.parse(readFileSync(join(HERE, "package-lock.json"), "utf8"));
+    const pinnedKey = `node_modules/${INSPECTOR_PACKAGE}`;
+    const pinned = lock.packages[pinnedKey].version;
+    const mismatch = `${pinned}-mismatch`;
+    const cases = [
+      ["package.json inspector version mismatch was accepted", {
+        ...manifest,
+        devDependencies: { ...manifest.devDependencies, [INSPECTOR_PACKAGE]: mismatch },
+      }, lock],
+      ["lock root inspector version mismatch was accepted", manifest, {
+        ...lock,
+        packages: {
+          ...lock.packages,
+          "": {
+            ...lock.packages[""],
+            devDependencies: {
+              ...lock.packages[""].devDependencies,
+              [INSPECTOR_PACKAGE]: mismatch,
+            },
+          },
+        },
+      }],
+      ["pinned inspector version mismatch was accepted", manifest, {
+        ...lock,
+        packages: {
+          ...lock.packages,
+          [pinnedKey]: { ...lock.packages[pinnedKey], version: mismatch },
+        },
+      }],
+    ];
+    expect(checkManifestAlignment(manifest, lock) === pinned,
+      "unmodified manifest and lockfile were not accepted, so the mismatch cases prove nothing");
+    for (const [message, driftedManifest, driftedLock] of cases) {
+      let refusal = null;
+      try {
+        checkManifestAlignment(driftedManifest, driftedLock);
+      } catch (error) {
+        refusal = error;
+      }
+      expect(refusal !== null, message);
+      expect(refusal instanceof Error && refusal.message.includes("versions disagree"),
+        `${message}: refused for another reason: ${refusal?.message}`);
+    }
+  });
   let ok = baseline.failed.length === 0;
   for (const name of FIXTURE_BREAKS) {
     const broken = new Report(`break ${name}`);
