@@ -1281,7 +1281,7 @@ class ExternalPublicationIT {
             GitSchemaRegistryStore gitRegistry = GitSchemaRegistryStore.builder()
                     .repositoryDir(gitDir)
                     .build();
-            ExternalBindingStore.registerSchemaInConfigStore(gitRegistry);
+            ExternalPublicationProtoSources.registerInConfigStore(gitRegistry);
 
             Path profilesDir = tempDir.resolve("service-profiles");
             FileSystemServiceProfileRepository profileRepo =

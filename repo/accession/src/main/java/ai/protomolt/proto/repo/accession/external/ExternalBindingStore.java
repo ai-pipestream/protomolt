@@ -8,11 +8,6 @@ import ai.protomolt.proto.grpc.profile.v1.ServiceProfile;
 import ai.protomolt.proto.grpc.profile.v1.Transport;
 import ai.protomolt.proto.grpc.workspace.ProfileCredentialResolver;
 import ai.protomolt.proto.registry.ConfigDocumentStore;
-import ai.protomolt.proto.registry.ConfigSupport;
-import ai.protomolt.proto.registry.InvalidConfigException;
-import ai.protomolt.proto.registry.RegistryStoreException;
-import ai.protomolt.proto.registry.SchemaReference;
-import ai.protomolt.proto.registry.SchemaRegistryStore;
 import ai.protomolt.proto.repo.external.v1.ExternalBindingLifecycle;
 import ai.protomolt.proto.repo.external.v1.ExternalEndpointSummary;
 import ai.protomolt.proto.repo.external.v1.ExternalRetentionPolicy;
@@ -50,13 +45,11 @@ import ai.protomolt.proto.validate.source.ProtomoltRuleSource;
 import com.google.protobuf.Any;
 import com.google.protobuf.InvalidProtocolBufferException;
 import com.google.protobuf.Timestamp;
-import com.google.protobuf.util.JsonFormat;
 import io.grpc.Channel;
 import io.grpc.Metadata;
 import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
 import java.io.IOException;
-import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.time.Clock;
 import java.time.Instant;
@@ -78,26 +71,6 @@ import java.util.Set;
  */
 public final class ExternalBindingStore {
 
-    /** Classpath resource path for house validation rules proto. */
-    public static final String VALIDATE_PROTO_RESOURCE =
-            "ai/protomolt/proto/validate/v1/validate.proto";
-
-    /** Classpath resource path for portable Buf protovalidate rules proto. */
-    public static final String BUF_VALIDATE_PROTO_RESOURCE =
-            "buf/validate/validate.proto";
-
-    /** Classpath resource path for repository NodeAddress proto. */
-    public static final String ADDRESS_PROTO_RESOURCE =
-            "ai/protomolt/proto/repo/v1/address.proto";
-
-    /** Classpath resource path for repository manifest proto. */
-    public static final String MANIFEST_PROTO_RESOURCE =
-            "ai/protomolt/proto/repo/v1/manifest.proto";
-
-    /** Classpath resource path for external publication contract proto. */
-    public static final String EXTERNAL_PUBLICATION_PROTO_RESOURCE =
-            "ai/protomolt/proto/repo/external/v1/external_publication.proto";
-
     private static final ProtoValidator VALIDATOR = ProtoValidator.create(
             List.of(new ProtomoltRuleSource(), new ProtovalidateRuleSource()));
 
@@ -115,7 +88,7 @@ public final class ExternalBindingStore {
     private final DocumentServiceGrpc.DocumentServiceBlockingStub documents;
     private final ServiceProfileRepository profiles;
     private final ProfileCredentialResolver credentials;
-    private final ConfigDocumentStore configStore;
+    private final ExternalBindingConfigLane configLane;
     private final String drive;
     private final SaveOwner saveOwner;
     private final DocumentSecurity bindingSecurity;
@@ -184,7 +157,7 @@ public final class ExternalBindingStore {
                 Objects.requireNonNull(documents, "documents"));
         this.profiles = Objects.requireNonNull(profiles, "profiles");
         this.credentials = Objects.requireNonNull(credentials, "credentials");
-        this.configStore = configStore;
+        this.configLane = new ExternalBindingConfigLane(configStore);
         ExternalPublicationCoordinates.requireNonBlankCoordinate(drive, "drive");
         this.drive = drive;
         this.saveOwner = Objects.requireNonNull(saveOwner, "saveOwner");
@@ -273,56 +246,6 @@ public final class ExternalBindingStore {
     }
 
     /**
-     * Registers {@code external_publication.proto} and its transitive imports into
-     * {@code registryStore} so {@link ConfigSupport#gate} can resolve and validate
-     * {@link ExternalSystemBinding} config-lane envelopes.
-     *
-     * @param registryStore target schema registry / config store
-     */
-    public static void registerSchemaInConfigStore(SchemaRegistryStore registryStore) {
-        Objects.requireNonNull(registryStore, "registryStore");
-        int validateVer = registryStore
-                .register(
-                        VALIDATE_PROTO_RESOURCE,
-                        readClasspathResource(VALIDATE_PROTO_RESOURCE),
-                        List.of())
-                .version();
-        int bufValidateVer = registryStore
-                .register(
-                        BUF_VALIDATE_PROTO_RESOURCE,
-                        readClasspathResource(BUF_VALIDATE_PROTO_RESOURCE),
-                        List.of())
-                .version();
-        int addressVer = registryStore
-                .register(
-                        ADDRESS_PROTO_RESOURCE,
-                        readClasspathResource(ADDRESS_PROTO_RESOURCE),
-                        List.of())
-                .version();
-        int manifestVer = registryStore
-                .register(
-                        MANIFEST_PROTO_RESOURCE,
-                        readClasspathResource(MANIFEST_PROTO_RESOURCE),
-                        List.of(new SchemaReference(
-                                ADDRESS_PROTO_RESOURCE, ADDRESS_PROTO_RESOURCE, addressVer)))
-                .version();
-        registryStore.register(
-                EXTERNAL_PUBLICATION_PROTO_RESOURCE,
-                readClasspathResource(EXTERNAL_PUBLICATION_PROTO_RESOURCE),
-                List.of(
-                        new SchemaReference(
-                                ADDRESS_PROTO_RESOURCE, ADDRESS_PROTO_RESOURCE, addressVer),
-                        new SchemaReference(
-                                MANIFEST_PROTO_RESOURCE, MANIFEST_PROTO_RESOURCE, manifestVer),
-                        new SchemaReference(
-                                VALIDATE_PROTO_RESOURCE, VALIDATE_PROTO_RESOURCE, validateVer),
-                        new SchemaReference(
-                                BUF_VALIDATE_PROTO_RESOURCE,
-                                BUF_VALIDATE_PROTO_RESOURCE,
-                                bufValidateVer)));
-    }
-
-    /**
      * Creates revision 1 of a binding or rotates an existing {@code ACTIVE} binding to
      * {@code current_revision + 1}, preserving every prior revision immutably in
      * {@code external-bindings:<accountId>} and mirroring the validated envelope to
@@ -403,9 +326,9 @@ public final class ExternalBindingStore {
 
         ExternalSystemBinding candidate = builder.build();
         validateBindingContract(candidate);
-        gateConfigLaneIfConfigured(candidate);
+        configLane.gate(candidate);
         persistBindingDocument(address, expected, candidate, spec.operationId());
-        mirrorToConfigLaneIfConfigured(candidate);
+        configLane.mirror(candidate);
         return candidate;
     }
 
@@ -448,12 +371,12 @@ public final class ExternalBindingStore {
                 .build();
 
         validateBindingContract(retired);
-        gateConfigLaneIfConfigured(retired);
+        configLane.gate(retired);
         ExpectedRevision expected = ExpectedRevision.newBuilder()
                 .setRevision(existing.documentRevision())
                 .build();
         persistBindingDocument(address, expected, retired, operationId);
-        mirrorToConfigLaneIfConfigured(retired);
+        configLane.mirror(retired);
         return retired;
     }
 
@@ -642,58 +565,6 @@ public final class ExternalBindingStore {
     }
 
     /**
-     * Checks the config-lane envelope before the canonical save, so a binding the config
-     * lane would refuse is never committed. Writes nothing.
-     */
-    private void gateConfigLaneIfConfigured(ExternalSystemBinding binding) {
-        if (configStore == null) {
-            return;
-        }
-        try {
-            ConfigSupport.gate(configStore, toConfigEnvelopeJson(binding));
-        } catch (InvalidConfigException invalid) {
-            throw Status.INVALID_ARGUMENT
-                    .withDescription("Config-lane gate rejected binding: " + invalid.getMessage())
-                    .withCause(invalid)
-                    .asRuntimeException();
-        } catch (RegistryStoreException storeFailure) {
-            throw Status.UNAVAILABLE
-                    .withDescription("ConfigDocumentStore unavailable: " + storeFailure.getMessage())
-                    .withCause(storeFailure)
-                    .asRuntimeException();
-        }
-    }
-
-    /**
-     * Mirrors one committed binding revision to its own immutable config-lane document,
-     * named by {@link ExternalPublicationCoordinates#configRevisionDocumentName}. Runs only
-     * after the canonical save succeeded, so a refused or lost save never leaves a mirror,
-     * and two revisions never overwrite each other. A mirror failure leaves the canonical
-     * revision in place and is reported as {@code UNAVAILABLE}; {@link #mirrorRevision}
-     * repairs it from the canonical revision.
-     */
-    private void mirrorToConfigLaneIfConfigured(ExternalSystemBinding committed) {
-        if (configStore == null) {
-            return;
-        }
-        String configName = ExternalPublicationCoordinates.configRevisionDocumentName(
-                committed.getAccountId(), committed.getBindingId(), committed.getBindingRevision());
-        try {
-            String envelope = toConfigEnvelopeJson(committed);
-            ConfigSupport.gate(configStore, envelope);
-            configStore.putConfig(configName, envelope);
-        } catch (InvalidConfigException | RegistryStoreException mirrorFailure) {
-            throw Status.UNAVAILABLE
-                    .withDescription("ExternalSystemBinding '" + committed.getBindingId()
-                            + "' revision " + committed.getBindingRevision()
-                            + " is saved, but its config-lane mirror failed; call mirrorRevision"
-                            + " to repair it: " + mirrorFailure.getMessage())
-                    .withCause(mirrorFailure)
-                    .asRuntimeException();
-        }
-    }
-
-    /**
      * Writes the config-lane mirror of an already committed binding revision, read back from
      * the canonical {@code DocumentService} revision. Repeating it writes the same document.
      *
@@ -706,7 +577,7 @@ public final class ExternalBindingStore {
      */
     public ExternalSystemBinding mirrorRevision(
             String accountId, String bindingId, long bindingRevision) {
-        if (configStore == null) {
+        if (!configLane.configured()) {
             throw Status.FAILED_PRECONDITION
                     .withDescription("No config-lane store is configured")
                     .asRuntimeException();
@@ -716,21 +587,8 @@ public final class ExternalBindingStore {
                         .withDescription("ExternalSystemBinding '" + bindingId + "' revision "
                                 + bindingRevision + " not found")
                         .asRuntimeException());
-        mirrorToConfigLaneIfConfigured(committed);
+        configLane.mirror(committed);
         return committed;
-    }
-
-    private static String toConfigEnvelopeJson(ExternalSystemBinding binding) {
-        try {
-            String configJson = JsonFormat.printer()
-                    .omittingInsignificantWhitespace()
-                    .print(binding);
-            return "{\"" + ConfigSupport.MESSAGE_TYPE + "\":\""
-                    + ExternalSystemBinding.getDescriptor().getFullName()
-                    + "\",\"" + ConfigSupport.CONFIG + "\":" + configJson + "}";
-        } catch (InvalidProtocolBufferException impossible) {
-            throw new IllegalStateException("Failed to serialize ExternalSystemBinding", impossible);
-        }
     }
 
     private Optional<LoadedBinding> loadOptionalCurrent(NodeAddress address) {
@@ -816,19 +674,6 @@ public final class ExternalBindingStore {
         ExternalPublicationCoordinates.requireNonSecretText(binding.getDataset(), "dataset", 256);
         ExternalPublicationCoordinates.requireNonSecretText(
                 binding.getNamespace(), "namespace", 256);
-    }
-
-    private static String readClasspathResource(String resourcePath) {
-        try (InputStream stream =
-                ExternalSystemBinding.class.getClassLoader().getResourceAsStream(resourcePath)) {
-            if (stream == null) {
-                throw new IllegalStateException("Missing classpath proto resource: " + resourcePath);
-            }
-            return new String(stream.readAllBytes(), StandardCharsets.UTF_8);
-        } catch (IOException ioError) {
-            throw new IllegalStateException(
-                    "Failed reading classpath proto resource: " + resourcePath, ioError);
-        }
     }
 
     private static Timestamp timestamp(Instant instant) {
