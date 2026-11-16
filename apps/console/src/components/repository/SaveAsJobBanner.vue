@@ -40,6 +40,28 @@
       >
         Refresh status
       </VBtn>
+      <VBtn
+        v-if="canRetry(item)"
+        size="small"
+        variant="text"
+        class="mt-1"
+        :loading="item.submitting"
+        data-testid="save-as-job-banner-retry"
+        @click="jobs.retry(item.operationId)"
+      >
+        Retry same operation
+      </VBtn>
+      <VBtn
+        v-if="item.summary !== null && item.summary.canCancel"
+        size="small"
+        variant="text"
+        class="mt-1"
+        :loading="item.cancelling"
+        data-testid="save-as-job-banner-cancel"
+        @click="jobs.cancel(item.operationId, 'Cancelled from console Save-as banner')"
+      >
+        Cancel job
+      </VBtn>
     </VAlert>
   </div>
 </template>
@@ -54,6 +76,16 @@ const visible = computed(() => jobs.items.filter((item) => !item.dialogOpen))
 
 function busy(item: SaveAsJobEntry): boolean {
   return item.submitting || item.cancelling
+}
+
+/**
+ * The retained request can be sent again under its operation ID when the publish outcome is
+ * unknown, or when the server says the same operation may be retried.
+ */
+function canRetry(item: SaveAsJobEntry): boolean {
+  if (item.submitting) return false
+  if (item.summary === null) return item.error?.kind === 'unsettled'
+  return item.summary.canRetrySameOperation
 }
 
 function alertType(item: SaveAsJobEntry): 'info' | 'success' | 'warning' | 'error' {

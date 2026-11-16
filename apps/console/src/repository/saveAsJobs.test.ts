@@ -215,4 +215,117 @@ describe('Save-as job store', () => {
     expect(jobs.items).toHaveLength(20)
     jobs.dispose()
   })
+
+  it('keeps a publication uncertain when the status lookup that follows cannot find the job', async () => {
+    const client = routerClients((r) =>
+      r.service(RepositorySinkService, {
+        publishRepositorySink() {
+          throw new ConnectError('lost', Code.Unavailable)
+        },
+        getRepositorySinkJob() {
+          // Admission may still be pending, so "not found" settles nothing.
+          throw new ConnectError('no such job', Code.NotFound)
+        },
+      }),
+    ).repositorySink
+    const jobs = createSaveAsJobStore()
+    await jobs.publish(client, request('op-pending'), true)
+    await jobs.refresh('op-pending')
+    const entry = jobs.find('op-pending')!
+    expect(entry.summary).toBeNull()
+    expect(entry.error?.kind).toBe('unsettled')
+    expect(entry.error?.canReconcile).toBe(true)
+    jobs.dispose()
+  })
+
+  it('applies a publish response that arrives after a later status lookup failed', async () => {
+    vi.useFakeTimers()
+    let releasePublish = () => {}
+    const publishGate = new Promise<void>((resolve) => {
+      releasePublish = resolve
+    })
+    let gets = 0
+    const client = routerClients((r) =>
+      r.service(RepositorySinkService, {
+        async publishRepositorySink(req) {
+          await publishGate
+          return create(PublishRepositorySinkResponseSchema, {
+            job: job(req.operationId, RepositorySinkJobState.QUEUED),
+          })
+        },
+        getRepositorySinkJob(req) {
+          gets += 1
+          if (gets === 1) throw new ConnectError('no such job', Code.NotFound)
+          return create(GetRepositorySinkJobResponseSchema, {
+            job: job(req.operationId, RepositorySinkJobState.SUCCEEDED),
+          })
+        },
+      }),
+    ).repositorySink
+    const jobs = createSaveAsJobStore()
+    const publishing = jobs.publish(client, request('op-early'), false)
+    await jobs.refresh('op-early')
+    expect(jobs.find('op-early')!.error).toBeNull()
+    releasePublish()
+    await publishing
+    expect(jobs.find('op-early')!.summary?.phase).toBe('queued')
+    // The accepted job is polled to its end.
+    await vi.advanceTimersByTimeAsync(6000)
+    expect(jobs.find('op-early')!.summary?.phase).toBe('succeeded')
+    jobs.dispose()
+  })
+
+  it('accepts a terminal outcome from an older call over a newer call that saw the job running', async () => {
+    let releasePublish = () => {}
+    const publishGate = new Promise<void>((resolve) => {
+      releasePublish = resolve
+    })
+    const client = routerClients((r) =>
+      r.service(RepositorySinkService, {
+        async publishRepositorySink(req) {
+          await publishGate
+          return create(PublishRepositorySinkResponseSchema, {
+            job: job(req.operationId, RepositorySinkJobState.SUCCEEDED),
+          })
+        },
+        getRepositorySinkJob(req) {
+          return create(GetRepositorySinkJobResponseSchema, {
+            job: job(req.operationId, RepositorySinkJobState.UNRESOLVED),
+          })
+        },
+      }),
+    ).repositorySink
+    const jobs = createSaveAsJobStore()
+    const publishing = jobs.publish(client, request('op-sync'), true)
+    await jobs.refresh('op-sync')
+    expect(jobs.find('op-sync')!.summary?.phase).toBe('unresolved')
+    releasePublish()
+    await publishing
+    expect(jobs.find('op-sync')!.summary?.phase).toBe('succeeded')
+    jobs.dispose()
+  })
+
+  it('re-sends the retained request under the same operation ID without the dialog', async () => {
+    const seen: string[] = []
+    let lost = true
+    const client = routerClients((r) =>
+      r.service(RepositorySinkService, {
+        publishRepositorySink(req) {
+          seen.push(req.operationId)
+          if (lost) throw new ConnectError('lost', Code.Unavailable)
+          return create(PublishRepositorySinkResponseSchema, {
+            job: job(req.operationId, RepositorySinkJobState.SUCCEEDED),
+          })
+        },
+      }),
+    ).repositorySink
+    const jobs = createSaveAsJobStore()
+    await jobs.publish(client, request('op-banner'), false)
+    lost = false
+    await jobs.retry('op-banner')
+    expect(seen).toEqual(['op-banner', 'op-banner'])
+    expect(jobs.find('op-banner')!.summary?.phase).toBe('succeeded')
+    expect(jobs.find('op-banner')!.dialogOpen).toBe(false)
+    jobs.dispose()
+  })
 })

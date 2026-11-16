@@ -55,6 +55,8 @@ export interface SaveAsJobStore {
    * @throws SaveAsJobCapacityError when the job is new and no tracked job can be forgotten
    */
   publish(client: SinkClient, request: PublishRepositorySinkRequest, dialogOpen: boolean): Promise<void>
+  /** Re-sends a tracked job's frozen request under its operation ID; never commits twice. */
+  retry(operationId: string): Promise<void>
   refresh(operationId: string): Promise<void>
   cancel(operationId: string, reason: string): Promise<void>
   setDialogOpen(operationId: string, dialogOpen: boolean): void
@@ -92,7 +94,7 @@ function isActive(summary: SinkJobSummary | null): boolean {
 interface JobCalls {
   /** Sequence number handed to the most recently started call. */
   started: number
-  /** Sequence number of the call whose outcome the entry currently shows. */
+  /** Sequence number of the call whose job summary the entry currently shows. */
   shown: number
   /** Status calls that have failed in a row. */
   failedPolls: number
@@ -123,15 +125,15 @@ export function createSaveAsJobStore(): SaveAsJobStore {
   }
 
   /**
-   * Claims the entry for the outcome of call `sequence`. Publish, status and cancel calls can
-   * overlap, and a call that started earlier describes older state, so its outcome is dropped
-   * once a later call's outcome is shown.
+   * Whether the summary from call `sequence` replaces the one shown. Calls overlap, and the
+   * order they start in is not the order the server answered them in, so two rules decide:
+   * a summary from a later call replaces an earlier call's, and a terminal summary always
+   * replaces a non-terminal one, because a job that has ended does not start running again
+   * under an older call.
    */
-  function claim(operationId: string, sequence: number): boolean {
-    const state = callsFor(operationId)
-    if (sequence < state.shown) return false
-    state.shown = sequence
-    return true
+  function supersedes(entry: SaveAsJobEntry, summary: SinkJobSummary, sequence: number): boolean {
+    if (sequence >= callsFor(entry.operationId).shown) return true
+    return summary.terminal && entry.summary !== null && !entry.summary.terminal
   }
 
   function find(operationId: string): SaveAsJobEntry | undefined {
@@ -176,7 +178,9 @@ export function createSaveAsJobStore(): SaveAsJobStore {
     source: SaveAsJobUpdateSource,
     sequence: number,
   ) {
-    if (!claim(entry.operationId, sequence)) return
+    if (!supersedes(entry, summary, sequence)) return
+    const state = callsFor(entry.operationId)
+    state.shown = Math.max(state.shown, sequence)
     entry.summary = summary
     entry.updatedBy = source
     // The server has answered for this job, so an earlier call's failure no longer describes it.
@@ -189,8 +193,27 @@ export function createSaveAsJobStore(): SaveAsJobStore {
     }
   }
 
-  function fail(entry: SaveAsJobEntry, error: ClassifiedSinkError, sequence: number) {
-    if (!claim(entry.operationId, sequence)) return
+  /** True when a call that started after `sequence` has already shown the job's state. */
+  function answeredSince(operationId: string, sequence: number): boolean {
+    return sequence < callsFor(operationId).shown
+  }
+
+  /** Records that the publish call itself failed, unless a later call has shown the job. */
+  function failPublish(entry: SaveAsJobEntry, error: ClassifiedSinkError, sequence: number) {
+    if (answeredSince(entry.operationId, sequence)) return
+    entry.error = error
+  }
+
+  /**
+   * Records a failed status or cancel call. It says only that the lookup failed: while the
+   * publish is still in flight, or its outcome is unknown, the lookup failing (even with "not
+   * found", since admission may be pending) settles nothing, so the publish's own state stands
+   * and the same request can still be retried.
+   */
+  function failLookup(entry: SaveAsJobEntry, error: ClassifiedSinkError, sequence: number) {
+    if (answeredSince(entry.operationId, sequence)) return
+    if (entry.submitting) return
+    if (entry.summary === null && entry.error?.kind === 'unsettled') return
     entry.error = error
   }
 
@@ -246,7 +269,7 @@ export function createSaveAsJobStore(): SaveAsJobStore {
     try {
       const response = await client.publishRepositorySink(entry.request, { signal })
       if (response.job === undefined) {
-        fail(
+        failPublish(
           entry,
           {
             kind: 'unsettled',
@@ -261,11 +284,18 @@ export function createSaveAsJobStore(): SaveAsJobStore {
       apply(entry, describeSinkJob(response.job), 'publish', sequence)
     } catch (error) {
       if (!isOwnCancellation(error, signal)) {
-        fail(entry, classifySinkRpcError(error), sequence)
+        failPublish(entry, classifySinkRpcError(error), sequence)
       }
     } finally {
       entry.submitting = false
     }
+  }
+
+  async function retry(operationId: string) {
+    const entry = find(operationId)
+    const client = clients.get(operationId)
+    if (entry === undefined || client === undefined) return
+    await publish(client, entry.request, entry.dialogOpen)
   }
 
   async function refresh(operationId: string) {
@@ -286,7 +316,7 @@ export function createSaveAsJobStore(): SaveAsJobStore {
     } catch (error) {
       if (!isOwnCancellation(error, signal)) {
         callsFor(operationId).failedPolls += 1
-        fail(entry, classifySinkRpcError(error), sequence)
+        failLookup(entry, classifySinkRpcError(error), sequence)
       }
     } finally {
       entry.reconciling = false
@@ -316,7 +346,7 @@ export function createSaveAsJobStore(): SaveAsJobStore {
       }
     } catch (error) {
       if (!isOwnCancellation(error, signal)) {
-        fail(entry, classifySinkRpcError(error), sequence)
+        failLookup(entry, classifySinkRpcError(error), sequence)
       }
     } finally {
       entry.cancelling = false
@@ -351,7 +381,7 @@ export function createSaveAsJobStore(): SaveAsJobStore {
     for (const controller of controllers.values()) controller.abort()
   }
 
-  return { items, find, publish, refresh, cancel, setDialogOpen, dismiss, dispose }
+  return { items, find, publish, retry, refresh, cancel, setDialogOpen, dismiss, dispose }
 }
 
 export const SAVE_AS_JOBS: InjectionKey<SaveAsJobStore> = Symbol('save-as-jobs')
