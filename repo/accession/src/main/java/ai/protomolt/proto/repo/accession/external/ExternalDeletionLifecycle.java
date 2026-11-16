@@ -119,7 +119,7 @@ final class ExternalDeletionLifecycle {
         ExternalPublicationCoordinates.requireNonBlankCoordinate(request.purgeId(), "purgeId");
 
         String accountId = request.sourceAddress().getAccountId();
-        sources.verifyAccountCallerAccess(request.sourceAddress());
+        sources.requireSourcePurged(request.sourceAddress());
 
         NodeAddress ledgerAddr = ExternalPublicationCoordinates.ledgerAddress(
                 accountId, request.bindingId(), request.sourceAddress());

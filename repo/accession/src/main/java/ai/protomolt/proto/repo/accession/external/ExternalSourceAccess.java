@@ -269,17 +269,30 @@ final class ExternalSourceAccess {
         return DocumentSecurity.getDefaultInstance();
     }
 
-    void verifyAccountCallerAccess(NodeAddress sourceAddress) {
+    /**
+     * Requires that the source document no longer exists. Handling a purge deletes the external
+     * projection and fences the ledger for good, so it runs only once the repository has
+     * actually removed the document; a caller-supplied purge ID proves nothing by itself.
+     *
+     * @throws StatusRuntimeException FAILED_PRECONDITION while the document still has
+     *         revisions, or the repository's own refusal when the caller may not ask
+     */
+    void requireSourcePurged(NodeAddress sourceAddress) {
         try {
             documents.listRevisions(ListRevisionsRequest.newBuilder()
                     .setAddress(sourceAddress)
                     .setPageSize(1)
                     .build());
         } catch (StatusRuntimeException e) {
-            if (e.getStatus().getCode() != Status.Code.NOT_FOUND) {
-                throw e;
+            if (e.getStatus().getCode() == Status.Code.NOT_FOUND) {
+                return;
             }
+            throw e;
         }
+        throw Status.FAILED_PRECONDITION
+                .withDescription("Source document still exists; a purge is handled only after "
+                        + "PurgeDocument has removed it")
+                .asRuntimeException();
     }
 
     DocumentSecurity authorizeReadOrReconcile(

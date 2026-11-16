@@ -359,6 +359,101 @@ class ExternalPublicationIT {
     }
 
     @Test
+    void publishingAnOlderRevisionDoesNotRestoreAccessTheCurrentRevisionRevoked(
+            @TempDir Path tempDir) throws Exception {
+        SimulatedManagedSearchProvider provider = new SimulatedManagedSearchProvider();
+        try (Harness h = Harness.boot(tempDir, provider)) {
+            h.saveActiveBinding(
+                    "tenant-alpha",
+                    "rust-search",
+                    "search-profile-v1",
+                    "ingest",
+                    "corpus-main",
+                    "ns-alpha",
+                    ExternalRetentionPolicy.EXTERNAL_RETENTION_POLICY_RETAIN_HISTORY,
+                    "op-bind-1");
+            NodeAddress sourceAddr = sourceAddress("tenant-alpha", "doc-revoked");
+            // Revision 1 lets Bob in; revision 2 revokes him.
+            h.saveSourceDocument("save-r1", sourceAddr, 0L, "Shared", "alice", "bob");
+            h.saveSourceDocument("save-r2", sourceAddr, 1L, "Alice only", "alice");
+
+            ExternalPublicationCoordinator.OperationResult historical = h.coordinator.publish(
+                    new ExternalPublicationCoordinator.PublishRequest(
+                            "pub-historical",
+                            sourceAddr,
+                            1L,
+                            "rust-search",
+                            1L,
+                            "ext-revoked",
+                            null,
+                            null));
+            assertThat(historical.operation().getOutcome())
+                    .isEqualTo(ExternalPublicationOutcome.EXTERNAL_PUBLICATION_OUTCOME_CONFIRMED);
+
+            // The ledger follows the source's access as it is now, not as it was at revision 1.
+            h.useCaller(h.alphaBob);
+            assertGrpcCode(
+                    () -> h.coordinator.getLedgerView(sourceAddr, "rust-search"),
+                    Status.Code.PERMISSION_DENIED);
+            h.useCaller(h.alphaAlice);
+            assertThat(h.coordinator.getLedgerView(sourceAddr, "rust-search")).isPresent();
+
+            // After the source is purged the retained ledger answers for itself. It must
+            // still refuse Bob: the access it kept is the revoked one, not revision 1's.
+            h.stub.purgeDocument(PurgeDocumentRequest.newBuilder()
+                    .setPurgeId("purge-revoked-001")
+                    .setAddress(sourceAddr)
+                    .setReason("Purge after revocation")
+                    .build());
+            h.coordinator.handlePurge(new ExternalPublicationCoordinator.PurgeRequest(
+                    "op-purge-revoked", sourceAddr, "purge-revoked-001", "rust-search", null));
+            h.useCaller(h.alphaBob);
+            assertGrpcCode(
+                    () -> h.coordinator.getLedgerView(sourceAddr, "rust-search"),
+                    Status.Code.PERMISSION_DENIED);
+            h.useCaller(h.alphaAlice);
+            assertThat(h.coordinator.getLedgerView(sourceAddr, "rust-search")).isPresent();
+        }
+    }
+
+    @Test
+    void aPurgeIsRefusedWhileTheSourceDocumentStillExists(
+            @TempDir Path tempDir) throws Exception {
+        SimulatedManagedSearchProvider provider = new SimulatedManagedSearchProvider();
+        try (Harness h = Harness.boot(tempDir, provider)) {
+            h.saveActiveBinding(
+                    "tenant-alpha",
+                    "rust-search",
+                    "search-profile-v1",
+                    "ingest",
+                    "corpus-main",
+                    "ns-alpha",
+                    ExternalRetentionPolicy.EXTERNAL_RETENTION_POLICY_RETAIN_HISTORY,
+                    "op-bind-1");
+            NodeAddress sourceAddr = sourceAddress("tenant-alpha", "doc-live");
+            h.saveSourceDocument("save-live", sourceAddr, 0L, "Live", "alice");
+            h.coordinator.publish(new ExternalPublicationCoordinator.PublishRequest(
+                    "pub-live", sourceAddr, 1L, "rust-search", 1L, "ext-live", null, null));
+            int callsBefore = provider.executeCalls.get();
+
+            // Nobody purged the document: an invented purge ID must not delete its projection.
+            assertGrpcCode(
+                    () -> h.coordinator.handlePurge(new ExternalPublicationCoordinator.PurgeRequest(
+                            "op-fake-purge", sourceAddr, "purge-never-happened", "rust-search", null)),
+                    Status.Code.FAILED_PRECONDITION);
+
+            assertThat(provider.executeCalls.get()).as("no delete reached the provider")
+                    .isEqualTo(callsBefore);
+            ExternalPublicationCoordinator.ExternalLedgerView view =
+                    h.coordinator.getLedgerView(sourceAddr, "rust-search").orElseThrow();
+            assertThat(view.sourcePurged()).isFalse();
+            assertThat(h.coordinator.listActiveExternalLinks("tenant-alpha", "rust-search"))
+                    .extracting(ExternalLink::getExternalObjectId)
+                    .containsExactly("ext-live");
+        }
+    }
+
+    @Test
     void lostReplyReconcilesToConfirmedOrFailedWithoutDuplicateProviderExecution(
             @TempDir Path tempDir) throws Exception {
         SimulatedManagedSearchProvider provider = new SimulatedManagedSearchProvider();

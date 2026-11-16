@@ -450,9 +450,11 @@ public final class ExternalPublicationCoordinator {
                     ExternalAttemptTrigger.EXTERNAL_ATTEMPT_TRIGGER_INITIAL);
         }
 
+        // The ledger keeps the source's access as it is now. The published revision's own
+        // security is history: taking it would hand access back to anyone a later revision
+        // revoked.
         VerifiedSourceSnapshot verifiedSource = sources.inspectSourceRevision(
                 request.sourceAddress(), request.sourceRevision());
-        retainedSecurity = verifiedSource.documentSecurity();
         ExternalSourceAccess.verifyDeclaredProcessingMatchesSource(request.processing(), verifiedSource);
 
         ExternalProviderGateway.OutboundAuthContext outboundAuth =
