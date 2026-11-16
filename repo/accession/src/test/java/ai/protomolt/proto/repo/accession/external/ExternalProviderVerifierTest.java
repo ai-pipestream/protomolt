@@ -26,6 +26,7 @@ import ai.protomolt.proto.repo.external.v1.ExternalProviderEvidence;
 import ai.protomolt.proto.repo.external.v1.ExternalProviderSettlement;
 import ai.protomolt.proto.repo.external.v1.ExternalPublicationAction;
 import ai.protomolt.proto.repo.external.v1.ExternalPublicationIntent;
+import ai.protomolt.proto.repo.external.v1.ExternalIdentityProof;
 import ai.protomolt.proto.repo.external.v1.ExternalRetentionPolicy;
 import ai.protomolt.proto.repo.external.v1.ExternalServingVisibility;
 import ai.protomolt.proto.repo.external.v1.ExternalSystemBinding;
@@ -74,6 +75,8 @@ class ExternalProviderVerifierTest {
                         .setTlsEnabled(true))
                 .setLifecycle(ExternalBindingLifecycle.EXTERNAL_BINDING_LIFECYCLE_ACTIVE)
                 .setRetentionPolicy(ExternalRetentionPolicy.EXTERNAL_RETENTION_POLICY_RETAIN_HISTORY)
+                .setRequiredIdentityProof(
+                        ExternalIdentityProof.EXTERNAL_IDENTITY_PROOF_MANAGED_SEARCH)
                 .setCreatedAt(FIXED_TIME)
                 .build();
     }
@@ -499,6 +502,36 @@ class ExternalProviderVerifierTest {
                 .build();
         assertRefusal(verifier, acceptedWithPrematureEpoch, binding, auth, intent, intentSha,
                 "PROVIDER_EVIDENCE_MALFORMED");
+    }
+
+    @Test
+    void aManagedSearchBindingRefusesPublishEvidenceWithoutManagedSearchIdentity() {
+        ExternalSystemBinding managed = binding();
+        ExternalProviderGateway.OutboundAuthContext auth = authContext(managed);
+        ExternalPublicationIntent intent = publishIntent();
+        String intentSha = ExternalOperationKeys.intentSha256(intent);
+        ExternalProviderVerifier verifier = new ExternalProviderVerifier();
+
+        // Receipt-grade evidence: everything in the envelope matches, but there is no
+        // history, sequence, catalog epoch or manifest to prove the document is in the index.
+        ExternalProviderEvidence publishedWithoutProof =
+                validPublishedEvidence(intent, intentSha).toBuilder().clearManagedSearch().build();
+        assertRefusal(verifier, publishedWithoutProof, managed, auth, intent, intentSha,
+                "MANAGED_SEARCH_IDENTITY_REQUIRED");
+        ExternalProviderEvidence acceptedWithoutProof = publishedWithoutProof.toBuilder()
+                .setSettlement(ExternalProviderSettlement.EXTERNAL_PROVIDER_SETTLEMENT_ACCEPTED_ONLY)
+                .build();
+        assertRefusal(verifier, acceptedWithoutProof, managed, auth, intent, intentSha,
+                "MANAGED_SEARCH_IDENTITY_REQUIRED");
+
+        // A binding that asks for the receipt alone accepts the same evidence.
+        ExternalSystemBinding receiptOnly = managed.toBuilder()
+                .setRequiredIdentityProof(ExternalIdentityProof.EXTERNAL_IDENTITY_PROOF_RECEIPT)
+                .build();
+        ExternalProviderGateway.OutboundAuthContext receiptAuth = authContext(receiptOnly);
+        assertThatCode(() -> verifier.verifyEvidence(
+                publishedWithoutProof, receiptOnly, receiptAuth, intent, intentSha))
+                .doesNotThrowAnyException();
     }
 
     private static void assertRefusal(

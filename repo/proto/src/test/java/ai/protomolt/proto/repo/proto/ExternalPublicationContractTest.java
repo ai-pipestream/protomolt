@@ -59,6 +59,8 @@ class ExternalPublicationContractTest {
                         .setTlsEnabled(true))
                 .setLifecycle(ExternalBindingLifecycle.EXTERNAL_BINDING_LIFECYCLE_ACTIVE)
                 .setRetentionPolicy(ExternalRetentionPolicy.EXTERNAL_RETENTION_POLICY_RETAIN_HISTORY)
+                .setRequiredIdentityProof(
+                        ExternalIdentityProof.EXTERNAL_IDENTITY_PROOF_MANAGED_SEARCH)
                 .putLabels("tier", "gold")
                 .setCreatedAt(TIME)
                 .build();

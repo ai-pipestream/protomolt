@@ -312,6 +312,7 @@ public final class ExternalProviderVerifier {
                 evidence, expectedBinding, expectedAuth, expectedIntent, expectedIntentSha256);
         verifySettlementMatchesAction(evidence.getSettlement(), expectedIntent.getAction());
 
+        requireDeclaredIdentityProof(evidence, expectedBinding);
         if (evidence.hasManagedSearch()) {
             verifyManagedSearchIdentity(
                     evidence.getManagedSearch(), evidence.getSettlement(), expectedIntent);
@@ -472,6 +473,42 @@ public final class ExternalProviderVerifier {
         } else {
             throw new ProviderVerificationException(
                     "INVALID_ACTION", "Unsupported publication action: " + action);
+        }
+    }
+
+    /**
+     * A binding states what a publish receipt must prove. Evidence that only says the provider
+     * accepted or published the object, without the proof the binding asks for, confirms
+     * nothing.
+     */
+    private static void requireDeclaredIdentityProof(
+            ExternalProviderEvidence evidence, ExternalSystemBinding expectedBinding) {
+        boolean publishSettlement = evidence.getSettlement()
+                        == ExternalProviderSettlement.EXTERNAL_PROVIDER_SETTLEMENT_ACCEPTED_ONLY
+                || evidence.getSettlement()
+                        == ExternalProviderSettlement.EXTERNAL_PROVIDER_SETTLEMENT_PUBLISHED;
+        if (!publishSettlement) {
+            return;
+        }
+        switch (expectedBinding.getRequiredIdentityProof()) {
+            case EXTERNAL_IDENTITY_PROOF_RECEIPT -> {
+                // The envelope checks already made are the whole proof.
+            }
+            case EXTERNAL_IDENTITY_PROOF_MANAGED_SEARCH -> {
+                if (!evidence.hasManagedSearch()) {
+                    throw new ProviderVerificationException(
+                            "MANAGED_SEARCH_IDENTITY_REQUIRED",
+                            "Binding '" + expectedBinding.getBindingId() + "' revision "
+                                    + expectedBinding.getBindingRevision()
+                                    + " requires ManagedSearchIdentity on publish evidence");
+                }
+            }
+            case EXTERNAL_IDENTITY_PROOF_UNSPECIFIED, UNRECOGNIZED ->
+                    throw new ProviderVerificationException(
+                            "BINDING_IDENTITY_PROOF_UNDECLARED",
+                            "Binding '" + expectedBinding.getBindingId() + "' revision "
+                                    + expectedBinding.getBindingRevision()
+                                    + " does not declare required_identity_proof");
         }
     }
 

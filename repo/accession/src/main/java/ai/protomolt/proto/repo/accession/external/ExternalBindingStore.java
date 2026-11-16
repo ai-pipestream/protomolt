@@ -10,6 +10,7 @@ import ai.protomolt.proto.grpc.workspace.ProfileCredentialResolver;
 import ai.protomolt.proto.registry.ConfigDocumentStore;
 import ai.protomolt.proto.repo.external.v1.ExternalBindingLifecycle;
 import ai.protomolt.proto.repo.external.v1.ExternalEndpointSummary;
+import ai.protomolt.proto.repo.external.v1.ExternalIdentityProof;
 import ai.protomolt.proto.repo.external.v1.ExternalRetentionPolicy;
 import ai.protomolt.proto.repo.external.v1.ExternalSystemBinding;
 import ai.protomolt.proto.repo.v1.Access;
@@ -213,6 +214,7 @@ public final class ExternalBindingStore {
      * @param namespace external workspace/tenant namespace
      * @param contractVersion wire contract version identifier
      * @param retentionPolicy retention behavior upon source purge
+     * @param requiredIdentityProof proof every publish receipt through the binding must carry
      * @param labels optional non-secret operator labels
      * @param operationId repository save operation ID
      */
@@ -226,6 +228,7 @@ public final class ExternalBindingStore {
             String namespace,
             String contractVersion,
             ExternalRetentionPolicy retentionPolicy,
+            ExternalIdentityProof requiredIdentityProof,
             Map<String, String> labels,
             String operationId) {
 
@@ -240,6 +243,7 @@ public final class ExternalBindingStore {
             Objects.requireNonNull(namespace, "namespace");
             Objects.requireNonNull(contractVersion, "contractVersion");
             Objects.requireNonNull(retentionPolicy, "retentionPolicy");
+            Objects.requireNonNull(requiredIdentityProof, "requiredIdentityProof");
             labels = labels == null ? Map.of() : Map.copyOf(labels);
             Objects.requireNonNull(operationId, "operationId");
         }
@@ -321,6 +325,7 @@ public final class ExternalBindingStore {
                 .setEndpointSummary(summary)
                 .setLifecycle(ExternalBindingLifecycle.EXTERNAL_BINDING_LIFECYCLE_ACTIVE)
                 .setRetentionPolicy(spec.retentionPolicy())
+                .setRequiredIdentityProof(spec.requiredIdentityProof())
                 .putAllLabels(spec.labels())
                 .setCreatedAt(createdAt);
 

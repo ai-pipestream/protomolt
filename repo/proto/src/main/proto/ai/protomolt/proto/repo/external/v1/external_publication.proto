@@ -34,6 +34,20 @@ enum ExternalRetentionPolicy {
   EXTERNAL_RETENTION_POLICY_PURGE_WITH_SOURCE = 2;
 }
 
+// Identity proof a provider receipt must carry before a publication through
+// the binding is accepted or confirmed.
+enum ExternalIdentityProof {
+  // Unset; never valid in persisted or admitted bindings.
+  EXTERNAL_IDENTITY_PROOF_UNSPECIFIED = 0;
+  // The receipt envelope alone: provider, contract version, service profile,
+  // endpoint, credential binding digest, intent digest and external object ID.
+  EXTERNAL_IDENTITY_PROOF_RECEIPT = 1;
+  // The receipt envelope and a ManagedSearchIdentity bound to the source
+  // document: history ID, accepted version and sequence, and for a confirmed
+  // publication the catalog epoch and manifest digest.
+  EXTERNAL_IDENTITY_PROOF_MANAGED_SEARCH = 2;
+}
+
 // Non-secret endpoint summary preserved on binding revisions so historical
 // links remain interpretable after service profile rotation or retirement.
 message ExternalEndpointSummary {
@@ -271,6 +285,18 @@ message ExternalSystemBinding {
   ];
   // Timestamp when this binding revision entered RETIRED; forbidden when ACTIVE.
   optional google.protobuf.Timestamp retired_at = 17;
+  // Proof every publish receipt through this binding must carry. A receipt
+  // without it never confirms a publication or activates a link.
+  ExternalIdentityProof required_identity_proof = 18 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      required: true
+      enum: {defined_only: true, not_in: [0]}
+    },
+    (buf.validate.field) = {
+      required: true
+      enum: {defined_only: true, not_in: [0]}
+    }
+  ];
 }
 
 // Verified digest of one retained source document part consumed by external publication.

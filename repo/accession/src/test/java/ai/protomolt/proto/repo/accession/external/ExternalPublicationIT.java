@@ -48,6 +48,7 @@ import ai.protomolt.proto.repo.external.v1.ExternalProviderEvidence;
 import ai.protomolt.proto.repo.external.v1.ExternalProviderSettlement;
 import ai.protomolt.proto.repo.external.v1.ExternalPublicationOperationRecord;
 import ai.protomolt.proto.repo.external.v1.ExternalPublicationOutcome;
+import ai.protomolt.proto.repo.external.v1.ExternalIdentityProof;
 import ai.protomolt.proto.repo.external.v1.ExternalRetentionPolicy;
 import ai.protomolt.proto.repo.external.v1.ExternalServingVisibility;
 import ai.protomolt.proto.repo.external.v1.ExternalSystemBinding;
@@ -1505,6 +1506,7 @@ class ExternalPublicationIT {
                     namespace,
                     "managed-search/v1",
                     retentionPolicy,
+                    ExternalIdentityProof.EXTERNAL_IDENTITY_PROOF_MANAGED_SEARCH,
                     Map.of("environment", "integration-test"),
                     operationId));
         }
