@@ -49,7 +49,9 @@ public final class RepoServiceMain {
                 ? ConsoleSignIn.fromEnvironment(System.getenv())
                 : ConsoleSignIn.none();
         RepoCallerConfiguration callers = RepoCallerConfiguration.fromEnvironment(System.getenv());
-        RepoServices services = RepoServices.build(config).withAccountBindings(callers.bindings());
+        RepoServices services = RepoServices.build(config)
+                .withAccountBindings(callers.bindings())
+                .withRenderers(RepoServices.defaultSaveAsRenderers());
         // Seeded default account (DOCUMENT_PLATFORM_SEED_ACCOUNT_ID): ensure
         // the account's intake/pipeline drives exist before serving. No-op
         // when unset; embedded hosts opt in by calling it themselves.

@@ -212,6 +212,18 @@ public final class RepoServices implements AutoCloseable {
     }
 
     /**
+     * Loads the standard bounded {@code Save as...} renderer providers enabled on standalone and
+     * platform repository hosts ({@link ai.protomolt.proto.emit.parquet.ParquetRendererProvider#PROVIDER_ID}).
+     *
+     * @return the enabled {@link ai.protomolt.proto.repo.archive.RepositorySinkRenderers}
+     */
+    public static ai.protomolt.proto.repo.archive.RepositorySinkRenderers defaultSaveAsRenderers() {
+        return ai.protomolt.proto.repo.archive.RepositorySinkRenderers.load(
+                RepoServices.class.getClassLoader(),
+                java.util.Set.of(ai.protomolt.proto.emit.parquet.ParquetRendererProvider.PROVIDER_ID));
+    }
+
+    /**
      * Loads and validates {@code ConceptScheme} definitions from files or directories.
      *
      * <p>Each entry in {@code paths} may be:
