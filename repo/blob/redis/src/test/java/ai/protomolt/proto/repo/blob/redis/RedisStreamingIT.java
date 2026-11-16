@@ -10,6 +10,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Arrays;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 import ai.protomolt.proto.repo.blob.spi.BlobStoreException;
 import redis.clients.jedis.Jedis;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -212,6 +213,58 @@ class RedisStreamingIT {
         }
     }
 
+    @Test void streamingSocketCapRejectsTheNextTransferAndReleasesOnClose() throws Exception {
+        try (var store = new RedisBlobStore(new RedisBlobStoreConfig(uri(), 0, 0, UUID.randomUUID().toString(),
+                1, RedisWritePolicy.REPLACE))) {
+            var spec = spec("capped", null);
+            store.put(spec, new byte[]{1, 2, 3, 4});
+            InputStream held = store.openStream("streaming", "capped", 0, -1);
+            try {
+                assertThat(held.read()).isEqualTo(1);
+                assertExhausted(() -> store.openStream("streaming", "capped", 0, -1));
+                assertExhausted(() -> store.openSnapshot("streaming", "capped"));
+                assertExhausted(() -> store.put(spec, new ByteArrayInputStream(new byte[]{9}), 1));
+                assertThat(store.get("streaming", "capped", null).data()).containsExactly(1, 2, 3, 4);
+                var failure = new AtomicReference<Throwable>();
+                var other = new Thread(() -> {
+                    InputStream second = null;
+                    try {
+                        second = store.openStream("streaming", "capped", 0, 1);
+                        failure.set(new AssertionError("second transfer opened"));
+                    } catch (RuntimeException | Error opened) {
+                        failure.set(opened);
+                    } finally {
+                        if (second != null) {
+                            try { second.close(); }
+                            catch (IOException close) { failure.set(close); }
+                        }
+                    }
+                });
+                other.start();
+                other.join(30_000);
+                if (other.isAlive()) {
+                    other.interrupt();
+                    other.join(5_000);
+                }
+                assertThat(other.isAlive()).as("concurrent transfer attempt").isFalse();
+                assertThat(failure.get()).isInstanceOf(BlobStoreException.class)
+                        .extracting(thrown -> ((BlobStoreException) thrown).code())
+                        .isEqualTo(BlobStoreException.Code.RESOURCE_EXHAUSTED);
+            } finally {
+                held.close();
+            }
+            try (var stream = store.openStream("streaming", "capped", 0, -1)) {
+                assertThat(stream.readAllBytes()).containsExactly(1, 2, 3, 4);
+            }
+            try (var snapshot = store.openSnapshot("streaming", "capped")) {
+                assertThat(snapshot.metadata().length()).isEqualTo(4);
+                assertThat(snapshot.stream().readAllBytes()).containsExactly(1, 2, 3, 4);
+            }
+            store.put(spec, new ByteArrayInputStream(new byte[]{8}), 1);
+            assertThat(store.get("streaming", "capped", null).data()).containsExactly(8);
+        }
+    }
+
     @Test void snapshotMetadataAndBytesComeFromTheSameAtomicRead() throws Exception {
         try (var store = store(0, RedisWritePolicy.REPLACE)) {
             var written = store.put(spec("snapshot-metadata", null), new byte[]{1, 2, 3});
@@ -223,6 +276,13 @@ class RedisStreamingIT {
             }
             assertThat(store.statObject("streaming", "snapshot-metadata").length()).isEqualTo(4);
         }
+    }
+
+    private static void assertExhausted(org.assertj.core.api.ThrowableAssert.ThrowingCallable call) {
+        assertThatThrownBy(call).isInstanceOf(BlobStoreException.class)
+                .hasMessageContaining("streaming transfer limit")
+                .extracting(failure -> ((BlobStoreException) failure).code())
+                .isEqualTo(BlobStoreException.Code.RESOURCE_EXHAUSTED);
     }
 
     private static String uri() { return "redis://" + REDIS.getHost() + ":" + REDIS.getMappedPort(6379); }
