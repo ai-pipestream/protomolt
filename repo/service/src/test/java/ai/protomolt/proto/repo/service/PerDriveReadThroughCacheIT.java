@@ -145,8 +145,8 @@ class PerDriveReadThroughCacheIT {
                         .setForcePathStyle(true))
                 .build();
 
-        String cacheNamespace = DriveBackingPool.s3CacheNamespace(
-                DriveBackingPool.s3Endpoint(S3_A.getEndpoint().toString(), S3_A.getRegion(), true),
+        String cacheNamespace = DriveStoreIdentities.s3CacheNamespace(
+                DriveStoreIdentities.s3Endpoint(S3_A.getEndpoint().toString(), S3_A.getRegion(), true),
                 S3_A.getRegion(),
                 true);
         String isolatedCacheBucket = cacheNamespace.length() + ":" + cacheNamespace + ":" + bucket;
