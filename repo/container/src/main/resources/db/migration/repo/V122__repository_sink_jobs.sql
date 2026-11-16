@@ -5,9 +5,7 @@
 -- cancel_requested lets a peer ask the live owner to stop without
 -- overwriting its state.
 
-CREATE SCHEMA repo_sink;
-
-CREATE TABLE repo_sink.sink_jobs (
+CREATE TABLE sink_jobs (
     account_id TEXT NOT NULL,
     operation_id TEXT NOT NULL,
     state TEXT NOT NULL,
