@@ -121,7 +121,7 @@ public final class OutboundChannelPolicy {
         ValidatedTarget target = validateTarget(rawTarget, tls);
         if (!channelSlots.tryAcquire()) {
             throw new OutboundChannelPolicyException(
-                    "outbound channel concurrency limit is exhausted");
+                    "outbound channel concurrency limit is exhausted", true);
         }
         try {
             ManagedChannel delegate = opener.apply(target.canonicalTarget());

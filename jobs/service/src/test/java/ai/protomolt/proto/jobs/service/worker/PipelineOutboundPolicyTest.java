@@ -21,6 +21,8 @@ import ai.protomolt.proto.workflow.WorkflowRunner;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.protobuf.Descriptors.FileDescriptor;
+import io.grpc.ManagedChannel;
+import io.grpc.InsecureChannelCredentials;
 import io.grpc.ChannelCredentials;
 import io.grpc.Grpc;
 import io.grpc.InsecureServerCredentials;
@@ -263,7 +265,35 @@ class PipelineOutboundPolicyTest {
     }
 
     @Test
-    void maxActiveChannelsOneEvictsIdleCachedChannelsSequentiallyAndProtectsInFlightCalls()
+    void finishedPipelineCallReleasesItsChannelSlotForOtherUsersOfThePolicy() throws Exception {
+        InMemoryWorkflowRunStore store = new InMemoryWorkflowRunStore();
+        WorkflowRunSubmitter submitter = new WorkflowRunSubmitter(store, null, 1);
+        OutboundChannelPolicy oneSlotPolicy = OutboundChannelPolicy.builder()
+                .allowedHosts(Set.of("127.0.0.1"))
+                .allowedPorts(Set.of(plainPort, secondaryPort))
+                .maxActiveChannels(1)
+                .build();
+        try (WorkflowRunWorker worker = new WorkflowRunWorker(
+                store, context, null, new WorkflowRunner(oneSlotPolicy),
+                oneSlotPolicy, serviceProfiles, null, workerConfig("slot-release", 1, 4))) {
+            String jobId = submitPipeline(
+                    submitter, schema, echoPipeline(schema, "echo", "plain"), "done");
+            assertThat(worker.workOnce()).isTrue();
+            assertThat(store.get(UUID.fromString(jobId)).orElseThrow().status)
+                    .isEqualTo(WorkflowRunRecord.STATUS_COMPLETED);
+
+            // A catalog or workflow call shares this policy and cannot ask the pipeline
+            // transport to give anything up, so the finished call must not be holding the slot.
+            ManagedChannel other = oneSlotPolicy.open(
+                    "127.0.0.1:" + secondaryPort, false,
+                    target -> Grpc.newChannelBuilder(target, InsecureChannelCredentials.create())
+                            .build());
+            other.shutdownNow();
+        }
+    }
+
+    @Test
+    void maxActiveChannelsOneServesSequentialCallsOneChannelAtATimeAndProtectsInFlightCalls()
             throws Exception {
         InMemoryWorkflowRunStore store = new InMemoryWorkflowRunStore();
         WorkflowRunSubmitter submitter = new WorkflowRunSubmitter(store, null, 1);
@@ -276,7 +306,8 @@ class PipelineOutboundPolicyTest {
         try (WorkflowRunWorker worker = new WorkflowRunWorker(
                 store, context, null, new WorkflowRunner(oneSlotPolicy),
                 oneSlotPolicy, serviceProfiles, null, workerConfig("one-slot", 1, 4))) {
-            // Sequential calls: endpoint A twice (reusing channel), then endpoint B (evicts idle A).
+            // Sequential calls: endpoint A twice, then endpoint B. Each call's channel closes when
+            // the call finishes, so the single slot is free for the next one.
             String firstA = submitPipeline(
                     submitter, schema, echoPipeline(schema, "echo", "plain"), "a1");
             assertThat(worker.workOnce()).isTrue();
@@ -288,7 +319,7 @@ class PipelineOutboundPolicyTest {
             assertThat(worker.workOnce()).isTrue();
             assertThat(store.get(UUID.fromString(secondA)).orElseThrow().status)
                     .isEqualTo(WorkflowRunRecord.STATUS_COMPLETED);
-            assertThat(plainTransports.get()).isEqualTo(1);
+            assertThat(plainTransports.get()).isEqualTo(2);
 
             String firstB = submitPipeline(
                     submitter, schema, echoPipeline(schema, "echo", "plain-secondary"), "b1");

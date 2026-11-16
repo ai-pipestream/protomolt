@@ -7,8 +7,7 @@ import io.grpc.ManagedChannel;
 import io.grpc.Status;
 
 import java.util.ArrayList;
-import java.util.Iterator;
-import java.util.LinkedHashMap;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -16,12 +15,11 @@ import java.util.concurrent.TimeUnit;
 import java.util.function.Supplier;
 
 /**
- * Package-private reference-counted LRU channel cache for {@link ServiceProfilePipelineTransport}.
- *
- * <p>Reuses healthy non-custom-TLS {@link ManagedChannel}s across sequential and concurrent RPCs,
- * evicts idle ({@code activeCalls == 0}) channels when {@code OutboundChannelPolicy} saturates
- * {@code maxActiveChannels} so active-channel slots are reclaimed without restarting the worker,
- * and never shuts down an active channel underneath an in-flight RPC.
+ * Shares one {@link ManagedChannel} per target among the pipeline calls that are in flight to
+ * it. A channel is opened for the first call and closed when its last call finishes, so an
+ * {@code OutboundChannelPolicy} slot is held only while a call needs it and never by an idle
+ * channel that other users of the policy could not reclaim. A channel is never shut down
+ * underneath an in-flight call.
  */
 final class PipelineChannelCache implements AutoCloseable {
 
@@ -54,8 +52,7 @@ final class PipelineChannelCache implements AutoCloseable {
 
     private final ChannelFactory channels;
     private final Object lock = new Object();
-    private final LinkedHashMap<ChannelKey, Lease> openChannels =
-            new LinkedHashMap<>(16, 0.75f, true);
+    private final Map<ChannelKey, Lease> openChannels = new HashMap<>();
     private volatile boolean closed;
 
     PipelineChannelCache(ChannelFactory channels) {
@@ -72,7 +69,7 @@ final class PipelineChannelCache implements AutoCloseable {
     }
 
     ManagedChannel openDedicated(String target, ChannelCredentials customTls) {
-        return openWithIdleEviction(() -> Objects.requireNonNull(
+        return open(() -> Objects.requireNonNull(
                 channels.open(target, customTls), "channel factory returned null"));
     }
 
@@ -100,7 +97,7 @@ final class PipelineChannelCache implements AutoCloseable {
             stale.shutdownNow();
         }
 
-        ManagedChannel opened = openWithIdleEviction(() -> Objects.requireNonNull(
+        ManagedChannel opened = open(() -> Objects.requireNonNull(
                 channels.open(key.target(), key.tls()), "channel factory returned null"));
         ManagedChannel duplicate = null;
         Lease acquired;
@@ -126,65 +123,37 @@ final class PipelineChannelCache implements AutoCloseable {
         return acquired;
     }
 
-    private ManagedChannel openWithIdleEviction(Supplier<ManagedChannel> opener) {
-        while (true) {
-            try {
-                return opener.get();
-            } catch (OutboundChannelPolicyException e) {
-                if (!isConcurrencyLimit(e) || !evictOneIdleChannel()) {
-                    throw translateOpenRejection(e);
-                }
-            }
+    private static ManagedChannel open(Supplier<ManagedChannel> opener) {
+        try {
+            return opener.get();
+        } catch (OutboundChannelPolicyException refused) {
+            throw translateOpenRejection(refused);
         }
-    }
-
-    private boolean evictOneIdleChannel() {
-        ManagedChannel idle = null;
-        synchronized (lock) {
-            Iterator<Map.Entry<ChannelKey, Lease>> iterator = openChannels.entrySet().iterator();
-            while (iterator.hasNext()) {
-                Lease candidate = iterator.next().getValue();
-                if (candidate.activeCalls == 0) {
-                    iterator.remove();
-                    candidate.evicted = true;
-                    idle = candidate.channel;
-                    break;
-                }
-            }
-        }
-        if (idle == null) {
-            return false;
-        }
-        idle.shutdown();
-        return true;
     }
 
     private void releaseShared(Lease entry) {
-        ManagedChannel toShutdown = null;
-        boolean force = false;
+        boolean lastCall;
+        boolean force;
         synchronized (lock) {
             entry.activeCalls--;
-            if (entry.activeCalls == 0 && (closed || entry.evicted)) {
-                toShutdown = entry.channel;
-                force = closed;
+            lastCall = entry.activeCalls == 0;
+            force = closed;
+            if (lastCall) {
+                entry.evicted = true;
+                openChannels.values().remove(entry);
             }
         }
-        if (toShutdown != null) {
+        if (lastCall) {
             if (force) {
-                toShutdown.shutdownNow();
+                entry.channel.shutdownNow();
             } else {
-                toShutdown.shutdown();
+                entry.channel.shutdown();
             }
         }
-    }
-
-    private static boolean isConcurrencyLimit(OutboundChannelPolicyException error) {
-        String message = error.getMessage();
-        return message != null && message.contains("concurrency limit");
     }
 
     private static RuntimeException translateOpenRejection(OutboundChannelPolicyException error) {
-        if (isConcurrencyLimit(error)) {
+        if (error.channelLimitExhausted()) {
             return Status.RESOURCE_EXHAUSTED
                     .withDescription("outbound channel policy rejected step: " + error.getMessage())
                     .withCause(error)
