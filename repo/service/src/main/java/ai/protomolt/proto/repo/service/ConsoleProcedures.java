@@ -2,6 +2,7 @@ package ai.protomolt.proto.repo.service;
 
 import ai.protomolt.proto.repo.archive.v1.ArchiveServiceGrpc;
 import ai.protomolt.proto.repo.archive.v1.ArchiveMutationServiceGrpc;
+import ai.protomolt.proto.repo.sink.v1.RepositorySinkServiceGrpc;
 import ai.protomolt.proto.repo.v1.DriveServiceGrpc;
 import ai.protomolt.proto.repo.v2.DocumentServiceGrpc;
 
@@ -10,7 +11,7 @@ import java.util.Set;
 /**
  * The procedures the repository host exposes to the console through the Connect gateway:
  * exactly the calls the console's screens make, and nothing else. Every other method of the
- * four services stays reachable over gRPC and answers {@code unimplemented} at
+ * five services stays reachable over gRPC and answers {@code unimplemented} at
  * {@code /connect}. A screen that needs a new call adds it here, and the pinning test fails
  * until the list matches.
  */
@@ -39,7 +40,12 @@ public final class ConsoleProcedures {
             ArchiveServiceGrpc.getListEntriesMethod().getFullMethodName(),
             ArchiveServiceGrpc.getGetEntryManifestMethod().getFullMethodName(),
             ArchiveServiceGrpc.getListVersionsMethod().getFullMethodName(),
-            ArchiveServiceGrpc.getReadRenditionMethod().getFullMethodName());
+            ArchiveServiceGrpc.getReadRenditionMethod().getFullMethodName(),
+            RepositorySinkServiceGrpc.getListSaveAsCapabilitiesMethod().getFullMethodName(),
+            RepositorySinkServiceGrpc.getPublishRepositorySinkMethod().getFullMethodName(),
+            RepositorySinkServiceGrpc.getGetRepositorySinkJobMethod().getFullMethodName(),
+            RepositorySinkServiceGrpc.getCancelRepositorySinkJobMethod().getFullMethodName(),
+            RepositorySinkServiceGrpc.getListRenditionProvenanceMethod().getFullMethodName());
 
     private ConsoleProcedures() {
     }
