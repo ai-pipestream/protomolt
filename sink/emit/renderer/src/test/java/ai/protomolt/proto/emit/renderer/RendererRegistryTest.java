@@ -184,7 +184,7 @@ class RendererRegistryTest {
                 "test.echo", Empty.getDefaultInstance(), Empty.getDefaultInstance(), ALLOW, ACTIVE);
         assertThat(rendered.size()).isEqualTo(totalBytes);
         assertThat(rendered.toByteArray()).containsExactly(expected);
-        // ByteString.Output retains flushed buffers as rope leaves instead of coalescing via toByteArray() + copyFrom().
+        // Flushed chunks stay as separate ByteString buffers.
         assertThat(rendered.asReadOnlyByteBufferList().size()).isGreaterThan(1);
     }
 

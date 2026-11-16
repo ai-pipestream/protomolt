@@ -36,6 +36,7 @@ public final class ServiceWorkspaceActions {
                                          ProfileCredentialResolver credentials) {
         Objects.requireNonNull(catalog, "catalog");
         Objects.requireNonNull(channels, "channels");
+        EvictableTlsResolver.bind(credentials, channels);
         // A stored profile's methods become live verbs the moment register or
         // refresh lands, so the workbench never advertises a verb that is not there.
         ProfileStored reflected = profile -> ReflectedServiceActions.register(
