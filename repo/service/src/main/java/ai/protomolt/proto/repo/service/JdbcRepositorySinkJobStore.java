@@ -11,7 +11,6 @@ import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
-import java.sql.Statement;
 import java.sql.Timestamp;
 import java.sql.Types;
 import java.time.Instant;
@@ -23,7 +22,8 @@ import javax.sql.DataSource;
 /**
  * Durable PostgreSQL implementation of {@link RepositorySinkJobStore} backed by isolated table
  * {@code repo_sink.sink_jobs} with monotonic lease fencing and cooperative cross-instance
- * cancellation.
+ * cancellation. The table is created by the ledger migration
+ * {@code V122__repository_sink_jobs.sql}; this store never issues DDL.
  *
  * <p>All reads, heartbeats, and conditional state transitions execute as short autocommit
  * statements with bounded query timeouts so no database connection or transaction is ever held open
@@ -32,37 +32,6 @@ import javax.sql.DataSource;
 final class JdbcRepositorySinkJobStore implements RepositorySinkJobStore {
 
     private static final int STATEMENT_TIMEOUT_SECONDS = 15;
-
-    private static final String CREATE_SCHEMA_SQL = "CREATE SCHEMA IF NOT EXISTS repo_sink";
-    private static final String CREATE_TABLE_SQL =
-            """
-            CREATE TABLE IF NOT EXISTS repo_sink.sink_jobs (
-                account_id TEXT NOT NULL,
-                operation_id TEXT NOT NULL,
-                state TEXT NOT NULL,
-                job_pb BYTEA NOT NULL,
-                request_pb BYTEA NOT NULL,
-                pending_provenance_pb BYTEA,
-                owner_id TEXT NOT NULL DEFAULT 'unowned',
-                lease_epoch BIGINT NOT NULL DEFAULT 1,
-                lease_expires_at TIMESTAMPTZ NOT NULL DEFAULT TIMESTAMP WITH TIME ZONE '1970-01-01 00:00:00+00',
-                cancel_requested BOOLEAN NOT NULL DEFAULT FALSE,
-                cancel_reason TEXT NOT NULL DEFAULT '',
-                updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-                PRIMARY KEY (account_id, operation_id)
-            )
-            """;
-
-    private static final String ALTER_OWNER_SQL =
-            "ALTER TABLE repo_sink.sink_jobs ADD COLUMN IF NOT EXISTS owner_id TEXT NOT NULL DEFAULT 'unowned'";
-    private static final String ALTER_EPOCH_SQL =
-            "ALTER TABLE repo_sink.sink_jobs ADD COLUMN IF NOT EXISTS lease_epoch BIGINT NOT NULL DEFAULT 1";
-    private static final String ALTER_EXPIRES_SQL =
-            "ALTER TABLE repo_sink.sink_jobs ADD COLUMN IF NOT EXISTS lease_expires_at TIMESTAMPTZ NOT NULL DEFAULT TIMESTAMP WITH TIME ZONE '1970-01-01 00:00:00+00'";
-    private static final String ALTER_CANCEL_REQ_SQL =
-            "ALTER TABLE repo_sink.sink_jobs ADD COLUMN IF NOT EXISTS cancel_requested BOOLEAN NOT NULL DEFAULT FALSE";
-    private static final String ALTER_CANCEL_REASON_SQL =
-            "ALTER TABLE repo_sink.sink_jobs ADD COLUMN IF NOT EXISTS cancel_reason TEXT NOT NULL DEFAULT ''";
 
     private static final String SELECT_SQL =
             """
@@ -196,27 +165,6 @@ final class JdbcRepositorySinkJobStore implements RepositorySinkJobStore {
 
     JdbcRepositorySinkJobStore(DataSource dataSource) {
         this.dataSource = Objects.requireNonNull(dataSource, "dataSource");
-        initializeSchema();
-    }
-
-    private void initializeSchema() {
-        withInterruptCleared(() -> {
-            try (Connection conn = openAutocommitConnection();
-                    Statement stmt = conn.createStatement()) {
-                stmt.setQueryTimeout(STATEMENT_TIMEOUT_SECONDS);
-                stmt.execute(CREATE_SCHEMA_SQL);
-                stmt.execute(CREATE_TABLE_SQL);
-                stmt.execute(ALTER_OWNER_SQL);
-                stmt.execute(ALTER_EPOCH_SQL);
-                stmt.execute(ALTER_EXPIRES_SQL);
-                stmt.execute(ALTER_CANCEL_REQ_SQL);
-                stmt.execute(ALTER_CANCEL_REASON_SQL);
-                return null;
-            } catch (SQLException e) {
-                throw new IllegalStateException(
-                        "Failed to initialize repo_sink.sink_jobs schema", e);
-            }
-        });
     }
 
     @Override

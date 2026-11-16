@@ -1,31 +1,25 @@
 package ai.protomolt.proto.emit.parquet;
 
-import ai.protomolt.proto.descriptors.DescriptorFingerprints;
-import ai.protomolt.proto.emit.parquet.v1.ParquetMaskStrategy;
+import static ai.protomolt.proto.emit.parquet.ParquetInputChecks.requireNoUnknownWireFields;
+import static ai.protomolt.proto.emit.parquet.ParquetInputChecks.validateMessageRules;
+import static ai.protomolt.proto.emit.parquet.ParquetInputChecks.validateRowSchemaAndColumns;
+import static ai.protomolt.proto.emit.parquet.ParquetOptionChecks.OPTIONS_FINGERPRINT;
+import static ai.protomolt.proto.emit.parquet.ParquetOptionChecks.extractSelectedColumns;
+import static ai.protomolt.proto.emit.parquet.ParquetOptionChecks.parseAndValidateOptions;
+import static ai.protomolt.proto.emit.parquet.ParquetOptionChecks.toExportOptions;
+
 import ai.protomolt.proto.emit.parquet.v1.ParquetRendererOptions;
 import ai.protomolt.proto.emit.renderer.RenderFailure;
 import ai.protomolt.proto.emit.renderer.RendererProvider;
 import ai.protomolt.proto.emit.v1.RendererCapability;
-import ai.protomolt.proto.meta.SensitivityMasker;
 import ai.protomolt.proto.projection.MessageProjection;
-import ai.protomolt.proto.projection.ProjectionException;
 import ai.protomolt.proto.validate.ProtoValidator;
-import ai.protomolt.proto.validate.RuleCompilationException;
-import ai.protomolt.proto.validate.RuleEvaluationException;
 import ai.protomolt.proto.validate.ValidationResult;
 import com.google.protobuf.Descriptors.Descriptor;
-import com.google.protobuf.Descriptors.EnumValueDescriptor;
 import com.google.protobuf.Descriptors.FieldDescriptor;
-import com.google.protobuf.DynamicMessage;
-import com.google.protobuf.InvalidProtocolBufferException;
 import com.google.protobuf.Message;
-
 import java.io.IOException;
 import java.io.OutputStream;
-import java.util.ArrayDeque;
-import java.util.ArrayList;
-import java.util.Deque;
-import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Objects;
 import java.util.Set;
@@ -81,11 +75,6 @@ public final class ParquetRendererProvider implements RendererProvider {
     /** Hard upper ceiling permitted for {@code maxOutputBytes} (64 MiB). */
     public static final int HARD_MAX_OUTPUT_BYTES = 64 * 1024 * 1024;
 
-    private static final String ANY_FULL_NAME = "google.protobuf.Any";
-    private static final int MAX_MESSAGE_WALK_DEPTH = 128;
-    private static final String OPTIONS_FINGERPRINT =
-            DescriptorFingerprints.fingerprintOf(ParquetRendererOptions.getDescriptor());
-
     private static final String SINGLE_DOCUMENT_LOSS_DESCRIPTION =
             "Derived non-authoritative columnar Parquet artifact (1 row per selected protobuf "
                     + "message); does not replace authoritative protobuf state, omits unknown "
@@ -95,9 +84,7 @@ public final class ParquetRendererProvider implements RendererProvider {
                     + "Parquet UINT_64 logical annotations over signed INT64 physical storage.";
 
     private final RendererCapability capability;
-    private final Descriptor declaredSourceDescriptor;
-    private final FieldDescriptor repeatedRowsField;
-    private final MessageProjection projection;
+    private final ParquetRowMode mode;
 
     /**
      * Default no-argument constructor for {@link java.util.ServiceLoader} discovery: creates the
@@ -111,20 +98,12 @@ public final class ParquetRendererProvider implements RendererProvider {
                         SINGLE_DOCUMENT_LOSS_DESCRIPTION,
                         DEFAULT_MAX_INPUT_BYTES,
                         DEFAULT_MAX_OUTPUT_BYTES),
-                null,
-                null,
-                null);
+                SingleDocumentRows.INSTANCE);
     }
 
-    private ParquetRendererProvider(
-            RendererCapability capability,
-            Descriptor declaredSourceDescriptor,
-            FieldDescriptor repeatedRowsField,
-            MessageProjection projection) {
+    private ParquetRendererProvider(RendererCapability capability, ParquetRowMode mode) {
         this.capability = Objects.requireNonNull(capability, "capability");
-        this.declaredSourceDescriptor = declaredSourceDescriptor;
-        this.repeatedRowsField = repeatedRowsField;
-        this.projection = projection;
+        this.mode = Objects.requireNonNull(mode, "mode");
     }
 
     /**
@@ -143,9 +122,7 @@ public final class ParquetRendererProvider implements RendererProvider {
                         SINGLE_DOCUMENT_LOSS_DESCRIPTION,
                         maxInputBytes,
                         maxOutputBytes),
-                null,
-                null,
-                null);
+                SingleDocumentRows.INSTANCE);
     }
 
     /**
@@ -200,9 +177,7 @@ public final class ParquetRendererProvider implements RendererProvider {
         String loss = projectedLossDescription(sourceDescriptor, null, projection.targetType());
         return new ParquetRendererProvider(
                 buildCapability(providerId, sourceProfile, loss, maxInputBytes, maxOutputBytes),
-                sourceDescriptor,
-                null,
-                projection);
+                new ProjectedRows(sourceDescriptor, projection));
     }
 
     /**
@@ -282,9 +257,7 @@ public final class ParquetRendererProvider implements RendererProvider {
                 sourceDescriptor, repeatedRowsField, projection.targetType());
         return new ParquetRendererProvider(
                 buildCapability(providerId, sourceProfile, loss, maxInputBytes, maxOutputBytes),
-                sourceDescriptor,
-                repeatedRowsField,
-                projection);
+                new RepeatedProjectedRows(sourceDescriptor, repeatedRowsField, projection));
     }
 
     @Override
@@ -357,12 +330,8 @@ public final class ParquetRendererProvider implements RendererProvider {
         ParquetExportOptions exportOptions = toExportOptions(typedOptions, selectedColumns);
 
         Descriptor inputDescriptor = input.getDescriptorForType();
-        if (projection != null) {
-            verifyDeclaredSourceCompatibility(inputDescriptor);
-        }
-
-        Descriptor rowDescriptor =
-                projection != null ? projection.targetType() : inputDescriptor;
+        mode.verifySource(capability.getProviderId(), inputDescriptor);
+        Descriptor rowDescriptor = mode.rowDescriptor(inputDescriptor);
         validateRowSchemaAndColumns(rowDescriptor, selectedColumns);
 
         // Refuse unknown wire fields anywhere on the input so unmodeled wire extensions are
@@ -373,488 +342,11 @@ public final class ParquetRendererProvider implements RendererProvider {
         // projection or masking runs.
         validateMessageRules(inputDescriptor, input, -1);
 
-        List<Message> rows;
-        if (projection == null) {
-            requireRecognizedEnumsInSelectedColumns(input, selectedColumns, cancellation);
-            rows = List.of(input);
-        } else if (repeatedRowsField == null) {
-            requireRecognizedEnumsInSelectedColumns(input, Set.of(), cancellation);
-            Message projectedRow = projectSingleRow(input, -1);
-            requireNoUnknownWireFields(projectedRow, cancellation);
-            requireRecognizedEnumsInSelectedColumns(projectedRow, selectedColumns, cancellation);
-            validateMessageRules(rowDescriptor, projectedRow, 0);
-            rows = List.of(projectedRow);
-        } else {
-            requireRecognizedEnumsInSelectedColumns(input, Set.of(), cancellation);
-            FieldDescriptor inputRepeatedField =
-                    inputDescriptor.findFieldByNumber(repeatedRowsField.getNumber());
-            int count = input.getRepeatedFieldCount(inputRepeatedField);
-            List<Message> projectedRows = new ArrayList<>(count);
-            ProtoValidator rowValidator = ProtoValidator.forMessageType(rowDescriptor);
-            for (int i = 0; i < count; i++) {
-                cancellation.check();
-                Message element = (Message) input.getRepeatedField(inputRepeatedField, i);
-                Message projectedRow = projectSingleRow(element, i);
-                requireNoUnknownWireFields(projectedRow, cancellation);
-                requireRecognizedEnumsInSelectedColumns(
-                        projectedRow, selectedColumns, cancellation);
-                ValidationResult rowValidation = evaluateRules(rowValidator, projectedRow);
-                if (!rowValidation.valid()) {
-                    throw new RenderFailure(
-                            RenderFailure.Kind.INVALID,
-                            formatValidationFailure(rowDescriptor, i, rowValidation));
-                }
-                projectedRows.add(projectedRow);
-            }
-            rows = List.copyOf(projectedRows);
-        }
+        List<Message> rows = mode.rows(input, selectedColumns, cancellation);
 
         cancellation.check();
         return new PreparedRender(
                 rowDescriptor, rows, exportOptions, effectiveMaxOutputBytes);
-    }
-
-    private Message projectSingleRow(Message sourceElement, int rowIndex) throws RenderFailure {
-        try {
-            return projection.project(sourceElement);
-        } catch (ProjectionException failure) {
-            String prefix = rowIndex >= 0
-                    ? "Row " + rowIndex + " failed declared projection to "
-                            + projection.targetType().getFullName() + ": "
-                    : "Source failed declared projection to "
-                            + projection.targetType().getFullName() + ": ";
-            throw new RenderFailure(
-                    RenderFailure.Kind.UNSUPPORTED, prefix + failure.getMessage(), failure);
-        }
-    }
-
-    private ParquetRendererOptions parseAndValidateOptions(Message options) throws RenderFailure {
-        Descriptor suppliedDesc = options.getDescriptorForType();
-        if (!suppliedDesc.getFullName().equals(ParquetRendererOptions.getDescriptor().getFullName())
-                || !DescriptorFingerprints.fingerprintOf(suppliedDesc).equals(OPTIONS_FINGERPRINT)) {
-            throw new RenderFailure(
-                    RenderFailure.Kind.INVALID,
-                    "Options descriptor '" + suppliedDesc.getFullName()
-                            + "' does not match capability options '"
-                            + ParquetRendererOptions.getDescriptor().getFullName() + "'");
-        }
-        requireNoUnknownOptionFields(options);
-        ParquetRendererOptions typed;
-        if (options instanceof ParquetRendererOptions direct) {
-            typed = direct;
-        } else {
-            try {
-                typed = ParquetRendererOptions.parseFrom(options.toByteString());
-            } catch (InvalidProtocolBufferException failure) {
-                throw new RenderFailure(
-                        RenderFailure.Kind.INVALID,
-                        "Malformed binary ParquetRendererOptions: " + failure.getMessage(),
-                        failure);
-            }
-        }
-        if (!typed.getUnknownFields().asMap().isEmpty()) {
-            throw new RenderFailure(
-                    RenderFailure.Kind.INVALID,
-                    "Unknown fields are not allowed on ParquetRendererOptions");
-        }
-        if (typed.getMaskStrategy() == ParquetMaskStrategy.UNRECOGNIZED) {
-            throw new RenderFailure(
-                    RenderFailure.Kind.INVALID,
-                    "Unrecognized ParquetMaskStrategy value: " + typed.getMaskStrategyValue());
-        }
-        ValidationResult validation =
-                ProtoValidator.forMessageType(ParquetRendererOptions.getDescriptor())
-                        .validate(typed);
-        if (!validation.valid()) {
-            throw new RenderFailure(
-                    RenderFailure.Kind.INVALID,
-                    formatValidationFailure(
-                            ParquetRendererOptions.getDescriptor(), -1, validation));
-        }
-        return typed;
-    }
-
-    private static Set<String> extractSelectedColumns(ParquetRendererOptions options)
-            throws RenderFailure {
-        if (options.getColumnsCount() == 0) {
-            return Set.of();
-        }
-        Set<String> columns = new LinkedHashSet<>(options.getColumnsCount());
-        for (String col : options.getColumnsList()) {
-            if (col == null || col.isBlank()) {
-                throw new RenderFailure(
-                        RenderFailure.Kind.INVALID,
-                        "ParquetRendererOptions.columns must not contain blank column names");
-            }
-            if (!columns.add(col)) {
-                throw new RenderFailure(
-                        RenderFailure.Kind.INVALID,
-                        "ParquetRendererOptions.columns contains duplicate column '" + col + "'");
-            }
-        }
-        return Set.copyOf(columns);
-    }
-
-    private static ParquetExportOptions toExportOptions(
-            ParquetRendererOptions options, Set<String> selectedColumns) throws RenderFailure {
-        if (options.getMaskedSensitivityClassesCount() == 0) {
-            return new ParquetExportOptions(selectedColumns, Set.of(), null, null, false);
-        }
-        Set<String> classes = new LinkedHashSet<>(options.getMaskedSensitivityClassesCount());
-        for (String sensitivityClass : options.getMaskedSensitivityClassesList()) {
-            if (sensitivityClass == null || sensitivityClass.isBlank()) {
-                throw new RenderFailure(
-                        RenderFailure.Kind.INVALID,
-                        "masked_sensitivity_classes must not contain blank entries");
-            }
-            if (!classes.add(sensitivityClass)) {
-                throw new RenderFailure(
-                        RenderFailure.Kind.INVALID,
-                        "Duplicate sensitivity class '" + sensitivityClass + "'");
-            }
-        }
-        SensitivityMasker.Strategy strategy = switch (options.getMaskStrategy()) {
-            case PARQUET_MASK_STRATEGY_UNSPECIFIED, PARQUET_MASK_STRATEGY_REDACT ->
-                    SensitivityMasker.Strategy.REDACT;
-            case PARQUET_MASK_STRATEGY_REMOVE -> SensitivityMasker.Strategy.REMOVE;
-            case UNRECOGNIZED -> throw new RenderFailure(
-                    RenderFailure.Kind.INVALID,
-                    "Unrecognized ParquetMaskStrategy: " + options.getMaskStrategyValue());
-        };
-        return new ParquetExportOptions(
-                selectedColumns, Set.copyOf(classes), strategy, null, false);
-    }
-
-    private void verifyDeclaredSourceCompatibility(Descriptor actualSource) throws RenderFailure {
-        if (!actualSource.getFullName().equals(declaredSourceDescriptor.getFullName())) {
-            throw new RenderFailure(
-                    RenderFailure.Kind.UNSUPPORTED,
-                    "Provider '" + capability.getProviderId() + "' expects source type '"
-                            + declaredSourceDescriptor.getFullName() + "', got '"
-                            + actualSource.getFullName() + "'");
-        }
-        if (repeatedRowsField != null) {
-            FieldDescriptor actualField =
-                    actualSource.findFieldByNumber(repeatedRowsField.getNumber());
-            if (actualField == null
-                    || !actualField.getName().equals(repeatedRowsField.getName())
-                    || !actualField.isRepeated()
-                    || actualField.isMapField()
-                    || actualField.getJavaType() != FieldDescriptor.JavaType.MESSAGE
-                    || !actualField.getMessageType().getFullName()
-                            .equals(repeatedRowsField.getMessageType().getFullName())) {
-                throw new RenderFailure(
-                        RenderFailure.Kind.UNSUPPORTED,
-                        "Source descriptor '" + actualSource.getFullName()
-                                + "' is incompatible with declared repeated row field '"
-                                + repeatedRowsField.getName() + "'");
-            }
-            verifyFieldsCompatible(repeatedRowsField.getMessageType(), actualField.getMessageType());
-        } else {
-            verifyFieldsCompatible(declaredSourceDescriptor, actualSource);
-        }
-    }
-
-    private static void verifyFieldsCompatible(Descriptor expected, Descriptor actual)
-            throws RenderFailure {
-        for (FieldDescriptor expectedField : expected.getFields()) {
-            FieldDescriptor actualField = actual.findFieldByNumber(expectedField.getNumber());
-            if (actualField == null
-                    || !actualField.getName().equals(expectedField.getName())
-                    || actualField.getType() != expectedField.getType()
-                    || actualField.isRepeated() != expectedField.isRepeated()
-                    || actualField.isMapField() != expectedField.isMapField()) {
-                throw new RenderFailure(
-                        RenderFailure.Kind.UNSUPPORTED,
-                        "Source descriptor '" + actual.getFullName()
-                                + "' is structurally incompatible on field '"
-                                + expectedField.getName() + "' (#" + expectedField.getNumber()
-                                + ")");
-            }
-            if (expectedField.getJavaType() == FieldDescriptor.JavaType.MESSAGE
-                    && !actualField.getMessageType().getFullName()
-                            .equals(expectedField.getMessageType().getFullName())) {
-                throw new RenderFailure(
-                        RenderFailure.Kind.UNSUPPORTED,
-                        "Source descriptor '" + actual.getFullName()
-                                + "' differs in message type for field '"
-                                + expectedField.getName() + "'");
-            }
-        }
-    }
-
-    private static void validateRowSchemaAndColumns(
-            Descriptor rowDescriptor, Set<String> selectedColumns) throws RenderFailure {
-        if (rowDescriptor.getFields().isEmpty()) {
-            throw new RenderFailure(
-                    RenderFailure.Kind.UNSUPPORTED,
-                    "Empty message schema '" + rowDescriptor.getFullName()
-                            + "' has zero columns and cannot be rendered as Parquet");
-        }
-        List<FieldDescriptor> topFields;
-        if (selectedColumns.isEmpty()) {
-            topFields = rowDescriptor.getFields();
-        } else {
-            topFields = new ArrayList<>(selectedColumns.size());
-            for (String column : selectedColumns) {
-                FieldDescriptor field = rowDescriptor.findFieldByName(column);
-                if (field == null) {
-                    throw new RenderFailure(
-                            RenderFailure.Kind.INVALID,
-                            "Unknown column '" + column + "' on row schema '"
-                                    + rowDescriptor.getFullName() + "'");
-                }
-                topFields.add(field);
-            }
-            if (topFields.isEmpty()) {
-                throw new RenderFailure(
-                        RenderFailure.Kind.INVALID,
-                        "Selected column list produced zero columns on '"
-                                + rowDescriptor.getFullName() + "'");
-            }
-        }
-
-        Deque<String> ancestry = new ArrayDeque<>();
-        ancestry.push(rowDescriptor.getFullName());
-        for (FieldDescriptor field : topFields) {
-            inspectFieldSchema(field, field.getName(), ancestry);
-        }
-        ancestry.pop();
-
-        try {
-            ProtoParquetSchemas.schema(
-                    rowDescriptor, ProtoParquetSchemas.FieldIdResolver.NONE, selectedColumns);
-        } catch (IllegalArgumentException schemaFailure) {
-            throw new RenderFailure(
-                    RenderFailure.Kind.UNSUPPORTED, schemaFailure.getMessage(), schemaFailure);
-        }
-    }
-
-    private static void inspectFieldSchema(
-            FieldDescriptor field, String path, Deque<String> ancestry) throws RenderFailure {
-        if (field.getType() == FieldDescriptor.Type.GROUP) {
-            throw new RenderFailure(
-                    RenderFailure.Kind.UNSUPPORTED,
-                    "Proto2 group field '" + path + "' is not supported for Parquet");
-        }
-        if (field.isMapField()) {
-            FieldDescriptor valueField = field.getMessageType().findFieldByName("value");
-            inspectFieldSchema(valueField, path + ".value", ancestry);
-            return;
-        }
-        if (field.getJavaType() != FieldDescriptor.JavaType.MESSAGE) {
-            return;
-        }
-        Descriptor nested = field.getMessageType();
-        String fullName = nested.getFullName();
-        if (ANY_FULL_NAME.equals(fullName)) {
-            throw new RenderFailure(
-                    RenderFailure.Kind.UNSUPPORTED,
-                    "Opaque google.protobuf.Any field '" + path
-                            + "' cannot be rendered directly to Parquet; select an unpacked Any "
-                            + "occurrence source, exclude the column via ParquetRendererOptions."
-                            + "columns, or configure a declared MessageProjection profile");
-        }
-        if (ProtoParquetSchemas.TIMESTAMP.equals(fullName)
-                || ProtoParquetSchemas.JSON_TYPES.contains(fullName)) {
-            return;
-        }
-        if (ancestry.contains(fullName)) {
-            throw new RenderFailure(
-                    RenderFailure.Kind.UNSUPPORTED,
-                    "Recursive message schema at '" + path + "' ("
-                            + String.join(" -> ", ancestry.reversed()) + " -> " + fullName
-                            + ") cannot be rendered as a columnar Parquet file");
-        }
-        if (nested.getFields().isEmpty()) {
-            throw new RenderFailure(
-                    RenderFailure.Kind.UNSUPPORTED,
-                    "Empty nested message schema '" + fullName + "' at '" + path
-                            + "' has zero columns and cannot be rendered as Parquet");
-        }
-        ancestry.push(fullName);
-        for (FieldDescriptor child : nested.getFields()) {
-            inspectFieldSchema(child, path + "." + child.getName(), ancestry);
-        }
-        ancestry.pop();
-    }
-
-    private static void requireNoUnknownOptionFields(Message root) throws RenderFailure {
-        Deque<Message> stack = new ArrayDeque<>();
-        stack.push(root);
-        while (!stack.isEmpty()) {
-            Message current = stack.pop();
-            if (!current.getUnknownFields().asMap().isEmpty()) {
-                throw new RenderFailure(
-                        RenderFailure.Kind.INVALID,
-                        "Unknown fields are not permitted on "
-                                + current.getDescriptorForType().getFullName());
-            }
-            for (var entry : current.getAllFields().entrySet()) {
-                FieldDescriptor field = entry.getKey();
-                if (field.getJavaType() != FieldDescriptor.JavaType.MESSAGE) {
-                    continue;
-                }
-                if (field.isRepeated()) {
-                    for (Object item : (List<?>) entry.getValue()) {
-                        stack.push((Message) item);
-                    }
-                } else {
-                    stack.push((Message) entry.getValue());
-                }
-            }
-        }
-    }
-
-    private static void requireNoUnknownWireFields(Message root, Cancellation cancellation)
-            throws RenderFailure {
-        record Frame(Message message, int depth) {}
-        Deque<Frame> stack = new ArrayDeque<>();
-        stack.push(new Frame(root, 0));
-        while (!stack.isEmpty()) {
-            cancellation.check();
-            Frame frame = stack.pop();
-            if (frame.depth() > MAX_MESSAGE_WALK_DEPTH) {
-                throw new RenderFailure(
-                        RenderFailure.Kind.LIMIT,
-                        "Input message exceeds maximum nesting depth ("
-                                + MAX_MESSAGE_WALK_DEPTH + ")");
-            }
-            Message current = frame.message();
-            if (!current.getUnknownFields().asMap().isEmpty()) {
-                throw new RenderFailure(
-                        RenderFailure.Kind.UNSUPPORTED,
-                        "Source message '" + current.getDescriptorForType().getFullName()
-                                + "' contains unknown wire fields "
-                                + current.getUnknownFields().asMap().keySet()
-                                + " which would be lost in Parquet conversion");
-            }
-            for (var entry : current.getAllFields().entrySet()) {
-                FieldDescriptor field = entry.getKey();
-                if (field.getJavaType() != FieldDescriptor.JavaType.MESSAGE) {
-                    continue;
-                }
-                if (field.isRepeated()) {
-                    List<?> items = (List<?>) entry.getValue();
-                    for (int i = items.size() - 1; i >= 0; i--) {
-                        stack.push(new Frame((Message) items.get(i), frame.depth() + 1));
-                    }
-                } else {
-                    stack.push(new Frame((Message) entry.getValue(), frame.depth() + 1));
-                }
-            }
-        }
-    }
-
-    private static void requireRecognizedEnumsInSelectedColumns(
-            Message root, Set<String> selectedTopColumns, Cancellation cancellation)
-            throws RenderFailure {
-        record EnumFrame(Message message, String pathPrefix, boolean rootLevel, int depth) {}
-        Deque<EnumFrame> stack = new ArrayDeque<>();
-        stack.push(new EnumFrame(root, "", true, 0));
-        while (!stack.isEmpty()) {
-            cancellation.check();
-            EnumFrame frame = stack.pop();
-            if (frame.depth() > MAX_MESSAGE_WALK_DEPTH) {
-                throw new RenderFailure(
-                        RenderFailure.Kind.LIMIT,
-                        "Message exceeds maximum nesting depth (" + MAX_MESSAGE_WALK_DEPTH + ")");
-            }
-            Message msg = frame.message();
-            for (var entry : msg.getAllFields().entrySet()) {
-                FieldDescriptor field = entry.getKey();
-                if (frame.rootLevel()
-                        && !selectedTopColumns.isEmpty()
-                        && !selectedTopColumns.contains(field.getName())) {
-                    continue;
-                }
-                String path = frame.pathPrefix().isEmpty()
-                        ? field.getName()
-                        : frame.pathPrefix() + "." + field.getName();
-                if (field.getJavaType() == FieldDescriptor.JavaType.ENUM) {
-                    if (field.isRepeated()) {
-                        List<?> values = (List<?>) entry.getValue();
-                        for (int i = 0; i < values.size(); i++) {
-                            checkEnumValue(
-                                    field,
-                                    (EnumValueDescriptor) values.get(i),
-                                    path + "[" + i + "]");
-                        }
-                    } else {
-                        checkEnumValue(field, (EnumValueDescriptor) entry.getValue(), path);
-                    }
-                } else if (field.getJavaType() == FieldDescriptor.JavaType.MESSAGE) {
-                    if (ANY_FULL_NAME.equals(field.getMessageType().getFullName())) {
-                        continue;
-                    }
-                    if (field.isRepeated()) {
-                        List<?> items = (List<?>) entry.getValue();
-                        for (int i = items.size() - 1; i >= 0; i--) {
-                            stack.push(new EnumFrame(
-                                    (Message) items.get(i),
-                                    path + "[" + i + "]",
-                                    false,
-                                    frame.depth() + 1));
-                        }
-                    } else {
-                        stack.push(new EnumFrame(
-                                (Message) entry.getValue(), path, false, frame.depth() + 1));
-                    }
-                }
-            }
-        }
-    }
-
-    private static void checkEnumValue(
-            FieldDescriptor field, EnumValueDescriptor value, String path) throws RenderFailure {
-        if (value.getIndex() < 0
-                || field.getEnumType().findValueByNumber(value.getNumber()) == null) {
-            throw new RenderFailure(
-                    RenderFailure.Kind.UNSUPPORTED,
-                    "Unrecognized enum number " + value.getNumber() + " at '" + path
-                            + "' for enum " + field.getEnumType().getFullName());
-        }
-    }
-
-    private static void validateMessageRules(
-            Descriptor descriptor, Message message, int rowIndex) throws RenderFailure {
-        ValidationResult result =
-                evaluateRules(ProtoValidator.forMessageType(descriptor), message);
-        if (!result.valid()) {
-            throw new RenderFailure(
-                    RenderFailure.Kind.INVALID,
-                    formatValidationFailure(descriptor, rowIndex, result));
-        }
-    }
-
-    private static ValidationResult evaluateRules(ProtoValidator validator, Message message)
-            throws RenderFailure {
-        try {
-            return validator.validate(message);
-        } catch (RuleCompilationException | RuleEvaluationException failure) {
-            throw new RenderFailure(
-                    RenderFailure.Kind.INVALID,
-                    "Validation rule evaluation failed on "
-                            + message.getDescriptorForType().getFullName() + ": "
-                            + failure.getMessage(),
-                    failure);
-        }
-    }
-
-    private static String formatValidationFailure(
-            Descriptor descriptor, int rowIndex, ValidationResult result) {
-        StringBuilder sb = new StringBuilder();
-        if (rowIndex >= 0) {
-            sb.append("Row ").append(rowIndex).append(" of type ");
-        } else {
-            sb.append("Message of type ");
-        }
-        sb.append(descriptor.getFullName()).append(" failed validation:");
-        for (ValidationResult.Violation violation : result.violations()) {
-            sb.append(" [").append(violation.path()).append("] ")
-                    .append(violation.ruleId()).append(": ").append(violation.message());
-        }
-        return sb.toString();
     }
 
     private static RendererCapability buildCapability(
