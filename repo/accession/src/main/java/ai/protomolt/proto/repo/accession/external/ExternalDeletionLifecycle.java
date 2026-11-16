@@ -5,6 +5,7 @@ import static ai.protomolt.proto.repo.accession.external.ExternalLedgerStore.isT
 import static ai.protomolt.proto.repo.accession.external.ExternalLedgerStore.lastAttemptStartedAt;
 import static ai.protomolt.proto.repo.accession.external.ExternalLedgerStore.lastAttemptTrigger;
 import static ai.protomolt.proto.repo.accession.external.ExternalLedgerStore.optionalCurrentLink;
+import static ai.protomolt.proto.repo.accession.external.ExternalLedgerStore.refusedByProvider;
 import static ai.protomolt.proto.repo.accession.external.ExternalLedgerStore.replaceAttempt;
 import static ai.protomolt.proto.repo.accession.external.ExternalLedgerStore.replaceOperation;
 import static ai.protomolt.proto.repo.accession.external.ExternalLedgerStore.sanitizeMessage;
@@ -318,10 +319,29 @@ final class ExternalDeletionLifecycle {
         try {
             callResult = gateway.execute(new ExternalProviderGateway.ProviderCallRequest(
                     operationId, intentSha256, intent, outboundAuth));
-        } catch (StatusRuntimeException transportFailure) {
-            callResult = new ExternalProviderGateway.ProviderCallResult.Unresolved(
-                    "ENDPOINT_" + transportFailure.getStatus().getCode().name(),
-                    sanitizeMessage(transportFailure.getMessage()));
+        } catch (StatusRuntimeException callFailure) {
+            callResult = ExternalProviderGateway.ProviderCallResult.fromCallFailure(callFailure);
+        }
+
+        if (callResult instanceof ExternalProviderGateway.ProviderCallResult.Refused refused) {
+            // The provider turned the deletion down, so the object is still there: the
+            // operation fails and the link stays owed a deletion.
+            Timestamp finishedAt = timestamp(clock.instant());
+            ExternalPublicationLedger updated = ledgers.updateLedgerWithCas(
+                    ledgerAddr,
+                    sourceAddress,
+                    bindingId,
+                    retainedSecurity,
+                    "ext-del-refused:" + operationId + ":" + attemptNumber + ":" + UUID.randomUUID(),
+                    current -> replaceOperation(current, refusedByProvider(
+                            findOperation(current, operationId).orElseThrow(),
+                            attemptNumber, startedAt, finishedAt,
+                            refused.diagnosticCode(), refused.diagnosticMessage())));
+            return new ExternalPublicationCoordinator.OperationResult(
+                    findOperation(updated, operationId).orElseThrow(),
+                    optionalCurrentLink(updated),
+                    false,
+                    false);
         }
 
         if (callResult instanceof ExternalProviderGateway.ProviderCallResult.Unresolved unresolved) {

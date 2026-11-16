@@ -2,6 +2,7 @@ package ai.protomolt.proto.repo.accession.external;
 
 import ai.protomolt.proto.repo.external.v1.ExternalAttemptTrigger;
 import ai.protomolt.proto.repo.external.v1.ExternalLink;
+import ai.protomolt.proto.repo.external.v1.ExternalPendingPhase;
 import ai.protomolt.proto.repo.external.v1.ExternalPublicationAttempt;
 import ai.protomolt.proto.repo.external.v1.ExternalPublicationLedger;
 import ai.protomolt.proto.repo.external.v1.ExternalPublicationOperationRecord;
@@ -326,6 +327,39 @@ final class ExternalLedgerStore {
             return fallback;
         }
         return op.getAttempts(op.getAttemptsCount() - 1).getStartedAt();
+    }
+
+    /**
+     * The operation after its provider refused attempt {@code attemptNumber}: failed, with the
+     * refusal as its failure. An operation already settled is returned unchanged.
+     */
+    static ExternalPublicationOperationRecord refusedByProvider(
+            ExternalPublicationOperationRecord op,
+            int attemptNumber,
+            Timestamp fallbackStartedAt,
+            Timestamp finishedAt,
+            String diagnosticCode,
+            String diagnosticMessage) {
+        if (isTerminalOutcome(op.getOutcome())) {
+            return op;
+        }
+        String message = sanitizeMessage(diagnosticMessage);
+        ExternalPublicationAttempt refusedAttempt = ExternalPublicationAttempt.newBuilder()
+                .setAttemptNumber(attemptNumber)
+                .setTrigger(lastAttemptTrigger(op))
+                .setOutcome(ExternalPublicationOutcome.EXTERNAL_PUBLICATION_OUTCOME_FAILED)
+                .setStartedAt(lastAttemptStartedAt(op, fallbackStartedAt))
+                .setFinishedAt(finishedAt)
+                .setDiagnosticCode(diagnosticCode)
+                .setDiagnosticMessage(message)
+                .build();
+        return replaceAttempt(op, refusedAttempt)
+                .setOutcome(ExternalPublicationOutcome.EXTERNAL_PUBLICATION_OUTCOME_FAILED)
+                .setPendingPhase(ExternalPendingPhase.EXTERNAL_PENDING_PHASE_UNSPECIFIED)
+                .setFailureCode(diagnosticCode)
+                .setFailureMessage(message)
+                .setUpdatedAt(finishedAt)
+                .build();
     }
 
     static Optional<ExternalLink> optionalCurrentLink(ExternalPublicationLedger ledger) {

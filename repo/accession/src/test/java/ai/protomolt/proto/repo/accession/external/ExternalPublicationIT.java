@@ -454,6 +454,54 @@ class ExternalPublicationIT {
     }
 
     @Test
+    void aProviderRefusalFailsThePublicationInsteadOfLeavingItPendingForever(
+            @TempDir Path tempDir) throws Exception {
+        SimulatedManagedSearchProvider provider = new SimulatedManagedSearchProvider();
+        try (Harness h = Harness.boot(tempDir, provider)) {
+            h.saveActiveBinding(
+                    "tenant-alpha",
+                    "rust-search",
+                    "search-profile-v1",
+                    "ingest",
+                    "corpus-main",
+                    "ns-alpha",
+                    ExternalRetentionPolicy.EXTERNAL_RETENTION_POLICY_RETAIN_HISTORY,
+                    "op-bind-1");
+            NodeAddress sourceAddr = sourceAddress("tenant-alpha", "doc-refused");
+            h.saveSourceDocument("save-refused", sourceAddr, 0L, "Refused", "alice");
+
+            // The provider answered, and its answer is no: nothing was published.
+            provider.nextExecuteBehavior = ctx -> {
+                throw Status.PERMISSION_DENIED.withDescription("token revoked").asRuntimeException();
+            };
+            ExternalPublicationCoordinator.OperationResult refused = h.coordinator.publish(
+                    new ExternalPublicationCoordinator.PublishRequest(
+                            "pub-refused", sourceAddr, 1L, "rust-search", 1L, "ext-refused",
+                            null, null));
+            assertThat(refused.operation().getOutcome())
+                    .isEqualTo(ExternalPublicationOutcome.EXTERNAL_PUBLICATION_OUTCOME_FAILED);
+            assertThat(refused.operation().getFailureCode())
+                    .isEqualTo("ENDPOINT_PERMISSION_DENIED");
+            assertThat(refused.operation().getPendingPhase())
+                    .isEqualTo(ExternalPendingPhase.EXTERNAL_PENDING_PHASE_UNSPECIFIED);
+            assertThat(refused.currentLink()).isEmpty();
+
+            // An outage says nothing about whether the provider acted: that stays pending.
+            provider.nextExecuteBehavior = ctx -> {
+                throw Status.UNAVAILABLE.withDescription("connection reset").asRuntimeException();
+            };
+            ExternalPublicationCoordinator.OperationResult lost = h.coordinator.publish(
+                    new ExternalPublicationCoordinator.PublishRequest(
+                            "pub-lost", sourceAddr, 1L, "rust-search", 1L, "ext-refused",
+                            null, null));
+            assertThat(lost.operation().getOutcome())
+                    .isEqualTo(ExternalPublicationOutcome.EXTERNAL_PUBLICATION_OUTCOME_PENDING);
+            assertThat(lost.operation().getPendingPhase())
+                    .isEqualTo(ExternalPendingPhase.EXTERNAL_PENDING_PHASE_UNRESOLVED_LOST_REPLY);
+        }
+    }
+
+    @Test
     void lostReplyReconcilesToConfirmedOrFailedWithoutDuplicateProviderExecution(
             @TempDir Path tempDir) throws Exception {
         SimulatedManagedSearchProvider provider = new SimulatedManagedSearchProvider();

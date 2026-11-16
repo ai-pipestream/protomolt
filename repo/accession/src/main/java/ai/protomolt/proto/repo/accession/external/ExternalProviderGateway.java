@@ -6,6 +6,7 @@ import ai.protomolt.proto.repo.external.v1.ExternalProviderEvidence;
 import ai.protomolt.proto.repo.external.v1.ExternalPublicationIntent;
 import ai.protomolt.proto.repo.external.v1.ExternalSystemBinding;
 import io.grpc.Metadata;
+import io.grpc.StatusRuntimeException;
 import java.util.Objects;
 
 /**
@@ -95,7 +96,30 @@ public interface ExternalProviderGateway {
 
     /** Outcome of one outbound {@link #execute(ProviderCallRequest)} attempt. */
     sealed interface ProviderCallResult
-            permits ProviderCallResult.Receipt, ProviderCallResult.Unresolved {
+            permits ProviderCallResult.Receipt,
+                    ProviderCallResult.Refused,
+                    ProviderCallResult.Unresolved {
+
+        /**
+         * Classifies a call that ended in a gRPC status instead of a receipt. A status that
+         * means the provider turned the request down before acting on it is a refusal: the
+         * operation failed and retrying the same request cannot succeed. Every other status
+         * leaves it unknown whether the provider acted, so the operation stays unresolved
+         * until it is reconciled.
+         *
+         * @param failure the status the call ended with
+         * @return {@link Refused} or {@link Unresolved}, never a receipt
+         */
+        static ProviderCallResult fromCallFailure(StatusRuntimeException failure) {
+            String code = "ENDPOINT_" + failure.getStatus().getCode().name();
+            String message = failure.getMessage() == null ? code : failure.getMessage();
+            return switch (failure.getStatus().getCode()) {
+                case INVALID_ARGUMENT, PERMISSION_DENIED, UNAUTHENTICATED, UNIMPLEMENTED,
+                        FAILED_PRECONDITION, OUT_OF_RANGE, NOT_FOUND ->
+                        new Refused(code, message);
+                default -> new Unresolved(code, message);
+            };
+        }
 
         /**
          * Structured provider receipt subject to {@link ExternalProviderVerifier} validation.
@@ -106,6 +130,22 @@ public interface ExternalProviderGateway {
             /** Validates non-null evidence. */
             public Receipt {
                 Objects.requireNonNull(evidence, "evidence");
+            }
+        }
+
+        /**
+         * The provider turned the request down before acting on it: not authorized, not
+         * valid, or not supported. External state is unchanged and the operation has failed.
+         *
+         * @param diagnosticCode bounded machine diagnostic code
+         * @param diagnosticMessage non-secret diagnostic summary, sanitized before it is stored
+         */
+        record Refused(String diagnosticCode, String diagnosticMessage)
+                implements ProviderCallResult {
+            /** Validates non-null diagnostic code and message. */
+            public Refused {
+                Objects.requireNonNull(diagnosticCode, "diagnosticCode");
+                Objects.requireNonNull(diagnosticMessage, "diagnosticMessage");
             }
         }
 
