@@ -4,6 +4,7 @@ import ai.protomolt.proto.metric.Aggregate;
 import ai.protomolt.proto.metric.MemberRole;
 import ai.protomolt.proto.metric.TimeGrain;
 import com.google.protobuf.Descriptors.Descriptor;
+import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -35,7 +36,7 @@ public record MetricMapping(
     }
 
     public MetricMapping {
-        members = new LinkedHashMap<>(members);
+        members = Collections.unmodifiableMap(new LinkedHashMap<>(members));
     }
 
     /** The member by public name, when declared. */

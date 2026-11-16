@@ -1,5 +1,6 @@
 <template>
   <div>
+    <ArchiveDeleteReceiptBanner v-if="showBanner" />
     <v-card class="mb-4">
       <v-card-title class="text-subtitle-1 d-flex align-center flex-wrap ga-2">
         <v-btn icon="mdi-arrow-left" size="small" variant="text" aria-label="Account"
@@ -263,7 +264,9 @@
 import { computed, inject, onMounted, reactive, ref, shallowRef, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { create } from '@bufbuild/protobuf'
+import ArchiveDeleteReceiptBanner from '@/components/repository/ArchiveDeleteReceiptBanner.vue'
 import RpcFailureAlert from '@/components/repository/RpcFailureAlert.vue'
+import { useArchiveDeleteReceiptHost } from '@/repository/archiveDeleteReceipts'
 import { ClassificationState, ClassificationStateSchema } from '@/gen/ai/protomolt/proto/asset/v1/classification_pb'
 import { VersioningPolicySchema, type Archive, type ArchiveStats } from '@/gen/ai/protomolt/proto/repo/archive/v1/archive_pb'
 import {
@@ -287,6 +290,7 @@ import { useCallScope } from '@/repository/useCallScope'
 
 const ENTRIES_PAGE_SIZE = 50
 
+const { receipts, showBanner } = useArchiveDeleteReceiptHost()
 const clients = useRepositoryClients()
 const newRequest = inject(REPOSITORY_UPLOAD_REQUEST, () => new XMLHttpRequest())
 const route = useRoute()
@@ -580,5 +584,13 @@ watch(
     if ((entrySearch.value ?? '') !== routeQ) entrySearch.value = routeQ
   },
 )
+watch(receipts.arrivals, () => {
+  const arrived = receipts.latestArrival.value?.address
+  if (!arrived || routeError.value !== null) return
+  if (arrived.accountId === accountId.value && arrived.archive === archiveName.value) {
+    void loadInfo()
+    void loadEntries()
+  }
+})
 onMounted(load)
 </script>

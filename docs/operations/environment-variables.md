@@ -46,10 +46,10 @@ naming the missing ones.
 | `DOCUMENT_PLATFORM_DEFAULT_BUCKET_BASE` | `documents` | non-blank text |
 | `DOCUMENT_PLATFORM_BLOB_STORE` | `s3` | `s3` (default), `valkey`, `s3-valkey-cache`, `redis` or `s3-redis-cache`; anything else (including the retired `repo` values) fails fast |
 | `DOCUMENT_PLATFORM_VALKEY_URI` | `redis://localhost:6379` | preferred non-blank Redis-compatible connection URI (`redis://` or `rediss://`) |
-| `DOCUMENT_PLATFORM_VALKEY_TTL_SECONDS` | `3600` | preferred integer 0..2147483647; 0 disables expiry |
+| `DOCUMENT_PLATFORM_VALKEY_TTL_SECONDS` | `0` (`3600` in `s3-valkey-cache` and `s3-redis-cache`) | preferred integer 0..2147483647; 0 disables expiry (required for authoritative `valkey` and `redis` host-default storage; cache-entry TTL in S3 cache modes) |
 | `DOCUMENT_PLATFORM_VALKEY_MAX_OBJECT_BYTES` | `8388608` | preferred integer >= 0; 0 retains the adapter ceiling |
 | `DOCUMENT_PLATFORM_REDIS_URI` | `redis://localhost:6379` | compatibility alias of `DOCUMENT_PLATFORM_VALKEY_URI` |
-| `DOCUMENT_PLATFORM_REDIS_TTL_SECONDS` | `3600` | compatibility alias of `DOCUMENT_PLATFORM_VALKEY_TTL_SECONDS` |
+| `DOCUMENT_PLATFORM_REDIS_TTL_SECONDS` | `0` (`3600` in `s3-valkey-cache` and `s3-redis-cache`) | compatibility alias of `DOCUMENT_PLATFORM_VALKEY_TTL_SECONDS` |
 | `DOCUMENT_PLATFORM_REDIS_MAX_OBJECT_BYTES` | `8388608` | compatibility alias of `DOCUMENT_PLATFORM_VALKEY_MAX_OBJECT_BYTES` |
 | `DOCUMENT_PLATFORM_LIFECYCLE_ENABLED` | `true` | strict flag |
 | `DOCUMENT_PLATFORM_PURGE_INTERVAL_MS` | `5000` | integer >= 1 |
@@ -283,6 +283,7 @@ naming the variable on a malformed value.
 | `PROTOMOLT_JOBS_WORKERS` | the jobs default worker count | integer |
 | `PROTOMOLT_JOBS_TARGET_CONCURRENCY` | the jobs default | integer |
 | `PROTOMOLT_SERVICE_WORKSPACE` | unset = in-memory profiles | profile store directory |
+| `PROTOMOLT_PROFILE_TLS_CONFIG` | unset = custom TLS refs refused | `ProfileTlsConfig` path (`.json`, `.binpb`, or `.pb`) for `protomolt-serve` and `protomolt-mcp` |
 | `PROTOMOLT_WORKFLOW_WORKSPACE` | unset | workflow workspace directory |
 | `PROTOMOLT_WORKFLOW_AUTHORING_POLICY_SHA256` | unset | hex digest pinning the authoring policy |
 | `PROTOMOLT_WORKFLOW_AUTHORING_AUTHORIZATION_DIR` | unset | directory |

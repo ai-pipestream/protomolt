@@ -471,8 +471,264 @@ class DriveBackingPoolTest {
         return Base64.getUrlEncoder().withoutPadding().encodeToString(value.getBytes(java.nio.charset.StandardCharsets.UTF_8));
     }
 
+    @Test void slowResolveDoesNotBlockUnrelatedNamespacesAndDeduplicatesSameIdentity() throws Exception {
+        var slowEntered = new java.util.concurrent.CountDownLatch(1);
+        var releaseSlow = new java.util.concurrent.CountDownLatch(1);
+        var slowOpened = new AtomicInteger();
+        var fastOpened = new AtomicInteger();
+        var closed = java.util.Collections.synchronizedList(new ArrayList<String>());
+        var slowStore = uniqueStore("slow");
+
+        var s3Provider = new BlobStoreProvider() {
+            public String id() { return "s3"; }
+            public OpenedBlobStore open(Map<String, String> options) {
+                String endpoint = options.get("endpoint");
+                if (endpoint.toLowerCase(Locale.ROOT).contains("slow")) {
+                    slowOpened.incrementAndGet();
+                    slowEntered.countDown();
+                    try {
+                        if (!releaseSlow.await(10, java.util.concurrent.TimeUnit.SECONDS)) {
+                            throw new AssertionError("Timed out waiting to release slow open");
+                        }
+                    } catch (InterruptedException interrupted) {
+                        Thread.currentThread().interrupt();
+                        throw new AssertionError(interrupted);
+                    }
+                    return new OpenedBlobStore(slowStore, () -> closed.add("slow"),
+                            Set.of(BlobCapability.NON_EXPIRING_WRITES, BlobCapability.PHYSICAL_RECLAMATION),
+                            name -> {}, (bucket, key) -> true);
+                }
+                fastOpened.incrementAndGet();
+                BlobStore distinctFast = uniqueStore(endpoint);
+                return new OpenedBlobStore(distinctFast, () -> closed.add(endpoint),
+                        Set.of(BlobCapability.NON_EXPIRING_WRITES, BlobCapability.PHYSICAL_RECLAMATION),
+                        name -> {}, (bucket, key) -> true);
+            }
+        };
+
+        var pool = new DriveBackingPool(CONFIG, BlobStores.of(List.of(s3Provider)), DEFAULTS);
+        try (var executor = java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor()) {
+            var slowFirst = executor.submit(() -> pool.resolve(s3("http://slow:9000", "bucket-slow", "a")));
+            assertThat(slowEntered.await(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+
+            // Normalized equivalent endpoint joins the in-flight open instead of opening a second handle
+            var slowAlias = executor.submit(() -> pool.resolve(s3("http://SLOW:9000/", "bucket-slow", "a")));
+
+            // Unrelated endpoints complete promptly while http://slow:9000 is still blocked inside open()
+            var fastA = executor.submit(() -> pool.resolve(s3("http://fast-a:9000", "bucket-a", "a")));
+            var fastB = executor.submit(() -> pool.resolve(s3("http://fast-b:9000", "bucket-b", "b")));
+            assertThat(fastA.get(2, java.util.concurrent.TimeUnit.SECONDS).endpoint()).isEqualTo("http://fast-a:9000");
+            assertThat(fastB.get(2, java.util.concurrent.TimeUnit.SECONDS).endpoint()).isEqualTo("http://fast-b:9000");
+            assertThat(fastOpened).hasValue(2);
+            assertThat(slowFirst.isDone()).isFalse();
+
+            releaseSlow.countDown();
+            var resolvedSlow1 = slowFirst.get(5, java.util.concurrent.TimeUnit.SECONDS);
+            var resolvedSlow2 = slowAlias.get(5, java.util.concurrent.TimeUnit.SECONDS);
+            assertThat(resolvedSlow2).isSameAs(resolvedSlow1);
+            assertThat(resolvedSlow1.store()).isSameAs(slowStore);
+            assertThat(slowOpened).hasValue(1);
+        } finally {
+            releaseSlow.countDown();
+            pool.close();
+        }
+        assertThat(closed).containsExactlyInAnyOrder("slow", "http://fast-a:9000", "http://fast-b:9000");
+    }
+
+    @Test void redisAndValkeyAliasesAndHostDefaultsShareOneCanonicalStoreHandle() {
+        var opened = new AtomicInteger();
+        var closed = java.util.Collections.synchronizedList(new ArrayList<String>());
+        BlobStoreProvider valkeyProvider = new BlobStoreProvider() {
+            public String id() { return "valkey"; }
+            public String identityProviderId() { return "redis"; }
+            public OpenedBlobStore open(Map<String, String> options) {
+                int n = opened.incrementAndGet();
+                return new OpenedBlobStore(uniqueStore("valkey-" + n), () -> closed.add("valkey:" + options.get("uri")),
+                        Set.of(BlobCapability.NON_EXPIRING_WRITES, BlobCapability.PHYSICAL_RECLAMATION),
+                        name -> {}, (bucket, key) -> true);
+            }
+        };
+        BlobStoreProvider redisProvider = new BlobStoreProvider() {
+            public String id() { return "redis"; }
+            public OpenedBlobStore open(Map<String, String> options) {
+                int n = opened.incrementAndGet();
+                return new OpenedBlobStore(uniqueStore("redis-" + n), () -> closed.add("redis:" + options.get("uri")),
+                        Set.of(BlobCapability.NON_EXPIRING_WRITES, BlobCapability.PHYSICAL_RECLAMATION),
+                        name -> {}, (bucket, key) -> true);
+            }
+        };
+
+        try (var pool = new DriveBackingPool(CONFIG, BlobStores.of(List.of(valkeyProvider, redisProvider)), DEFAULTS)) {
+            var valkeyDrive = redisDrive("valkey", "redis://HOST:6379", 0, "aliases", 4096L, "shared-bucket", "/same");
+            var redisDrive = redisDrive("redis", "redis://host:6379/00", 0, "aliases", 4096L, "shared-bucket", "same");
+
+            var first = pool.resolve(valkeyDrive);
+            var second = pool.resolve(redisDrive);
+            assertThat(opened).as("compatible valkey and redis aliases open one physical store").hasValue(1);
+            assertThat(second.store()).isSameAs(first.store());
+            assertThat(second.identity()).isEqualTo(first.identity());
+            assertThat(first.endpoint()).isEqualTo("redis://host:6379/0");
+            assertThat(second.endpoint()).isEqualTo("redis://host:6379/0");
+            assertThat(first.namespace("shared-bucket", "same/documents"))
+                    .isEqualTo(second.namespace("shared-bucket", "same/documents"));
+        }
+        assertThat(closed).hasSize(1);
+
+        // Host defaults registered under either "redis" or "valkey" share their handle across both aliases
+        for (String hostMode : List.of("valkey", "redis")) {
+            var hostConfig = RepoServiceConfig.fromEnvironment(Map.of(
+                    RepoServiceConfig.ENV_BLOB_STORE, hostMode,
+                    RepoServiceConfig.ENV_VALKEY_URI, "redis://localhost:6379"));
+            try (var pool = new DriveBackingPool(hostConfig, BlobStores.of(List.of()), DEFAULTS)) {
+                var inheritedValkey = new DriveRecord();
+                inheritedValkey.provider = "valkey";
+                inheritedValkey.bucket = "host-b";
+                inheritedValkey.prefix = "same";
+
+                var explicitRedis = redisDrive(
+                        "redis",
+                        "redis://LOCALHOST:6379/00",
+                        0,
+                        "",
+                        hostConfig.redisMaxObjectBytes(),
+                        "host-b",
+                        "same");
+                var explicitValkey = redisDrive(
+                        "valkey",
+                        "redis://localhost:6379/0",
+                        0,
+                        "",
+                        hostConfig.redisMaxObjectBytes(),
+                        "host-b",
+                        "same");
+
+                assertThat(pool.resolve(inheritedValkey).store()).isSameAs(STORE);
+                assertThat(pool.resolve(explicitRedis).store()).isSameAs(STORE);
+                assertThat(pool.resolve(explicitValkey).store()).isSameAs(STORE);
+            }
+        }
+    }
+
+    @Test void conflictingOptionsForSamePhysicalNamespaceFailInsteadOfLettingFirstCallerWin() {
+        var opened = new AtomicInteger();
+        BlobStoreProvider valkeyProvider = new BlobStoreProvider() {
+            public String id() { return "valkey"; }
+            public OpenedBlobStore open(Map<String, String> options) {
+                opened.incrementAndGet();
+                return handle(() -> {});
+            }
+        };
+        BlobStoreProvider redisProvider = new BlobStoreProvider() {
+            public String id() { return "redis"; }
+            public OpenedBlobStore open(Map<String, String> options) {
+                opened.incrementAndGet();
+                return handle(() -> {});
+            }
+        };
+        var env = Map.of("KV_A_PASSWORD", "secret-a", "KV_B_PASSWORD", "secret-b");
+        try (var pool = new DriveBackingPool(
+                CONFIG, BlobStores.of(List.of(valkeyProvider, redisProvider)), DEFAULTS, env::get)) {
+            var first = redisDrive("valkey", "redis://host:6379", 0, "ns", 1024L, "bucket-1", "/docs");
+            first.credentialsRef = "env:KV_A";
+            pool.resolve(first);
+            assertThat(opened).hasValue(1);
+
+            // Different max_object_bytes on the same physical namespace is refused before opening another handle
+            var conflictingLimit = redisDrive("redis", "redis://HOST:6379/00", 0, "ns", 8192L, "bucket-1", "docs");
+            conflictingLimit.credentialsRef = "env:KV_A";
+            assertThatThrownBy(() -> pool.resolve(conflictingLimit))
+                    .isInstanceOfSatisfying(ai.protomolt.proto.repo.spi.RepositoryException.class, failure ->
+                            assertThat(failure.code())
+                                    .isEqualTo(ai.protomolt.proto.repo.spi.RepositoryException.Code.FAILED_PRECONDITION))
+                    .hasMessageContaining("conflicts");
+            assertThat(opened).hasValue(1);
+
+            // Different credentials on the same physical namespace are also refused without echoing secrets
+            var conflictingCreds = redisDrive("redis", "redis://host:6379/0", 0, "ns", 1024L, "bucket-1", "docs");
+            conflictingCreds.credentialsRef = "env:KV_B";
+            assertThatThrownBy(() -> pool.resolve(conflictingCreds))
+                    .hasMessageContaining("conflicts")
+                    .hasMessageNotContaining("secret-b");
+            assertThat(opened).hasValue(1);
+
+            // A different prefix on the same endpoint and bucket is a distinct physical namespace and succeeds
+            var distinctNamespace = redisDrive("redis", "redis://host:6379/0", 0, "ns", 8192L, "bucket-1", "other");
+            distinctNamespace.credentialsRef = "env:KV_A";
+            assertThat(pool.resolve(distinctNamespace)).isNotNull();
+            assertThat(opened).hasValue(2);
+        }
+
+        // S3 drives targeting the same (endpoint, region, pathStyle, bucket, prefix) cannot mix cached and uncached
+        var s3Opened = new AtomicInteger();
+        var s3Provider = provider(s3Opened, new ArrayList<>(), Set.of(
+                BlobCapability.NON_EXPIRING_WRITES, BlobCapability.PHYSICAL_RECLAMATION));
+        var cacheProvider = new BlobStoreProvider() {
+            public String id() { return "valkey"; }
+            public OpenedBlobStore open(Map<String, String> options) {
+                return new OpenedBlobStore(uniqueStore("cache"), () -> {},
+                        Set.of(BlobCapability.OBJECT_EXPIRY, BlobCapability.PHYSICAL_RECLAMATION),
+                        name -> {}, (bucket, key) -> true);
+            }
+        };
+        try (var pool = new DriveBackingPool(
+                CONFIG, BlobStores.of(List.of(s3Provider, cacheProvider)), DEFAULTS)) {
+            var cache = DriveCacheConfig.newBuilder()
+                    .setProvider("valkey")
+                    .setUri("redis://cache:6379")
+                    .setTtlSeconds(60)
+                    .setMaxCacheableBytes(1024)
+                    .build();
+            var cached = s3WithCache("http://s3-shared:9000", "us-east-1", true, cache);
+            cached.bucket = "shared-bucket";
+            cached.prefix = "shared-prefix";
+            pool.resolve(cached);
+
+            var uncachedSameNamespace = s3("http://s3-shared:9000", "shared-bucket", "shared-prefix");
+            assertThatThrownBy(() -> pool.resolve(uncachedSameNamespace))
+                    .hasMessageContaining("conflicts");
+
+            var uncachedDistinctPrefix = s3("http://s3-shared:9000", "shared-bucket", "other-prefix");
+            assertThat(pool.resolve(uncachedDistinctPrefix).store()).isSameAs(STORE);
+            assertThat(s3Opened).hasValue(1);
+        }
+    }
+
+    private static BlobStore uniqueStore(String label) {
+        return (BlobStore) java.lang.reflect.Proxy.newProxyInstance(
+                BlobStore.class.getClassLoader(), new Class<?>[]{BlobStore.class},
+                (proxy, method, args) -> switch (method.getName()) {
+                    case "equals" -> proxy == args[0];
+                    case "hashCode" -> System.identityHashCode(proxy);
+                    case "toString" -> "BlobStore[" + label + "]";
+                    default -> throw new AssertionError("No byte IO expected on " + label);
+                });
+    }
+
+    private static DriveRecord redisDrive(
+            String provider, String uri, int ttlSeconds, String keyPrefix, long maxObjectBytes,
+            String bucket, String prefix) {
+        var record = new DriveRecord();
+        record.provider = provider;
+        record.bucket = bucket;
+        record.prefix = prefix;
+        record.writeProviderConfig(DriveProviderConfig.newBuilder()
+                .setRedis(RedisDriveConfig.newBuilder()
+                        .setUri(uri)
+                        .setTtlSeconds(ttlSeconds)
+                        .setKeyPrefix(keyPrefix)
+                        .setMaxObjectBytes(maxObjectBytes))
+                .build());
+        return record;
+    }
+
     private static DriveRecord s3(String endpoint) {
+        return s3(endpoint, null, null);
+    }
+
+    private static DriveRecord s3(String endpoint, String bucket, String prefix) {
         var record = new DriveRecord(); record.provider = "s3"; record.region = "us-east-1";
+        record.bucket = bucket;
+        record.prefix = prefix;
         record.credentialsRef = "host:default";
         record.writeProviderConfig(DriveProviderConfig.newBuilder().setS3(S3DriveConfig.newBuilder()
                 .setEndpointOverride(endpoint).setForcePathStyle(true)).build());
