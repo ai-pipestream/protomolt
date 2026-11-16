@@ -499,6 +499,52 @@ class PipelineSegmentsTest {
     }
 
     @Test
+    void transportFaultInAFanOutBranchKeepsItsGrpcClassificationAndCause() {
+        FanOutSpec fanOut = FanOutSpec.newBuilder()
+                .setItems("items")
+                .setCollectType(BATCH)
+                .setCollectInto("items")
+                .setMaxItems(10)
+                .setMaxConcurrency(1)
+                .setFailurePolicy(BranchFailurePolicy.BRANCH_FAILURE_POLICY_FAIL_FAST)
+                .build();
+        Pipeline pipeline = PipelineFixtures.base("fan-out-transport-fault", BATCH)
+                .addDependencies(PipelineFixtures.dependency("pipeline.test.Worker"))
+                .addSteps(PipelineStep.newBuilder()
+                        .setName("fan_apply")
+                        .setDependency("pipeline.test.Worker")
+                        .setGrpcCall(GrpcCallStep.newBuilder()
+                                .setMethod(PROCESS)
+                                .setMethodShape(MethodShape.METHOD_SHAPE_UNARY)
+                                .setEdge(PipelineFixtures.edge(BATCH, List.of("input"),
+                                        "items = input.items"))
+                                .setEdgeCardinality(EdgeCardinality.EDGE_CARDINALITY_ONE)
+                                .setOutputCardinality(EdgeCardinality.EDGE_CARDINALITY_ONE)
+                                .setCompletion(StepCompletion.STEP_COMPLETION_LIVE)
+                                .setFanOut(fanOut)
+                                .build())
+                        .build())
+                .build();
+        Descriptor batchType = PipelineFixtures.type(BATCH);
+        DynamicMessage input = DynamicMessage.newBuilder(batchType)
+                .addRepeatedField(batchType.findFieldByName("items"), ticket("first"))
+                .build();
+        java.io.UncheckedIOException fault = new java.io.UncheckedIOException(
+                "failed to read service profile", new java.io.IOException("store down"));
+        PipelineExecutor executor = new PipelineExecutor((dep, method, reqs, deadline, max) -> {
+            throw fault;
+        });
+
+        // The same fault outside a fan-out is a GRPC failure carrying its cause; a branch
+        // must not turn it into something a retry policy reads differently.
+        assertThatThrownBy(() -> executor.run(pipeline, PipelineFixtures.files(), input))
+                .isInstanceOfSatisfying(PipelineExecutionException.class, failure -> {
+                    assertThat(failure.kind()).isEqualTo(FailureKind.GRPC);
+                    assertThat(failure.getCause()).isSameAs(fault);
+                });
+    }
+
+    @Test
     void observerFailureStopsImmediatelyAndPreservesCause() {
         Pipeline pipeline = PipelineFixtures.base("observer-failure", TICKET)
                 .addDependencies(PipelineFixtures.dependency("pipeline.test.Worker"))

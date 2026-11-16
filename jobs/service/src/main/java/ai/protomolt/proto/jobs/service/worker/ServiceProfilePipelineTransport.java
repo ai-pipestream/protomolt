@@ -22,6 +22,7 @@ import io.grpc.Channel;
 import io.grpc.ChannelCredentials;
 import io.grpc.ManagedChannel;
 import io.grpc.Metadata;
+import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
 
 import java.io.IOException;
@@ -103,6 +104,7 @@ final class ServiceProfilePipelineTransport implements PipelineTransport, AutoCl
                                        long deadlineMillis,
                                        int maxResponses) {
         validateInvokeArguments(dependency, method, requests, deadlineMillis, maxResponses);
+        long startedNanos = System.nanoTime();
 
         ServiceProfile profile = resolveProfile(dependency);
         ServiceEndpoint endpoint = resolveEndpoint(profile, dependency.getEndpoint());
@@ -124,10 +126,12 @@ final class ServiceProfilePipelineTransport implements PipelineTransport, AutoCl
         channelCache.validateTargetAndDeadline(target, tls, effectiveDeadlineMs);
 
         Metadata headers = buildHeaders(hostHeaders, context);
+        long callDeadlineMs = remainingAfterResolution(
+                effectiveDeadlineMs, startedNanos, profileMethodName(method));
         if (customTls != null) {
             ManagedChannel dedicated = channelCache.openDedicated(target, customTls);
             try {
-                return executeCall(dedicated, method, requests, effectiveDeadlineMs, maxResponses,
+                return executeCall(dedicated, method, requests, callDeadlineMs, maxResponses,
                         headers, credentialed);
             } finally {
                 dedicated.shutdownNow();
@@ -135,11 +139,29 @@ final class ServiceProfilePipelineTransport implements PipelineTransport, AutoCl
         }
         PipelineChannelCache.Lease lease = channelCache.acquireShared(target, tls);
         try {
-            return executeCall(lease.channel(), method, requests, effectiveDeadlineMs,
+            return executeCall(lease.channel(), method, requests, callDeadlineMs,
                     maxResponses, headers, credentialed);
         } finally {
             lease.release();
         }
+    }
+
+    /**
+     * The time left for the call itself. Reading the profile and resolving credentials are
+     * part of the step, so what they took comes off the step's deadline; when nothing is left
+     * the call is not made.
+     */
+    private static long remainingAfterResolution(long deadlineMs, long startedNanos,
+                                                 String methodName) {
+        long remainingMs = deadlineMs
+                - TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedNanos);
+        if (remainingMs <= 0) {
+            throw Status.DEADLINE_EXCEEDED
+                    .withDescription("deadline of " + deadlineMs + " ms for " + methodName
+                            + " passed while resolving its service profile and credentials")
+                    .asRuntimeException();
+        }
+        return remainingMs;
     }
 
     private void validateInvokeArguments(ServiceDependency dependency,

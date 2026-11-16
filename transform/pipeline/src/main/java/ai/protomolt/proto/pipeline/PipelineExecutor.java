@@ -555,6 +555,9 @@ public final class PipelineExecutor {
                                 e.getStatus().getCode(), "gRPC "
                                         + e.getStatus().getCode() + ": "
                                         + e.getStatus().getDescription(), e);
+                    } catch (RuntimeException e) {
+                        throw failure(step.getName(), FailureKind.GRPC, Status.Code.UNKNOWN,
+                                "gRPC transport failed: " + e.getMessage(), e);
                     }
                     verifyResponseCount(step.getName(), method, responses, streamLimit);
                     if (step.getGrpcCall().getValidateResponse()) {

@@ -178,6 +178,12 @@ public final class WorkflowRunSubmitter {
         if (pipeline == null || files == null || input == null) {
             return fail("", "'pipeline', 'files', and 'input' are required");
         }
+        java.util.Set<String> fileNames = new java.util.HashSet<>();
+        for (FileDescriptor file : files) {
+            if (!fileNames.add(file.getName())) {
+                return fail("", "'files' lists '" + file.getName() + "' more than once");
+            }
+        }
         List<PipelineChecker.Finding> findings = new PipelineChecker().verify(pipeline, files);
         if (!findings.isEmpty()) {
             PipelineChecker.Finding first = findings.getFirst();

@@ -561,6 +561,24 @@ class PipelineJobCoordinationTest {
     }
 
     @Test
+    void submittingTheSameDescriptorFileTwiceIsRefused() {
+        Pipeline pipeline = streamingExternalPipeline();
+        Descriptor orderInput = type("OrderInput");
+        DynamicMessage input = DynamicMessage.newBuilder(orderInput)
+                .setField(orderInput.findFieldByName("order_id"), "dup-files")
+                .build();
+        List<FileDescriptor> twice = new java.util.ArrayList<>(files);
+        twice.add(files.getFirst());
+
+        var refused = coordinator.submit(pipeline, twice, input, null);
+        assertThat(refused.ok()).isFalse();
+        assertThat(refused.error())
+                .contains("more than once")
+                .contains(files.getFirst().getName());
+        assertThat(store.list(null, null, 10, 0)).isEmpty();
+    }
+
+    @Test
     void streamingExternalCompletionWorksEndToEndOnProtobufRunState() throws Exception {
         Pipeline pipeline = streamingExternalPipeline();
         Descriptor orderInput = type("OrderInput");

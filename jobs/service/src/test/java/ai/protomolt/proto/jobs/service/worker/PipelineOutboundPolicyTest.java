@@ -1,5 +1,6 @@
 package ai.protomolt.proto.jobs.service.worker;
 
+import ai.protomolt.proto.pipeline.v1.Pipeline;
 import ai.protomolt.proto.actions.ActionContext;
 import ai.protomolt.proto.grpc.invoke.ChannelFactory;
 import ai.protomolt.proto.grpc.policy.OutboundChannelPolicy;
@@ -414,6 +415,64 @@ class PipelineOutboundPolicyTest {
             assertThat(store.get(UUID.fromString(jobId)).orElseThrow().status)
                     .isEqualTo(WorkflowRunRecord.STATUS_COMPLETED);
             assertThat(plainCalls.get()).isEqualTo(1);
+        }
+    }
+
+    @Test
+    void timeSpentResolvingTheProfileCountsAgainstTheStepDeadline() throws Exception {
+        // The second read (the call) takes longer than the whole pipeline deadline.
+        AtomicInteger reads = new AtomicInteger();
+        ServiceProfileRepository slow = new ServiceProfileRepository() {
+            @Override
+            public Optional<ServiceProfile> find(String name) throws IOException {
+                if (reads.incrementAndGet() == 2) {
+                    try {
+                        Thread.sleep(1500);
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                    }
+                }
+                return serviceProfiles.find(name);
+            }
+
+            @Override
+            public List<ServiceProfile> list() throws IOException {
+                return serviceProfiles.list();
+            }
+
+            @Override
+            public void save(ServiceProfile profile) throws IOException {
+                serviceProfiles.save(profile);
+            }
+
+            @Override
+            public Optional<DescriptorArtifact> findDescriptorArtifact(String fingerprint)
+                    throws IOException {
+                return serviceProfiles.findDescriptorArtifact(fingerprint);
+            }
+
+            @Override
+            public void saveDescriptorArtifact(DescriptorArtifact artifact) throws IOException {
+                serviceProfiles.saveDescriptorArtifact(artifact);
+            }
+        };
+        InMemoryWorkflowRunStore store = new InMemoryWorkflowRunStore();
+        WorkflowRunSubmitter submitter = new WorkflowRunSubmitter(store, null, 4);
+        OutboundChannelPolicy allowLoopback = OutboundChannelPolicy.builder()
+                .allowedHosts(Set.of("127.0.0.1"))
+                .build();
+        try (WorkflowRunWorker worker = new WorkflowRunWorker(
+                store, context, null, new WorkflowRunner(allowLoopback),
+                allowLoopback, slow, null, workerConfig("slow-profile", 4, 1))) {
+            Pipeline oneSecond = echoPipeline(schema, "echo", "plain").toBuilder()
+                    .setDeadline(com.google.protobuf.Duration.newBuilder().setSeconds(1))
+                    .build();
+            String jobId = submitPipeline(submitter, schema, oneSecond, "late");
+            assertThat(worker.workOnce()).isTrue();
+            WorkflowRunRecord after = store.get(UUID.fromString(jobId)).orElseThrow();
+            assertThat(plainCalls.get()).as("no call after the deadline has passed").isZero();
+            assertThat(after.status).as("error: %s", after.error)
+                    .isEqualTo(WorkflowRunRecord.STATUS_QUEUED);
         }
     }
 
