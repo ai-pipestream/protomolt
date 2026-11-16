@@ -70,6 +70,13 @@ const MAX_RETAINED_SAVE_AS_JOBS = 20
 const OPEN_POLL_MS = 500
 const CLOSED_POLL_MS = 5000
 const MAX_POLL_BACKOFF_MS = 30_000
+/**
+ * How long a call may go unanswered. Past it the call ends as DeadlineExceeded, which is an
+ * outcome still unknown: without a bound, a publish whose reply never came would hold the job
+ * in "submitting" for good, with refresh, cancel and the dialog's close all waiting on it.
+ */
+const PUBLISH_TIMEOUT_MS = 120_000
+const LOOKUP_TIMEOUT_MS = 30_000
 
 /**
  * Raised when a new job cannot be tracked: every retained job is still in flight, shown in an
@@ -283,7 +290,10 @@ export function createSaveAsJobStore(): SaveAsJobStore {
     entry.summary = null
     entry.updatedBy = null
     try {
-      const response = await client.publishRepositorySink(entry.request, { signal })
+      const response = await client.publishRepositorySink(entry.request, {
+        signal,
+        timeoutMs: PUBLISH_TIMEOUT_MS,
+      })
       if (response.job === undefined) {
         failPublish(
           entry,
@@ -327,7 +337,7 @@ export function createSaveAsJobStore(): SaveAsJobStore {
     try {
       const response = await client.getRepositorySinkJob(
         buildGetRepositorySinkJobRequest(entry.accountId, operationId),
-        { signal },
+        { signal, timeoutMs: LOOKUP_TIMEOUT_MS },
       )
       if (response.job !== undefined) {
         apply(entry, describeSinkJob(response.job), 'refresh', sequence)
@@ -359,7 +369,7 @@ export function createSaveAsJobStore(): SaveAsJobStore {
     try {
       const response = await client.cancelRepositorySinkJob(
         buildCancelRepositorySinkJobRequest(entry.accountId, operationId, reason),
-        { signal },
+        { signal, timeoutMs: LOOKUP_TIMEOUT_MS },
       )
       if (response.job !== undefined) {
         apply(entry, describeSinkJob(response.job), 'cancel', sequence)

@@ -495,4 +495,31 @@ describe('Save-as job store', () => {
     expect(jobs.find('op-ended')!.summary?.phase).toBe('cancelled')
     jobs.dispose()
   })
+
+  it('gives up waiting on a publish that never answers and leaves the job reconcilable', async () => {
+    vi.useFakeTimers()
+    const client = routerClients((r) =>
+      r.service(RepositorySinkService, {
+        publishRepositorySink(_req, context) {
+          // The server may have committed; the reply never comes.
+          return new Promise((_, reject) => {
+            context.signal.addEventListener('abort', () =>
+              reject(new ConnectError('deadline exceeded', Code.DeadlineExceeded)),
+            )
+          })
+        },
+      }),
+    ).repositorySink
+    const jobs = createSaveAsJobStore()
+    const publishing = jobs.publish(client, request('op-silent'), true)
+    await vi.advanceTimersByTimeAsync(10 * 60_000)
+    await publishing
+    const entry = jobs.find('op-silent')!
+    expect(entry.submitting).toBe(false)
+    expect(entry.error?.kind).toBe('unsettled')
+    expect(entry.error?.canReconcile).toBe(true)
+    // The request and its operation ID are still there to refresh or retry with.
+    expect(entry.request.operationId).toBe('op-silent')
+    jobs.dispose()
+  })
 })
