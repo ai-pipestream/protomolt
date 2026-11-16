@@ -736,13 +736,13 @@ message ExternalLink {
   };
   option (ai.protomolt.proto.validate.v1.message).cel = {
     id: "external-link-safe-display-url"
-    message: "display_url must be an http or https URL with no embedded userinfo or secret query parameters"
-    expression: "!has(this.display_url) || (this.display_url.matches('^https?://[A-Za-z0-9._\\\\-:\\\\[\\\\]]+([/?#].*)?$') && !this.display_url.contains('@') && !this.display_url.lowerAscii().matches('[?&](access_token|bearer|token|id_token|api_key|apikey|client_secret|password|secret|sig|x-amz-signature|x-amz-credential|x-goog-signature)='))"
+    message: "display_url must be an http or https URL with no embedded userinfo or secret query or fragment parameters"
+    expression: "!has(this.display_url) || (this.display_url.matches('^https?://[A-Za-z0-9._\\\\-:\\\\[\\\\]]+([/?#].*)?$') && !this.display_url.contains('@') && !this.display_url.lowerAscii().matches('[?&#](access_token|bearer|token|id_token|api_key|apikey|client_secret|password|secret|sig|x-amz-signature|x-amz-credential|x-goog-signature)='))"
   };
   option (buf.validate.message).cel = {
     id: "external-link-safe-display-url"
-    message: "display_url must be an http or https URL with no embedded userinfo or secret query parameters"
-    expression: "!has(this.display_url) || (this.display_url.matches('^https?://[A-Za-z0-9._\\\\-:\\\\[\\\\]]+([/?#].*)?$') && !this.display_url.contains('@') && !this.display_url.lowerAscii().matches('[?&](access_token|bearer|token|id_token|api_key|apikey|client_secret|password|secret|sig|x-amz-signature|x-amz-credential|x-goog-signature)='))"
+    message: "display_url must be an http or https URL with no embedded userinfo or secret query or fragment parameters"
+    expression: "!has(this.display_url) || (this.display_url.matches('^https?://[A-Za-z0-9._\\\\-:\\\\[\\\\]]+([/?#].*)?$') && !this.display_url.contains('@') && !this.display_url.lowerAscii().matches('[?&#](access_token|bearer|token|id_token|api_key|apikey|client_secret|password|secret|sig|x-amz-signature|x-amz-credential|x-goog-signature)='))"
   };
 
   // Stable binding identifier within the source document's account.
@@ -946,12 +946,12 @@ message ExternalPublicationIntent {
   option (ai.protomolt.proto.validate.v1.message).cel = {
     id: "intent-safe-display-url"
     message: "display_url is valid only on PUBLISH and must be an http/https URL without userinfo or secret query parameters"
-    expression: "!has(this.display_url) || (this.action == 1 && this.display_url.matches('^https?://[A-Za-z0-9._\\\\-:\\\\[\\\\]]+([/?#].*)?$') && !this.display_url.contains('@') && !this.display_url.lowerAscii().matches('[?&](access_token|bearer|token|id_token|api_key|apikey|client_secret|password|secret|sig|x-amz-signature|x-amz-credential|x-goog-signature)='))"
+    expression: "!has(this.display_url) || (this.action == 1 && this.display_url.matches('^https?://[A-Za-z0-9._\\\\-:\\\\[\\\\]]+([/?#].*)?$') && !this.display_url.contains('@') && !this.display_url.lowerAscii().matches('[?&#](access_token|bearer|token|id_token|api_key|apikey|client_secret|password|secret|sig|x-amz-signature|x-amz-credential|x-goog-signature)='))"
   };
   option (buf.validate.message).cel = {
     id: "intent-safe-display-url"
     message: "display_url is valid only on PUBLISH and must be an http/https URL without userinfo or secret query parameters"
-    expression: "!has(this.display_url) || (this.action == 1 && this.display_url.matches('^https?://[A-Za-z0-9._\\\\-:\\\\[\\\\]]+([/?#].*)?$') && !this.display_url.contains('@') && !this.display_url.lowerAscii().matches('[?&](access_token|bearer|token|id_token|api_key|apikey|client_secret|password|secret|sig|x-amz-signature|x-amz-credential|x-goog-signature)='))"
+    expression: "!has(this.display_url) || (this.action == 1 && this.display_url.matches('^https?://[A-Za-z0-9._\\\\-:\\\\[\\\\]]+([/?#].*)?$') && !this.display_url.contains('@') && !this.display_url.lowerAscii().matches('[?&#](access_token|bearer|token|id_token|api_key|apikey|client_secret|password|secret|sig|x-amz-signature|x-amz-credential|x-goog-signature)='))"
   };
 
   // Canonicalization version for deterministic intent hashing; fixed at 1.

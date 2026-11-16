@@ -70,6 +70,7 @@ describe('safeExternalHref', () => {
     expect(safeExternalHref('https://console.example.org/search?collection=claims&page=2')).toBe(
       'https://console.example.org/search?collection=claims&page=2',
     )
+    expect(safeExternalHref('https://example.org/docs#section-2')).toBe('https://example.org/docs#section-2')
   })
 
   it.each([
@@ -86,6 +87,9 @@ describe('safeExternalHref', () => {
     'https://example.org/items/1?view=full&Bearer=secret',
     'https://example.org/items/1?api_key=12345',
     'https://example.org/items/1?X-Amz-Signature=deadbeef',
+    'https://example.org/items/1#access_token=eyJ0eXAi',
+    'https://example.org/items/1?view=full#a=1&Api_Key=12345',
+    'https://example.org/app#/callback?id_token=eyJ0eXAi',
     'references',
     '/relative/path',
     '//example.org/scheme-relative',

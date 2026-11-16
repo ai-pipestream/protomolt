@@ -348,11 +348,20 @@ public final class ExternalPublicationCoordinates {
         }
         validateAuthorityHostAndPort(authority);
 
+        int fragmentStart = rawUrl.indexOf('#', authorityEnd);
+        int beforeFragment = fragmentStart >= 0 ? fragmentStart : rawUrl.length();
         int queryStart = rawUrl.indexOf('?', authorityEnd);
-        if (queryStart >= 0) {
-            int fragmentStart = rawUrl.indexOf('#', queryStart + 1);
-            int queryEnd = fragmentStart >= 0 ? fragmentStart : rawUrl.length();
-            validateQueryParameters(rawUrl, queryStart + 1, queryEnd);
+        if (queryStart >= 0 && queryStart < beforeFragment) {
+            validateQueryParameters(rawUrl, queryStart + 1, beforeFragment);
+        }
+        if (fragmentStart >= 0) {
+            // A fragment carries tokens as readily as a query does (OAuth implicit replies,
+            // single-page routes), either as the whole fragment or after a '?' inside it.
+            validateQueryParameters(rawUrl, fragmentStart + 1, rawUrl.length());
+            int routeQuery = rawUrl.indexOf('?', fragmentStart + 1);
+            if (routeQuery >= 0) {
+                validateQueryParameters(rawUrl, routeQuery + 1, rawUrl.length());
+            }
         }
     }
 

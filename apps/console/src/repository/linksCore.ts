@@ -67,10 +67,23 @@ export function safeExternalHref(raw: string): string | null {
   }
   if (url.protocol !== 'https:' && url.protocol !== 'http:') return null
   if (url.username !== '' || url.password !== '') return null
-  for (const [key] of url.searchParams) {
-    if (FORBIDDEN_EXTERNAL_QUERY_KEYS.has(key.toLowerCase())) return null
+  if (carriesCredentialKey(url.searchParams)) return null
+  // A fragment carries tokens as readily as a query does, either as the whole fragment or
+  // after a '?' inside it (a single-page route).
+  const fragment = url.hash.startsWith('#') ? url.hash.slice(1) : url.hash
+  if (carriesCredentialKey(new URLSearchParams(fragment))) return null
+  const routeQuery = fragment.indexOf('?')
+  if (routeQuery >= 0 && carriesCredentialKey(new URLSearchParams(fragment.slice(routeQuery + 1)))) {
+    return null
   }
   return url.href
+}
+
+function carriesCredentialKey(params: URLSearchParams): boolean {
+  for (const [key] of params) {
+    if (FORBIDDEN_EXTERNAL_QUERY_KEYS.has(key.toLowerCase())) return true
+  }
+  return false
 }
 
 /**

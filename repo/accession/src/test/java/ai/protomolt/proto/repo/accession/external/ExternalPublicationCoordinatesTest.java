@@ -147,6 +147,11 @@ class ExternalPublicationCoordinatesTest {
                 "http://[::1]:8080/items/42"))
                 .doesNotThrowAnyException();
 
+        // A fragment that is plain navigation is not a credential.
+        assertThatCode(() -> ExternalPublicationCoordinates.validateDisplayUrl(
+                "https://search.example.com/item#section-2"))
+                .doesNotThrowAnyException();
+
         List<String> rejected = List.of(
                 "javascript:alert(1)",
                 "data:text/html;base64,PHNjcmlwdD4=",
@@ -157,6 +162,9 @@ class ExternalPublicationCoordinatesTest {
                 "https://search.example.com/item?a=1&Api_Key=secret123",
                 "https://search.example.com/item?%74%6F%6B%65%6E=secret123",
                 "https://search.example.com/item?X-Amz-Signature=deadbeef",
+                "https://search.example.com/item#access_token=secret123",
+                "https://search.example.com/item?view=full#a=1&Api_Key=secret123",
+                "https://search.example.com/app#/callback?id_token=secret123",
                 "https://search.example.com/item with space",
                 "https:///missing-host",
                 "https://host:99999/item");
