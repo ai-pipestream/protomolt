@@ -877,6 +877,68 @@ describe('Repository Save-as and format icons', () => {
     }
     expect(document.body.querySelector('[data-testid="save-as-occurrence-picker"]')).not.toBeNull()
     expect(document.body.querySelector('[data-testid="save-as-capability-parquet-v1"]')).not.toBeNull()
+
+    // A document part has no home archive. The one listed archive is offered, never chosen
+    // for the operator.
+    const archiveField = document.body.querySelector('[data-testid="save-as-archive-input"]')!
+    expect(archiveField.textContent).not.toContain('exports')
+    expect(archiveField.querySelector('.v-select__selection')).toBeNull()
+    wrapper.unmount()
+  })
+
+  it('shows why the destination archive list is missing when listing archives is refused', async () => {
+    let archiveListCalls = 0
+    const { wrapper } = await mountRepositoryView(
+      RepositoryArchiveEntryView,
+      { name: 'repository-archive-entry', query: { account: 'acct-a', archive: 'datasets', entry: 'e-metrics' } },
+      (router: ConnectRouter) => {
+        router.service(ArchiveService, {
+          listArchives: () => {
+            archiveListCalls += 1
+            throw new ConnectError('archive listing is not granted', Code.PermissionDenied)
+          },
+          getEntryManifest: () =>
+            create(GetEntryManifestResponseSchema, {
+              info: create(EntryInfoSchema, { address: entryAddr(), currentVersion: 2n, title: 'Metrics' }),
+              manifest: create(VersionManifestSchema, {
+                address: entryAddr(),
+                version: 2n,
+                renditions: [
+                  create(RenditionManifestEntrySchema, {
+                    rendition: create(RenditionDescriptorSchema, { name: 'parsed', mediaType: 'application/x-protobuf' }),
+                    state: RenditionState.PRESENT,
+                    sizeBytes: BigInt(PROTO_BYTES.length),
+                    sha256: PROTO_SHA,
+                  }),
+                ],
+              }),
+            }),
+          listVersions: () => create(ListVersionsResponseSchema, { versions: [] }),
+        })
+        router.service(RepositorySinkService, {
+          listRenditionProvenance: () => create(ListRenditionProvenanceResponseSchema),
+          listSaveAsCapabilities: () =>
+            create(ListSaveAsCapabilitiesResponseSchema, {
+              resolvedSourceRevision: 2n,
+              sourceSchemaType: 'ai.protomolt.proto.repo.v1.Document',
+              sourceSizeBytes: BigInt(PROTO_BYTES.length),
+              capabilities: [
+                create(SaveAsCapabilitySchema, { capability: parquetCap, status: SaveAsCompatibilityStatus.COMPATIBLE }),
+              ],
+            }),
+        })
+      },
+    )
+
+    await wrapper.get('[data-testid="save-as-rendition-parsed"]').trigger('click')
+    await settle()
+
+    expect(archiveListCalls).toBeGreaterThan(0)
+    const failure = document.body.querySelector('[data-testid="save-as-archives-failure"]')
+    expect(failure).not.toBeNull()
+    expect(failure!.textContent).toContain('archive listing is not granted')
+    // The destination can still be typed by hand.
+    expect(document.body.querySelector('[data-testid="save-as-archive-input"] input')).not.toBeNull()
     wrapper.unmount()
   })
 

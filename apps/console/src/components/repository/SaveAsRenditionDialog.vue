@@ -206,6 +206,15 @@
 
             <v-divider class="my-3" />
 
+            <RpcFailureAlert
+              v-if="archivesFailure"
+              :failure="archivesFailure"
+              title="Listing destination archives"
+              class="mb-3"
+              data-testid="save-as-archives-failure"
+              @sign-in="signIn"
+            />
+
             <SaveAsDestinationFields
               :form="destinationForm"
               :disabled="lockedByActiveAttempt"
@@ -340,6 +349,7 @@ const jobs = useSaveAsJobs()
 
 const loadingCapabilities = ref(false)
 const capabilitiesFailure = ref<RpcFailure | null>(null)
+const archivesFailure = ref<RpcFailure | null>(null)
 const capabilitiesView = shallowRef<SaveAsCapabilitiesView | null>(null)
 const selectedCapabilityKey = ref<string>('')
 const selectedOccurrencePath = ref<string>('')
@@ -476,6 +486,7 @@ async function loadArchives() {
     return
   }
   const signal = archivesScope.next()
+  archivesFailure.value = null
   try {
     const names: string[] = []
     let token = ''
@@ -488,11 +499,12 @@ async function loadArchives() {
       token = page.nextContinuationToken
     } while (token !== '')
     availableArchives.value = names
-    if (destinationForm.archive === '' && names.length > 0) {
-      destinationForm.archive = names[0]!
+  } catch (error) {
+    // The archive can still be typed by hand, so the dialog stays usable; the operator is
+    // told the list is missing and why.
+    if (!isOwnCancellation(error, signal)) {
+      archivesFailure.value = rpcFailure(error)
     }
-  } catch {
-    // Non-fatal: operator can still type the destination archive directly.
   }
 }
 
