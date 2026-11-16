@@ -111,11 +111,18 @@ final class ParquetInputChecks {
     /**
      * Checks one field and everything under it. A Parquet schema has a column per path, so
      * the same message type reached by two paths is walked twice; {@code fieldsSeen} counts
-     * every field on every path and stops the walk at {@link #MAX_SCHEMA_FIELDS}.
+     * every field on every path and stops the walk at {@link #MAX_SCHEMA_FIELDS}. Nesting
+     * stops at {@link #MAX_MESSAGE_WALK_DEPTH}, the same depth the message walks allow.
      */
     static void inspectFieldSchema(
             FieldDescriptor field, String path, Deque<String> ancestry, int[] fieldsSeen)
             throws RenderFailure {
+        if (ancestry.size() > MAX_MESSAGE_WALK_DEPTH) {
+            throw new RenderFailure(
+                    RenderFailure.Kind.LIMIT,
+                    "Row schema nests deeper than " + MAX_MESSAGE_WALK_DEPTH
+                            + " messages (reached at '" + path + "')");
+        }
         fieldsSeen[0]++;
         if (fieldsSeen[0] > MAX_SCHEMA_FIELDS) {
             throw new RenderFailure(
