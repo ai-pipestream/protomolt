@@ -40,7 +40,7 @@ final class PipelineRunView {
      * @param checkpoints one entry per executed step
      * @param result the final output, or null until the run completes
      */
-    record Documents(ObjectNode input, ArrayNode checkpoints, JsonNode result) {
+    record Documents(JsonNode input, ArrayNode checkpoints, JsonNode result) {
     }
 
     static Documents render(WorkflowRunRecord job) {
@@ -96,8 +96,8 @@ final class PipelineRunView {
                 PipelineCheckpointCodec.readResultMessages(stored, definition), transcoder);
     }
 
-    /** One message as an object, or a stream as {@code {"items": [...]}}. */
-    private static ObjectNode binding(EdgeCardinality cardinality,
+    /** One message as its proto3 JSON, or a stream as {@code {"items": [...]}}. */
+    private static JsonNode binding(EdgeCardinality cardinality,
                                       List<DynamicMessage> messages,
                                       ProtobufJsonTranscoder transcoder) {
         if (cardinality == EdgeCardinality.EDGE_CARDINALITY_ONE) {
@@ -111,8 +111,7 @@ final class PipelineRunView {
         return stream;
     }
 
-    private static ObjectNode message(DynamicMessage message,
-                                      ProtobufJsonTranscoder transcoder) {
+    static JsonNode message(DynamicMessage message, ProtobufJsonTranscoder transcoder) {
         String printed;
         try {
             printed = transcoder.toJson(message);
@@ -123,19 +122,14 @@ final class PipelineRunView {
             marker.put(UNRENDERABLE_TYPE_KEY, message.getDescriptorForType().getFullName());
             return marker;
         }
-        JsonNode tree;
+        // A message's proto3 JSON is whatever its type says: an object for most messages, a
+        // string for StringValue or Timestamp, an array for ListValue. All of them are shown.
         try {
-            tree = JSON.readTree(printed);
+            return JSON.readTree(printed);
         } catch (JsonProcessingException notJson) {
             throw new IllegalStateException(
                     "proto3 JSON printer produced text that is not JSON for "
                             + message.getDescriptorForType().getFullName(), notJson);
         }
-        if (tree instanceof ObjectNode object) {
-            return object;
-        }
-        throw new IllegalStateException(
-                "proto3 JSON printer produced a non-object node for "
-                        + message.getDescriptorForType().getFullName());
     }
 }

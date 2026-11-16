@@ -7,6 +7,7 @@ import ai.protomolt.proto.grpc.profile.ServiceProfileValidation;
 import ai.protomolt.proto.grpc.workflow.v1.ServiceDependency;
 import ai.protomolt.proto.grpc.workflow.v1.StepCompletion;
 import ai.protomolt.proto.grpc.workflow.v1.TypedEdge;
+import ai.protomolt.proto.http.json.ProtobufJsonTranscoder;
 import ai.protomolt.proto.jobs.service.PipelineJobCoordinator.PipelineDefinitionException;
 import ai.protomolt.proto.jobs.service.actions.CompleteStepAction;
 import ai.protomolt.proto.jobs.service.events.WorkflowRunEventFactory;
@@ -37,6 +38,10 @@ import com.google.protobuf.Descriptors.Descriptor;
 import com.google.protobuf.Descriptors.FileDescriptor;
 import com.google.protobuf.Duration;
 import com.google.protobuf.DynamicMessage;
+import com.google.protobuf.ListValue;
+import com.google.protobuf.StringValue;
+import com.google.protobuf.Timestamp;
+import com.google.protobuf.Value;
 import io.grpc.inprocess.InProcessChannelBuilder;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
@@ -338,6 +343,28 @@ class PipelineRunCodecTest {
         // The stored input is untouched by the view.
         assertThat(PipelineRunCodec.readDefinition(opaqueRow).input().toByteString())
                 .isEqualTo(withUnregisteredAny.toByteString());
+    }
+
+    @Test
+    void viewRendersMessagesWhoseProto3JsonIsNotAnObject() throws Exception {
+        ProtobufJsonTranscoder transcoder =
+                new ProtobufJsonTranscoder(PipelineRunCodec.buildRegistry(files, null));
+        DynamicMessage text = DynamicMessage.parseFrom(
+                StringValue.getDescriptor(), StringValue.of("plain").toByteString());
+        assertThat(PipelineRunView.message(text, transcoder).asText()).isEqualTo("plain");
+
+        DynamicMessage instant = DynamicMessage.parseFrom(Timestamp.getDescriptor(),
+                Timestamp.newBuilder().setSeconds(1).build().toByteString());
+        assertThat(PipelineRunView.message(instant, transcoder).asText())
+                .isEqualTo("1970-01-01T00:00:01Z");
+
+        DynamicMessage list = DynamicMessage.parseFrom(ListValue.getDescriptor(),
+                ListValue.newBuilder()
+                        .addValues(Value.newBuilder().setStringValue("a"))
+                        .addValues(Value.newBuilder().setNumberValue(2))
+                        .build().toByteString());
+        assertThat(PipelineRunView.message(list, transcoder)).hasSize(2);
+        assertThat(PipelineRunView.message(list, transcoder).isArray()).isTrue();
     }
 
     private static WorkflowRunRecord pipelineRow(byte[] definition) {

@@ -180,7 +180,7 @@ public final class PipelineJobCoordinator {
      * @param checkpoints one entry per executed step
      * @param result the final output, or null until the run completes
      */
-    public record RunView(ObjectNode input, ArrayNode checkpoints, JsonNode result) {
+    public record RunView(JsonNode input, ArrayNode checkpoints, JsonNode result) {
     }
 
     /** Renders {@code job}, a pipeline run, for the get-job and list-jobs replies. */
