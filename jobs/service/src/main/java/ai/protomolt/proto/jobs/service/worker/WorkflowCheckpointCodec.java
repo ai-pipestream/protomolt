@@ -2,6 +2,8 @@ package ai.protomolt.proto.jobs.service.worker;
 
 import ai.protomolt.proto.actions.ActionContext;
 import ai.protomolt.proto.http.json.MalformedProtobufJsonException;
+import ai.protomolt.proto.http.json.ProtobufJsonException;
+import com.fasterxml.jackson.core.JsonProcessingException;
 import ai.protomolt.proto.workflow.WorkflowRunner;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
@@ -33,16 +35,21 @@ final class WorkflowCheckpointCodec {
         entry.put(
                 RESPONSE_BASE64_FIELD,
                 Base64.getEncoder().encodeToString(checkpoint.response().toByteArray()));
+        String preview;
         try {
-            entry.set(
-                    RESPONSE_FIELD,
-                    context.objectMapper()
-                            .readTree(context.transcoder().toJson(checkpoint.response())));
-        } catch (Exception e) {
-            // If a response holds an unregistered google.protobuf.Any type URL that proto3 JSON
-            // cannot render, preserve null in the auxiliary JSON preview while keeping the
-            // authoritative binary wire payload in responseBase64.
+            preview = context.transcoder().toJson(checkpoint.response());
+        } catch (ProtobufJsonException unrenderable) {
+            // proto3 JSON cannot print an Any whose type is outside the registry. The preview is
+            // then null; responseBase64 above is the payload that is read back.
             entry.putNull(RESPONSE_FIELD);
+            return;
+        }
+        try {
+            entry.set(RESPONSE_FIELD, context.objectMapper().readTree(preview));
+        } catch (JsonProcessingException notJson) {
+            throw new IllegalStateException(
+                    "proto3 JSON printer produced text that is not JSON for checkpoint '"
+                            + checkpoint.name() + "'", notJson);
         }
     }
 

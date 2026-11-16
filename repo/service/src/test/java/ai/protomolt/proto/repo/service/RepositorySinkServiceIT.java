@@ -1075,7 +1075,7 @@ class RepositorySinkServiceIT {
             try (var conn = services.ledgerDataSource().getConnection();
                     var ps = conn.prepareStatement(
                             """
-                            UPDATE repo_sink.sink_jobs
+                            UPDATE sink_jobs
                                SET state = 'REPOSITORY_SINK_JOB_STATE_RUNNING',
                                    job_pb = ?,
                                    owner_id = 'crashed-owner-A',

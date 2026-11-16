@@ -20,8 +20,8 @@ import java.util.function.Supplier;
 import javax.sql.DataSource;
 
 /**
- * Durable PostgreSQL implementation of {@link RepositorySinkJobStore} backed by isolated table
- * {@code repo_sink.sink_jobs} with monotonic lease fencing and cooperative cross-instance
+ * Durable PostgreSQL implementation of {@link RepositorySinkJobStore} backed by the ledger table
+ * {@code sink_jobs} with monotonic lease fencing and cooperative cross-instance
  * cancellation. The table is created by the ledger migration
  * {@code V122__repository_sink_jobs.sql}; this store never issues DDL.
  *
@@ -38,13 +38,13 @@ final class JdbcRepositorySinkJobStore implements RepositorySinkJobStore {
             SELECT job_pb, request_pb, pending_provenance_pb,
                    owner_id, lease_epoch, lease_expires_at,
                    cancel_requested, cancel_reason
-              FROM repo_sink.sink_jobs
+              FROM sink_jobs
              WHERE account_id = ? AND operation_id = ?
             """;
 
     private static final String INSERT_IF_ABSENT_SQL =
             """
-            INSERT INTO repo_sink.sink_jobs (
+            INSERT INTO sink_jobs (
                 account_id, operation_id, state, job_pb, request_pb, pending_provenance_pb,
                 owner_id, lease_epoch, lease_expires_at, cancel_requested, cancel_reason,
                 updated_at
@@ -54,7 +54,7 @@ final class JdbcRepositorySinkJobStore implements RepositorySinkJobStore {
 
     private static final String RENEW_LEASE_SQL =
             """
-            UPDATE repo_sink.sink_jobs
+            UPDATE sink_jobs
                SET lease_expires_at = ?,
                    updated_at = now()
              WHERE account_id = ?
@@ -70,7 +70,7 @@ final class JdbcRepositorySinkJobStore implements RepositorySinkJobStore {
 
     private static final String PREPARE_COMMIT_SQL =
             """
-            UPDATE repo_sink.sink_jobs
+            UPDATE sink_jobs
                SET state = ?,
                    job_pb = ?,
                    request_pb = ?,
@@ -87,7 +87,7 @@ final class JdbcRepositorySinkJobStore implements RepositorySinkJobStore {
 
     private static final String TRANSITION_OWNED_SQL =
             """
-            UPDATE repo_sink.sink_jobs
+            UPDATE sink_jobs
                SET state = ?,
                    job_pb = ?,
                    request_pb = ?,
@@ -107,7 +107,7 @@ final class JdbcRepositorySinkJobStore implements RepositorySinkJobStore {
 
     private static final String REQUEST_CANCEL_SQL =
             """
-            UPDATE repo_sink.sink_jobs
+            UPDATE sink_jobs
                SET cancel_requested = TRUE,
                    cancel_reason = CASE WHEN cancel_reason = '' THEN ? ELSE cancel_reason END,
                    updated_at = now()
@@ -121,7 +121,7 @@ final class JdbcRepositorySinkJobStore implements RepositorySinkJobStore {
 
     private static final String CLAIM_EXPIRED_SQL =
             """
-            UPDATE repo_sink.sink_jobs
+            UPDATE sink_jobs
                SET owner_id = ?,
                    lease_epoch = lease_epoch + 1,
                    lease_expires_at = ?,
@@ -142,7 +142,7 @@ final class JdbcRepositorySinkJobStore implements RepositorySinkJobStore {
 
     private static final String CLAIM_RETRYABLE_FAILURE_SQL =
             """
-            UPDATE repo_sink.sink_jobs
+            UPDATE sink_jobs
                SET state = 'REPOSITORY_SINK_JOB_STATE_QUEUED',
                    job_pb = ?,
                    pending_provenance_pb = NULL,
