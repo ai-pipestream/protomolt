@@ -401,7 +401,10 @@ class PipelineJobPostgresRecoveryIT {
                         workerB.close();
                     }
                     // Stale Worker A now tries to save its checkpoint under expired attempt 2!
-                    store.saveCheckpoint(staleClaimA, "[]",
+                    List<Checkpoint> staleCheckpoints = new java.util.ArrayList<>(prior);
+                    staleCheckpoints.add(cp);
+                    store.savePipelineCheckpoints(staleClaimA,
+                            PipelineJobCoordinator.writeCheckpoints(staleCheckpoints),
                             WorkflowRunEventFactory.stepCheckpoint(claimedByA, cp.outcome().name()));
                 }))
                 .isInstanceOfSatisfying(PipelineExecutor.PipelineExecutionException.class,
@@ -417,6 +420,25 @@ class PipelineJobPostgresRecoveryIT {
         WorkflowRunRecord settled = store.get(jobId).orElseThrow();
         assertThat(settled.status).isEqualTo(WorkflowRunRecord.STATUS_COMPLETED);
         assertThat(settled.attempt).isEqualTo(3);
+
+        // Every pipeline write is fenced: the stale claim can change nothing Worker B stored.
+        byte[] forged = new byte[] {0x0a, 0x00};
+        assertThatThrownBy(() -> store.savePipelineCheckpoints(staleClaimA, forged,
+                WorkflowRunEventFactory.stepCheckpoint(claimedByA, "apply")))
+                .isInstanceOf(ClaimLostException.class);
+        assertThatThrownBy(() -> store.markPipelineWaiting(staleClaimA, "signoff", forged,
+                WorkflowRunEventFactory.waiting(claimedByA, "signoff")))
+                .isInstanceOf(ClaimLostException.class);
+        assertThatThrownBy(() -> store.markPipelineCompleted(staleClaimA, forged, "stale",
+                WorkflowRunEventFactory.completed(claimedByA, "stale")))
+                .isInstanceOf(ClaimLostException.class);
+        WorkflowRunRecord untouched = store.get(jobId).orElseThrow();
+        assertThat(untouched.status).isEqualTo(WorkflowRunRecord.STATUS_COMPLETED);
+        assertThat(untouched.attempt).isEqualTo(3);
+        assertThat(untouched.pipelineCheckpoints).isEqualTo(settled.pipelineCheckpoints);
+        assertThat(untouched.pipelineResult).isEqualTo(settled.pipelineResult);
+        assertThat(untouched.pipelineCheckpoints).isNotEqualTo(forged);
+        assertThat(untouched.result).isEqualTo(settled.result);
         assertThat(store.pollPendingEvents(50).stream()
                 .filter(e -> WorkflowRunEventRecord.TYPE_COMPLETED.equals(e.eventType))
                 .count()).isEqualTo(1);

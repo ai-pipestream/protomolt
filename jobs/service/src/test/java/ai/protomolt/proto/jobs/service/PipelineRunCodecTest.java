@@ -492,6 +492,16 @@ class PipelineRunCodecTest {
                 .hasMessageContaining("google.protobuf.StringValue")
                 .hasMessageContaining("{\"value\": ...}");
 
+        // A stream envelope is exactly {"items": [...]}; a second key is a mistake, not noise.
+        ObjectNode extraKey = JSON.createObjectNode();
+        extraKey.putArray("items").add("a");
+        extraKey.putArray("itmes").add("b");
+        assertThatThrownBy(() -> PipelineExternalCompletionParser.parseResponses(
+                        extraKey, EdgeCardinality.EDGE_CARDINALITY_MANY,
+                        StringValue.getDescriptor(), 8, "approve", files, null))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("itmes");
+
         // A stream of an ordinary message type still refuses an item that is not an object.
         ObjectNode badStream = JSON.createObjectNode();
         badStream.putArray("items").add("not-an-object");

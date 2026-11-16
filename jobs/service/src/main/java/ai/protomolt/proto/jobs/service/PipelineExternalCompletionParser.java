@@ -44,6 +44,17 @@ final class PipelineExternalCompletionParser {
                     "streaming external step '" + stepName
                             + "' requires 'response' object {\"items\": [...]}");
         }
+        if (response.size() != 1) {
+            List<String> unexpected = new ArrayList<>();
+            response.fieldNames().forEachRemaining(name -> {
+                if (!name.equals(PipelineRunView.ITEMS_KEY)) {
+                    unexpected.add(name);
+                }
+            });
+            throw new IllegalArgumentException(
+                    "streaming external step '" + stepName + "' takes only 'items'; got also "
+                            + unexpected);
+        }
         if (items.size() > maxStreamMessages) {
             throw new IllegalArgumentException(
                     "streaming external step '" + stepName + "' supplied " + items.size()

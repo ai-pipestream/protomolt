@@ -300,6 +300,7 @@ public final class PipelineExecutor {
         for (PipelineStep step : pipeline.getStepsList()) {
             if (index < prior.size()) {
                 Checkpoint saved = prior.get(index++);
+                StepDeadlines.requireTime(step.getName(), deadlineNanos);
                 last = CheckpointReplay.restore(step, saved, scope, replay);
                 scope.put(step.getName(), last);
                 outcomes.add(saved.outcome());
@@ -341,6 +342,8 @@ public final class PipelineExecutor {
             checkpoints.add(checkpoint);
         }
 
+        // A segment that only replayed checkpoints is held to the deadline like any other.
+        StepDeadlines.requireTime("", deadlineNanos);
         if (pipeline.hasOutput()) {
             Descriptor outputType = registry.findDescriptorByFullName(
                     pipeline.getOutput().getType());

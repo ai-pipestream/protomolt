@@ -953,6 +953,97 @@ class PipelineSegmentsTest {
                 });
     }
 
+    @Test
+    void replayOfAFullCheckpointPrefixStillHonorsThePipelineDeadline() throws Exception {
+        Pipeline.Builder local = PipelineFixtures.base("local-deadline", BATCH)
+                .addDependencies(PipelineFixtures.dependency("pipeline.test.Worker"))
+                .addSteps(PipelineStep.newBuilder().setName("spread")
+                        .setUnnest(UnnestStep.newBuilder()
+                                .setSource("input").setPath("items")))
+                .addSteps(PipelineStep.newBuilder().setName("gathered")
+                        .setCollect(CollectStep.newBuilder().setSource("spread")
+                                .setCollectType(PipelineFixtures.TICKET_BOX)
+                                .setCollectInto("tickets")));
+        Pipeline roomy = local.build();
+        Pipeline expired = local.setDeadline(Duration.newBuilder().setNanos(1)).build();
+        List<FileDescriptor> files = PipelineFixtures.files();
+        Descriptor batchType = PipelineFixtures.type(BATCH);
+        DynamicMessage input = DynamicMessage.newBuilder(batchType)
+                .addRepeatedField(batchType.findFieldByName("items"), ticket("a"))
+                .build();
+        PipelineExecutor executor = new PipelineExecutor((dep, method, reqs, deadline, max) -> {
+            throw new AssertionError("this pipeline calls nothing");
+        });
+        List<Checkpoint> written = new ArrayList<>();
+        executor.runSegment(roomy, files, input, List.of(), written::add);
+
+        // The same checkpoints, belonging to the pipeline whose deadline has already passed.
+        String expiredFp = PipelineExecutor.pipelineFingerprint(expired, files);
+        List<Checkpoint> prefix = written.stream()
+                .map(cp -> new Checkpoint(expiredFp, cp.inputFingerprint(), cp.outcome(),
+                        cp.cardinality(), cp.messages(), cp.branches()))
+                .toList();
+        assertThatThrownBy(() -> executor.runSegment(expired, files, input, prefix, cp -> { }))
+                .isInstanceOfSatisfying(PipelineExecutionException.class,
+                        e -> assertThat(e.kind()).isEqualTo(FailureKind.DEADLINE));
+    }
+
+    @Test
+    void aSkippedStepWhoseProto2OutputHasRequiredFieldsReplays() throws Exception {
+        String proto2 = """
+                syntax = "proto2";
+                package pipeline.legacy;
+                message Ask { optional string text = 1; }
+                message Verdict { required string decision = 1; }
+                service Desk { rpc Decide(Ask) returns (Verdict); }
+                """;
+        FileDescriptor file = new ProtoSourceCompiler().compile(ProtoSourceSet.builder()
+                        .add("pipeline/legacy/legacy.proto", proto2, "test").build())
+                .descriptorFor("pipeline/legacy/legacy.proto").orElseThrow();
+        List<FileDescriptor> files = List.of(file);
+        String fp = ai.protomolt.proto.grpc.profile.ServiceProfileValidation.sha256(
+                FileDescriptorSet.newBuilder().addFile(file.toProto()).build().toByteArray());
+        Pipeline pipeline = Pipeline.newBuilder()
+                .setName("legacy-skip")
+                .setInputType("pipeline.legacy.Ask")
+                .setDescriptorFingerprint(fp)
+                .setMaxStreamMessages(10)
+                .setDeadline(Duration.newBuilder().setSeconds(10).build())
+                .addDependencies(ServiceDependency.newBuilder()
+                        .setAlias("desk").setServiceProfile("desk").setEndpoint("local")
+                        .setDescriptorFingerprint(fp))
+                .addSteps(PipelineStep.newBuilder()
+                        .setName("decide")
+                        .setDependency("desk")
+                        .setWhen("input.text == 'ask'")
+                        .setGrpcCall(GrpcCallStep.newBuilder()
+                                .setMethod("pipeline.legacy.Desk/Decide")
+                                .setMethodShape(MethodShape.METHOD_SHAPE_UNARY)
+                                .setEdge(ai.protomolt.proto.grpc.workflow.v1.TypedEdge.newBuilder()
+                                        .addSources("input")
+                                        .setProduceType("pipeline.legacy.Ask")
+                                        .addRules("text = input.text"))
+                                .setEdgeCardinality(EdgeCardinality.EDGE_CARDINALITY_ONE)
+                                .setOutputCardinality(EdgeCardinality.EDGE_CARDINALITY_ONE)
+                                .setCompletion(StepCompletion.STEP_COMPLETION_LIVE)))
+                .build();
+        Descriptor askType = file.findMessageTypeByName("Ask");
+        DynamicMessage input = DynamicMessage.newBuilder(askType)
+                .setField(askType.findFieldByName("text"), "do-not-ask")
+                .build();
+        PipelineExecutor executor = new PipelineExecutor((dep, method, reqs, deadline, max) -> {
+            throw new AssertionError("the gate is false, so nothing is called");
+        });
+        List<Checkpoint> written = new ArrayList<>();
+        executor.runSegment(pipeline, files, input, List.of(), written::add);
+        assertThat(written.getFirst().outcome())
+                .isEqualTo(new StepOutcome("decide", true, 0, 0));
+
+        // The placeholder of a skipped step has no required field set; it must still replay.
+        Segment replayed = executor.runSegment(pipeline, files, input, written, cp -> { });
+        assertThat(replayed).isInstanceOf(Segment.Completed.class);
+    }
+
     private static PipelineStep.Builder externalStep(String name, String service, String method,
                                                      MethodShape shape,
                                                      EdgeCardinality outputCardinality,

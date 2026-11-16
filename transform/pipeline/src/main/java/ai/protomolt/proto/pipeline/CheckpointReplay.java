@@ -238,9 +238,15 @@ final class CheckpointReplay {
                 throw invalid(step,
                         "checkpoint response descriptor does not match " + type.getFullName());
             }
-            if (skipped && !message.equals(
-                    DynamicMessage.getDefaultInstance(message.getDescriptorForType()))) {
-                throw invalid(step, "skipped checkpoint contains a response");
+            if (skipped) {
+                if (!message.equals(
+                        DynamicMessage.getDefaultInstance(message.getDescriptorForType()))) {
+                    throw invalid(step, "skipped checkpoint contains a response");
+                }
+                // The placeholder of a skipped step is the empty message. It is not parsed
+                // back, because a proto2 type with required fields refuses to parse empty.
+                values.add(DynamicMessage.getDefaultInstance(type));
+                continue;
             }
             DynamicMessage restored;
             try {

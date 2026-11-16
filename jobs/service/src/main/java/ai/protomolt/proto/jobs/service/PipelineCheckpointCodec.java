@@ -187,6 +187,13 @@ final class PipelineCheckpointCodec {
                                                        Descriptor type, String stepName) {
         List<DynamicMessage> messages = new ArrayList<>(stored.size());
         for (ByteString bytes : stored) {
+            if (bytes.isEmpty()) {
+                // No bytes is the default instance, which is what a skipped step stores as
+                // its placeholder. It is not parsed, because a proto2 type with required
+                // fields refuses to parse empty; replay still refuses it for a step that ran.
+                messages.add(DynamicMessage.getDefaultInstance(type));
+                continue;
+            }
             try {
                 messages.add(DynamicMessage.parseFrom(type, bytes));
             } catch (InvalidProtocolBufferException e) {
