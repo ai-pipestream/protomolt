@@ -78,6 +78,17 @@ jobs:
           if-no-files-found: warn
           retention-days: 7
 
+      - name: Save failed system test reports
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: system-test-results-jdk-${{ matrix.test-jdk }}-${{ github.run_attempt }}
+          path: |
+            tests/system/build/test-results/test/*.xml
+            tests/system/build/reports/tests/test/
+          if-no-files-found: warn
+          retention-days: 7
+
       - name: Save repository test diagnostics
         if: failure()
         uses: actions/upload-artifact@v4
