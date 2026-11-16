@@ -29,7 +29,7 @@
   },
   "devDependencies": {
     "@bufbuild/protoc-gen-es": "2.17.0",
-    "@playwright/test": "1.65.0",
+    "@playwright/test": "1.65.1",
     "@types/node": "^26.1.1",
     "@vitejs/plugin-vue": "^6.0.4",
     "@vue/test-utils": "^2.4.11",

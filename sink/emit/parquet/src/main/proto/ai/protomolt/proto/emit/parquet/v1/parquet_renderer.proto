@@ -1,0 +1,135 @@
+syntax = "proto3";
+
+package ai.protomolt.proto.emit.parquet.v1;
+
+import "ai/protomolt/proto/validate/v1/validate.proto";
+import "buf/validate/validate.proto";
+
+option java_multiple_files = true;
+option java_package = "ai.protomolt.proto.emit.parquet.v1";
+
+// Strategy applied when masking schema-declared sensitive fields during Parquet rendering.
+// Keyed AES-GCM strategies are intentionally omitted so untrusted Save-as options never
+// carry raw cryptographic key material.
+enum ParquetMaskStrategy {
+  // Default strategy: applies REDACT when masked_sensitivity_classes is non-empty,
+  // or leaves values unchanged when masked_sensitivity_classes is empty.
+  PARQUET_MASK_STRATEGY_UNSPECIFIED = 0;
+  // Replaces matched string fields (and string-valued maps) with "***" and clears
+  // non-string matched fields to their default or unset value.
+  PARQUET_MASK_STRATEGY_REDACT = 1;
+  // Clears matched fields to their default or unset value (to omit a required
+  // top-level column from the Parquet schema entirely, exclude it via columns).
+  PARQUET_MASK_STRATEGY_REMOVE = 2;
+}
+
+// Typed bounded options for rendering protobuf state into a derived Parquet artifact.
+// Default instances are valid and render all columns of the row schema with validation
+// enforced and no sensitivity masking. Validation bypass and raw encryption keys are
+// never exposed on this surface.
+message ParquetRendererOptions {
+  // Optional top-level field names of the effective row descriptor to retain in the
+  // Parquet schema. Empty retains all top-level columns; unknown, blank, dotted, or
+  // duplicate names are rejected.
+  repeated string columns = 1 [
+    (ai.protomolt.proto.validate.v1.field).repeated = {
+      max_items: 512
+      unique: true
+      items: {
+        string: {
+          identifier: true
+          min_len: 1
+          max_len: 128
+        }
+      }
+    },
+    (buf.validate.field).repeated = {
+      max_items: 512
+      unique: true
+      items: {
+        string: {
+          min_len: 1
+          max_len: 128
+          pattern: "^[A-Za-z_][A-Za-z0-9_]*$"
+        }
+      }
+    }
+  ];
+
+  // Optional sensitivity class names matching (ai.protomolt.proto.meta.v1.field).sensitivity
+  // (such as "pii" or "secret") to mask via SensitivityMasker before writing Parquet rows.
+  repeated string masked_sensitivity_classes = 2 [
+    (ai.protomolt.proto.validate.v1.field).repeated = {
+      max_items: 128
+      unique: true
+      items: {
+        string: {
+          path_safe_name: true
+          min_len: 1
+          max_len: 128
+        }
+      }
+    },
+    (buf.validate.field).repeated = {
+      max_items: 128
+      unique: true
+      items: {
+        string: {
+          min_len: 1
+          max_len: 128
+          pattern: "^[A-Za-z0-9][A-Za-z0-9._-]*$"
+        }
+      }
+    }
+  ];
+
+  // Masking strategy applied when masked_sensitivity_classes is non-empty.
+  ParquetMaskStrategy mask_strategy = 3 [
+    (ai.protomolt.proto.validate.v1.field).enum = {defined_only: true},
+    (buf.validate.field).enum = {defined_only: true}
+  ];
+
+  // Optional caller-requested ceiling on rendered Parquet artifact bytes. Zero uses
+  // the provider's configured max_output_bytes; positive values tighten the output
+  // budget and are refused if they exceed the provider's configured ceiling.
+  int64 max_output_bytes = 4 [
+    (ai.protomolt.proto.validate.v1.field).int64 = {
+      gte: 0
+      lte: 67108864
+    },
+    (buf.validate.field).int64 = {
+      gte: 0
+      lte: 67108864
+    }
+  ];
+
+  // Optional column-selection or projection profile identifier bound into options digest.
+  string mapping_id = 5 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      string: {
+        max_len: 256
+        pattern: ".*\\S.*"
+      }
+      ignore_if_zero: true
+    },
+    (buf.validate.field).string = {
+      max_len: 256
+      pattern: "^(|.*\\S.*)$"
+    }
+  ];
+
+  // Optional disclosure or sensitivity-masking policy identifier bound into options digest.
+  string policy_id = 6 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      string: {
+        max_len: 256
+        pattern: ".*\\S.*"
+      }
+      ignore_if_zero: true
+    },
+    (buf.validate.field).string = {
+      max_len: 256
+      pattern: "^(|.*\\S.*)$"
+    }
+  ];
+}
