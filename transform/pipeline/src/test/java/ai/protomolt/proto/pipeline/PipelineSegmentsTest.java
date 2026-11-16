@@ -18,6 +18,7 @@ import ai.protomolt.proto.pipeline.v1.MethodShape;
 import ai.protomolt.proto.pipeline.v1.Pipeline;
 import ai.protomolt.proto.pipeline.v1.PipelineOutput;
 import ai.protomolt.proto.pipeline.v1.PipelineStep;
+import ai.protomolt.proto.pipeline.v1.UnnestStep;
 import ai.protomolt.proto.sources.CompiledProtos;
 import ai.protomolt.proto.sources.ProtoSourceCompiler;
 import ai.protomolt.proto.sources.ProtoSourceSet;
@@ -888,6 +889,68 @@ class PipelineSegmentsTest {
         }
         assertThat(replay.runSegment(pipeline, files, input, List.of(honest), cp -> { }))
                 .isInstanceOf(Segment.Completed.class);
+    }
+
+    @Test
+    void replayRejectsUnnestAndCollectCheckpointsThatDifferFromTheirSource() throws Exception {
+        Pipeline pipeline = PipelineFixtures.base("local-replay", BATCH)
+                .addDependencies(PipelineFixtures.dependency("pipeline.test.Worker"))
+                .addSteps(PipelineStep.newBuilder().setName("spread")
+                        .setUnnest(UnnestStep.newBuilder()
+                                .setSource("input").setPath("items")))
+                .addSteps(PipelineStep.newBuilder().setName("gathered")
+                        .setCollect(CollectStep.newBuilder().setSource("spread")
+                                .setCollectType(PipelineFixtures.TICKET_BOX)
+                                .setCollectInto("tickets")))
+                .build();
+        List<FileDescriptor> files = PipelineFixtures.files();
+        Descriptor batchType = PipelineFixtures.type(BATCH);
+        DynamicMessage input = DynamicMessage.newBuilder(batchType)
+                .addRepeatedField(batchType.findFieldByName("items"), ticket("a"))
+                .addRepeatedField(batchType.findFieldByName("items"), ticket("b"))
+                .build();
+        PipelineExecutor executor = new PipelineExecutor((dep, method, reqs, deadline, max) -> {
+            throw new AssertionError("this pipeline calls nothing");
+        });
+        List<Checkpoint> honest = new ArrayList<>();
+        executor.runSegment(pipeline, files, input, List.of(), honest::add);
+        Checkpoint spread = honest.get(0);
+        Checkpoint gathered = honest.get(1);
+        assertThat(executor.runSegment(pipeline, files, input, honest, cp -> { }))
+                .isInstanceOf(Segment.Completed.class);
+
+        // Unnest: a different value, and one item fewer, each with counts that agree.
+        Checkpoint alteredValue = new Checkpoint(spread.pipelineFingerprint(),
+                spread.inputFingerprint(), spread.outcome(), spread.cardinality(),
+                List.of(ticket("a"), ticket("forged")), List.of());
+        Checkpoint alteredCount = new Checkpoint(spread.pipelineFingerprint(),
+                spread.inputFingerprint(), new StepOutcome("spread", false, 0, 1),
+                spread.cardinality(), List.of(ticket("a")), List.of());
+        for (Checkpoint forged : List.of(alteredValue, alteredCount)) {
+            assertThatThrownBy(() -> executor.runSegment(
+                    pipeline, files, input, List.of(forged), cp -> { }))
+                    .isInstanceOfSatisfying(PipelineExecutionException.class, e -> {
+                        assertThat(e.kind()).isEqualTo(FailureKind.PIPELINE);
+                        assertThat(e.step()).isEqualTo("spread");
+                        assertThat(e.getMessage()).contains("recomputed");
+                    });
+        }
+
+        // Collect: a holder that is not what the stream collects to.
+        Descriptor boxType = PipelineFixtures.type(PipelineFixtures.TICKET_BOX);
+        Checkpoint forgedBox = new Checkpoint(gathered.pipelineFingerprint(),
+                gathered.inputFingerprint(), gathered.outcome(), gathered.cardinality(),
+                List.of(DynamicMessage.newBuilder(boxType)
+                        .addRepeatedField(boxType.findFieldByName("tickets"), ticket("forged"))
+                        .build()),
+                List.of());
+        assertThatThrownBy(() -> executor.runSegment(
+                pipeline, files, input, List.of(spread, forgedBox), cp -> { }))
+                .isInstanceOfSatisfying(PipelineExecutionException.class, e -> {
+                    assertThat(e.kind()).isEqualTo(FailureKind.PIPELINE);
+                    assertThat(e.step()).isEqualTo("gathered");
+                    assertThat(e.getMessage()).contains("recomputed");
+                });
     }
 
     private static PipelineStep.Builder externalStep(String name, String service, String method,

@@ -139,10 +139,11 @@ final class PipelineRunCodec {
             }
         }
         if (extraRegistry != null) {
+            // The run is defined against the descriptors it was submitted with. A type the
+            // supplemental registry also defines, under any file name, never replaces them.
             for (Descriptor descriptor : extraRegistry.registeredDescriptors()) {
-                FileDescriptor file = descriptor.getFile();
-                if (seen.add(file.getName())) {
-                    registry.registerFile(file);
+                if (!registry.isRegistered(descriptor.getFullName())) {
+                    registry.register(descriptor);
                 }
             }
         }

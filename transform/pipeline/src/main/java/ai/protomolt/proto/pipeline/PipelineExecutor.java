@@ -16,7 +16,6 @@ import ai.protomolt.proto.pipeline.v1.PipelineStep;
 import ai.protomolt.proto.pipeline.v1.StructuredStep;
 import com.google.protobuf.Any;
 import com.google.protobuf.Descriptors.Descriptor;
-import com.google.protobuf.Descriptors.FieldDescriptor;
 import com.google.protobuf.Descriptors.FileDescriptor;
 import com.google.protobuf.Descriptors.MethodDescriptor;
 import com.google.protobuf.DynamicMessage;
@@ -310,9 +309,10 @@ public final class PipelineExecutor {
             int branchStart = branches.size();
             StepDeadlines.requireTime(step.getName(), deadlineNanos);
             if (step.hasUnnest()) {
-                last = runUnnest(step, scope, pipeline.getMaxStreamMessages());
+                last = LocalSteps.unnest(step, scope, pipeline.getMaxStreamMessages());
             } else if (step.hasCollect()) {
-                last = runCollect(step, scope, registry);
+                last = LocalSteps.collect(step, scope, registry);
+                scope.remove(step.getCollect().getSource());
             } else if (step.hasStructured()) {
                 last = runStructured(step, scope, registry, deadlineNanos,
                         pipeline.getMaxStreamMessages(), branches);
@@ -499,32 +499,6 @@ public final class PipelineExecutor {
         }
         return runFanOutStructured(step, produced.getFirst(), target, registry, streamLimit,
                 stepDeadlineNanos, branches);
-    }
-
-    private PipelineBinding runUnnest(PipelineStep step, Map<String, PipelineBinding> scope, int limit)
-            throws PipelineExecutionException {
-        PipelineBinding source = scope.get(step.getUnnest().getSource());
-        FieldDescriptor field = StreamPaths.repeatedField(source.type(),
-                step.getUnnest().getPath());
-        List<?> raw = StreamPaths.repeatedValues(source.one(), step.getUnnest().getPath());
-        if (raw.size() > limit) {
-            throw failure(step.getName(), FailureKind.PIPELINE,
-                    "unnest produced " + raw.size() + " messages, over max_stream_messages "
-                            + limit, null);
-        }
-        List<DynamicMessage> values = raw.stream()
-                .map(value -> StepValues.dynamic((Message) value)).toList();
-        return PipelineBinding.many(field.getMessageType(), values);
-    }
-
-    private PipelineBinding runCollect(PipelineStep step, Map<String, PipelineBinding> scope,
-                               DescriptorRegistry registry) throws PipelineExecutionException {
-        PipelineBinding source = scope.remove(step.getCollect().getSource());
-        Descriptor type = registry.findDescriptorByFullName(step.getCollect().getCollectType());
-        FieldDescriptor field = type.findFieldByName(step.getCollect().getCollectInto());
-        DynamicMessage.Builder builder = DynamicMessage.newBuilder(type);
-        source.values().forEach(value -> builder.addRepeatedField(field, value));
-        return PipelineBinding.one(builder.build());
     }
 
     private PipelineBinding runFanOutGrpc(PipelineStep step, DynamicMessage holder,

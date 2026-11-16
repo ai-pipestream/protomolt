@@ -580,6 +580,44 @@ class PipelineRunCodecTest {
                 .isEqualTo("jobs.pipeline.codec.EnvelopeInput");
     }
 
+    @Test
+    void theRunsOwnTypesWinOverASupplementalRegistryThatRedefinesThem() throws Exception {
+        // The host has since moved EnvelopeOutput to another file and changed its field.
+        FileDescriptor moved = FileDescriptor.buildFrom(FileDescriptorProto.newBuilder()
+                .setName("jobs/pipeline/codec/moved.proto")
+                .setPackage("jobs.pipeline.codec")
+                .setSyntax("proto3")
+                .addMessageType(com.google.protobuf.DescriptorProtos.DescriptorProto.newBuilder()
+                        .setName("EnvelopeOutput")
+                        .addField(com.google.protobuf.DescriptorProtos.FieldDescriptorProto
+                                .newBuilder()
+                                .setName("status_code").setNumber(1)
+                                .setType(com.google.protobuf.DescriptorProtos
+                                        .FieldDescriptorProto.Type.TYPE_INT32)))
+                .addMessageType(com.google.protobuf.DescriptorProtos.DescriptorProto.newBuilder()
+                        .setName("HostOnly"))
+                .build(), new FileDescriptor[0]);
+        DescriptorRegistry host = DescriptorRegistry.create(false);
+        host.registerFile(moved);
+        Descriptor retained = file.findMessageTypeByName("EnvelopeOutput");
+
+        DescriptorRegistry combined = PipelineRunCodec.buildRegistry(files, host);
+        assertThat(combined.findDescriptorByFullName("jobs.pipeline.codec.EnvelopeOutput"))
+                .as("the type the run was submitted with")
+                .isSameAs(retained);
+        assertThat(combined.isRegistered("jobs.pipeline.codec.HostOnly"))
+                .as("a type only the host defines is still added")
+                .isTrue();
+
+        // complete-step therefore encodes a response against the run's schema.
+        assertThat(PipelineExternalCompletionParser.parseResponses(
+                        JSON.createObjectNode().put("status", "approved"),
+                        EdgeCardinality.EDGE_CARDINALITY_ONE, retained, 8, "echo", files, host))
+                .singleElement()
+                .satisfies(m -> assertThat(m.getField(retained.findFieldByName("status")))
+                        .isEqualTo("approved"));
+    }
+
     private static WorkflowRunRecord pipelineRow(byte[] definition) {
         WorkflowRunRecord record = new WorkflowRunRecord();
         record.jobId = UUID.randomUUID();

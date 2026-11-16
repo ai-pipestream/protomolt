@@ -152,8 +152,10 @@ model, and an uncapped worker fleet will DDoS it. Each worker allows
   ends. This is an approximation: a segment may call several targets, so
   the cap throttles the step each job is about to run rather than every
   call in flight.
-- **Pipeline runs** acquire the permit at each call, keyed by the resolved
-  `host:port`, and release it when the call returns. Every call is covered,
+- **Pipeline runs** acquire the permit at each call, keyed by the endpoint's
+  `host:port` exactly as its service profile spells it, and release it when
+  the call returns. Two spellings of one host (a DNS alias, different
+  letter case) are two targets to the cap. Every call is covered,
   including each fan-out branch, and a step that its gate skips or that
   parks for external completion takes no permit and reads no service
   profile. Waiting for a permit counts against the step deadline; when the

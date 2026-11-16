@@ -21,6 +21,7 @@ import com.google.protobuf.DynamicMessage;
 import com.google.protobuf.InvalidProtocolBufferException;
 import com.google.protobuf.Message;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 
@@ -64,7 +65,13 @@ final class CheckpointReplay {
             requireEveryItemBranched(step, saved, shape.fanOut(), scope, context.registry());
             requireCollectedBranches(step, saved, shape, values.getFirst());
         }
+        if (step.hasUnnest()) {
+            requireRecomputed(step, values,
+                    LocalSteps.unnest(step, scope, context.streamLimit()));
+        }
         if (step.hasCollect()) {
+            requireRecomputed(step, values,
+                    LocalSteps.collect(step, scope, context.registry()));
             scope.remove(step.getCollect().getSource());
         } else if (shape.method() != null) {
             PipelineBinding.consumeRequestStream(step.getGrpcCall(), shape.method(), scope);
@@ -300,6 +307,23 @@ final class CheckpointReplay {
                 || (step.hasGrpcCall()
                         && saved.outcome().requestCount() != saved.branches().size())) {
             throw invalid(step, "checkpoint branches do not match the collected responses");
+        }
+    }
+
+    /**
+     * An unnest or collect step calls nothing and depends only on the replayed scope, so its
+     * checkpoint must carry exactly what the step computes again.
+     */
+    private static void requireRecomputed(PipelineStep step, List<DynamicMessage> saved,
+                                          PipelineBinding recomputed)
+            throws PipelineExecutionException {
+        boolean same = saved.size() == recomputed.values().size();
+        for (int i = 0; same && i < saved.size(); i++) {
+            same = Arrays.equals(StepValues.canonicalBytes(saved.get(i)),
+                    StepValues.canonicalBytes(recomputed.values().get(i)));
+        }
+        if (!same) {
+            throw invalid(step, "checkpoint differs from the value recomputed from its source");
         }
     }
 
