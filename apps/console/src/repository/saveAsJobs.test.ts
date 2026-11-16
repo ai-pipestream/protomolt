@@ -421,4 +421,78 @@ describe('Save-as job store', () => {
     expect(jobs.find('op-requeue')!.summary?.phase).toBe('running')
     jobs.dispose()
   })
+
+  it('stops treating a failed job as settled once it is retried and the reply is lost', async () => {
+    let call = 0
+    const client = routerClients((r) =>
+      r.service(RepositorySinkService, {
+        publishRepositorySink(req) {
+          call += 1
+          if (call === 1) {
+            return create(PublishRepositorySinkResponseSchema, {
+              job: job(req.operationId, RepositorySinkJobState.FAILED),
+            })
+          }
+          // The server restarted the job; its answer never arrived.
+          throw new ConnectError('lost', Code.Unavailable)
+        },
+      }),
+    ).repositorySink
+    const jobs = createSaveAsJobStore()
+    await jobs.publish(client, request('op-again'), false)
+    expect(jobs.find('op-again')!.summary?.phase).toBe('failed')
+    await jobs.retry('op-again')
+    const entry = jobs.find('op-again')!
+    // What the job is doing now is unknown: the old "failed" no longer describes it.
+    expect(entry.summary).toBeNull()
+    expect(entry.error?.kind).toBe('unsettled')
+
+    // So it is not evicted to make room, and its request can still be retried.
+    for (let i = 0; i < 19; i++) {
+      await jobs.publish(client, request(`op-fill-${i}`), false)
+    }
+    await expect(jobs.publish(client, request('op-one-more'), false)).rejects.toBeInstanceOf(
+      SaveAsJobCapacityError,
+    )
+    expect(jobs.find('op-again')).toBeDefined()
+    jobs.dispose()
+  })
+
+  it('does not put a job that has ended back to running when an older sample arrives late', async () => {
+    let releaseGet = () => {}
+    const getGate = new Promise<void>((resolve) => {
+      releaseGet = resolve
+    })
+    const client = routerClients((r) =>
+      r.service(RepositorySinkService, {
+        publishRepositorySink(req) {
+          return create(PublishRepositorySinkResponseSchema, {
+            job: job(req.operationId, RepositorySinkJobState.RUNNING),
+          })
+        },
+        cancelRepositorySinkJob(req) {
+          return create(CancelRepositorySinkJobResponseSchema, {
+            job: job(req.operationId, RepositorySinkJobState.CANCELLED),
+          })
+        },
+        async getRepositorySinkJob(req) {
+          await getGate
+          // Sampled before the cancel took effect.
+          return create(GetRepositorySinkJobResponseSchema, {
+            job: job(req.operationId, RepositorySinkJobState.RUNNING),
+          })
+        },
+      }),
+    ).repositorySink
+    const jobs = createSaveAsJobStore()
+    await jobs.publish(client, request('op-ended'), true)
+    const cancelling = jobs.cancel('op-ended', 'stop')
+    const looking = jobs.refresh('op-ended')
+    await cancelling
+    expect(jobs.find('op-ended')!.summary?.phase).toBe('cancelled')
+    releaseGet()
+    await looking
+    expect(jobs.find('op-ended')!.summary?.phase).toBe('cancelled')
+    jobs.dispose()
+  })
 })

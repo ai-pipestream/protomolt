@@ -279,7 +279,9 @@ export function isProtobufMediaType(mediaType: string | null | undefined): boole
 
 function classifyByMediaType(normalized: string): FormatFamily | null {
   if (normalized === '') return null
-  const exact = EXACT_MEDIA_TYPE_FAMILIES[normalized]
+  const exact = Object.hasOwn(EXACT_MEDIA_TYPE_FAMILIES, normalized)
+    ? EXACT_MEDIA_TYPE_FAMILIES[normalized]
+    : undefined
   if (exact !== undefined) return exact
   if (normalized.endsWith('+proto')) return 'protobuf'
   if (normalized.endsWith('+json')) return 'json'
@@ -366,7 +368,8 @@ export function classifyFormat(
   // Filename extension is consulted ONLY when media_type is absent or generic octet-stream.
   if (normalizedMediaType === '' || normalizedMediaType === GENERIC_BINARY_MEDIA_TYPE) {
     const ext = extractFilenameExtension(options?.filename)
-    const hinted = ext !== '' ? EXTENSION_HINT_FAMILIES[ext] : undefined
+    // Own properties only: a file named report.constructor has no format called "constructor".
+    const hinted = ext !== '' && Object.hasOwn(EXTENSION_HINT_FAMILIES, ext) ? EXTENSION_HINT_FAMILIES[ext] : undefined
     if (hinted !== undefined) {
       const spec = FAMILY_SPECS[hinted]
       return {

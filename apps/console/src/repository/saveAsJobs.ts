@@ -138,6 +138,9 @@ export function createSaveAsJobStore(): SaveAsJobStore {
     // A retry restarts the job on the server. A status or cancel call that began before it
     // describes the attempt it replaced, whatever that answer says.
     if (sequence < state.publishStarted) return false
+    // Within one attempt a job that has ended does not start running again, so a sample
+    // taken before it ended never replaces the ending, whenever that sample arrives.
+    if (entry.summary !== null && entry.summary.terminal && !summary.terminal) return false
     if (sequence >= state.shown) return true
     return summary.terminal && entry.summary !== null && !entry.summary.terminal
   }
@@ -274,6 +277,11 @@ export function createSaveAsJobStore(): SaveAsJobStore {
     callsFor(entry.operationId).publishStarted = sequence
     entry.submitting = true
     entry.error = null
+    // Publishing again starts a new attempt on the server. What was known about the last one
+    // (even "failed") no longer describes the job, so until this call is answered the job's
+    // state is unknown: reconcilable, retryable and never evicted as settled.
+    entry.summary = null
+    entry.updatedBy = null
     try {
       const response = await client.publishRepositorySink(entry.request, { signal })
       if (response.job === undefined) {

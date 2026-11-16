@@ -111,4 +111,24 @@ describe('formatIcons', () => {
     expect(sanitized.length).toBe(43)
     expect(sanitized.endsWith('...')).toBe(true)
   })
+
+  it.each(['report.constructor', 'report.__proto__', 'report.toString', 'report.hasOwnProperty'])(
+    'treats %s as an unknown format, not as a property every object inherits',
+    (filename) => {
+      const viaAbsent = classifyFormat('', { filename })
+      const viaGeneric = classifyFormat('application/octet-stream', { filename })
+      expect(viaAbsent.hintSource).not.toBe('extension-hint')
+      expect(viaGeneric.hintSource).not.toBe('extension-hint')
+      expect(viaGeneric.accessibleLabel).toBeTypeOf('string')
+    },
+  )
+
+  it.each(['constructor', '__proto__', 'toString'])(
+    'treats the media type %s as unknown, not as a property every object inherits',
+    (mediaType) => {
+      const format = classifyFormat(mediaType)
+      expect(format.hintSource).not.toBe('media-type')
+      expect(format.accessibleLabel).toBeTypeOf('string')
+    },
+  )
 })
