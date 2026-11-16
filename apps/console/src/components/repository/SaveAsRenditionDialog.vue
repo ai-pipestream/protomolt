@@ -481,7 +481,7 @@ function buildCurrentSinkSource(): SinkSource {
 }
 
 async function loadArchives() {
-  const acct = props.accountId.trim()
+  const acct = props.accountId
   if (acct === '') {
     availableArchives.value = []
     return

@@ -30,7 +30,7 @@ import {
   ValidationStatus,
 } from '@/gen/ai/protomolt/proto/repo/v2/manifest_pb'
 import { decodedTree } from './decodedTreeCore'
-import { PartStreamError, decodePart, readPart, typeNameOf } from './partReadCore'
+import { PartPayloadError, PartStreamError, decodePart, readPart, typeNameOf } from './partReadCore'
 import { at, descriptorSetOf, routerClients, testAddress } from './repositoryTestKit'
 
 const CORE = create(PartSelectorSchema, { selector: { case: 'part', value: DocumentPart.CORE } })
@@ -170,6 +170,14 @@ describe('decodePart', () => {
   it('shows raw bytes, saying why, when the revision binds no schema to the part', async () => {
     const decoded = await decodePart(descriptorServer(), testAddress(), 3n, validation(), PARSED, STORED, signal())
     expect(decoded).toEqual({ kind: 'raw', reason: 'Revision 3 binds no fragment schema to PARSED.', descriptorSha256: null })
+  })
+
+  it('says the bytes are malformed, not that the schema failed to load, when the payload does not decode', async () => {
+    // A truncated length-delimited field: the schema loads fine, the bytes are not a Document.
+    const malformed = new Uint8Array([0x0a, 0x7f, 0x01])
+    await expect(
+      decodePart(descriptorServer(), testAddress(), 3n, validation(), CORE, malformed, signal()),
+    ).rejects.toBeInstanceOf(PartPayloadError)
   })
 
   it('refuses a descriptor set that does not hash to the retained digest', async () => {

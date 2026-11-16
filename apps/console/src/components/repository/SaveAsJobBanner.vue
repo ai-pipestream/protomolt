@@ -6,7 +6,7 @@
       :type="alertType(item)"
       variant="tonal"
       density="compact"
-      :closable="!busy(item)"
+      :closable="canDismiss(item)"
       class="mb-3"
       data-testid="save-as-job-banner"
       :data-job-phase="item.summary?.phase ?? 'unknown'"
@@ -14,7 +14,10 @@
     >
       <div>
         Save-as operation <span class="text-mono">{{ item.operationId }}</span>:
-        <template v-if="item.summary === null">
+        <template v-if="item.summary === null && refused(item)">
+          refused ({{ item.error?.codeLabel }}): {{ item.error?.message }}
+        </template>
+        <template v-else-if="item.summary === null">
           {{ item.error ? `outcome not confirmed (${item.error.codeLabel})` : 'awaiting the server response' }}.
         </template>
         <template v-else-if="item.summary.phase === 'succeeded'">
@@ -33,11 +36,11 @@
       >
         The last call for this job failed ({{ item.error.codeLabel }}): {{ item.error.message }}
       </div>
-      <div v-if="item.summary === null || item.summary.phase === 'unresolved'" class="text-caption">
+      <div v-if="(item.summary === null && !refused(item)) || item.summary?.phase === 'unresolved'" class="text-caption">
         Keep this operation ID: retrying the same request with it never commits twice.
       </div>
       <VBtn
-        v-if="item.summary === null || item.summary.canReconcile"
+        v-if="(item.summary === null && !refused(item)) || item.summary?.canReconcile"
         size="small"
         variant="text"
         class="mt-1"
@@ -81,8 +84,20 @@ import { useSaveAsJobs, type SaveAsJobEntry } from '@/repository/saveAsJobs'
 const jobs = useSaveAsJobs()
 const visible = computed(() => jobs.items.filter((item) => !item.dialogOpen))
 
-function busy(item: SaveAsJobEntry): boolean {
-  return item.submitting || item.cancelling
+/** The publish was turned down outright: nothing was accepted and nothing is left to learn. */
+function refused(item: SaveAsJobEntry): boolean {
+  return item.summary === null && !item.submitting && item.error !== null && !item.error.canReconcile
+}
+
+/**
+ * Dismissing forgets the operation ID and the request. That is safe only once the job has a
+ * confirmed end or was refused; a job still queued, running or of unknown outcome may yet
+ * commit, and the operator would have no way left to reconcile it.
+ */
+function canDismiss(item: SaveAsJobEntry): boolean {
+  if (item.submitting || item.reconciling || item.cancelling) return false
+  if (item.summary !== null) return item.summary.terminal
+  return refused(item)
 }
 
 /**
@@ -97,7 +112,10 @@ function canRetry(item: SaveAsJobEntry): boolean {
 
 function alertType(item: SaveAsJobEntry): 'info' | 'success' | 'warning' | 'error' {
   const phase = item.summary?.phase
-  if (phase === undefined) return item.error ? 'warning' : 'info'
+  if (phase === undefined) {
+    if (refused(item)) return 'error'
+    return item.error ? 'warning' : 'info'
+  }
   if (phase === 'succeeded') return 'success'
   if (phase === 'queued' || phase === 'running') return 'info'
   if (phase === 'unresolved' || phase === 'cancelled') return 'warning'

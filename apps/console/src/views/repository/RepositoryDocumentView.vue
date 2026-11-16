@@ -458,7 +458,7 @@ import {
   type CallNumber,
 } from '@/repository/documentCore'
 import { byteSize, hexDump } from '@/repository/formatCore'
-import { decodePart, readPart, retainedDescriptorSet, type DecodedPart } from '@/repository/partReadCore'
+import { PartPayloadError, decodePart, readPart, retainedDescriptorSet, type DecodedPart } from '@/repository/partReadCore'
 import { rpcFailure, type RpcFailure } from '@/repository/rpcErrorCore'
 import {
   evaluateSaveAsSessionAccess,
@@ -823,7 +823,10 @@ async function readPartAt(index: number) {
       )?.fragmentSchema?.descriptorSha256 ?? null
       decoded = {
         kind: 'raw',
-        reason: 'The retained fragment schema could not be loaded.',
+        // Malformed bytes under a schema that loaded are not a schema-loading failure.
+        reason: error instanceof PartPayloadError
+          ? error.message
+          : 'The retained fragment schema could not be loaded.',
         descriptorSha256: boundSha,
       }
     }

@@ -91,7 +91,8 @@ export function evaluateSaveAsSessionAccess(
       principal: null,
     }
   }
-  const acct = accountId.trim()
+  // The account ID exactly as given: scopes name accounts verbatim.
+  const acct = accountId
   const scopes = acct !== '' ? scopesIn(session.intakeWriters, acct) : session.intakeWriters
   if (scopes.length === 0) {
     return {
@@ -422,16 +423,25 @@ function isSafeClassOrPolicyToken(value: string): boolean {
   return true
 }
 
+/** The largest value a protobuf int64 field can carry. */
+const INT64_MAX = 9223372036854775807n
+
 function parseOptionalNonNegativeBigInt(raw: string, fieldLabel: string): bigint {
   const trimmed = raw.trim()
   if (trimmed === '') return 0n
   for (let i = 0; i < trimmed.length; i++) {
     const c = trimmed.charCodeAt(i)
     if (c < 0x30 || c > 0x39) {
-      throw new SaveAsInputError(`${fieldLabel}: must be a whole number of bytes.`)
+      throw new SaveAsInputError(`${fieldLabel}: must be a whole number.`)
     }
   }
-  return BigInt(trimmed)
+  const value = BigInt(trimmed)
+  if (value > INT64_MAX) {
+    // Refused here, as input: left alone it fails later while the request is serialized,
+    // which looks like a lost publish and locks the form around a request nothing can send.
+    throw new SaveAsInputError(`${fieldLabel}: must be at most ${INT64_MAX}.`)
+  }
+  return value
 }
 
 /**

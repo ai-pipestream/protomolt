@@ -76,6 +76,12 @@ export function mergeRenditionsWithProvenance(
     viewedEntryVersion?: bigint
     originalFilename?: string
     sourceUri?: string
+    /**
+     * True when provenance was asked for and could not be read. Nothing is then known about
+     * which renditions are authoritative, so none is claimed to be and none is offered as a
+     * Save-as source. Leave unset when the server has no provenance service at all.
+     */
+    provenanceUnavailable?: boolean
   },
 ): EnrichedRenditionRow[] {
   const byKey = new Map<string, RenditionProvenanceEntry>()
@@ -90,9 +96,12 @@ export function mergeRenditionsWithProvenance(
     const provEntry = byKey.get(renditionKey(row.name, row.subKey))
     const prov = provEntry?.provenance
     const hasProvider = Boolean(prov && prov.providerId.trim() !== '')
-    const authoritativeProtobuf = prov !== undefined
-      ? prov.authoritativeProtobuf
-      : row.name === 'parsed' || isProtobufMediaType(row.mediaType)
+    const unknownProvenance = options?.provenanceUnavailable === true
+    const authoritativeProtobuf = unknownProvenance
+      ? false
+      : prov !== undefined
+        ? prov.authoritativeProtobuf
+        : row.name === 'parsed' || isProtobufMediaType(row.mediaType)
     const isDerived = prov !== undefined ? !prov.authoritativeProtobuf || hasProvider : false
 
     const sourceRevision = prov?.sourceRevision ?? 0n
@@ -138,7 +147,8 @@ export function mergeRenditionsWithProvenance(
     })
 
     const canSaveAsSource =
-      row.readable
+      !unknownProvenance
+      && row.readable
       && !isDerived
       && (authoritativeProtobuf || row.name === 'parsed' || isProtobufMediaType(row.mediaType))
 

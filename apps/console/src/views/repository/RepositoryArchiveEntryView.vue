@@ -1266,6 +1266,7 @@ const renditions = computed<EnrichedRenditionRow[]>(() =>
         viewedEntryVersion: pinned.value ?? undefined,
         originalFilename: info.value?.filename,
         sourceUri: info.value?.sourceUri,
+        provenanceUnavailable: provenanceFailure.value !== null,
       })
     : [],
 )

@@ -435,6 +435,17 @@ describe('saveAsCore', () => {
       ],
     })
 
+    // Provenance could not be read: nothing may be claimed authoritative or offered as a source.
+    const unknown = mergeRenditionsWithProvenance(renditionRows(manifest), null, {
+      viewedEntryVersion: 4n,
+      provenanceUnavailable: true,
+    })
+    expect(unknown.every((row) => !row.authoritativeProtobuf)).toBe(true)
+    expect(unknown.every((row) => !row.canSaveAsSource)).toBe(true)
+    // The server has no provenance service at all: the protobuf slots are read as before.
+    const compat = mergeRenditionsWithProvenance(renditionRows(manifest), null, { viewedEntryVersion: 4n })
+    expect(compat.some((row) => row.authoritativeProtobuf)).toBe(true)
+
     const enriched = mergeRenditionsWithProvenance(renditionRows(manifest), provResp, {
       viewedEntryVersion: 4n,
       originalFilename: 'paper.pdf',
@@ -688,5 +699,46 @@ describe('saveAsCore', () => {
     expect(commitFollowUp({ ...base, dialogOpen: false })).toBe('none')
     expect(commitFollowUp({ ...base, dialogOpen: false, viewedVersion: null })).toBe('none')
     expect(commitFollowUp({ ...base, sameEntry: false })).toBe('none')
+  })
+
+  it('refuses an expected destination version that no int64 can hold, before anything is tracked', () => {
+    const view = describeSaveAsCapabilities(
+      create(ListSaveAsCapabilitiesResponseSchema, {
+        capabilities: [
+          create(SaveAsCapabilitySchema, {
+            status: SaveAsCompatibilityStatus.COMPATIBLE,
+            capability: create(RendererCapabilitySchema, {
+              providerId: 'csv', providerVersion: '1', sourceProfile: 'row', mediaType: 'text/csv',
+            }),
+          }),
+        ],
+      }),
+    )
+    const source = buildArchiveRenditionSinkSource({
+      address: create(EntryAddressSchema, { accountId: 'acct-a', archive: 'datasets', entryId: 'e-1' }),
+      rendition: { name: 'original' },
+      revision: 1n,
+    })
+    const build = (expectedDestinationVersionText: string) =>
+      buildPublishSaveAsRequest({
+        operationId: 'op-range', source, capability: view.compatible[0],
+        destination: {
+          accountId: 'acct-a', archive: 'datasets', entryId: 'e-1', renditionName: 'csv',
+          preconditionMode: 'expected-version', expectedDestinationVersionText,
+        },
+      })
+    expect(build('9223372036854775807').destination?.expectedDestinationVersion).toBe(9223372036854775807n)
+    expect(() => build('9223372036854775808')).toThrow(SaveAsInputError)
+  })
+
+  it('matches writer scopes on the account ID exactly as given', () => {
+    const writer = create(ConsoleSessionStatusSchema, {
+      authenticated: true,
+      principal: 'writer@example.com',
+      intakeWriters: [create(IntakeWriterScopeSchema, { accountId: ' acct-a ', datasourceId: 'ds-1' })],
+    })
+    expect(evaluateSaveAsSessionAccess(writer, ' acct-a ').readOnly).toBe(false)
+    // "acct-a" is a different account from " acct-a ".
+    expect(evaluateSaveAsSessionAccess(writer, 'acct-a').readOnly).toBe(true)
   })
 })

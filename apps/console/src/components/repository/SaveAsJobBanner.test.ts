@@ -123,4 +123,81 @@ describe('Save-as job banner', () => {
     banner.unmount()
     jobs.dispose()
   })
+
+  it('cannot be dismissed while the job is running or its outcome is unknown', async () => {
+    let lost = false
+    const client = routerClients((r) =>
+      r.service(RepositorySinkService, {
+        publishRepositorySink(req) {
+          if (lost) throw new ConnectError('lost', Code.Unavailable)
+          return create(PublishRepositorySinkResponseSchema, {
+            job: create(RepositorySinkJobSchema, {
+              operationId: req.operationId,
+              accountId: 'acct-a',
+              state: RepositorySinkJobState.RUNNING,
+            }),
+          })
+        },
+      }),
+    ).repositorySink
+    const jobs = createSaveAsJobStore()
+    const publish = (operationId: string) =>
+      jobs.publish(
+        client,
+        create(PublishRepositorySinkRequestSchema, {
+          operationId,
+          destination: create(SinkDestinationSchema, {
+            address: create(EntryAddressSchema, { accountId: 'acct-a', archive: 'datasets', entryId: 'e-1' }),
+          }),
+        }),
+        false,
+      )
+    await publish('op-running')
+    lost = true
+    await publish('op-unknown')
+    const banner = mount(SaveAsJobBanner, {
+      global: { plugins: [vuetifyForTests()], provide: { [SAVE_AS_JOBS as symbol]: jobs } },
+      attachTo: document.body,
+    })
+    // Dismissing would forget the operation ID and request of a job that may still commit.
+    expect(banner.findAll('[data-testid="save-as-job-banner"]')).toHaveLength(2)
+    expect(banner.findAll('.v-alert__close')).toHaveLength(0)
+    banner.unmount()
+    jobs.dispose()
+  })
+
+  it('shows a refused publish as a final failure that can be dismissed', async () => {
+    const client = routerClients((r) =>
+      r.service(RepositorySinkService, {
+        publishRepositorySink() {
+          throw new ConnectError('not a writer here', Code.PermissionDenied)
+        },
+      }),
+    ).repositorySink
+    const jobs = createSaveAsJobStore()
+    await jobs.publish(
+      client,
+      create(PublishRepositorySinkRequestSchema, {
+        operationId: 'op-refused',
+        destination: create(SinkDestinationSchema, {
+          address: create(EntryAddressSchema, { accountId: 'acct-a', archive: 'datasets', entryId: 'e-1' }),
+        }),
+      }),
+      false,
+    )
+    const banner = mount(SaveAsJobBanner, {
+      global: { plugins: [vuetifyForTests()], provide: { [SAVE_AS_JOBS as symbol]: jobs } },
+      attachTo: document.body,
+    })
+    const shown = banner.get('[data-testid="save-as-job-banner"]')
+    expect(shown.text()).toContain('refused')
+    expect(shown.text()).toContain('PermissionDenied')
+    expect(shown.text()).not.toContain('not confirmed')
+    // Nothing was accepted, so there is nothing to refresh or retry, and it can be closed.
+    expect(banner.find('[data-testid="save-as-job-banner-refresh"]').exists()).toBe(false)
+    expect(banner.find('[data-testid="save-as-job-banner-retry"]').exists()).toBe(false)
+    expect(banner.findAll('.v-alert__close')).toHaveLength(1)
+    banner.unmount()
+    jobs.dispose()
+  })
 })
