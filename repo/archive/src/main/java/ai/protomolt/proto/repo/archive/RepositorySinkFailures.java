@@ -49,6 +49,21 @@ final class RepositorySinkFailures {
                 .build();
     }
 
+    /**
+     * The failure recorded when an upload failed with an uncertain status and the repository
+     * has no outcome for it yet. No outcome yet does not prove none will arrive, so the
+     * publication stays retryable whatever the status: the retry replays a commit that landed
+     * late instead of leaving it reported as failed.
+     */
+    static RepositorySinkFailure commitNotRecorded(Status.Code code, String description) {
+        return failureOf(
+                code,
+                "COMMIT_NOT_RECORDED",
+                sanitizeMessage(description, "Upload failed before repository commit"),
+                true,
+                false);
+    }
+
     static StatusRuntimeException toStatusException(RepositorySinkFailure failure) {
         Status status = Status.fromCodeValue(failure.getGrpcCode())
                 .withDescription(failure.getMessage());

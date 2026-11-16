@@ -50,6 +50,14 @@ final class RepositorySinkRequests {
                         "non-protobuf converted renditions cannot overwrite the 'parsed' protobuf part");
             }
         }
+        if (!request.hasConversion()
+                && !rend.getMediaType().isEmpty()
+                && !RepositorySink.PROTOBUF_MEDIA_TYPE.equals(rend.getMediaType())) {
+            throw ArchiveErrors.invalid(
+                    "destination.rendition.media_type",
+                    "a publication with no conversion writes protobuf; leave it empty or set '"
+                            + RepositorySink.PROTOBUF_MEDIA_TYPE + "'");
+        }
         if (request.hasConversion()
                 && !rend.getMediaType().isEmpty()
                 && !rend.getMediaType().equals(request.getConversion().getMediaType())) {
