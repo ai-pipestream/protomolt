@@ -134,4 +134,41 @@ class ExternalDeleteTargetTest {
         assertThat(recorded(ExternalPublicationLedger.newBuilder()
                 .addOperations(failedPublish).build(), 0L, "")).isEmpty();
     }
+
+    @Test
+    void anExplicitObjectStillPendingIsDeletedUnderTheBindingRevisionItWasSentWith() {
+        // Object X was sent under binding v1 (dataset-one) and the reply was lost. The binding
+        // has since rotated to v2, which points at another dataset.
+        ExternalPublicationOperationRecord pendingUnderV1 = ExternalPublicationOperationRecord.newBuilder()
+                .setOperationId("op-x-v1")
+                .setIntent(ExternalPublicationIntent.newBuilder()
+                        .setAction(ExternalPublicationAction.EXTERNAL_PUBLICATION_ACTION_PUBLISH)
+                        .setExternalObjectId("object-x").setBindingRevision(1L))
+                .setBindingSnapshot(binding(1L, "dataset-one"))
+                .setOutcome(ExternalPublicationOutcome.EXTERNAL_PUBLICATION_OUTCOME_PENDING)
+                .build();
+        ExternalPublicationLedger ledger = ExternalPublicationLedger.newBuilder()
+                .addOperations(pendingUnderV1).build();
+
+        ExternalDeletionLifecycle.ResolvedDeleteTarget target =
+                recorded(ledger, 0L, "object-x").orElseThrow();
+        assertThat(target.binding().getBindingRevision()).isEqualTo(1L);
+        assertThat(target.binding().getDataset()).isEqualTo("dataset-one");
+
+        // The same ID recorded under two binding revisions names two different objects:
+        // without a revision the caller must say which.
+        ExternalPublicationLedger both = ledger.toBuilder()
+                .addHistoricalLinks(link("object-x", 2L, "dataset-two",
+                        ExternalProjectionLifecycle.EXTERNAL_PROJECTION_LIFECYCLE_SUPERSEDED))
+                .build();
+        assertThatThrownBy(() -> recorded(both, 0L, "object-x"))
+                .isInstanceOfSatisfying(StatusRuntimeException.class, e -> {
+                    assertThat(e.getStatus().getCode()).isEqualTo(Status.Code.FAILED_PRECONDITION);
+                    assertThat(e.getStatus().getDescription()).contains("binding revisions");
+                });
+        assertThat(recorded(both, 2L, "object-x").orElseThrow().binding().getDataset())
+                .isEqualTo("dataset-two");
+        assertThat(recorded(both, 1L, "object-x").orElseThrow().binding().getDataset())
+                .isEqualTo("dataset-one");
+    }
 }

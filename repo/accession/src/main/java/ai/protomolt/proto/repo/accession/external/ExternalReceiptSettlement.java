@@ -143,6 +143,19 @@ final class ExternalReceiptSettlement {
                             ? fallbackStartedAt
                             : lastAttemptStartedAt(op, fallbackStartedAt);
 
+                    boolean settles = settlement
+                                    == ExternalProviderSettlement.EXTERNAL_PROVIDER_SETTLEMENT_PUBLISHED
+                            || settlement
+                                    == ExternalProviderSettlement.EXTERNAL_PROVIDER_SETTLEMENT_REJECTED
+                            || settlement
+                                    == ExternalProviderSettlement.EXTERNAL_PROVIDER_SETTLEMENT_DELETED;
+                    if (explicitTrigger != null && !settles
+                            && !ExternalLedgerStore.hasRoomForUnsettledAttempt(op)) {
+                        // A receipt that settles nothing is not written into the last attempt
+                        // slot: that slot is for the receipt that ends the operation.
+                        return current;
+                    }
+
                     return switch (settlement) {
                         case EXTERNAL_PROVIDER_SETTLEMENT_ACCEPTED_ONLY -> {
                             ExternalPublicationAttempt attempt = ExternalPublicationAttempt.newBuilder()

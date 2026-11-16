@@ -107,6 +107,11 @@ final class ExternalLedgerStore {
                     if (isTerminalOutcome(op.getOutcome())) {
                         return current;
                     }
+                    if (!hasRoomForUnsettledAttempt(op)) {
+                        // This lookup settled nothing, and the one attempt slot left is for
+                        // the receipt that ends the operation, so it is not recorded.
+                        return current;
+                    }
                     ExternalPublicationOperationRecord updatedOp = op.toBuilder()
                             .setOutcome(attempt.getOutcome())
                             .setPendingPhase(attempt.getPendingPhase())
@@ -330,8 +335,9 @@ final class ExternalLedgerStore {
     }
 
     /**
-     * The operation after its provider refused attempt {@code attemptNumber}: failed, with the
-     * refusal as its failure. An operation already settled is returned unchanged.
+     * The operation after its provider refused attempt {@code attemptNumber}. A refused first
+     * attempt fails the operation. A refused retry does not: see below. An operation already
+     * settled is returned unchanged.
      */
     static ExternalPublicationOperationRecord refusedByProvider(
             ExternalPublicationOperationRecord op,
@@ -353,6 +359,24 @@ final class ExternalLedgerStore {
                 .setDiagnosticCode(diagnosticCode)
                 .setDiagnosticMessage(message)
                 .build();
+        boolean earlierAttemptUnknown = false;
+        for (ExternalPublicationAttempt attempt : op.getAttemptsList()) {
+            earlierAttemptUnknown |= attempt.getAttemptNumber() != attemptNumber;
+        }
+        if (earlierAttemptUnknown) {
+            // This attempt was refused, but the operation is only still open because an
+            // earlier attempt was sent and never answered. That one may have gone through,
+            // so the refusal is recorded against this attempt and the operation stays
+            // unresolved for reconciliation to ask the provider.
+            boolean deleting = op.getOutcome()
+                    == ExternalPublicationOutcome.EXTERNAL_PUBLICATION_OUTCOME_DELETION_PENDING;
+            return replaceAttempt(op, refusedAttempt)
+                    .setPendingPhase(deleting
+                            ? ExternalPendingPhase.EXTERNAL_PENDING_PHASE_DELETION_IN_FLIGHT
+                            : ExternalPendingPhase.EXTERNAL_PENDING_PHASE_UNRESOLVED_LOST_REPLY)
+                    .setUpdatedAt(finishedAt)
+                    .build();
+        }
         return replaceAttempt(op, refusedAttempt)
                 .setOutcome(ExternalPublicationOutcome.EXTERNAL_PUBLICATION_OUTCOME_FAILED)
                 .setPendingPhase(ExternalPendingPhase.EXTERNAL_PENDING_PHASE_UNSPECIFIED)
@@ -382,7 +406,15 @@ final class ExternalLedgerStore {
                             + " operations and cannot record another")
                     .asRuntimeException();
         }
-        if (ledger.getHistoricalLinksCount() >= MAX_HISTORICAL_LINKS) {
+        // Every operation still outstanding may add a historical link when it settles, so
+        // their room is spoken for.
+        int outstanding = 0;
+        for (ExternalPublicationOperationRecord operation : ledger.getOperationsList()) {
+            if (!isTerminalOutcome(operation.getOutcome())) {
+                outstanding++;
+            }
+        }
+        if (ledger.getHistoricalLinksCount() + outstanding >= MAX_HISTORICAL_LINKS) {
             throw Status.RESOURCE_EXHAUSTED
                     .withDescription("External publication ledger holds " + MAX_HISTORICAL_LINKS
                             + " historical links and cannot record the outcome of another operation")

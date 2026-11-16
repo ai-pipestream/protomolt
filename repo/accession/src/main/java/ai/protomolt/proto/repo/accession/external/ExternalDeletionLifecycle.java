@@ -32,7 +32,9 @@ import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
 import java.time.Clock;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
@@ -462,13 +464,8 @@ final class ExternalDeletionLifecycle {
         }
         List<ExternalLink> candidates = linksInDeletionOrder(ledgerOpt.get());
         if (explicitExternalObjectId != null && !explicitExternalObjectId.isEmpty()) {
-            return candidates.stream()
-                    .filter(link -> link.getExternalObjectId().equals(explicitExternalObjectId))
-                    .filter(link -> explicitBindingRevision <= 0L
-                            || link.getBindingRevision() == explicitBindingRevision)
-                    .findFirst()
-                    .map(link -> new ResolvedDeleteTarget(
-                            link.getBindingSnapshot(), link.getExternalObjectId()));
+            return recordedSnapshotFor(
+                    ledgerOpt.get(), candidates, explicitBindingRevision, explicitExternalObjectId);
         }
         if (candidates.isEmpty()) {
             return unsettledPublication(ledgerOpt.get(), explicitBindingRevision);
@@ -483,6 +480,49 @@ final class ExternalDeletionLifecycle {
         }
         return Optional.of(new ResolvedDeleteTarget(
                 chosen.getBindingSnapshot(), chosen.getExternalObjectId()));
+    }
+
+    /**
+     * The binding snapshot a named object was recorded under: from its link, or from the
+     * publication still pending for it (sent, with no confirmed link yet). The same ID under
+     * two binding revisions is two objects in two datasets, so without a revision to choose
+     * by the request is refused instead of guessed.
+     */
+    private static Optional<ResolvedDeleteTarget> recordedSnapshotFor(
+            ExternalPublicationLedger ledger,
+            List<ExternalLink> linksInOrder,
+            long explicitBindingRevision,
+            String externalObjectId) {
+        Map<Long, ExternalSystemBinding> byRevision = new LinkedHashMap<>();
+        for (ExternalLink link : linksInOrder) {
+            if (link.getExternalObjectId().equals(externalObjectId)) {
+                byRevision.putIfAbsent(link.getBindingRevision(), link.getBindingSnapshot());
+            }
+        }
+        for (int i = ledger.getOperationsCount() - 1; i >= 0; i--) {
+            ExternalPublicationOperationRecord operation = ledger.getOperations(i);
+            if (operation.getIntent().getAction()
+                            == ExternalPublicationAction.EXTERNAL_PUBLICATION_ACTION_PUBLISH
+                    && operation.getOutcome()
+                            == ExternalPublicationOutcome.EXTERNAL_PUBLICATION_OUTCOME_PENDING
+                    && operation.getIntent().getExternalObjectId().equals(externalObjectId)) {
+                byRevision.putIfAbsent(
+                        operation.getIntent().getBindingRevision(), operation.getBindingSnapshot());
+            }
+        }
+        if (explicitBindingRevision > 0L) {
+            return Optional.ofNullable(byRevision.get(explicitBindingRevision))
+                    .map(binding -> new ResolvedDeleteTarget(binding, externalObjectId));
+        }
+        if (byRevision.size() > 1) {
+            throw Status.FAILED_PRECONDITION
+                    .withDescription("External object '" + externalObjectId
+                            + "' is recorded under binding revisions " + byRevision.keySet()
+                            + "; name the binding revision to delete it from")
+                    .asRuntimeException();
+        }
+        return byRevision.values().stream().findFirst()
+                .map(binding -> new ResolvedDeleteTarget(binding, externalObjectId));
     }
 
     /**
