@@ -383,6 +383,31 @@ class ParquetRendererProviderTest {
     }
 
     @Test
+    void explicitMaskStrategyWithoutSensitivityClassesIsRefusedInsteadOfRenderingUnmasked()
+            throws Exception {
+        Descriptor docDesc = closedTestFile.findMessageTypeByName("TelemetryDocument");
+        DynamicMessage doc = sampleTelemetry(docDesc, true, true);
+        ParquetRendererProvider provider = new ParquetRendererProvider();
+
+        for (ParquetMaskStrategy strategy : List.of(
+                ParquetMaskStrategy.PARQUET_MASK_STRATEGY_REDACT,
+                ParquetMaskStrategy.PARQUET_MASK_STRATEGY_REMOVE)) {
+            ParquetRendererOptions strategyOnly = ParquetRendererOptions.newBuilder()
+                    .addColumns("doc_id")
+                    .addColumns("operator_email")
+                    .setMaskStrategy(strategy)
+                    .build();
+            assertThatThrownBy(() -> renderToBytes(provider, doc, strategyOnly))
+                    .isInstanceOfSatisfying(RenderFailure.class, refused -> {
+                        assertThat(refused.kind()).isEqualTo(RenderFailure.Kind.INVALID);
+                        assertThat(refused.getMessage())
+                                .contains("mask_strategy")
+                                .contains("masked_sensitivity_classes");
+                    });
+        }
+    }
+
+    @Test
     void columnProjectionAndSensitivityMaskingComposeWithoutKeyMaterial(@TempDir Path dir)
             throws Exception {
         Descriptor docDesc = closedTestFile.findMessageTypeByName("TelemetryDocument");
