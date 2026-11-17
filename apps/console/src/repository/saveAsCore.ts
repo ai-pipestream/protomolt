@@ -87,7 +87,17 @@ export interface SaveAsSessionAccess {
 export function evaluateSaveAsSessionAccess(
   session: ConsoleSessionStatus | null,
   accountId: string,
+  sessionLookupFailure: string | null = null,
 ): SaveAsSessionAccess {
+  if (session === null && sessionLookupFailure !== null) {
+    // The lookup was made and failed. Nothing is known about this session, and offering
+    // writes on that basis would hide the failure; reloading the page asks again.
+    return {
+      readOnly: true,
+      reason: `Write access could not be confirmed (${sessionLookupFailure}). Reload to try again.`,
+      principal: null,
+    }
+  }
   if (session === null) {
     return { readOnly: false, reason: null, principal: null }
   }
@@ -497,6 +507,9 @@ export function encodeParquetRendererOptions(
     // is refused instead of being read as "export everything".
     throw new SaveAsInputError('Projected columns: no field name found; clear the box to export every field.')
   }
+  if (columns.length > 512) {
+    throw new SaveAsInputError('Projected columns: at most 512 columns can be named.')
+  }
   const seenColumns = new Set<string>()
   for (const col of columns) {
     if (col.includes('.')) {
@@ -525,6 +538,9 @@ export function encodeParquetRendererOptions(
     }
   }
   const uniqueClasses = [...seenClasses]
+  if (uniqueClasses.length > 128) {
+    throw new SaveAsInputError('Sensitivity classes: at most 128 classes can be named.')
+  }
 
   // Classes with the strategy left unspecified are valid: the renderer then redacts.
   if (uniqueClasses.length === 0 && form.maskStrategy !== ParquetMaskStrategy.UNSPECIFIED) {

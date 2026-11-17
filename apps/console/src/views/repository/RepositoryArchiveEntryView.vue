@@ -1254,12 +1254,17 @@ const provenanceFailure = ref<RpcFailure | null>(null)
 const provenanceSettled = ref(false)
 const sessionStatus = shallowRef<ConsoleSessionStatus | null>(null)
 let sessionLoaded = false
+const sessionLookupFailure = ref<string | null>(null)
 const saveAsDialogOpen = ref(false)
 const saveAsArchiveSource = shallowRef<ArchiveRenditionSourceInput | null>(null)
 const saveAsSourceLabel = ref('')
 
 const saveAsAccess = computed(() =>
-  evaluateSaveAsSessionAccess(sessionStatus.value, address.value?.accountId ?? queryText('account')),
+  evaluateSaveAsSessionAccess(
+    sessionStatus.value,
+    address.value?.accountId ?? queryText('account'),
+    sessionLookupFailure.value,
+  ),
 )
 
 const renditions = computed<EnrichedRenditionRow[]>(() =>
@@ -1530,10 +1535,20 @@ async function loadCompareVersion(target: EntryAddress, baseVersion: bigint) {
 async function ensureSessionLoaded() {
   if (sessionLoaded) return
   sessionLoaded = true
+  sessionLookupFailure.value = null
   try {
     sessionStatus.value = await sessions.status()
-  } catch {
-    // Advisory only: server authorization remains authoritative.
+  } catch (error) {
+    // The server still authorizes every write, but an access check that failed is not the
+    // same as one that passed: Save-as is withheld with the reason, and the next load asks
+    // again.
+    if (error instanceof ConnectError && error.code === Code.Unimplemented) {
+      // This server has no session service to ask. That is not a failed check.
+      return
+    }
+    const failure = rpcFailure(error)
+    sessionLookupFailure.value = `${failure.code}: ${failure.message}`
+    sessionLoaded = false
   }
 }
 

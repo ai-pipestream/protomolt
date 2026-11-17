@@ -308,6 +308,8 @@ export function createSaveAsJobStore(): SaveAsJobStore {
     // Publishing again starts a new attempt on the server. What was known about the last one
     // (even "failed") no longer describes the job, so until this call is answered the job's
     // state is unknown: reconcilable, retryable and never evicted as settled.
+    const summaryBeforeRetry = entry.summary
+    const updatedByBeforeRetry = entry.updatedBy
     entry.summary = null
     entry.updatedBy = null
     try {
@@ -331,7 +333,19 @@ export function createSaveAsJobStore(): SaveAsJobStore {
       apply(entry, describeSinkJob(response.job), 'publish', sequence)
     } catch (error) {
       if (!isOwnCancellation(error, signal)) {
-        failPublish(entry, classifySinkRpcError(error), sequence)
+        const classified = classifySinkRpcError(error)
+        failPublish(entry, classified, sequence)
+        if (
+          !classified.canReconcile
+          && entry.summary === null
+          && summaryBeforeRetry !== null
+          && !summaryBeforeRetry.terminal
+        ) {
+          // The server refused this call outright, so it changed nothing: the job is still
+          // what it last said it was (unresolved, say), not "refused".
+          entry.summary = summaryBeforeRetry
+          entry.updatedBy = updatedByBeforeRetry
+        }
       }
     } finally {
       entry.submitting = false

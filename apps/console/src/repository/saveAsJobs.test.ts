@@ -545,4 +545,30 @@ describe('Save-as job store', () => {
     expect(entry.error?.message).toContain('PermissionDenied')
     jobs.dispose()
   })
+
+  it('keeps an UNRESOLVED job unresolved when a retry of it is refused', async () => {
+    let call = 0
+    const client = routerClients((r) =>
+      r.service(RepositorySinkService, {
+        publishRepositorySink(req) {
+          call += 1
+          if (call === 1) {
+            return create(PublishRepositorySinkResponseSchema, {
+              job: job(req.operationId, RepositorySinkJobState.UNRESOLVED),
+            })
+          }
+          throw new ConnectError('no longer a writer', Code.PermissionDenied)
+        },
+      }),
+    ).repositorySink
+    const jobs = createSaveAsJobStore()
+    await jobs.publish(client, request('op-unres'), false)
+    expect(jobs.find('op-unres')!.summary?.phase).toBe('unresolved')
+    await jobs.retry('op-unres')
+    const entry = jobs.find('op-unres')!
+    // The server said the commit outcome is unknown. A refused retry does not change that.
+    expect(entry.summary?.phase).toBe('unresolved')
+    expect(entry.error?.codeLabel).toBe('PermissionDenied')
+    jobs.dispose()
+  })
 })

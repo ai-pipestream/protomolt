@@ -912,4 +912,26 @@ describe('saveAsCore', () => {
     expect(() => build({ subKey: 'sub key' })).toThrow(SaveAsInputError)
     expect(build({ subKey: 'Part-1.v2' }).destination?.rendition?.subKey).toBe('Part-1.v2')
   })
+
+  it('does not offer Save-as when the session lookup failed', () => {
+    const verdict = evaluateSaveAsSessionAccess(null, 'acct-a', 'Unavailable: session service down')
+    expect(verdict.readOnly).toBe(true)
+    expect(verdict.reason).toContain('could not be confirmed')
+    expect(verdict.reason).toContain('session service down')
+    // Not asked yet is still only advisory: the server decides.
+    expect(evaluateSaveAsSessionAccess(null, 'acct-a').readOnly).toBe(false)
+  })
+
+  it('holds Parquet lists to the item limits of their schema', () => {
+    const form = {
+      columnsText: '', maskedSensitivityClassesText: '', maskStrategy: ParquetMaskStrategy.UNSPECIFIED,
+      maxOutputBytesText: '', mappingId: '', policyId: '',
+    }
+    const names = (count: number, prefix: string) =>
+      Array.from({ length: count }, (_, i) => `${prefix}${i}`).join(',')
+    expect(() => encodeParquetRendererOptions({ ...form, columnsText: names(512, 'c') })).not.toThrow()
+    expect(() => encodeParquetRendererOptions({ ...form, columnsText: names(513, 'c') })).toThrow(SaveAsInputError)
+    expect(() => encodeParquetRendererOptions({ ...form, maskedSensitivityClassesText: names(128, 's') })).not.toThrow()
+    expect(() => encodeParquetRendererOptions({ ...form, maskedSensitivityClassesText: names(129, 's') })).toThrow(SaveAsInputError)
+  })
 })

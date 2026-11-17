@@ -561,13 +561,18 @@ const partView = shallowRef<{
 
 const sessionStatus = shallowRef<ConsoleSessionStatus | null>(null)
 let sessionLoaded = false
+const sessionLookupFailure = ref<string | null>(null)
 const saveAsDialogOpen = ref(false)
 const saveAsDocumentSource = shallowRef<Omit<DocumentPartSourceInput, 'occurrenceFieldPath'> | null>(null)
 const saveAsOccurrenceOptions = shallowRef<ResolvedOccurrenceOption[]>([])
 const saveAsSourceLabel = ref('')
 
 const saveAsAccess = computed(() =>
-  evaluateSaveAsSessionAccess(sessionStatus.value, address.value?.accountId ?? queryText('account')),
+  evaluateSaveAsSessionAccess(
+    sessionStatus.value,
+    address.value?.accountId ?? queryText('account'),
+    sessionLookupFailure.value,
+  ),
 )
 
 const defaultSaveAsArchive = computed(() => {
@@ -660,10 +665,20 @@ function onSaveAsCommitted(job: SinkJobSummary) {
 async function ensureSessionLoaded() {
   if (sessionLoaded) return
   sessionLoaded = true
+  sessionLookupFailure.value = null
   try {
     sessionStatus.value = await sessions.status()
-  } catch {
-    // Advisory only: server authorization remains authoritative.
+  } catch (error) {
+    // The server still authorizes every write, but an access check that failed is not the
+    // same as one that passed: Save-as is withheld with the reason, and the next load asks
+    // again.
+    if (error instanceof ConnectError && error.code === Code.Unimplemented) {
+      // This server has no session service to ask. That is not a failed check.
+      return
+    }
+    const failure = rpcFailure(error)
+    sessionLookupFailure.value = `${failure.code}: ${failure.message}`
+    sessionLoaded = false
   }
 }
 

@@ -75,11 +75,32 @@ import { vuetifyForTests } from '@/componentTestKit'
 import SaveAsJobBanner from '@/components/repository/SaveAsJobBanner.vue'
 import { REPOSITORY_SESSION } from '@/repository/clients'
 import { at, descriptorSetOf, testAddress } from '@/repository/repositoryTestKit'
-import { mountRepositoryView, settle } from '@/repository/repositoryViewKit'
+import { mountRepositoryView as mountRepositoryViewBare, settle } from '@/repository/repositoryViewKit'
 import { createSaveAsJobStore, SAVE_AS_JOBS } from '@/repository/saveAsJobs'
 import RepositoryArchiveEntryView from './RepositoryArchiveEntryView.vue'
 import RepositoryArchiveView from './RepositoryArchiveView.vue'
 import RepositoryDocumentView from './RepositoryDocumentView.vue'
+
+/**
+ * These views ask the session service whether the session may write. A test that does not say
+ * otherwise is signed in as a writer for the account under test.
+ */
+const writerSession = {
+  status: async () =>
+    create(ConsoleSessionStatusSchema, {
+      authenticated: true,
+      principal: 'writer@example.com',
+      accountIds: ['acct-a'],
+      intakeWriters: [create(IntakeWriterScopeSchema, { accountId: 'acct-a', datasourceId: 'ds-1' })],
+    }),
+}
+
+const mountRepositoryView: typeof mountRepositoryViewBare = (component, path, routes, provide) =>
+  mountRepositoryViewBare(component, path, routes, {
+    [REPOSITORY_SESSION as symbol]: writerSession,
+    ...(provide ?? {}),
+  })
+
 
 const PARQUET_BYTES = new Uint8Array([0x50, 0x41, 0x52, 0x31, 1, 2, 3, 4, 0x50, 0x41, 0x52, 0x31])
 const PARQUET_SHA = createHash('sha256').update(PARQUET_BYTES).digest('hex')
