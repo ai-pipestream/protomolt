@@ -843,4 +843,22 @@ describe('saveAsCore', () => {
       sourceUri: 'https://example.org/v2',
     })
   })
+
+  it('validates classes, mapping IDs and policy IDs each by its own contract', () => {
+    const form = {
+      columnsText: '', maskedSensitivityClassesText: 'pii', maskStrategy: ParquetMaskStrategy.REDACT,
+      maxOutputBytesText: '', mappingId: '', policyId: '',
+    }
+    // A sensitivity class is a path-safe name: the renderer refuses anything else.
+    for (const bad of ['pii/secret', '.pii', 'p ii', 'pii!']) {
+      expect(() => encodeParquetRendererOptions({ ...form, maskedSensitivityClassesText: bad })).toThrow(SaveAsInputError)
+    }
+    expect(() => encodeParquetRendererOptions({ ...form, maskedSensitivityClassesText: 'pii, pci-dss, secret.v2' })).not.toThrow()
+
+    // Mapping and policy IDs are free text up to 256 characters, sent exactly as given.
+    const spaced = encodeParquetRendererOptions({ ...form, mappingId: ' map one ', policyId: 'p'.repeat(256) })
+    expect(spaced.mappingId).toBe(' map one ')
+    expect(spaced.policyId).toBe('p'.repeat(256))
+    expect(() => encodeParquetRendererOptions({ ...form, mappingId: 'm'.repeat(257) })).toThrow(SaveAsInputError)
+  })
 })

@@ -421,13 +421,32 @@ function isProtoIdentifier(value: string): boolean {
   return true
 }
 
-function isSafeClassOrPolicyToken(value: string): boolean {
+/**
+ * A sensitivity class as `ParquetRendererOptions.masked_sensitivity_classes` defines it: a
+ * path-safe name of 1 to 128 characters, starting with a letter or digit and continuing with
+ * letters, digits, `.`, `_` or `-`.
+ */
+function isSensitivityClass(value: string): boolean {
   if (value.length === 0 || value.length > 128) return false
   for (let i = 0; i < value.length; i++) {
     const c = value.charCodeAt(i)
-    if (c < 0x21 || c > 0x7e) return false
+    const alphaNum = (c >= 0x30 && c <= 0x39) || (c >= 0x41 && c <= 0x5a) || (c >= 0x61 && c <= 0x7a)
+    if (alphaNum) continue
+    if (i > 0 && (c === 0x2e || c === 0x5f || c === 0x2d)) continue
+    return false
   }
   return true
+}
+
+/**
+ * A mapping or policy ID as the sink contract defines it: any text of at most 256 characters,
+ * sent exactly as given. It is an identifier someone else issued, so it is not trimmed.
+ */
+function validateOptionId(value: string, label: string): string {
+  if (value.length > 256) {
+    throw new SaveAsInputError(`${label}: must be at most 256 characters.`)
+  }
+  return value
 }
 
 /** The largest value a protobuf int64 field can carry. */
@@ -484,7 +503,7 @@ export function encodeParquetRendererOptions(
   }
   const seenClasses = new Set<string>()
   for (const cls of sensitivityClasses) {
-    if (!isSafeClassOrPolicyToken(cls)) {
+    if (!isSensitivityClass(cls)) {
       throw new SaveAsInputError(`Sensitivity classes: '${cls}' contains invalid characters.`)
     }
     if (!seenClasses.has(cls)) {
@@ -513,14 +532,8 @@ export function encodeParquetRendererOptions(
     )
   }
 
-  const mappingId = form.mappingId.trim()
-  if (mappingId !== '' && !isSafeClassOrPolicyToken(mappingId)) {
-    throw new SaveAsInputError('Mapping ID: contains invalid whitespace or control characters.')
-  }
-  const policyId = form.policyId.trim()
-  if (policyId !== '' && !isSafeClassOrPolicyToken(policyId)) {
-    throw new SaveAsInputError('Policy ID: contains invalid whitespace or control characters.')
-  }
+  const mappingId = validateOptionId(form.mappingId, 'Mapping ID')
+  const policyId = validateOptionId(form.policyId, 'Policy ID')
 
   const message = create(ParquetRendererOptionsSchema, {
     columns,
@@ -639,8 +652,8 @@ export function buildPublishSaveAsRequest(input: BuildPublishSaveAsInput): Publi
   }
 
   let optionsBytes: Uint8Array = new Uint8Array(0)
-  let mappingId = (input.genericMappingId ?? '').trim()
-  let policyId = (input.genericPolicyId ?? '').trim()
+  let mappingId = validateOptionId(input.genericMappingId ?? '', 'Mapping ID')
+  let policyId = validateOptionId(input.genericPolicyId ?? '', 'Policy ID')
 
   if (input.capability.optionsKind === 'parquet') {
     const encoded = encodeParquetRendererOptions(
@@ -658,12 +671,6 @@ export function buildPublishSaveAsRequest(input: BuildPublishSaveAsInput): Publi
     mappingId = encoded.mappingId
     policyId = encoded.policyId
   } else {
-    if (mappingId !== '' && !isSafeClassOrPolicyToken(mappingId)) {
-      throw new SaveAsInputError('Mapping ID: contains invalid whitespace or control characters.')
-    }
-    if (policyId !== '' && !isSafeClassOrPolicyToken(policyId)) {
-      throw new SaveAsInputError('Policy ID: contains invalid whitespace or control characters.')
-    }
   }
 
   return create(PublishRepositorySinkRequestSchema, {

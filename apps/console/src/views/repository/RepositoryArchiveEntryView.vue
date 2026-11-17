@@ -751,7 +751,7 @@
               <td>
                 <FormatIcon
                   :media-type="r.mediaType"
-                  :filename="r.name === 'original' ? info?.filename : undefined"
+                  :filename="r.name === 'original' && manifest ? viewedVersionMetadata(manifest, info).filename : undefined"
                   :authoritative-protobuf="r.authoritativeProtobuf"
                   :derived="r.isDerived"
                   :stale="r.isStale"
