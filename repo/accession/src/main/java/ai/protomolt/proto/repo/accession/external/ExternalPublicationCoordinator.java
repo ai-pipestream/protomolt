@@ -481,6 +481,8 @@ public final class ExternalPublicationCoordinator {
                 .build();
 
         final DocumentSecurity securityForSave = retainedSecurity;
+        // Set inside the ledger update: true only when this call registered the operation.
+        final boolean[] registeredHere = new boolean[] {false};
         ExternalPublicationLedger afterPreSave = ledgers.updateLedgerWithCas(
                 ledgerAddr,
                 request.sourceAddress(),
@@ -497,8 +499,10 @@ public final class ExternalPublicationCoordinator {
                                             + "' concurrently bound to different intent")
                                     .asRuntimeException();
                         }
+                        registeredHere[0] = false;
                         return current;
                     }
+                    registeredHere[0] = true;
                     ExternalLedgerStore.requireRoomForNewOperation(current);
                     if (isSourceRevisionFenced(current, request.sourceRevision())) {
                         Timestamp now = timestamp(clock.instant());
@@ -538,6 +542,38 @@ public final class ExternalPublicationCoordinator {
                     optionalCurrentLink(afterPreSave),
                     false,
                     false);
+        }
+
+        if (!registeredHere[0]) {
+            // Another call registered this operation first and owns its dispatch. Sending it
+            // again from here would be a second "attempt 1" whose outcome could overwrite the
+            // first's; this call reports the operation as it stands.
+            return new OperationResult(savedPreOp, optionalCurrentLink(afterPreSave), true, false);
+        }
+        try {
+            // The source was read before the operation was registered. If it was purged in
+            // between, its ledger (and the purge fence in it) may be gone too, so the source
+            // itself is asked again before anything is sent.
+            sources.verifyCallerSourceAccessForMutation(request.sourceAddress());
+        } catch (StatusRuntimeException gone) {
+            if (gone.getStatus().getCode() != Status.Code.NOT_FOUND) {
+                throw gone;
+            }
+            Timestamp now = timestamp(clock.instant());
+            ExternalPublicationLedger failed = ledgers.updateLedgerWithCas(
+                    ledgerAddr,
+                    request.sourceAddress(),
+                    request.bindingId(),
+                    securityForSave,
+                    "ext-source-gone:" + operationId + ":" + UUID.randomUUID(),
+                    current -> ExternalLedgerStore.replaceOperation(current,
+                            ExternalLedgerStore.refusedByProvider(
+                                    findOperation(current, operationId).orElseThrow(),
+                                    1, now, now, "SOURCE_REMOVED_BEFORE_DISPATCH",
+                                    "The source document was removed before the publication was sent")));
+            return new OperationResult(
+                    findOperation(failed, operationId).orElseThrow(),
+                    optionalCurrentLink(failed), false, false);
         }
 
         return attempts.executeAndSettlePublishAttempt(

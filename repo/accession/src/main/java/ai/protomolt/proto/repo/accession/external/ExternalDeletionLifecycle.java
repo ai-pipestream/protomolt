@@ -535,11 +535,21 @@ final class ExternalDeletionLifecycle {
                                 + coveredUpToSourceRevision + "; this tombstone does not cover it")
                         .asRuntimeException();
             }
+            covered.ifPresent(target -> requireNotRepublished(
+                    ledgerOpt.get(), target, coveredUpToSourceRevision));
             return covered;
         }
-        if (candidates.isEmpty()) {
-            return unsettledPublication(
+        boolean onlyDeletedHistory = candidates.stream().allMatch(link ->
+                link.getProjectionLifecycle()
+                        == ExternalProjectionLifecycle.EXTERNAL_PROJECTION_LIFECYCLE_DELETED);
+        if (onlyDeletedHistory) {
+            // Nothing recorded is still live. A publication still pending may be, and it is
+            // reached before going back over what has already been deleted.
+            Optional<ResolvedDeleteTarget> pending = unsettledPublication(
                     ledgerOpt.get(), explicitBindingRevision, coveredUpToSourceRevision);
+            if (pending.isPresent() || candidates.isEmpty()) {
+                return pending;
+            }
         }
         ExternalLink chosen = candidates.getFirst();
         if (explicitBindingRevision > 0L && chosen.getBindingRevision() != explicitBindingRevision) {
@@ -549,8 +559,55 @@ final class ExternalDeletionLifecycle {
                             + chosen.getBindingRevision() + ", not " + explicitBindingRevision)
                     .asRuntimeException();
         }
-        return Optional.of(new ResolvedDeleteTarget(
-                chosen.getBindingSnapshot(), chosen.getExternalObjectId()));
+        ResolvedDeleteTarget target = new ResolvedDeleteTarget(
+                chosen.getBindingSnapshot(), chosen.getExternalObjectId());
+        requireNotRepublished(ledgerOpt.get(), target, coveredUpToSourceRevision);
+        return Optional.of(target);
+    }
+
+    /**
+     * Refuses a tombstone deletion whose object has been published again, under the same ID
+     * and binding revision, for a source revision after the tombstone. The provider knows the
+     * object by ID alone, so deleting it now would delete the republished one.
+     */
+    private static void requireNotRepublished(
+            ExternalPublicationLedger ledger, ResolvedDeleteTarget target,
+            long coveredUpToSourceRevision) {
+        if (coveredUpToSourceRevision == ALL_REVISIONS) {
+            return;
+        }
+        long bindingRevision = target.binding().getBindingRevision();
+        List<ExternalLink> all = new ArrayList<>(ledger.getHistoricalLinksList());
+        if (ledger.hasCurrentLink()) {
+            all.add(ledger.getCurrentLink());
+        }
+        long republishedAt = 0L;
+        for (ExternalLink link : all) {
+            if (link.getExternalObjectId().equals(target.externalObjectId())
+                    && link.getBindingRevision() == bindingRevision
+                    && link.getSourceRevision() > coveredUpToSourceRevision) {
+                republishedAt = Math.max(republishedAt, link.getSourceRevision());
+            }
+        }
+        for (ExternalPublicationOperationRecord operation : ledger.getOperationsList()) {
+            ExternalPublicationIntent intent = operation.getIntent();
+            if (intent.getAction() == ExternalPublicationAction.EXTERNAL_PUBLICATION_ACTION_PUBLISH
+                    && operation.getOutcome()
+                            == ExternalPublicationOutcome.EXTERNAL_PUBLICATION_OUTCOME_PENDING
+                    && intent.getExternalObjectId().equals(target.externalObjectId())
+                    && intent.getBindingRevision() == bindingRevision
+                    && intent.getSourceRevision() > coveredUpToSourceRevision) {
+                republishedAt = Math.max(republishedAt, intent.getSourceRevision());
+            }
+        }
+        if (republishedAt > 0L) {
+            throw Status.FAILED_PRECONDITION
+                    .withDescription("External object '" + target.externalObjectId()
+                            + "' was republished for source revision " + republishedAt
+                            + ", after tombstone revision " + coveredUpToSourceRevision
+                            + "; deleting it would delete that publication")
+                    .asRuntimeException();
+        }
     }
 
     /**

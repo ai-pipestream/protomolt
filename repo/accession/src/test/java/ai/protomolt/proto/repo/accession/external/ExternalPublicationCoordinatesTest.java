@@ -280,4 +280,22 @@ class ExternalPublicationCoordinatesTest {
             assertThat(ExternalLedgerStore.sanitizeMessage(plain)).isEqualTo(plain);
         }
     }
+
+    @Test
+    void nonSecretTextRefusesCredentialsAnywhereInIt() {
+        for (String leaking : List.of(
+                "notes: https://example.org/#access_token=abcdefgh12345678",
+                "see https://example.org/app#/cb?id_token=abcdefgh12345678",
+                "rotate with Bearer abcdefgh12345678 next week",
+                "owner=ops client_secret=abcdefgh")) {
+            assertThatThrownBy(() -> ExternalPublicationCoordinates.requireNonSecretText(
+                    leaking, "labels.notes", 512))
+                    .as(leaking)
+                    .isInstanceOf(IllegalArgumentException.class);
+        }
+        assertThatCode(() -> ExternalPublicationCoordinates.requireNonSecretText(
+                "owned by the search team; docs at https://example.org/runbook#rotation",
+                "labels.notes", 512))
+                .doesNotThrowAnyException();
+    }
 }

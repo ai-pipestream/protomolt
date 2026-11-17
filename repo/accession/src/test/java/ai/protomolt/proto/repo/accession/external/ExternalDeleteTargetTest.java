@@ -247,4 +247,52 @@ class ExternalDeleteTargetTest {
         assertThat(ExternalDeletionLifecycle.replayedTarget(
                 Optional.of(ledger), "op-unknown", "", 0L)).isEmpty();
     }
+
+    @Test
+    void aLateTombstoneIsRefusedWhenItsObjectHasSinceBeenRepublishedUnderTheSameId() {
+        // A at revision 1, tombstone at 2, then the source was restored and A republished at 3
+        // under the same binding. Deleting "A" now would delete the restored object.
+        ExternalLink oldA = link("object-a", 1L, "dataset-one",
+                ExternalProjectionLifecycle.EXTERNAL_PROJECTION_LIFECYCLE_SUPERSEDED)
+                .toBuilder().setSourceRevision(1L).build();
+        ExternalLink newA = link("object-a", 1L, "dataset-one",
+                ExternalProjectionLifecycle.EXTERNAL_PROJECTION_LIFECYCLE_ACTIVE)
+                .toBuilder().setSourceRevision(3L).build();
+        ExternalPublicationLedger ledger = ExternalPublicationLedger.newBuilder()
+                .setCurrentLink(newA).addHistoricalLinks(oldA).build();
+
+        for (String named : new String[] {"", "object-a"}) {
+            assertThatThrownBy(() -> ExternalDeletionLifecycle.recordedTarget(
+                    Optional.of(ledger), 0L, named, 2L))
+                    .isInstanceOfSatisfying(StatusRuntimeException.class, e -> {
+                        assertThat(e.getStatus().getCode())
+                                .isEqualTo(Status.Code.FAILED_PRECONDITION);
+                        assertThat(e.getStatus().getDescription()).contains("republished");
+                    });
+        }
+        // A purge is for every revision and deletes it.
+        assertThat(recorded(ledger, 0L, "").orElseThrow().externalObjectId())
+                .isEqualTo("object-a");
+    }
+
+    @Test
+    void aPendingPublicationIsReachedBeforeHistoryThatIsAlreadyDeleted() {
+        ExternalPublicationOperationRecord pending = ExternalPublicationOperationRecord.newBuilder()
+                .setOperationId("op-pending")
+                .setIntent(ExternalPublicationIntent.newBuilder()
+                        .setAction(ExternalPublicationAction.EXTERNAL_PUBLICATION_ACTION_PUBLISH)
+                        .setExternalObjectId("object-new").setBindingRevision(2L))
+                .setBindingSnapshot(binding(2L, "dataset-two"))
+                .setOutcome(ExternalPublicationOutcome.EXTERNAL_PUBLICATION_OUTCOME_PENDING)
+                .build();
+        ExternalPublicationLedger ledger = ExternalPublicationLedger.newBuilder()
+                .addHistoricalLinks(link("object-old", 1L, "dataset-one",
+                        ExternalProjectionLifecycle.EXTERNAL_PROJECTION_LIFECYCLE_DELETED))
+                .addOperations(pending)
+                .build();
+
+        // The old object is gone; the pending one may be live and is what needs deleting.
+        assertThat(recorded(ledger, 0L, "").orElseThrow().externalObjectId())
+                .isEqualTo("object-new");
+    }
 }

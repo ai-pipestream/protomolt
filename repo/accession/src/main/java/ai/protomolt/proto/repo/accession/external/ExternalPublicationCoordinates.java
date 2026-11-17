@@ -438,6 +438,12 @@ public final class ExternalPublicationCoordinates {
                 validateQueryParameters(text, qIndex + 1, end);
             }
         }
+        // The checks above look at where the text starts and at one URL's query. A credential
+        // can sit anywhere in free text: in a fragment, after a route, or mid-sentence.
+        if (containsCredentialMaterial(text)) {
+            throw new IllegalArgumentException(
+                    fieldName + " must not contain credential or key material");
+        }
     }
 
     static void requireNonBlankCoordinate(String value, String fieldName) {
