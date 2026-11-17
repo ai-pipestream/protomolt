@@ -422,6 +422,17 @@ function isProtoIdentifier(value: string): boolean {
 }
 
 /**
+ * A mapping or policy ID inside `ParquetRendererOptions`: as {@link validateOptionId}, and
+ * when it is not empty it must contain something other than whitespace.
+ */
+function validateParquetOptionId(value: string, label: string): string {
+  if (value !== '' && value.trim() === '') {
+    throw new SaveAsInputError(`${label}: must not be only whitespace; clear it to leave it unset.`)
+  }
+  return validateOptionId(value, label)
+}
+
+/**
  * A sensitivity class as `ParquetRendererOptions.masked_sensitivity_classes` defines it: a
  * path-safe name of 1 to 128 characters, starting with a letter or digit and continuing with
  * letters, digits, `.`, `_` or `-`.
@@ -448,6 +459,9 @@ function validateOptionId(value: string, label: string): string {
   }
   return value
 }
+
+/** `ParquetRendererOptions.max_output_bytes` accepts at most 64 MiB. */
+const PARQUET_MAX_OUTPUT_BYTES = 67_108_864n
 
 /** The largest value a protobuf int64 field can carry. */
 const INT64_MAX = 9223372036854775807n
@@ -512,13 +526,7 @@ export function encodeParquetRendererOptions(
   }
   const uniqueClasses = [...seenClasses]
 
-  if (
-    uniqueClasses.length > 0
-    && form.maskStrategy === ParquetMaskStrategy.UNSPECIFIED
-  ) {
-    throw new SaveAsInputError('Mask strategy: choose REDACT or REMOVE when sensitivity classes are specified.')
-  }
-
+  // Classes with the strategy left unspecified are valid: the renderer then redacts.
   if (uniqueClasses.length === 0 && form.maskStrategy !== ParquetMaskStrategy.UNSPECIFIED) {
     // The renderer refuses a strategy with nothing to apply it to; say so here instead of
     // letting every such job fail.
@@ -526,14 +534,19 @@ export function encodeParquetRendererOptions(
   }
 
   const maxOutputBytes = parseOptionalNonNegativeBigInt(form.maxOutputBytesText, 'Max output bytes')
+  if (maxOutputBytes > PARQUET_MAX_OUTPUT_BYTES) {
+    throw new SaveAsInputError(
+      `Max output bytes: must be at most ${PARQUET_MAX_OUTPUT_BYTES.toString()} (64 MiB), the limit of the Parquet options.`,
+    )
+  }
   if (capabilityMaxOutputBytes > 0n && maxOutputBytes > capabilityMaxOutputBytes) {
     throw new SaveAsInputError(
       `Max output bytes: ${maxOutputBytes.toString()} exceeds provider ceiling of ${capabilityMaxOutputBytes.toString()} bytes.`,
     )
   }
 
-  const mappingId = validateOptionId(form.mappingId, 'Mapping ID')
-  const policyId = validateOptionId(form.policyId, 'Policy ID')
+  const mappingId = validateParquetOptionId(form.mappingId, 'Mapping ID')
+  const policyId = validateParquetOptionId(form.policyId, 'Policy ID')
 
   const message = create(ParquetRendererOptionsSchema, {
     columns,
@@ -572,29 +585,61 @@ export interface BuildPublishSaveAsInput {
   async?: boolean
 }
 
+function isAsciiAlphaNum(c: number): boolean {
+  return (c >= 0x30 && c <= 0x39) || (c >= 0x41 && c <= 0x5a) || (c >= 0x61 && c <= 0x7a)
+}
+
 /**
- * Checks an archive, rendition name or sub-key, which are path segments, and returns it
- * unchanged. Names are compared exactly by the repository, so nothing is trimmed: a value that
- * is only whitespace is refused, and any other value is the name it will be written under.
+ * Checks an archive name against `EntryAddress.archive` and returns it unchanged: a lowercase
+ * slug of at most 100 characters (a-z and 0-9, with single `.`, `_` or `-` separators inside,
+ * starting and ending with a letter or digit).
  */
-function validateSafeSegment(value: string, label: string, maxLen = 128): string {
-  if (value.trim() === '') {
+function validateArchiveSlug(value: string, label: string): string {
+  if (value === '') {
     throw new SaveAsInputError(`${label}: required.`)
   }
-  const trimmed = value
-  if (trimmed.length > maxLen) {
-    throw new SaveAsInputError(`${label}: must be at most ${maxLen} characters.`)
+  if (value.length > 100) {
+    throw new SaveAsInputError(`${label}: must be at most 100 characters.`)
   }
-  if (trimmed === '.' || trimmed === '..' || trimmed.includes('/') || trimmed.includes('\\')) {
-    throw new SaveAsInputError(`${label}: must not contain path separators or relative segments.`)
-  }
-  for (let i = 0; i < trimmed.length; i++) {
-    const c = trimmed.charCodeAt(i)
-    if (c < 0x20 || c === 0x7f) {
-      throw new SaveAsInputError(`${label}: must not contain control characters.`)
+  let previousWasSeparator = true
+  for (let i = 0; i < value.length; i++) {
+    const c = value.charCodeAt(i)
+    const lowerAlphaNum = (c >= 0x30 && c <= 0x39) || (c >= 0x61 && c <= 0x7a)
+    const separator = c === 0x2e || c === 0x5f || c === 0x2d
+    if (lowerAlphaNum) {
+      previousWasSeparator = false
+    } else if (separator && !previousWasSeparator && i < value.length - 1) {
+      previousWasSeparator = true
+    } else {
+      throw new SaveAsInputError(
+        `${label}: must be a lowercase slug (a-z, 0-9, with single '.', '_' or '-' between them).`,
+      )
     }
   }
-  return trimmed
+  return value
+}
+
+/**
+ * Checks a rendition name or sub-key against `RenditionDescriptor` and returns it unchanged:
+ * a path-safe name of at most 200 characters, starting with a letter or digit and continuing
+ * with letters, digits, `.`, `_` or `-`.
+ */
+function validatePathSafeName(value: string, label: string): string {
+  if (value === '') {
+    throw new SaveAsInputError(`${label}: required.`)
+  }
+  if (value.length > 200) {
+    throw new SaveAsInputError(`${label}: must be at most 200 characters.`)
+  }
+  for (let i = 0; i < value.length; i++) {
+    const c = value.charCodeAt(i)
+    if (isAsciiAlphaNum(c)) continue
+    if (i > 0 && (c === 0x2e || c === 0x5f || c === 0x2d)) continue
+    throw new SaveAsInputError(
+      `${label}: must start with a letter or digit and use only letters, digits, '.', '_' or '-'.`,
+    )
+  }
+  return value
 }
 
 /**
@@ -628,14 +673,14 @@ export function buildPublishSaveAsRequest(input: BuildPublishSaveAsInput): Publi
   }
 
   const accountId = validateFreeFormIdentity(input.destination.accountId, 'Destination account', 200)
-  const archive = validateSafeSegment(input.destination.archive, 'Destination archive', 100)
+  const archive = validateArchiveSlug(input.destination.archive, 'Destination archive')
   const entryId = validateFreeFormIdentity(input.destination.entryId, 'Destination entry ID', 500)
-  const renditionName = validateSafeSegment(input.destination.renditionName, 'Rendition name', 128)
+  const renditionName = validatePathSafeName(input.destination.renditionName, 'Rendition name')
   if (renditionName === 'parsed' && !isProtobufMediaType(input.capability.mediaType)) {
     throw new SaveAsInputError("Rendition name: converted non-protobuf renditions cannot overwrite the 'parsed' protobuf slot.")
   }
   const subKeyRaw = input.destination.subKey ?? ''
-  const subKey = subKeyRaw !== '' ? validateSafeSegment(subKeyRaw, 'Rendition sub-key', 128) : ''
+  const subKey = subKeyRaw !== '' ? validatePathSafeName(subKeyRaw, 'Rendition sub-key') : ''
 
   let expectedDestinationVersion = 0n
   let createOnly = false

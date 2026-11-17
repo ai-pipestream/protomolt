@@ -247,16 +247,6 @@ describe('saveAsCore', () => {
       }),
     ).toThrow('duplicate column')
 
-    expect(() =>
-      encodeParquetRendererOptions({
-        columnsText: '',
-        maskedSensitivityClassesText: 'PII',
-        maskStrategy: ParquetMaskStrategy.UNSPECIFIED,
-        maxOutputBytesText: '',
-        mappingId: '',
-        policyId: '',
-      }),
-    ).toThrow('choose REDACT or REMOVE')
 
     expect(() =>
       encodeParquetRendererOptions(
@@ -860,5 +850,66 @@ describe('saveAsCore', () => {
     expect(spaced.mappingId).toBe(' map one ')
     expect(spaced.policyId).toBe('p'.repeat(256))
     expect(() => encodeParquetRendererOptions({ ...form, mappingId: 'm'.repeat(257) })).toThrow(SaveAsInputError)
+  })
+
+  it('accepts sensitivity classes with the mask strategy left unspecified, which the renderer redacts', () => {
+    const encoded = encodeParquetRendererOptions({
+      columnsText: '', maskedSensitivityClassesText: 'pii', maskStrategy: ParquetMaskStrategy.UNSPECIFIED,
+      maxOutputBytesText: '', mappingId: '', policyId: '',
+    })
+    const decoded = fromBinary(ParquetRendererOptionsSchema, encoded.bytes)
+    expect(decoded.maskedSensitivityClasses).toEqual(['pii'])
+    expect(decoded.maskStrategy).toBe(ParquetMaskStrategy.UNSPECIFIED)
+  })
+
+  it('holds Parquet options to the limits of their schema', () => {
+    const form = {
+      columnsText: '', maskedSensitivityClassesText: '', maskStrategy: ParquetMaskStrategy.UNSPECIFIED,
+      maxOutputBytesText: '', mappingId: '', policyId: '',
+    }
+    expect(() => encodeParquetRendererOptions({ ...form, maxOutputBytesText: '67108864' })).not.toThrow()
+    expect(() => encodeParquetRendererOptions({ ...form, maxOutputBytesText: '67108865' })).toThrow(SaveAsInputError)
+    expect(() => encodeParquetRendererOptions({ ...form, mappingId: '   ' })).toThrow(SaveAsInputError)
+    expect(() => encodeParquetRendererOptions({ ...form, policyId: '\t' })).toThrow(SaveAsInputError)
+  })
+
+  it('validates the destination archive and rendition names by their own contracts', () => {
+    const view = describeSaveAsCapabilities(
+      create(ListSaveAsCapabilitiesResponseSchema, {
+        capabilities: [
+          create(SaveAsCapabilitySchema, {
+            status: SaveAsCompatibilityStatus.COMPATIBLE,
+            capability: create(RendererCapabilitySchema, {
+              providerId: 'csv', providerVersion: '1', sourceProfile: 'row', mediaType: 'text/csv',
+            }),
+          }),
+        ],
+      }),
+    )
+    const source = buildArchiveRenditionSinkSource({
+      address: create(EntryAddressSchema, { accountId: 'acct-a', archive: 'datasets', entryId: 'e-1' }),
+      rendition: { name: 'original' },
+      revision: 1n,
+    })
+    const build = (destination: Partial<{ archive: string; renditionName: string; subKey: string }>) =>
+      buildPublishSaveAsRequest({
+        operationId: 'op-dest', source, capability: view.compatible[0],
+        destination: {
+          accountId: 'acct-a', archive: 'datasets', entryId: 'e-1', renditionName: 'csv',
+          preconditionMode: 'unconditional', ...destination,
+        },
+      })
+    // An archive is a lowercase slug of at most 100 characters.
+    for (const archive of ['My Archive', 'Datasets', 'data..sets', '-data', 'data-', 'a'.repeat(101)]) {
+      expect(() => build({ archive })).toThrow(SaveAsInputError)
+    }
+    expect(build({ archive: 'data.sets_2-b' }).destination?.address?.archive).toBe('data.sets_2-b')
+    // A rendition name or sub-key is a path-safe name of at most 200 characters.
+    for (const renditionName of ['my rendition', '.hidden', 'a/b', 'n'.repeat(201)]) {
+      expect(() => build({ renditionName })).toThrow(SaveAsInputError)
+    }
+    expect(build({ renditionName: 'N'.repeat(200) }).destination?.rendition?.name).toBe('N'.repeat(200))
+    expect(() => build({ subKey: 'sub key' })).toThrow(SaveAsInputError)
+    expect(build({ subKey: 'Part-1.v2' }).destination?.rendition?.subKey).toBe('Part-1.v2')
   })
 })
