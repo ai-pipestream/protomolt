@@ -131,9 +131,17 @@ final class ExternalDeletionLifecycle {
         NodeAddress ledgerAddr = ExternalPublicationCoordinates.ledgerAddress(
                 accountId, request.bindingId(), request.sourceAddress());
         Optional<ExternalLedgerStore.LoadedLedger> ledgerOpt = ledgers.loadOptionalLedger(ledgerAddr, request.sourceAddress());
-        DocumentSecurity retainedSecurity = ledgerOpt
-                .map(ExternalLedgerStore.LoadedLedger::security)
-                .orElse(DocumentSecurity.getDefaultInstance());
+        if (ledgerOpt.isEmpty()) {
+            // The source is gone and nothing was ever recorded for it under this binding:
+            // there are no access rules to check the caller against and no object the
+            // coordinator knows it published. Deleting whatever ID the caller names would be
+            // an external deletion on their word alone.
+            throw Status.FAILED_PRECONDITION
+                    .withDescription("No external publication is recorded for this source under "
+                            + "binding '" + request.bindingId() + "'; there is nothing to purge")
+                    .asRuntimeException();
+        }
+        DocumentSecurity retainedSecurity = ledgerOpt.get().security();
 
         ResolvedDeleteTarget target = replayedTarget(
                         ledgerOpt.map(ExternalLedgerStore.LoadedLedger::ledger),
@@ -225,6 +233,18 @@ final class ExternalDeletionLifecycle {
                 retainedSecurity,
                 "ext-del-pre:" + operationId + ":" + UUID.randomUUID(),
                 current -> {
+                    boolean settledAlready = findOperation(current, operationId)
+                            .map(known -> isTerminalOutcome(known.getOutcome()))
+                            .orElse(false);
+                    if (!settledAlready && tombstoneRevision.isPresent()) {
+                        // Checked again here, against the ledger as it is when the deletion
+                        // is about to be sent: the target may have been republished since it
+                        // was resolved, or since an earlier attempt of this same operation.
+                        requireNotRepublished(
+                                current,
+                                new ResolvedDeleteTarget(bindingSnapshot, intent.getExternalObjectId()),
+                                tombstoneRevision.get());
+                    }
                     ExternalPublicationLedger.Builder next = current.toBuilder();
                     if (tombstoneRevision.isPresent()) {
                         long tr = tombstoneRevision.get();
@@ -567,16 +587,28 @@ final class ExternalDeletionLifecycle {
 
     /**
      * Refuses a tombstone deletion whose object has been published again, under the same ID
-     * and binding revision, for a source revision after the tombstone. The provider knows the
+     * in the same external target, for a source revision after the tombstone. The provider knows the
      * object by ID alone, so deleting it now would delete the republished one.
      */
+    /**
+     * Whether two binding revisions address the same place in the external system. A binding
+     * can be revised without moving (new labels, rotated credentials), so the revision number
+     * does not say. An object ID means the same object exactly when provider, dataset,
+     * namespace and endpoint are the same.
+     */
+    static boolean sameExternalTarget(ExternalSystemBinding left, ExternalSystemBinding right) {
+        return left.getProvider().equals(right.getProvider())
+                && left.getDataset().equals(right.getDataset())
+                && left.getNamespace().equals(right.getNamespace())
+                && left.getEndpointSummary().equals(right.getEndpointSummary());
+    }
+
     private static void requireNotRepublished(
             ExternalPublicationLedger ledger, ResolvedDeleteTarget target,
             long coveredUpToSourceRevision) {
         if (coveredUpToSourceRevision == ALL_REVISIONS) {
             return;
         }
-        long bindingRevision = target.binding().getBindingRevision();
         List<ExternalLink> all = new ArrayList<>(ledger.getHistoricalLinksList());
         if (ledger.hasCurrentLink()) {
             all.add(ledger.getCurrentLink());
@@ -584,7 +616,7 @@ final class ExternalDeletionLifecycle {
         long republishedAt = 0L;
         for (ExternalLink link : all) {
             if (link.getExternalObjectId().equals(target.externalObjectId())
-                    && link.getBindingRevision() == bindingRevision
+                    && sameExternalTarget(link.getBindingSnapshot(), target.binding())
                     && link.getSourceRevision() > coveredUpToSourceRevision) {
                 republishedAt = Math.max(republishedAt, link.getSourceRevision());
             }
@@ -595,7 +627,7 @@ final class ExternalDeletionLifecycle {
                     && operation.getOutcome()
                             == ExternalPublicationOutcome.EXTERNAL_PUBLICATION_OUTCOME_PENDING
                     && intent.getExternalObjectId().equals(target.externalObjectId())
-                    && intent.getBindingRevision() == bindingRevision
+                    && sameExternalTarget(operation.getBindingSnapshot(), target.binding())
                     && intent.getSourceRevision() > coveredUpToSourceRevision) {
                 republishedAt = Math.max(republishedAt, intent.getSourceRevision());
             }

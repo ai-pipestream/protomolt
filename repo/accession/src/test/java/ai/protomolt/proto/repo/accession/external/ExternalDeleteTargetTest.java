@@ -295,4 +295,30 @@ class ExternalDeleteTargetTest {
         assertThat(recorded(ledger, 0L, "").orElseThrow().externalObjectId())
                 .isEqualTo("object-new");
     }
+
+    @Test
+    void republicationUnderARevisedBindingThatDidNotMoveStillProtectsTheObject() {
+        // Binding v2 only rotated credentials: same provider, dataset, namespace and endpoint.
+        ExternalLink oldA = link("object-a", 1L, "dataset-one",
+                ExternalProjectionLifecycle.EXTERNAL_PROJECTION_LIFECYCLE_SUPERSEDED)
+                .toBuilder().setSourceRevision(1L).build();
+        ExternalLink newA = link("object-a", 2L, "dataset-one",
+                ExternalProjectionLifecycle.EXTERNAL_PROJECTION_LIFECYCLE_ACTIVE)
+                .toBuilder().setSourceRevision(3L).build();
+        ExternalPublicationLedger sameTarget = ExternalPublicationLedger.newBuilder()
+                .setCurrentLink(newA).addHistoricalLinks(oldA).build();
+        assertThatThrownBy(() -> ExternalDeletionLifecycle.recordedTarget(
+                Optional.of(sameTarget), 0L, "", 2L))
+                .isInstanceOfSatisfying(StatusRuntimeException.class, e ->
+                        assertThat(e.getStatus().getDescription()).contains("republished"));
+
+        // A binding revision that points at another dataset holds a different object A.
+        ExternalPublicationLedger moved = ExternalPublicationLedger.newBuilder()
+                .setCurrentLink(link("object-a", 2L, "dataset-two",
+                        ExternalProjectionLifecycle.EXTERNAL_PROJECTION_LIFECYCLE_ACTIVE)
+                        .toBuilder().setSourceRevision(3L).build())
+                .addHistoricalLinks(oldA).build();
+        assertThat(ExternalDeletionLifecycle.recordedTarget(Optional.of(moved), 0L, "", 2L)
+                .orElseThrow().binding().getDataset()).isEqualTo("dataset-one");
+    }
 }
