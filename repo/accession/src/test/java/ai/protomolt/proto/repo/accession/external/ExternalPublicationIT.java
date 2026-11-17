@@ -502,6 +502,43 @@ class ExternalPublicationIT {
     }
 
     @Test
+    void anOlderRevisionIsNotPublishedOnceTheSourceIsTombstoned(
+            @TempDir Path tempDir) throws Exception {
+        SimulatedManagedSearchProvider provider = new SimulatedManagedSearchProvider();
+        try (Harness h = Harness.boot(tempDir, provider)) {
+            h.saveActiveBinding(
+                    "tenant-alpha",
+                    "rust-search",
+                    "search-profile-v1",
+                    "ingest",
+                    "corpus-main",
+                    "ns-alpha",
+                    ExternalRetentionPolicy.EXTERNAL_RETENTION_POLICY_RETAIN_HISTORY,
+                    "op-bind-1");
+            NodeAddress doc = sourceAddress("tenant-alpha", "doc-tombstoned-first");
+            h.saveSourceDocument("save-tf-1", doc, 0L, "Soon deleted", "alice");
+            h.stub.deleteDocument(DeleteDocumentRequest.newBuilder()
+                    .setOperationId("del-tf-1")
+                    .setAddress(doc)
+                    .setExpected(ExpectedRevision.newBuilder().setRevision(1L))
+                    .build());
+            int callsBefore = provider.executeCalls.get();
+
+            // Nothing was ever published, so the ledger holds no fence yet. The source itself
+            // says it is deleted, and revision 1 must not be projected now.
+            ExternalPublicationCoordinator.OperationResult refused = h.coordinator.publish(
+                    new ExternalPublicationCoordinator.PublishRequest(
+                            "pub-after-tombstone", doc, 1L, "rust-search", 1L, "ext-tf",
+                            null, null));
+            assertThat(provider.executeCalls.get()).isEqualTo(callsBefore);
+            assertThat(refused.operation().getOutcome())
+                    .isEqualTo(ExternalPublicationOutcome.EXTERNAL_PUBLICATION_OUTCOME_FAILED);
+            assertThat(refused.operation().getFailureCode()).isEqualTo("FENCED_BY_NEWER_STATE");
+            assertThat(refused.currentLink()).isEmpty();
+        }
+    }
+
+    @Test
     void lostReplyReconcilesToConfirmedOrFailedWithoutDuplicateProviderExecution(
             @TempDir Path tempDir) throws Exception {
         SimulatedManagedSearchProvider provider = new SimulatedManagedSearchProvider();

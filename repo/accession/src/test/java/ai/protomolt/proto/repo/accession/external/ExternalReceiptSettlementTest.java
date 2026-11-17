@@ -104,9 +104,12 @@ class ExternalReceiptSettlementTest {
         assertThat(ExternalLedgerStore.findOperation(afterB, "op-del-b").orElseThrow().getOutcome())
                 .isEqualTo(ExternalPublicationOutcome.EXTERNAL_PUBLICATION_OUTCOME_DELETED);
 
-        // A different binding revision is a different dataset: the same ID there is not A.
+        // A binding revision that points at another dataset: the same ID there is not A.
         ExternalPublicationOperationRecord deleteAUnderV2 = operation("op-del-a-v2",
-                ExternalPublicationAction.EXTERNAL_PUBLICATION_ACTION_DELETE, "object-a", 2L, 7L);
+                ExternalPublicationAction.EXTERNAL_PUBLICATION_ACTION_DELETE, "object-a", 2L, 7L)
+                .toBuilder()
+                .setBindingSnapshot(binding(2L).toBuilder().setDataset("another-dataset"))
+                .build();
         ExternalPublicationLedger afterV2 = deleted(
                 ledger.toBuilder().addOperations(deleteAUnderV2).build(), deleteAUnderV2);
         assertThat(afterV2.getCurrentLink().getExternalObjectId()).isEqualTo("object-a");
@@ -317,5 +320,52 @@ class ExternalReceiptSettlementTest {
             assertThat(old.getProjectionLifecycle()).isEqualTo(
                     ExternalProjectionLifecycle.EXTERNAL_PROJECTION_LIFECYCLE_SUPERSEDED);
         });
+    }
+
+    @Test
+    void aPurgeDeletionDoesNotCoverAPublicationRecordedAfterItWasSent() {
+        // The purge deletion ran at the provider and its reply was lost. A publication that
+        // had already been dispatched then completed and was recorded as owed a deletion.
+        // The old deletion's receipt is only now reconciled.
+        ExternalPublicationOperationRecord purgeDelete = operation("op-purge-del",
+                ExternalPublicationAction.EXTERNAL_PUBLICATION_ACTION_DELETE, "object-a", 1L, 0L)
+                .toBuilder().setCreatedAt(T0).build();
+        ExternalLink recordedLater = link("object-a", 1L, 4L,
+                ExternalProjectionLifecycle.EXTERNAL_PROJECTION_LIFECYCLE_DELETION_PENDING)
+                .toBuilder().setConfirmedAt(T1).build();
+        ExternalPublicationLedger ledger = ExternalPublicationLedger.newBuilder()
+                .setSourcePurged(true).setLastPurgeId("purge-1")
+                .setCurrentLink(recordedLater)
+                .addOperations(purgeDelete)
+                .build();
+
+        ExternalPublicationLedger after = deleted(ledger, purgeDelete);
+        // Nothing shows the deletion covered that publication: it is still owed one, and the
+        // ledger is not ready to be purged.
+        assertThat(after.getCurrentLink().getProjectionLifecycle()).isEqualTo(
+                ExternalProjectionLifecycle.EXTERNAL_PROJECTION_LIFECYCLE_DELETION_PENDING);
+        assertThat(ExternalReceiptSettlement.nothingOutstanding(after)).isFalse();
+
+        // A link that was on record before the deletion was sent is covered.
+        ExternalLink recordedEarlier = recordedLater.toBuilder()
+                .setConfirmedAt(Timestamp.newBuilder().setSeconds(T0.getSeconds() - 60)).build();
+        ExternalPublicationLedger covered = deleted(
+                ledger.toBuilder().setCurrentLink(recordedEarlier).build(), purgeDelete);
+        assertThat(covered.hasCurrentLink()).isFalse();
+    }
+
+    @Test
+    void aDeletionUnderARevisedBindingThatDidNotMoveRetiresTheLink() {
+        // Published under v1; v2 only rotated credentials; the deletion ran under v2.
+        ExternalPublicationOperationRecord deleteUnderV2 = operation("op-del-v2",
+                ExternalPublicationAction.EXTERNAL_PUBLICATION_ACTION_DELETE, "object-a", 2L, 0L);
+        ExternalPublicationLedger ledger = ExternalPublicationLedger.newBuilder()
+                .setSourcePurged(true).setLastPurgeId("purge-1")
+                .setCurrentLink(link("object-a", 1L, 5L,
+                        ExternalProjectionLifecycle.EXTERNAL_PROJECTION_LIFECYCLE_DELETION_PENDING))
+                .addOperations(deleteUnderV2)
+                .build();
+        ExternalPublicationLedger after = deleted(ledger, deleteUnderV2);
+        assertThat(after.hasCurrentLink()).isFalse();
     }
 }

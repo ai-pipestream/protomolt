@@ -11,7 +11,10 @@ import static ai.protomolt.proto.repo.accession.external.ExternalLedgerStore.rep
 import static ai.protomolt.proto.repo.accession.external.ExternalLedgerStore.sanitizeMessage;
 import static ai.protomolt.proto.repo.accession.external.ExternalLedgerStore.timestamp;
 
+import ai.protomolt.proto.grpc.profile.v1.ServiceEndpoint;
+import ai.protomolt.proto.grpc.profile.v1.Transport;
 import ai.protomolt.proto.repo.external.v1.ExternalAttemptTrigger;
+import ai.protomolt.proto.repo.external.v1.ExternalEndpointSummary;
 import ai.protomolt.proto.repo.external.v1.ExternalLink;
 import ai.protomolt.proto.repo.external.v1.ExternalPendingPhase;
 import ai.protomolt.proto.repo.external.v1.ExternalProjectionLifecycle;
@@ -186,6 +189,31 @@ final class ExternalDeletionLifecycle {
     record ResolvedDeleteTarget(ExternalSystemBinding binding, String externalObjectId) {
     }
 
+    /**
+     * Refuses a deletion when the binding revision's service profile no longer resolves to
+     * the endpoint that revision recorded. A deletion is addressed by what the snapshot says
+     * (and that is what the republication check compares), but it is sent where the live
+     * profile points; if the two differ, it would delete some other place's object.
+     */
+    static void requireEndpointUnmoved(
+            ExternalSystemBinding bindingSnapshot,
+            ExternalProviderGateway.OutboundAuthContext outboundAuth) {
+        ExternalEndpointSummary recorded = bindingSnapshot.getEndpointSummary();
+        ServiceEndpoint live = outboundAuth.serviceEndpoint();
+        boolean liveTls = live.getTransport() == Transport.TRANSPORT_TLS;
+        if (!recorded.getHost().equals(live.getHost())
+                || recorded.getPort() != live.getPort()
+                || recorded.getTlsEnabled() != liveTls) {
+            throw Status.FAILED_PRECONDITION
+                    .withDescription("Binding '" + bindingSnapshot.getBindingId() + "' revision "
+                            + bindingSnapshot.getBindingRevision() + " recorded endpoint "
+                            + recorded.getHost() + ":" + recorded.getPort()
+                            + ", but its service profile now resolves to " + live.getHost() + ":"
+                            + live.getPort() + "; the deletion is not sent to a different endpoint")
+                    .asRuntimeException();
+        }
+    }
+
     ExternalPublicationCoordinator.OperationResult executeDeleteLifecycle(
             NodeAddress ledgerAddr,
             NodeAddress sourceAddress,
@@ -223,6 +251,7 @@ final class ExternalDeletionLifecycle {
 
         ExternalProviderGateway.OutboundAuthContext outboundAuth =
                 bindingStore.resolveOutboundAuth(bindingSnapshot);
+        requireEndpointUnmoved(bindingSnapshot, outboundAuth);
         Timestamp startedAt = timestamp(clock.instant());
 
         final int[] attemptHolder = new int[]{1};
@@ -496,19 +525,13 @@ final class ExternalDeletionLifecycle {
                     .withDescription("No externalObjectId supplied and no prior ExternalLink recorded")
                     .asRuntimeException();
         }
-        // The ledger holds no link for this object (for example a first publication that was
-        // only accepted), so the caller's coordinates are all there is to go on.
-        ExternalSystemBinding binding = explicitBindingRevision > 0L
-                ? bindingStore.getBindingRevision(accountId, bindingId, explicitBindingRevision)
-                        .orElseThrow(() -> Status.NOT_FOUND
-                                .withDescription("ExternalSystemBinding '" + bindingId
-                                        + "' revision " + explicitBindingRevision + " not found")
-                                .asRuntimeException())
-                : bindingStore.getCurrentBinding(accountId, bindingId)
-                        .orElseThrow(() -> Status.NOT_FOUND
-                                .withDescription("ExternalSystemBinding '" + bindingId + "' not found")
-                                .asRuntimeException());
-        return new ResolvedDeleteTarget(binding, explicitExternalObjectId);
+        // The caller named an object this source's ledger has no link or pending publication
+        // for. Access was checked against this source only, so nothing ties the caller to
+        // that object: deleting it would be an external deletion on their word alone.
+        throw Status.FAILED_PRECONDITION
+                .withDescription("External object '" + explicitExternalObjectId
+                        + "' is not recorded for this source under binding '" + bindingId + "'")
+                .asRuntimeException();
     }
 
     /**

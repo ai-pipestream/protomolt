@@ -438,8 +438,11 @@ public final class ExternalPublicationCoordinator {
                     .asRuntimeException();
         }
 
-        if (existingLedgerOpt.isPresent()
-                && isSourceRevisionFenced(existingLedgerOpt.get().ledger(), request.sourceRevision())) {
+        // A source that is deleted now fences every revision of it, whether or not a tombstone
+        // deletion has reached this ledger yet to say so.
+        if (sources.isCurrentlyTombstoned(request.sourceAddress())
+                || (existingLedgerOpt.isPresent()
+                && isSourceRevisionFenced(existingLedgerOpt.get().ledger(), request.sourceRevision()))) {
             return attempts.recordFencedPublishFailure(
                     ledgerAddr,
                     retainedSecurity,

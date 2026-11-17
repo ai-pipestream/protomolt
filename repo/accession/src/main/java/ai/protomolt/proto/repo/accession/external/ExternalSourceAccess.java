@@ -234,6 +234,16 @@ final class ExternalSourceAccess {
         return latestCore.getDocument().getOwnership().getSecurity();
     }
 
+    /** Whether the source's latest revision is a tombstone: the document is deleted now. */
+    boolean isCurrentlyTombstoned(NodeAddress sourceAddress) {
+        ListRevisionsResponse revisions = documents.listRevisions(
+                ListRevisionsRequest.newBuilder()
+                        .setAddress(sourceAddress)
+                        .setPageSize(1)
+                        .build());
+        return revisions.getRevisionsCount() > 0 && revisions.getRevisions(0).getTombstone();
+    }
+
     DocumentSecurity verifyTombstoneRevision(
             NodeAddress sourceAddress, long tombstoneRevision) {
         GetManifestResponse manifestResp = documents.getManifest(

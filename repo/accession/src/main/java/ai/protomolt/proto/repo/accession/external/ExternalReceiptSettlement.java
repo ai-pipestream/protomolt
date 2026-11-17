@@ -31,6 +31,7 @@ import ai.protomolt.proto.repo.v2.DocumentServiceGrpc;
 import ai.protomolt.proto.repo.v2.PurgeDocumentRequest;
 import com.google.protobuf.Message;
 import com.google.protobuf.Timestamp;
+import com.google.protobuf.util.Timestamps;
 import java.time.Clock;
 import java.util.HashMap;
 import java.util.Map;
@@ -449,9 +450,17 @@ final class ExternalReceiptSettlement {
         // deletion (source revision 0) is for every revision.
         boolean publishedBeforeDeletion = deletion.getSourceRevision() == 0L
                 || link.getSourceRevision() <= deletion.getSourceRevision();
+        // Source revisions do not order what the provider did. A link recorded after this
+        // deletion was first sent may be a publication the provider ran after it, so the
+        // deletion's evidence is taken to cover only links that were already on record then.
+        boolean recordedBeforeDeletionWasSent = !link.hasConfirmedAt() || !deletedOp.hasCreatedAt()
+                || Timestamps.compare(link.getConfirmedAt(), deletedOp.getCreatedAt()) <= 0;
         return publishedBeforeDeletion
+                && recordedBeforeDeletionWasSent
                 && link.getExternalObjectId().equals(deletion.getExternalObjectId())
-                && link.getBindingRevision() == deletion.getBindingRevision();
+                // The same place in the external system, whatever the binding revision number.
+                && ExternalDeletionLifecycle.sameExternalTarget(
+                        link.getBindingSnapshot(), deletedOp.getBindingSnapshot());
     }
 
     private static ExternalLink retired(ExternalLink link,
