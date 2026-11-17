@@ -53,6 +53,13 @@ export const ZERO_PROVIDERS_MESSAGE = 'No Save-as conversion providers are enabl
 export const PARQUET_COLUMNS_HINT =
   'Comma-separated top-level field names; leave blank to export every field, including nested, repeated and map fields'
 
+/**
+ * The masker compares a class to a field's declared sensitivity exactly, case included, so the
+ * examples are written the way schemas declare them.
+ */
+export const PARQUET_CLASSES_HINT =
+  'Comma-separated sensitivity classes, matched exactly as fields declare them, case included (e.g. pii, secret)'
+
 export const PARQUET_MASK_STRATEGY_CHOICES: readonly { title: string; value: ParquetMaskStrategy }[] = [
   { title: 'Unspecified (redact when classes are set, otherwise no masking)', value: ParquetMaskStrategy.UNSPECIFIED },
   { title: 'Redact (strings become "***", other values are cleared)', value: ParquetMaskStrategy.REDACT },
@@ -452,6 +459,11 @@ export function encodeParquetRendererOptions(
   capabilityMaxOutputBytes = 0n,
 ): { bytes: Uint8Array; mappingId: string; policyId: string } {
   const columns = splitCleanTokens(form.columnsText)
+  if (columns.length === 0 && form.columnsText.trim() !== '') {
+    // Something was typed and it names no column. An empty list means every field, so this
+    // is refused instead of being read as "export everything".
+    throw new SaveAsInputError('Projected columns: no field name found; clear the box to export every field.')
+  }
   const seenColumns = new Set<string>()
   for (const col of columns) {
     if (col.includes('.')) {
@@ -467,6 +479,9 @@ export function encodeParquetRendererOptions(
   }
 
   const sensitivityClasses = splitCleanTokens(form.maskedSensitivityClassesText)
+  if (sensitivityClasses.length === 0 && form.maskedSensitivityClassesText.trim() !== '') {
+    throw new SaveAsInputError('Sensitivity classes: no class name found; clear the box to mask nothing.')
+  }
   const seenClasses = new Set<string>()
   for (const cls of sensitivityClasses) {
     if (!isSafeClassOrPolicyToken(cls)) {

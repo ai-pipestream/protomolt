@@ -10,6 +10,7 @@ import {
 import { RendererCapabilitySchema } from '@/gen/ai/protomolt/proto/emit/v1/renderer_pb'
 import {
   EntryAddressSchema,
+  EntryInfoSchema,
   RenditionDescriptorSchema,
   RenditionManifestEntrySchema,
   RenditionState,
@@ -42,6 +43,7 @@ import {
   describeSaveAsCapabilities,
   encodeParquetRendererOptions,
   evaluateSaveAsSessionAccess,
+  PARQUET_CLASSES_HINT,
   PARQUET_COLUMNS_HINT,
   PARQUET_MASK_STRATEGY_CHOICES,
   PARQUET_OPTIONS_TYPE,
@@ -59,6 +61,7 @@ import {
   buildListRenditionProvenanceRequest,
   listPartOccurrenceOptions,
   mergeRenditionsWithProvenance,
+  viewedVersionMetadata,
 } from './saveAsProvenanceCore'
 
 const parquetCapability = create(RendererCapabilitySchema, {
@@ -794,5 +797,50 @@ describe('saveAsCore', () => {
     expect(documentBacksEntry({ ...doc, docId: 'e-2' }, dest)).toBe(false)
     expect(documentBacksEntry({ ...doc, graphId: 'intake:acct-a' }, dest)).toBe(false)
     expect(documentBacksEntry(doc, undefined)).toBe(false)
+  })
+
+  it('refuses a column or class list that was typed and names nothing', () => {
+    const form = {
+      columnsText: '', maskedSensitivityClassesText: '', maskStrategy: ParquetMaskStrategy.UNSPECIFIED,
+      maxOutputBytesText: '', mappingId: '', policyId: '',
+    }
+    // "," is not "blank": taking it as an empty list would export every field unasked.
+    for (const columnsText of [',', ' , ,', '\n,\n']) {
+      expect(() => encodeParquetRendererOptions({ ...form, columnsText })).toThrow(SaveAsInputError)
+    }
+    expect(() =>
+      encodeParquetRendererOptions({
+        ...form, maskedSensitivityClassesText: ' , ', maskStrategy: ParquetMaskStrategy.REDACT,
+      }),
+    ).toThrow(SaveAsInputError)
+    // Truly blank still means every field.
+    expect(fromBinary(ParquetRendererOptionsSchema, encodeParquetRendererOptions(form).bytes).columns).toEqual([])
+  })
+
+  it('tells the operator that sensitivity classes match exactly, with examples as fields declare them', () => {
+    expect(PARQUET_CLASSES_HINT).toContain('exactly')
+    expect(PARQUET_CLASSES_HINT).toContain('pii')
+    expect(PARQUET_CLASSES_HINT).not.toContain('PII')
+  })
+
+  it('reads a viewed version\'s filename and source link from that version, not from the current entry', () => {
+    const current = create(EntryInfoSchema, {
+      filename: 'v2.pdf', sourceUri: 'https://example.org/v2', currentVersion: 2n,
+    })
+    const v1 = create(VersionManifestSchema, {
+      version: 1n,
+      metadataSnapshot: create(EntryInfoSchema, { filename: 'v1.pdf', sourceUri: 'https://example.org/v1' }),
+    })
+    expect(viewedVersionMetadata(v1, current)).toEqual({ filename: 'v1.pdf', sourceUri: 'https://example.org/v1' })
+    // A version that kept no snapshot shows no link; the current entry's is not borrowed.
+    expect(viewedVersionMetadata(create(VersionManifestSchema, { version: 1n }), current)).toEqual({
+      filename: undefined,
+      sourceUri: undefined,
+    })
+    // The current version is what the entry's own metadata describes.
+    expect(viewedVersionMetadata(create(VersionManifestSchema, { version: 2n }), current)).toEqual({
+      filename: 'v2.pdf',
+      sourceUri: 'https://example.org/v2',
+    })
   })
 })

@@ -954,6 +954,7 @@ import {
 import {
   buildListRenditionProvenanceRequest,
   mergeRenditionsWithProvenance,
+  viewedVersionMetadata,
   type EnrichedRenditionRow,
 } from '@/repository/saveAsProvenanceCore'
 import { UploadInputError, fileSha256, newOperationId } from '@/repository/uploadCore'
@@ -1265,8 +1266,8 @@ const renditions = computed<EnrichedRenditionRow[]>(() =>
   manifest.value
     ? mergeRenditionsWithProvenance(renditionRows(manifest.value), provenanceResponse.value, {
         viewedEntryVersion: pinned.value ?? undefined,
-        originalFilename: info.value?.filename,
-        sourceUri: info.value?.sourceUri,
+        originalFilename: viewedVersionMetadata(manifest.value, info.value).filename,
+        sourceUri: viewedVersionMetadata(manifest.value, info.value).sourceUri,
         // Unknown while the call is still out, as well as when it failed.
         provenanceUnavailable: !provenanceSettled.value || provenanceFailure.value !== null,
       })

@@ -33,7 +33,7 @@
         <v-text-field
           v-model="form.maskedSensitivityClassesText"
           label="Masked sensitivity classes (optional)"
-          hint="Comma-separated sensitivity classes (e.g. PII, SECRET)"
+          :hint="PARQUET_CLASSES_HINT"
           persistent-hint
           density="compact"
           variant="outlined"
@@ -87,6 +87,7 @@
 
 <script setup lang="ts">
 import {
+  PARQUET_CLASSES_HINT,
   PARQUET_COLUMNS_HINT,
   PARQUET_MASK_STRATEGY_CHOICES,
   type ParquetOptionsFormInput,

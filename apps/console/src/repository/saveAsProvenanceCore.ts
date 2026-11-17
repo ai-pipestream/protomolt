@@ -9,7 +9,12 @@ import {
   type DescField,
   type DescMessage,
 } from '@bufbuild/protobuf'
-import { EntryAddressSchema, type EntryAddress } from '@/gen/ai/protomolt/proto/repo/archive/v1/entry_pb'
+import {
+  EntryAddressSchema,
+  type EntryAddress,
+  type EntryInfo,
+  type VersionManifest,
+} from '@/gen/ai/protomolt/proto/repo/archive/v1/entry_pb'
 import {
   ListRenditionProvenanceRequestSchema,
   type ListRenditionProvenanceResponse,
@@ -322,6 +327,25 @@ export function listPartOccurrenceOptions(
     })
   }
   return results
+}
+
+/**
+ * The filename and source URI that belong to the version being viewed: the ones its manifest
+ * captured. The current entry's are not used for an older version, where they would attribute
+ * today's source to yesterday's bytes; an older version with no snapshot has neither.
+ */
+export function viewedVersionMetadata(
+  manifest: VersionManifest,
+  currentInfo: EntryInfo | null | undefined,
+): { filename: string | undefined; sourceUri: string | undefined } {
+  // The entry's own metadata describes its current version, so it stands in there when that
+  // version's manifest carries no snapshot. It never stands in for an older version.
+  const viewingCurrent = currentInfo != null && manifest.version === currentInfo.currentVersion
+  const snapshot = manifest.metadataSnapshot ?? (viewingCurrent ? currentInfo : undefined)
+  return {
+    filename: snapshot?.filename ? snapshot.filename : undefined,
+    sourceUri: snapshot?.sourceUri ? snapshot.sourceUri : undefined,
+  }
 }
 
 export { ScalarType }
