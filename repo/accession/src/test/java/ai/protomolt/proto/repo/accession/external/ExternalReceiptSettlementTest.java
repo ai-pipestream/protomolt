@@ -67,7 +67,43 @@ class ExternalReceiptSettlementTest {
                 .setSettlement(settlement).setExternalObjectId(objectId).build();
     }
 
+    /**
+     * The ledger as the deletion's dispatch leaves it: every link on record that the deletion
+     * covers carries the deletion's operation ID.
+     */
+    private static ExternalPublicationLedger claimedBy(ExternalPublicationLedger ledger,
+            ExternalPublicationOperationRecord deleteOp) {
+        ExternalPublicationLedger.Builder claimed = ledger.toBuilder();
+        long bound = deleteOp.getIntent().getSourceRevision();
+        java.util.function.Predicate<ExternalLink> covers = link ->
+                link.getExternalObjectId().equals(deleteOp.getIntent().getExternalObjectId())
+                        && ExternalDeletionLifecycle.sameExternalTarget(
+                                link.getBindingSnapshot(), deleteOp.getBindingSnapshot())
+                        && (bound == 0L || link.getSourceRevision() <= bound);
+        if (ledger.hasCurrentLink() && covers.test(ledger.getCurrentLink())) {
+            claimed.setCurrentLink(ledger.getCurrentLink().toBuilder()
+                    .setRetiredByOperationId(deleteOp.getOperationId()));
+        }
+        for (int i = 0; i < ledger.getHistoricalLinksCount(); i++) {
+            ExternalLink historical = ledger.getHistoricalLinks(i);
+            if (historical.getProjectionLifecycle()
+                            != ExternalProjectionLifecycle.EXTERNAL_PROJECTION_LIFECYCLE_DELETED
+                    && covers.test(historical)) {
+                claimed.setHistoricalLinks(i, historical.toBuilder()
+                        .setRetiredByOperationId(deleteOp.getOperationId()));
+            }
+        }
+        return claimed.build();
+    }
+
+    /** Dispatches (claims) and then settles a deletion, as the lifecycle does. */
     private static ExternalPublicationLedger deleted(ExternalPublicationLedger ledger,
+            ExternalPublicationOperationRecord deleteOp) {
+        return settled(claimedBy(ledger, deleteOp), deleteOp);
+    }
+
+    /** Settles a deletion against the ledger exactly as given. */
+    private static ExternalPublicationLedger settled(ExternalPublicationLedger ledger,
             ExternalPublicationOperationRecord deleteOp) {
         return ExternalReceiptSettlement.settleConfirmedDeletion(
                 ledger, deleteOp, 1, ExternalAttemptTrigger.EXTERNAL_ATTEMPT_TRIGGER_INITIAL,
@@ -324,34 +360,34 @@ class ExternalReceiptSettlementTest {
 
     @Test
     void aPurgeDeletionDoesNotCoverAPublicationRecordedAfterItWasSent() {
-        // The purge deletion ran at the provider and its reply was lost. A publication that
-        // had already been dispatched then completed and was recorded as owed a deletion.
+        // The purge deletion was sent, ran at the provider, and its reply was lost. A
+        // publication already dispatched then completed and was recorded as owed a deletion.
         // The old deletion's receipt is only now reconciled.
         ExternalPublicationOperationRecord purgeDelete = operation("op-purge-del",
-                ExternalPublicationAction.EXTERNAL_PUBLICATION_ACTION_DELETE, "object-a", 1L, 0L)
-                .toBuilder().setCreatedAt(T0).build();
-        ExternalLink recordedLater = link("object-a", 1L, 4L,
-                ExternalProjectionLifecycle.EXTERNAL_PROJECTION_LIFECYCLE_DELETION_PENDING)
-                .toBuilder().setConfirmedAt(T1).build();
-        ExternalPublicationLedger ledger = ExternalPublicationLedger.newBuilder()
-                .setSourcePurged(true).setLastPurgeId("purge-1")
-                .setCurrentLink(recordedLater)
-                .addOperations(purgeDelete)
-                .build();
-
-        ExternalPublicationLedger after = deleted(ledger, purgeDelete);
-        // Nothing shows the deletion covered that publication: it is still owed one, and the
-        // ledger is not ready to be purged.
-        assertThat(after.getCurrentLink().getProjectionLifecycle()).isEqualTo(
+                ExternalPublicationAction.EXTERNAL_PUBLICATION_ACTION_DELETE, "object-a", 1L, 0L);
+        ExternalLink onRecordAtDispatch = link("object-a", 1L, 3L,
                 ExternalProjectionLifecycle.EXTERNAL_PROJECTION_LIFECYCLE_DELETION_PENDING);
-        assertThat(ExternalReceiptSettlement.nothingOutstanding(after)).isFalse();
+        ExternalPublicationLedger atDispatch = claimedBy(ExternalPublicationLedger.newBuilder()
+                .setSourcePurged(true).setLastPurgeId("purge-1")
+                .setCurrentLink(onRecordAtDispatch)
+                .addOperations(purgeDelete)
+                .build(), purgeDelete);
+        // Recorded afterwards, with the same timestamp as far as any clock could tell.
+        ExternalLink recordedLater = link("object-a", 1L, 4L,
+                ExternalProjectionLifecycle.EXTERNAL_PROJECTION_LIFECYCLE_DELETION_PENDING);
+        ExternalPublicationLedger withLatePublication = atDispatch.toBuilder()
+                .addHistoricalLinks(recordedLater).build();
 
-        // A link that was on record before the deletion was sent is covered.
-        ExternalLink recordedEarlier = recordedLater.toBuilder()
-                .setConfirmedAt(Timestamp.newBuilder().setSeconds(T0.getSeconds() - 60)).build();
-        ExternalPublicationLedger covered = deleted(
-                ledger.toBuilder().setCurrentLink(recordedEarlier).build(), purgeDelete);
-        assertThat(covered.hasCurrentLink()).isFalse();
+        ExternalPublicationLedger after = settled(withLatePublication, purgeDelete);
+        // The link that was on record when the deletion was sent is retired.
+        assertThat(after.hasCurrentLink()).isFalse();
+        // The later one is still owed a deletion, and the ledger is not ready to be purged.
+        assertThat(after.getHistoricalLinksList())
+                .filteredOn(link -> link.getSourceRevision() == 4L)
+                .singleElement()
+                .satisfies(late -> assertThat(late.getProjectionLifecycle()).isEqualTo(
+                        ExternalProjectionLifecycle.EXTERNAL_PROJECTION_LIFECYCLE_DELETION_PENDING));
+        assertThat(ExternalReceiptSettlement.nothingOutstanding(after)).isFalse();
     }
 
     @Test

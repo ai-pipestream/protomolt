@@ -410,6 +410,13 @@ public final class ExternalPublicationCoordinator {
                             true,
                             false);
                 }
+                if (sources.isCurrentlyTombstoned(request.sourceAddress())) {
+                    // The source has been deleted since this operation was first sent. It
+                    // is not sent again; what the first attempt did is still for
+                    // reconciliation to find out, so the operation is left as it is.
+                    return new OperationResult(
+                            priorOp, optionalCurrentLink(existingLedger), true, false);
+                }
                 return attempts.retryPendingPublish(
                         ledgerAddr,
                         retainedSecurity,
@@ -462,6 +469,8 @@ public final class ExternalPublicationCoordinator {
 
         ExternalProviderGateway.OutboundAuthContext outboundAuth =
                 bindingStore.resolveOutboundAuth(requestedBinding);
+        // What is recorded as published to endpoint A must have been sent to endpoint A.
+        ExternalDeletionLifecycle.requireEndpointUnmoved(requestedBinding, outboundAuth);
 
         Timestamp startedAt = timestamp(clock.instant());
         ExternalPublicationAttempt dispatchingAttempt = ExternalPublicationAttempt.newBuilder()

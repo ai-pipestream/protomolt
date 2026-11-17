@@ -114,6 +114,8 @@ final class ExternalPublishAttempts {
 
         ExternalProviderGateway.OutboundAuthContext outboundAuth =
                 bindingStore.resolveOutboundAuth(latestAfterPre.getBindingSnapshot());
+        ExternalDeletionLifecycle.requireEndpointUnmoved(
+                latestAfterPre.getBindingSnapshot(), outboundAuth);
         return executeAndSettlePublishAttempt(
                 ledgerAddr,
                 retainedSecurity,

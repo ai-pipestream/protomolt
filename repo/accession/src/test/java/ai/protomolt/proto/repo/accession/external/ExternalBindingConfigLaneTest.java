@@ -76,7 +76,7 @@ class ExternalBindingConfigLaneTest {
                     org.assertj.core.api.Assertions.assertThat(refused.getStatus().getCode())
                             .isEqualTo(Status.Code.INVALID_ARGUMENT);
                     org.assertj.core.api.Assertions.assertThat(refused.getStatus().getDescription())
-                            .contains("does not declare field number(s) [18]");
+                            .contains("field number(s) [18]");
                 });
     }
 
@@ -90,6 +90,34 @@ class ExternalBindingConfigLaneTest {
                             .isEqualTo(Status.Code.INVALID_ARGUMENT);
                     org.assertj.core.api.Assertions.assertThat(refused.getStatus().getDescription())
                             .contains("dataset");
+                });
+    }
+
+    @Test
+    void aLaneWhoseSchemaLacksANestedFieldRefusesToo() throws Exception {
+        // The lane's ExternalEndpointSummary has no tls_enabled.
+        FileDescriptor current = ExternalSystemBinding.getDescriptor().getFile();
+        FileDescriptorProto.Builder older = current.toProto().toBuilder();
+        for (int i = 0; i < older.getMessageTypeCount(); i++) {
+            DescriptorProto.Builder message = older.getMessageTypeBuilder(i);
+            if (!message.getName().equals("ExternalEndpointSummary")) {
+                continue;
+            }
+            for (int f = message.getFieldCount() - 1; f >= 0; f--) {
+                if (message.getField(f).getName().equals("tls_enabled")) {
+                    message.removeField(f);
+                }
+            }
+        }
+        Descriptor laneType = FileDescriptor.buildFrom(
+                        older.build(), current.getDependencies().toArray(new FileDescriptor[0]))
+                .findMessageTypeByName("ExternalSystemBinding");
+        assertThatThrownBy(() -> ExternalBindingConfigLane.requireAdmissible(binding(), laneType))
+                .isInstanceOfSatisfying(StatusRuntimeException.class, refused -> {
+                    org.assertj.core.api.Assertions.assertThat(refused.getStatus().getCode())
+                            .isEqualTo(Status.Code.INVALID_ARGUMENT);
+                    org.assertj.core.api.Assertions.assertThat(refused.getStatus().getDescription())
+                            .contains("endpoint_summary");
                 });
     }
 }

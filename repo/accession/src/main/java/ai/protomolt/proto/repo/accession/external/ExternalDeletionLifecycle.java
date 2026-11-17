@@ -190,10 +190,48 @@ final class ExternalDeletionLifecycle {
     }
 
     /**
-     * Refuses a deletion when the binding revision's service profile no longer resolves to
-     * the endpoint that revision recorded. A deletion is addressed by what the snapshot says
-     * (and that is what the republication check compares), but it is sent where the live
-     * profile points; if the two differ, it would delete some other place's object.
+     * Names this deletion on every link it is about to delete: the links for its object, in
+     * its external target, that are on record now and that it covers. Settlement retires only
+     * links carrying that name. A publication recorded after this point does not carry it,
+     * however the clocks read, so this deletion's evidence can never be taken to cover it.
+     */
+    private static void claimLinksForDeletion(
+            ExternalPublicationLedger.Builder next,
+            ExternalPublicationLedger current,
+            String operationId,
+            ExternalSystemBinding bindingSnapshot,
+            String externalObjectId,
+            long coveredUpToSourceRevision) {
+        if (next.hasCurrentLink()
+                && claimable(next.getCurrentLink(), bindingSnapshot, externalObjectId,
+                        coveredUpToSourceRevision)) {
+            next.setCurrentLink(next.getCurrentLink().toBuilder()
+                    .setRetiredByOperationId(operationId));
+        }
+        for (int i = 0; i < current.getHistoricalLinksCount(); i++) {
+            ExternalLink historical = current.getHistoricalLinks(i);
+            if (historical.getProjectionLifecycle()
+                            != ExternalProjectionLifecycle.EXTERNAL_PROJECTION_LIFECYCLE_DELETED
+                    && claimable(historical, bindingSnapshot, externalObjectId,
+                            coveredUpToSourceRevision)) {
+                next.setHistoricalLinks(i, historical.toBuilder()
+                        .setRetiredByOperationId(operationId));
+            }
+        }
+    }
+
+    private static boolean claimable(ExternalLink link, ExternalSystemBinding bindingSnapshot,
+            String externalObjectId, long coveredUpToSourceRevision) {
+        return link.getExternalObjectId().equals(externalObjectId)
+                && sameExternalTarget(link.getBindingSnapshot(), bindingSnapshot)
+                && covered(link.getSourceRevision(), coveredUpToSourceRevision);
+    }
+
+    /**
+     * Refuses to send a publication or deletion when the binding revision's service profile
+     * no longer resolves to the endpoint that revision recorded. An operation is recorded, and
+     * later compared, by what the snapshot says, but it is sent where the live profile points;
+     * if the two differ it would act on some other place than the one on record.
      */
     static void requireEndpointUnmoved(
             ExternalSystemBinding bindingSnapshot,
@@ -209,7 +247,7 @@ final class ExternalDeletionLifecycle {
                             + bindingSnapshot.getBindingRevision() + " recorded endpoint "
                             + recorded.getHost() + ":" + recorded.getPort()
                             + ", but its service profile now resolves to " + live.getHost() + ":"
-                            + live.getPort() + "; the deletion is not sent to a different endpoint")
+                            + live.getPort() + "; nothing is sent to a different endpoint")
                     .asRuntimeException();
         }
     }
@@ -301,6 +339,11 @@ final class ExternalDeletionLifecycle {
                                 .setProjectionLifecycle(
                                         ExternalProjectionLifecycle
                                                 .EXTERNAL_PROJECTION_LIFECYCLE_DELETION_PENDING));
+                    }
+                    if (!settledAlready) {
+                        claimLinksForDeletion(next, current, operationId, bindingSnapshot,
+                                intent.getExternalObjectId(),
+                                tombstoneRevision.orElse(ALL_REVISIONS));
                     }
 
                     Optional<ExternalPublicationOperationRecord> existingOp =

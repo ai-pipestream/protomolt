@@ -8,10 +8,15 @@ import ai.protomolt.proto.repo.external.v1.ExternalSystemBinding;
 import ai.protomolt.proto.validate.ProtoValidator;
 import ai.protomolt.proto.validate.ValidationResult;
 import com.google.protobuf.Descriptors.Descriptor;
+import com.google.protobuf.Descriptors.FieldDescriptor;
 import com.google.protobuf.DynamicMessage;
 import com.google.protobuf.InvalidProtocolBufferException;
+import com.google.protobuf.Message;
 import com.google.protobuf.util.JsonFormat;
 import io.grpc.Status;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
 import java.util.stream.Collectors;
 
 /**
@@ -81,11 +86,11 @@ final class ExternalBindingConfigLane {
                     .withCause(unreadable)
                     .asRuntimeException();
         }
-        if (!asLaneType.getUnknownFields().asMap().isEmpty()) {
+        Optional<String> undeclared = firstUndeclaredField(asLaneType, laneType.getFullName());
+        if (undeclared.isPresent()) {
             throw Status.INVALID_ARGUMENT
-                    .withDescription("Config-lane gate rejected binding: the config lane's schema for "
-                            + laneType.getFullName() + " does not declare field number(s) "
-                            + asLaneType.getUnknownFields().asMap().keySet()
+                    .withDescription("Config-lane gate rejected binding: the config lane's schema "
+                            + "does not declare " + undeclared.get()
                             + "; register the current schema first")
                     .asRuntimeException();
         }
@@ -98,6 +103,32 @@ final class ExternalBindingConfigLane {
                                     .collect(Collectors.joining("; ")))
                     .asRuntimeException();
         }
+    }
+
+    /**
+     * The first field the lane's schema does not declare, at any depth: a nested message can
+     * lack a field just as the binding itself can. Empty when the lane holds the whole value.
+     */
+    private static Optional<String> firstUndeclaredField(Message message, String path) {
+        if (!message.getUnknownFields().asMap().isEmpty()) {
+            return Optional.of("field number(s) " + message.getUnknownFields().asMap().keySet()
+                    + " of " + path);
+        }
+        for (Map.Entry<FieldDescriptor, Object> field : message.getAllFields().entrySet()) {
+            if (field.getKey().getJavaType() != FieldDescriptor.JavaType.MESSAGE) {
+                continue;
+            }
+            List<?> values = field.getKey().isRepeated()
+                    ? (List<?>) field.getValue() : List.of(field.getValue());
+            for (Object value : values) {
+                Optional<String> nested = firstUndeclaredField(
+                        (Message) value, path + "." + field.getKey().getName());
+                if (nested.isPresent()) {
+                    return nested;
+                }
+            }
+        }
+        return Optional.empty();
     }
 
     /**
