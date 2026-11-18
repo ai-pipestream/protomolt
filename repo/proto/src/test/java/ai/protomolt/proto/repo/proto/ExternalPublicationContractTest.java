@@ -347,6 +347,17 @@ class ExternalPublicationContractTest {
                 .setIntentSha256(SHA_B)
                 .build(), false);
 
+        // Only a FAILED PUBLISH can record that the provider's answer could not be verified.
+        ExternalPublicationOperationRecord failedUnverified = confirmedOp.toBuilder()
+                .setOutcome(ExternalPublicationOutcome.EXTERNAL_PUBLICATION_OUTCOME_FAILED)
+                .clearTerminalEvidence()
+                .setFailureCode("SIGNED_WORK_RECORD_INVALID")
+                .setProviderAnswerUnverified(true)
+                .build();
+        checkBothDialects(failedUnverified, true);
+        checkBothDialects(confirmedOp.toBuilder().setProviderAnswerUnverified(true).build(), false);
+        checkBothDialects(failedUnverified.toBuilder().setIntent(tombstoneDelete).build(), false);
+
         ExternalPublicationLedger ledger = ExternalPublicationLedger.newBuilder()
                 .setAccountId("tenant-alpha")
                 .setBindingId("search-primary")

@@ -12,11 +12,13 @@ import static ai.protomolt.proto.repo.accession.external.ExternalLedgerStore.sha
 import static ai.protomolt.proto.repo.accession.external.ExternalLedgerStore.timestamp;
 
 import ai.protomolt.proto.repo.external.v1.ExternalAttemptTrigger;
+import ai.protomolt.proto.repo.external.v1.ExternalEndpointSummary;
 import ai.protomolt.proto.repo.external.v1.ExternalLink;
 import ai.protomolt.proto.repo.external.v1.ExternalPendingPhase;
 import ai.protomolt.proto.repo.external.v1.ExternalProjectionLifecycle;
 import ai.protomolt.proto.repo.external.v1.ExternalProviderEvidence;
 import ai.protomolt.proto.repo.external.v1.ExternalProviderSettlement;
+import ai.protomolt.proto.repo.external.v1.ExternalPublicationAction;
 import ai.protomolt.proto.repo.external.v1.ExternalPublicationAttempt;
 import ai.protomolt.proto.repo.external.v1.ExternalPublicationIntent;
 import ai.protomolt.proto.repo.external.v1.ExternalPublicationLedger;
@@ -111,6 +113,10 @@ final class ExternalReceiptSettlement {
                         ExternalPublicationOperationRecord updatedOp = opBuilder
                                 .setOutcome(ExternalPublicationOutcome.EXTERNAL_PUBLICATION_OUTCOME_FAILED)
                                 .setPendingPhase(ExternalPendingPhase.EXTERNAL_PENDING_PHASE_UNSPECIFIED)
+                                // The operation fails hard, but the provider answered: it may
+                                // have committed before sending evidence that does not verify.
+                                .setProviderAnswerUnverified(op.getIntent().getAction()
+                                        == ExternalPublicationAction.EXTERNAL_PUBLICATION_ACTION_PUBLISH)
                                 .setFailureCode(invalidEvidence.diagnosticCode())
                                 .setFailureMessage(sanitizeMessage(invalidEvidence.getMessage()))
                                 .setUpdatedAt(finishedAt)
@@ -453,7 +459,7 @@ final class ExternalReceiptSettlement {
         // itself on the links that were on record when it was sent; a link without that name
         // was recorded later and may be a publication the provider ran after the deletion.
         boolean recordedBeforeDeletionWasSent =
-                link.getRetiredByOperationId().equals(deletedOp.getOperationId());
+                link.getDeletionClaimedByOperationId().equals(deletedOp.getOperationId());
         return publishedBeforeDeletion
                 && recordedBeforeDeletionWasSent
                 && link.getExternalObjectId().equals(deletion.getExternalObjectId())
@@ -479,8 +485,9 @@ final class ExternalReceiptSettlement {
      * source only once this holds.
      */
     static boolean nothingOutstanding(ExternalPublicationLedger ledger) {
-        for (ExternalPublicationOperationRecord operation : ledger.getOperationsList()) {
-            if (!isTerminalOutcome(operation.getOutcome())) {
+        for (int i = 0; i < ledger.getOperationsCount(); i++) {
+            if (!isTerminalOutcome(ledger.getOperations(i).getOutcome())
+                    || ExternalLedgerStore.publicationMayHoldObject(ledger, i)) {
                 return false;
             }
         }
@@ -488,7 +495,7 @@ final class ExternalReceiptSettlement {
             return false;
         }
         // The newest source revision each object has deletion evidence for.
-        Map<String, Long> deletedUpTo = new HashMap<>();
+        Map<ObjectKey, Long> deletedUpTo = new HashMap<>();
         for (ExternalLink link : ledger.getHistoricalLinksList()) {
             if (link.getProjectionLifecycle()
                     == ExternalProjectionLifecycle.EXTERNAL_PROJECTION_LIFECYCLE_DELETED) {
@@ -518,8 +525,19 @@ final class ExternalReceiptSettlement {
     }
 
     /** One external object: an ID within the dataset and namespace of a binding revision. */
-    private static String objectKey(ExternalLink link) {
-        return link.getBindingRevision() + ":" + link.getExternalObjectId();
+    /**
+     * One object in the external system: its ID at one place there. Two binding revisions that
+     * point at the same provider, dataset, namespace and endpoint name the same object, as
+     * {@link ExternalDeletionLifecycle#sameExternalTarget} has it.
+     */
+    private record ObjectKey(String provider, String dataset, String namespace,
+            ExternalEndpointSummary endpoint, String externalObjectId) {
+    }
+
+    private static ObjectKey objectKey(ExternalLink link) {
+        ExternalSystemBinding target = link.getBindingSnapshot();
+        return new ObjectKey(target.getProvider(), target.getDataset(), target.getNamespace(),
+                target.getEndpointSummary(), link.getExternalObjectId());
     }
 
     boolean maybePurgeLedgerIfEligible(

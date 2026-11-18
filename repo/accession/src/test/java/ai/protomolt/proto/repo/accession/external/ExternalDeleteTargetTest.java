@@ -134,6 +134,30 @@ class ExternalDeleteTargetTest {
         // A publication the provider refused left nothing to delete.
         assertThat(recorded(ExternalPublicationLedger.newBuilder()
                 .addOperations(failedPublish).build(), 0L, "")).isEmpty();
+
+        // One whose answer failed verification may have left its object, so it is a target,
+        // by name or not, until a verified deletion of that object follows it.
+        ExternalPublicationOperationRecord unverified = failedPublish.toBuilder()
+                .setOperationId("op-unverified")
+                .setIntent(failedPublish.getIntent().toBuilder().setExternalObjectId("object-unverified"))
+                .setProviderAnswerUnverified(true)
+                .build();
+        ExternalPublicationLedger withUnverified = ExternalPublicationLedger.newBuilder()
+                .addOperations(failedPublish).addOperations(unverified).build();
+        assertThat(recorded(withUnverified, 0L, "").orElseThrow().externalObjectId())
+                .isEqualTo("object-unverified");
+        assertThat(recorded(withUnverified, 0L, "object-unverified").orElseThrow().binding().getDataset())
+                .isEqualTo("dataset-two");
+        ExternalPublicationOperationRecord verifiedDeletion = ExternalPublicationOperationRecord.newBuilder()
+                .setOperationId("op-deleted")
+                .setIntent(ExternalPublicationIntent.newBuilder()
+                        .setAction(ExternalPublicationAction.EXTERNAL_PUBLICATION_ACTION_DELETE)
+                        .setExternalObjectId("object-unverified").setBindingRevision(2L))
+                .setBindingSnapshot(binding(2L, "dataset-two"))
+                .setOutcome(ExternalPublicationOutcome.EXTERNAL_PUBLICATION_OUTCOME_DELETED)
+                .build();
+        assertThat(recorded(withUnverified.toBuilder().addOperations(verifiedDeletion).build(), 0L, ""))
+                .isEmpty();
     }
 
     @Test

@@ -70,6 +70,12 @@ parameters, or private key material:
    [linksCore.ts](../../apps/console/src/repository/linksCore.ts)) re-validates
    `display_url` before emitting an anchor `href`, rendering unsafe values as
    non-navigable text.
+4. Provider evidence is stored on the ledger, so `ExternalProviderVerifier`
+   refuses evidence (`EVIDENCE_CARRIES_CREDENTIAL`) when any string field of it,
+   or of the `WorkRecord` manifest inside a signed work record, at any depth,
+   reads as a credential. A valid signature proves who wrote the text, not that
+   it is safe to keep. The check recognizes the plain cases and cannot prove
+   absence.
 
 ### Dual config-lane and repository storage
 
@@ -185,7 +191,7 @@ with `ALREADY_EXISTS`.
 | `PENDING` | `UNRESOLVED_LOST_REPLY` | Outbound call timed out, lost its reply, or hit an unavailable endpoint; external outcome is unknown |
 | `PENDING` | `ACCEPTED_AWAITING_PUBLICATION` | Provider durably accepted source input (`accepted_version`), awaiting catalog publication |
 | `CONFIRMED` | `NONE` | `ExternalProviderVerifier` verified publication receipt (and optional Ed25519 `SignedWorkRecord`) |
-| `FAILED` | `NONE` | Provider rejected the request or verification failed; no active `ExternalLink` is created |
+| `FAILED` | `NONE` | Provider rejected the request or verification failed; no active `ExternalLink` is created. When a sent publication's answer failed verification, `provider_answer_unverified` is set: the provider may hold the object, so it stays a deletion target and keeps a `PURGE_WITH_SOURCE` ledger until a verified deletion of the same object at the same place is registered after it |
 | `DELETION_PENDING` | `DELETION_IN_FLIGHT` | Tombstone or purge deletion recorded durably; outbound delete in flight or awaiting settlement |
 | `DELETED` | `NONE` | `ExternalProviderVerifier` verified external deletion receipt; active link retired to `DELETED` |
 
@@ -233,13 +239,22 @@ Ordering invariants:
    lands directly in `historical_links` as `SUPERSEDED` (with
    `retired_by_operation_id` pointing to `r2`'s operation), leaving `current_link`
    untouched at `r2`.
-2. **Tombstone ordering**: `deleteForTombstone` verifies via `GetDocument` that
+2. **Deletion claims**: when a deletion is first registered it writes its
+   operation ID into `deletion_claimed_by_operation_id` on every link on record
+   that it covers. Only that deletion's verified evidence retires those links;
+   a retry claims nothing new, and a later supersession, which overwrites
+   `retired_by_operation_id`, leaves the claim in place. Whether a superseded
+   projection is covered by a later deletion is decided per object at one place
+   in the external system (provider, dataset, namespace, endpoint and object
+   ID), so a binding revision that only rotated credentials names the same
+   object.
+3. **Tombstone ordering**: `deleteForTombstone` verifies via `GetDocument` that
    the source document is tombstoned at `tombstone_revision`, marks any active
    link `DELETION_PENDING`, advances `tombstoned_at_source_revision`, and settles
    to `DELETED` only on verified provider deletion evidence. Delayed pre-delete
    publish retries (`source_revision <= tombstoned_at_source_revision`) cannot
    restore `current_link`.
-3. **Revision-zero purges** run in two steps. First, while the source still
+4. **Revision-zero purges** run in two steps. First, while the source still
    exists, `preparePurge(source, purge_id, binding)` copies the access rules of
    the source's latest live revision onto the ledger, replacing whatever rules
    the last publication left there, and records `purge_preparation` (the purge
@@ -260,7 +275,7 @@ Ordering invariants:
      non-secret historical receipts preserved for audit.
    - `PURGE_WITH_SOURCE`: invokes `DocumentService.PurgeDocument` on the ledger
      document once external deletion settles.
-4. **Repository and account authorization**: An `ExternalLink` grants neither
+5. **Repository and account authorization**: An `ExternalLink` grants neither
    repository access nor external provider access. Every read (`getLedgerView`,
    `getActiveLinks`) and mutation (`publish`, `deleteForTombstone`,
    `preparePurge`, `handlePurge`, `reconcileOperation`) checks caller account membership

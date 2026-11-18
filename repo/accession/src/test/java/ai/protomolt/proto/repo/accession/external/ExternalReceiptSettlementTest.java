@@ -82,7 +82,7 @@ class ExternalReceiptSettlementTest {
                         && (bound == 0L || link.getSourceRevision() <= bound);
         if (ledger.hasCurrentLink() && covers.test(ledger.getCurrentLink())) {
             claimed.setCurrentLink(ledger.getCurrentLink().toBuilder()
-                    .setRetiredByOperationId(deleteOp.getOperationId()));
+                    .setDeletionClaimedByOperationId(deleteOp.getOperationId()));
         }
         for (int i = 0; i < ledger.getHistoricalLinksCount(); i++) {
             ExternalLink historical = ledger.getHistoricalLinks(i);
@@ -90,7 +90,7 @@ class ExternalReceiptSettlementTest {
                             != ExternalProjectionLifecycle.EXTERNAL_PROJECTION_LIFECYCLE_DELETED
                     && covers.test(historical)) {
                 claimed.setHistoricalLinks(i, historical.toBuilder()
-                        .setRetiredByOperationId(deleteOp.getOperationId()));
+                        .setDeletionClaimedByOperationId(deleteOp.getOperationId()));
             }
         }
         return claimed.build();
@@ -409,7 +409,7 @@ class ExternalReceiptSettlementTest {
         ExternalDeletionLifecycle.DeletionRegistration retry =
                 register(withLatePublication, purgeDelete);
         assertThat(retry.attemptNumber()).isEqualTo(2);
-        assertThat(retry.ledger().getCurrentLink().getRetiredByOperationId()).isEmpty();
+        assertThat(retry.ledger().getCurrentLink().hasDeletionClaimedByOperationId()).isFalse();
 
         ExternalPublicationLedger after = settled(retry.ledger(),
                 ExternalLedgerStore.findOperation(retry.ledger(), "op-purge-del").orElseThrow());
@@ -430,11 +430,108 @@ class ExternalReceiptSettlementTest {
                 .build();
         ExternalDeletionLifecycle.DeletionRegistration first = register(onRecord, purgeDelete);
         assertThat(first.attemptNumber()).isEqualTo(1);
-        assertThat(first.ledger().getCurrentLink().getRetiredByOperationId()).isEqualTo("op-purge-del");
+        assertThat(first.ledger().getCurrentLink().getDeletionClaimedByOperationId()).isEqualTo("op-purge-del");
         assertThat(first.ledger().getCurrentLink().getProjectionLifecycle()).isEqualTo(
                 ExternalProjectionLifecycle.EXTERNAL_PROJECTION_LIFECYCLE_DELETION_PENDING);
         // A different object is not this deletion's.
-        assertThat(first.ledger().getHistoricalLinks(0).getRetiredByOperationId()).isEmpty();
+        assertThat(first.ledger().getHistoricalLinks(0).hasDeletionClaimedByOperationId()).isFalse();
+    }
+
+    @Test
+    void aPublicationWhoseAnswerFailedVerificationKeepsTheLedgerUntilItsObjectIsDeleted() {
+        // The provider was sent the publication and answered with evidence that did not
+        // verify. The operation failed, but the object may be there.
+        ExternalPublicationOperationRecord unverified = operation("op-unverified",
+                ExternalPublicationAction.EXTERNAL_PUBLICATION_ACTION_PUBLISH, "object-a", 1L, 3L)
+                .toBuilder()
+                .setOutcome(ExternalPublicationOutcome.EXTERNAL_PUBLICATION_OUTCOME_FAILED)
+                .setProviderAnswerUnverified(true)
+                .build();
+        ExternalPublicationLedger ledger = ExternalPublicationLedger.newBuilder()
+                .addOperations(unverified).build();
+        assertThat(ExternalReceiptSettlement.nothingOutstanding(ledger)).isFalse();
+
+        // A verified deletion of a different object, or at a different place, does not cover it.
+        ExternalPublicationOperationRecord otherObject = deletedOperation("op-del-b", "object-b", binding(1L));
+        ExternalPublicationOperationRecord otherPlace = deletedOperation("op-del-elsewhere", "object-a",
+                binding(1L).toBuilder().setDataset("another-dataset").build());
+        assertThat(ExternalReceiptSettlement.nothingOutstanding(ledger.toBuilder()
+                .addOperations(otherObject).addOperations(otherPlace).build())).isFalse();
+
+        // A verified deletion of the object at the same place, registered after it, does.
+        assertThat(ExternalReceiptSettlement.nothingOutstanding(ledger.toBuilder()
+                .addOperations(deletedOperation("op-del-a", "object-a", binding(2L))).build())).isTrue();
+
+        // One registered before it does not.
+        assertThat(ExternalReceiptSettlement.nothingOutstanding(ExternalPublicationLedger.newBuilder()
+                .addOperations(deletedOperation("op-del-a", "object-a", binding(1L)))
+                .addOperations(unverified).build())).isFalse();
+
+        // A publication the provider refused, with verified evidence, left nothing.
+        assertThat(ExternalReceiptSettlement.nothingOutstanding(ExternalPublicationLedger.newBuilder()
+                .addOperations(unverified.toBuilder().setProviderAnswerUnverified(false)).build())).isTrue();
+    }
+
+    @Test
+    void aDeletionSentBeforeARepublicationStillRetiresTheProjectionItClaimed() {
+        // Deletion D is sent for object-a at revision 3 and its reply is lost. The source is
+        // restored and republished as revision 5, which supersedes the revision-3 link. D's
+        // receipt is reconciled afterwards.
+        ExternalPublicationOperationRecord tombstoneDelete = operation("op-del-d",
+                ExternalPublicationAction.EXTERNAL_PUBLICATION_ACTION_DELETE, "object-a", 1L, 4L);
+        ExternalPublicationLedger atDispatch = claimedBy(ExternalPublicationLedger.newBuilder()
+                .setCurrentLink(link("object-a", 1L, 3L,
+                        ExternalProjectionLifecycle.EXTERNAL_PROJECTION_LIFECYCLE_DELETION_PENDING))
+                .addOperations(tombstoneDelete)
+                .build(), tombstoneDelete);
+        ExternalPublicationOperationRecord republish = operation("op-pub-r5",
+                ExternalPublicationAction.EXTERNAL_PUBLICATION_ACTION_PUBLISH, "object-b", 1L, 5L);
+        ExternalPublicationLedger republished = published(
+                atDispatch.toBuilder().addOperations(republish).build(), republish);
+        ExternalLink displaced = republished.getHistoricalLinksList().stream()
+                .filter(link -> link.getSourceRevision() == 3L).findFirst().orElseThrow();
+        assertThat(displaced.getRetiredByOperationId()).isEqualTo("op-pub-r5");
+        assertThat(displaced.getDeletionClaimedByOperationId()).isEqualTo("op-del-d");
+
+        ExternalPublicationLedger after = settled(republished, tombstoneDelete);
+        assertThat(after.getHistoricalLinksList())
+                .filteredOn(link -> link.getSourceRevision() == 3L)
+                .singleElement()
+                .satisfies(old -> assertThat(old.getProjectionLifecycle()).isEqualTo(
+                        ExternalProjectionLifecycle.EXTERNAL_PROJECTION_LIFECYCLE_DELETED));
+        assertThat(after.getCurrentLink().getSourceRevision()).isEqualTo(5L);
+    }
+
+    @Test
+    void deletionUnderARotatedBindingCoversTheSameObjectPublishedUnderTheOlderRevision() {
+        // object-a was published under v1 and again under v2, which only rotated credentials,
+        // so both are the same object at the same place. The purge deleted it under v2.
+        ExternalPublicationLedger ledger = ExternalPublicationLedger.newBuilder()
+                .setSourcePurged(true).setLastPurgeId("purge-1")
+                .addHistoricalLinks(link("object-a", 1L, 2L,
+                        ExternalProjectionLifecycle.EXTERNAL_PROJECTION_LIFECYCLE_SUPERSEDED))
+                .addHistoricalLinks(link("object-a", 2L, 3L,
+                        ExternalProjectionLifecycle.EXTERNAL_PROJECTION_LIFECYCLE_DELETED))
+                .build();
+        assertThat(ExternalReceiptSettlement.nothingOutstanding(ledger)).isTrue();
+
+        // Under a revision that moved to another dataset, it is a different object.
+        ExternalLink elsewhere = link("object-a", 1L, 2L,
+                ExternalProjectionLifecycle.EXTERNAL_PROJECTION_LIFECYCLE_SUPERSEDED);
+        elsewhere = elsewhere.toBuilder()
+                .setBindingSnapshot(elsewhere.getBindingSnapshot().toBuilder().setDataset("another-dataset"))
+                .build();
+        assertThat(ExternalReceiptSettlement.nothingOutstanding(ledger.toBuilder()
+                .setHistoricalLinks(0, elsewhere).build())).isFalse();
+    }
+
+    private static ExternalPublicationOperationRecord deletedOperation(
+            String operationId, String objectId, ExternalSystemBinding target) {
+        return operation(operationId, ExternalPublicationAction.EXTERNAL_PUBLICATION_ACTION_DELETE,
+                        objectId, target.getBindingRevision(), 0L).toBuilder()
+                .setBindingSnapshot(target)
+                .setOutcome(ExternalPublicationOutcome.EXTERNAL_PUBLICATION_OUTCOME_DELETED)
+                .build();
     }
 
     /** Registers an attempt of a purge deletion, as the lifecycle does before sending it. */

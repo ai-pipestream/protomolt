@@ -3,6 +3,7 @@ package ai.protomolt.proto.repo.accession.external;
 import ai.protomolt.proto.repo.external.v1.ExternalAttemptTrigger;
 import ai.protomolt.proto.repo.external.v1.ExternalLink;
 import ai.protomolt.proto.repo.external.v1.ExternalPendingPhase;
+import ai.protomolt.proto.repo.external.v1.ExternalPublicationAction;
 import ai.protomolt.proto.repo.external.v1.ExternalPublicationAttempt;
 import ai.protomolt.proto.repo.external.v1.ExternalPublicationLedger;
 import ai.protomolt.proto.repo.external.v1.ExternalPublicationOperationRecord;
@@ -295,6 +296,38 @@ final class ExternalLedgerStore {
             return true;
         }
         return candidateRevision < ledger.getHighestFencedSourceRevision();
+    }
+
+    /**
+     * Whether the publication at {@code index} may have left an object at the provider that no
+     * link records: it is still pending, or it was sent and its answer failed verification and
+     * no verified deletion of the same object at the same place follows it on the ledger.
+     * Operations are kept in registration order, so "follows" is that order, not a clock.
+     */
+    static boolean publicationMayHoldObject(ExternalPublicationLedger ledger, int index) {
+        ExternalPublicationOperationRecord publication = ledger.getOperations(index);
+        if (publication.getIntent().getAction()
+                != ExternalPublicationAction.EXTERNAL_PUBLICATION_ACTION_PUBLISH) {
+            return false;
+        }
+        if (publication.getOutcome() == ExternalPublicationOutcome.EXTERNAL_PUBLICATION_OUTCOME_PENDING) {
+            return true;
+        }
+        if (!publication.getProviderAnswerUnverified()) {
+            return false;
+        }
+        for (int later = index + 1; later < ledger.getOperationsCount(); later++) {
+            ExternalPublicationOperationRecord deletion = ledger.getOperations(later);
+            if (deletion.getIntent().getAction() == ExternalPublicationAction.EXTERNAL_PUBLICATION_ACTION_DELETE
+                    && deletion.getOutcome() == ExternalPublicationOutcome.EXTERNAL_PUBLICATION_OUTCOME_DELETED
+                    && deletion.getIntent().getExternalObjectId()
+                            .equals(publication.getIntent().getExternalObjectId())
+                    && ExternalDeletionLifecycle.sameExternalTarget(
+                            deletion.getBindingSnapshot(), publication.getBindingSnapshot())) {
+                return false;
+            }
+        }
+        return true;
     }
 
     static boolean isTerminalOutcome(ExternalPublicationOutcome outcome) {

@@ -863,6 +863,13 @@ message ExternalLink {
   ];
   // Optional verified provider deletion evidence when projection_lifecycle is DELETED.
   optional ExternalProviderEvidence deletion_evidence = 16;
+  // The deletion operation that named this projection as one it covers, when that deletion
+  // was first sent. Only that deletion's evidence retires it. Kept apart from
+  // retired_by_operation_id, which a later supersession overwrites.
+  optional string deletion_claimed_by_operation_id = 17 [
+    (ai.protomolt.proto.validate.v1.field).string = {min_len: 1, max_len: 200, pattern: ".*\\S.*"},
+    (buf.validate.field).string = {min_len: 1, max_len: 200, pattern: ".*\\S.*"}
+  ];
 }
 
 // Kind of external publication mutation bound into an operation's immutable intent.
@@ -1134,6 +1141,16 @@ message ExternalPublicationOperationRecord {
     message: "CONFIRMED and DELETED operations require matching terminal provider evidence; pending outcomes require pending_phase"
     expression: "(this.outcome == 2 ? (has(this.terminal_evidence) && this.terminal_evidence.settlement == 2 && this.terminal_evidence.request_intent_sha256 == this.intent_sha256 && this.pending_phase == 0) : true) && (this.outcome == 5 ? (has(this.terminal_evidence) && this.terminal_evidence.settlement == 5 && this.terminal_evidence.request_intent_sha256 == this.intent_sha256 && this.pending_phase == 0) : true) && ((this.outcome == 1 || this.outcome == 4) ? this.pending_phase != 0 : this.pending_phase == 0)"
   };
+  option (ai.protomolt.proto.validate.v1.message).cel = {
+    id: "operation-unverified-answer-is-a-failed-publish"
+    message: "provider_answer_unverified is set only on a FAILED PUBLISH"
+    expression: "!this.provider_answer_unverified || (this.outcome == 3 && this.intent.action == 1)"
+  };
+  option (buf.validate.message).cel = {
+    id: "operation-unverified-answer-is-a-failed-publish"
+    message: "provider_answer_unverified is set only on a FAILED PUBLISH"
+    expression: "!this.provider_answer_unverified || (this.outcome == 3 && this.intent.action == 1)"
+  };
   option (buf.validate.message).cel = {
     id: "operation-confirmation-requires-evidence"
     message: "CONFIRMED and DELETED operations require matching terminal provider evidence; pending outcomes require pending_phase"
@@ -1215,6 +1232,10 @@ message ExternalPublicationOperationRecord {
     (ai.protomolt.proto.validate.v1.field).required = true,
     (buf.validate.field).required = true
   ];
+  // Set on a PUBLISH that was sent and whose provider answer failed verification. The
+  // operation FAILED, but the provider may hold its object, so the object stays a deletion
+  // target and keeps the ledger from being purged until a verified deletion of it follows.
+  bool provider_answer_unverified = 13;
 }
 
 // Per-(account, binding, source_address) ledger persisted as typed structured_data

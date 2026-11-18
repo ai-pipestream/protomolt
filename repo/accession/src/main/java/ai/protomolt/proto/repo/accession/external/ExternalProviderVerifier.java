@@ -20,6 +20,7 @@ import ai.protomolt.proto.validate.ValidationResult;
 import ai.protomolt.proto.validate.protovalidate.ProtovalidateRuleSource;
 import ai.protomolt.proto.validate.source.ProtomoltRuleSource;
 import com.google.protobuf.ByteString;
+import com.google.protobuf.Message;
 import com.google.protobuf.Timestamp;
 import java.io.ByteArrayOutputStream;
 import java.io.DataOutputStream;
@@ -326,6 +327,20 @@ public final class ExternalProviderVerifier {
         if (evidence.hasSignedWorkRecordBytes()) {
             verifySignedWorkRecord(evidence, expectedBinding, expectedIntentSha256);
         }
+        refuseCredentialText(evidence, "evidence");
+    }
+
+    /**
+     * Evidence and the manifest inside a signed work record are stored on the ledger, readable
+     * by anyone who may read the source. A valid signature does not make their text safe to
+     * keep, so evidence whose text carries credential material is not accepted.
+     */
+    private static void refuseCredentialText(Message message, String rootName) {
+        ExternalEvidenceTextScan.firstCredentialField(message, rootName).ifPresent(path -> {
+            throw new ProviderVerificationException(
+                    "EVIDENCE_CARRIES_CREDENTIAL",
+                    "Provider evidence field " + path + " carries text that reads as a credential");
+        });
     }
 
     private static void verifyEnvelopeIdentity(
@@ -398,6 +413,7 @@ public final class ExternalProviderVerifier {
                     "Verified SignedWorkRecord did not expose a parsed WorkRecord manifest");
         }
         verifySignedManifestBinding(manifest, evidence, expectedBinding, expectedIntentSha256);
+        refuseCredentialText(manifest, "signed_work_record");
     }
 
     private static void verifySignedManifestBinding(

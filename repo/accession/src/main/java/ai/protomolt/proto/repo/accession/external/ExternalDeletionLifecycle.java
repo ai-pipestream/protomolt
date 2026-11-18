@@ -268,7 +268,7 @@ final class ExternalDeletionLifecycle {
                 && claimable(next.getCurrentLink(), bindingSnapshot, externalObjectId,
                         coveredUpToSourceRevision)) {
             next.setCurrentLink(next.getCurrentLink().toBuilder()
-                    .setRetiredByOperationId(operationId));
+                    .setDeletionClaimedByOperationId(operationId));
         }
         for (int i = 0; i < current.getHistoricalLinksCount(); i++) {
             ExternalLink historical = current.getHistoricalLinks(i);
@@ -277,7 +277,7 @@ final class ExternalDeletionLifecycle {
                     && claimable(historical, bindingSnapshot, externalObjectId,
                             coveredUpToSourceRevision)) {
                 next.setHistoricalLinks(i, historical.toBuilder()
-                        .setRetiredByOperationId(operationId));
+                        .setDeletionClaimedByOperationId(operationId));
             }
         }
     }
@@ -773,11 +773,10 @@ final class ExternalDeletionLifecycle {
                 republishedAt = Math.max(republishedAt, link.getSourceRevision());
             }
         }
-        for (ExternalPublicationOperationRecord operation : ledger.getOperationsList()) {
+        for (int i = 0; i < ledger.getOperationsCount(); i++) {
+            ExternalPublicationOperationRecord operation = ledger.getOperations(i);
             ExternalPublicationIntent intent = operation.getIntent();
-            if (intent.getAction() == ExternalPublicationAction.EXTERNAL_PUBLICATION_ACTION_PUBLISH
-                    && operation.getOutcome()
-                            == ExternalPublicationOutcome.EXTERNAL_PUBLICATION_OUTCOME_PENDING
+            if (ExternalLedgerStore.publicationMayHoldObject(ledger, i)
                     && intent.getExternalObjectId().equals(target.externalObjectId())
                     && sameExternalTarget(operation.getBindingSnapshot(), target.binding())
                     && intent.getSourceRevision() > coveredUpToSourceRevision) {
@@ -795,8 +794,9 @@ final class ExternalDeletionLifecycle {
     }
 
     /**
-     * The binding snapshot a named object was recorded under: from its link, or from the
-     * publication still pending for it (sent, with no confirmed link yet). The same ID under
+     * The binding snapshot a named object was recorded under: from its link, or from a
+     * publication that may have left it (pending, or answered with evidence that failed
+     * verification). The same ID under
      * two binding revisions is two objects in two datasets, so without a revision to choose
      * by the request is refused instead of guessed.
      */
@@ -814,10 +814,7 @@ final class ExternalDeletionLifecycle {
         }
         for (int i = ledger.getOperationsCount() - 1; i >= 0; i--) {
             ExternalPublicationOperationRecord operation = ledger.getOperations(i);
-            if (operation.getIntent().getAction()
-                            == ExternalPublicationAction.EXTERNAL_PUBLICATION_ACTION_PUBLISH
-                    && operation.getOutcome()
-                            == ExternalPublicationOutcome.EXTERNAL_PUBLICATION_OUTCOME_PENDING
+            if (ExternalLedgerStore.publicationMayHoldObject(ledger, i)
                     && covered(operation.getIntent().getSourceRevision(), coveredUpToSourceRevision)
                     && operation.getIntent().getExternalObjectId().equals(externalObjectId)) {
                 byRevision.putIfAbsent(
@@ -840,19 +837,17 @@ final class ExternalDeletionLifecycle {
     }
 
     /**
-     * With no link recorded, the newest publication still pending: accepted but not yet
-     * confirmed, or sent with the reply lost. The provider may hold that object, so it is what
-     * a deletion that names no object must reach. A publication that failed left nothing.
+     * With no link recorded, the newest publication that may have left an object: accepted but
+     * not yet confirmed, sent with the reply lost, or answered with evidence that failed
+     * verification. The provider may hold that object, so it is what a deletion that names no
+     * object must reach. A publication the provider refused left nothing.
      */
     private static Optional<ResolvedDeleteTarget> unsettledPublication(
             ExternalPublicationLedger ledger, long explicitBindingRevision,
             long coveredUpToSourceRevision) {
         for (int i = ledger.getOperationsCount() - 1; i >= 0; i--) {
             ExternalPublicationOperationRecord operation = ledger.getOperations(i);
-            if (operation.getIntent().getAction()
-                            != ExternalPublicationAction.EXTERNAL_PUBLICATION_ACTION_PUBLISH
-                    || operation.getOutcome()
-                            != ExternalPublicationOutcome.EXTERNAL_PUBLICATION_OUTCOME_PENDING) {
+            if (!ExternalLedgerStore.publicationMayHoldObject(ledger, i)) {
                 continue;
             }
             if (explicitBindingRevision > 0L

@@ -9,6 +9,7 @@ import ai.protomolt.proto.grpc.profile.v1.ServiceProfile;
 import ai.protomolt.proto.grpc.profile.v1.Transport;
 import ai.protomolt.proto.receipt.Completeness;
 import ai.protomolt.proto.receipt.CompletenessStatus;
+import ai.protomolt.proto.receipt.Disclosure;
 import ai.protomolt.proto.receipt.KeyState;
 import ai.protomolt.proto.receipt.RecordKeys;
 import ai.protomolt.proto.receipt.RecordSigner;
@@ -22,11 +23,11 @@ import ai.protomolt.proto.receipt.WorkRecord;
 import ai.protomolt.proto.receipt.WorkRecords;
 import ai.protomolt.proto.repo.external.v1.ExternalBindingLifecycle;
 import ai.protomolt.proto.repo.external.v1.ExternalEndpointSummary;
+import ai.protomolt.proto.repo.external.v1.ExternalIdentityProof;
 import ai.protomolt.proto.repo.external.v1.ExternalProviderEvidence;
 import ai.protomolt.proto.repo.external.v1.ExternalProviderSettlement;
 import ai.protomolt.proto.repo.external.v1.ExternalPublicationAction;
 import ai.protomolt.proto.repo.external.v1.ExternalPublicationIntent;
-import ai.protomolt.proto.repo.external.v1.ExternalIdentityProof;
 import ai.protomolt.proto.repo.external.v1.ExternalRetentionPolicy;
 import ai.protomolt.proto.repo.external.v1.ExternalServingVisibility;
 import ai.protomolt.proto.repo.external.v1.ExternalSystemBinding;
@@ -531,6 +532,45 @@ class ExternalProviderVerifierTest {
         ExternalProviderGateway.OutboundAuthContext receiptAuth = authContext(receiptOnly);
         assertThatCode(() -> verifier.verifyEvidence(
                 publishedWithoutProof, receiptOnly, receiptAuth, intent, intentSha))
+                .doesNotThrowAnyException();
+    }
+
+    @Test
+    void aValidlySignedReceiptWhoseTextCarriesACredentialIsRefused() {
+        KeyPair trustedPair = RecordKeys.generate();
+        RecordSigner trustedSigner = new RecordSigner("search-key-1", trustedPair.getPrivate());
+        ExternalProviderVerifier strictVerifier = new ExternalProviderVerifier(trustSnapshotFor(trustedPair), true);
+        ExternalSystemBinding binding = binding();
+        ExternalProviderGateway.OutboundAuthContext auth = authContext(binding);
+        ExternalPublicationIntent intent = publishIntent();
+        String intentSha = ExternalOperationKeys.intentSha256(intent);
+        ExternalProviderEvidence unsignedEvidence = validPublishedEvidence(intent, intentSha);
+        WorkRecord workRecord = ExternalProviderVerifier.buildBoundWorkRecord(
+                defaultIssuance("search-key-1"), unsignedEvidence, binding, intentSha);
+
+        // The signature is good; the text inside the signed manifest is not safe to store.
+        WorkRecord carriesToken = workRecord.toBuilder()
+                .setDisclosure(Disclosure.newBuilder()
+                        .setSourceManifestSha256("5".repeat(64))
+                        .setPolicy("Bearer abcdefghijklmnopqrstuvwxyz0123456789"))
+                .build();
+        ExternalProviderEvidence signedWithToken = unsignedEvidence.toBuilder()
+                .setSignedWorkRecordBytes(trustedSigner.sign(carriesToken).toByteString())
+                .build();
+        assertThatThrownBy(() -> strictVerifier.verifyEvidence(signedWithToken, binding, auth, intent, intentSha))
+                .isInstanceOfSatisfying(
+                        ExternalProviderVerifier.ProviderVerificationException.class,
+                        ex -> {
+                            assertThat(ex.diagnosticCode()).isEqualTo("EVIDENCE_CARRIES_CREDENTIAL");
+                            assertThat(ex.getMessage()).contains("signed_work_record.disclosure.policy")
+                                    .doesNotContain("abcdefghij");
+                        });
+
+        // The same signed record without the token verifies.
+        ExternalProviderEvidence signedClean = unsignedEvidence.toBuilder()
+                .setSignedWorkRecordBytes(trustedSigner.sign(workRecord).toByteString())
+                .build();
+        assertThatCode(() -> strictVerifier.verifyEvidence(signedClean, binding, auth, intent, intentSha))
                 .doesNotThrowAnyException();
     }
 
