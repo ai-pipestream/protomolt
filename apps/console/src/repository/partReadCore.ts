@@ -164,6 +164,17 @@ export function typeNameOf(typeUrl: string): string {
  * Decodes `bytes` as the fragment type the revision's validation record binds
  * to `selector`, using the descriptor set retained under that digest.
  */
+/**
+ * The part's schema loaded, and its bytes are not a message of that type. This is a different
+ * failure from a schema that could not be loaded, and is reported as what it is.
+ */
+export class PartPayloadError extends Error {
+  constructor(typeName: string, cause: unknown) {
+    super(`The part's bytes do not decode as ${typeName}: ${cause instanceof Error ? cause.message : String(cause)}`)
+    this.name = 'PartPayloadError'
+  }
+}
+
 export async function decodePart(
   client: Client<typeof DocumentService>,
   address: NodeAddress,
@@ -188,11 +199,17 @@ export async function decodePart(
   if (desc === undefined) {
     throw new Error(`The retained descriptor set ${schema.descriptorSha256} does not define ${typeName}.`)
   }
+  let message: Message
+  try {
+    message = fromBinary(desc, bytes)
+  } catch (error) {
+    throw new PartPayloadError(typeName, error)
+  }
   return {
     kind: 'decoded',
     descriptorSet,
     desc,
-    message: fromBinary(desc, bytes),
+    message,
     typeUrl: schema.typeUrl,
     descriptorSha256: schema.descriptorSha256,
   }

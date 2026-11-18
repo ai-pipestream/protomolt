@@ -45,6 +45,7 @@
     <v-main>
       <v-container fluid style="max-width: 1400px">
         <ArchiveDeleteReceiptBanner v-if="showBanner" />
+        <SaveAsJobBanner v-if="showSaveAsBanner" />
         <router-view />
       </v-container>
     </v-main>
@@ -58,11 +59,14 @@ import { computed, onMounted, ref } from 'vue'
 import { useRoute } from 'vue-router'
 import { useTheme } from 'vuetify'
 import ArchiveDeleteReceiptBanner from './components/repository/ArchiveDeleteReceiptBanner.vue'
+import SaveAsJobBanner from './components/repository/SaveAsJobBanner.vue'
 import ToastHost from './components/ToastHost.vue'
 import { useArchiveDeleteReceiptHost } from './repository/archiveDeleteReceipts'
+import { useSaveAsJobHost } from './repository/saveAsJobs'
 import { registryApi } from './services/api'
 
 const { showBanner } = useArchiveDeleteReceiptHost()
+const { showBanner: showSaveAsBanner } = useSaveAsJobHost()
 
 /** The console's sections; each one is a top-level route the rail links to. */
 const sections = [

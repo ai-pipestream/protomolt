@@ -1,0 +1,937 @@
+import { create, fromBinary } from '@bufbuild/protobuf'
+import { Code, ConnectError } from '@connectrpc/connect'
+import { describe, expect, it } from 'vitest'
+import { IntakeWriterScopeSchema } from '@/gen/ai/protomolt/proto/authz/v1/account_bindings_pb'
+import { ConsoleSessionStatusSchema } from '@/gen/ai/protomolt/proto/authz/v1/console_session_pb'
+import {
+  ParquetMaskStrategy,
+  ParquetRendererOptionsSchema,
+} from '@/gen/ai/protomolt/proto/emit/parquet/v1/parquet_renderer_pb'
+import { RendererCapabilitySchema } from '@/gen/ai/protomolt/proto/emit/v1/renderer_pb'
+import {
+  EntryAddressSchema,
+  EntryInfoSchema,
+  RenditionDescriptorSchema,
+  RenditionManifestEntrySchema,
+  RenditionState,
+  VersionManifestSchema,
+} from '@/gen/ai/protomolt/proto/repo/archive/v1/entry_pb'
+import {
+  ListRenditionProvenanceResponseSchema,
+  ListSaveAsCapabilitiesResponseSchema,
+  RenditionProvenanceEntrySchema,
+  RenditionProvenanceSchema,
+  RepositorySinkFailureSchema,
+  RepositorySinkJobSchema,
+  RepositorySinkJobState,
+  SaveAsCapabilitySchema,
+  SaveAsCompatibilityStatus,
+} from '@/gen/ai/protomolt/proto/repo/sink/v1/repository_sink_pb'
+import { DocumentSchema } from '@/gen/ai/protomolt/proto/repo/v1/document_pb'
+import {
+  DocumentPart,
+  PartSelectorSchema,
+  RevisionValidationSchema,
+} from '@/gen/ai/protomolt/proto/repo/v2/manifest_pb'
+import { renditionRows } from './archiveCore'
+import { at, testAddress } from './repositoryTestKit'
+import {
+  buildArchiveRenditionSinkSource,
+  buildDocumentPartSinkSource,
+  buildPublishSaveAsRequest,
+  defaultRenditionSlotName,
+  describeSaveAsCapabilities,
+  encodeParquetRendererOptions,
+  evaluateSaveAsSessionAccess,
+  PARQUET_CLASSES_HINT,
+  PARQUET_COLUMNS_HINT,
+  PARQUET_MASK_STRATEGY_CHOICES,
+  PARQUET_OPTIONS_TYPE,
+  SaveAsInputError,
+  ZERO_PROVIDERS_MESSAGE,
+} from './saveAsCore'
+import {
+  classifySinkRpcError,
+  commitFollowUp,
+  documentBacksEntry,
+  describeSinkJob,
+  enteredSucceeded,
+} from './saveAsJobCore'
+import {
+  buildListRenditionProvenanceRequest,
+  listPartOccurrenceOptions,
+  mergeRenditionsWithProvenance,
+  viewedVersionMetadata,
+} from './saveAsProvenanceCore'
+
+const parquetCapability = create(RendererCapabilitySchema, {
+  providerId: 'parquet-v1',
+  providerVersion: '1.0.0',
+  sourceProfile: 'tabular-scalar-v1',
+  mediaType: 'application/vnd.apache.parquet',
+  extension: 'parquet',
+  optionsType: PARQUET_OPTIONS_TYPE,
+  optionsFingerprint: 'fp-opts-1',
+  lossDescription: 'Projects scalar top-level columns only; nested fields are omitted.',
+  maxInputBytes: 4_194_304,
+  maxOutputBytes: 1_048_576,
+})
+
+describe('saveAsCore', () => {
+  it('evaluates session write access across unknown, unauthenticated, read-only, and writer sessions', () => {
+    expect(evaluateSaveAsSessionAccess(null, 'acct-a')).toEqual({
+      readOnly: false,
+      reason: null,
+      principal: null,
+    })
+
+    const unauth = create(ConsoleSessionStatusSchema, { authenticated: false })
+    expect(evaluateSaveAsSessionAccess(unauth, 'acct-a').readOnly).toBe(true)
+
+    const readOnly = create(ConsoleSessionStatusSchema, {
+      authenticated: true,
+      principal: 'viewer@example.com',
+      accountIds: ['acct-a'],
+      intakeWriters: [
+        create(IntakeWriterScopeSchema, { accountId: 'acct-other', datasourceId: 'ds-1' }),
+      ],
+    })
+    const roVerdict = evaluateSaveAsSessionAccess(readOnly, 'acct-a')
+    expect(roVerdict.readOnly).toBe(true)
+    expect(roVerdict.reason).toContain('viewer@example.com')
+    expect(roVerdict.reason).toContain('acct-a')
+
+    const writer = create(ConsoleSessionStatusSchema, {
+      authenticated: true,
+      principal: 'writer@example.com',
+      accountIds: ['acct-a'],
+      intakeWriters: [
+        create(IntakeWriterScopeSchema, { accountId: 'acct-a', datasourceId: 'ds-1' }),
+      ],
+    })
+    expect(evaluateSaveAsSessionAccess(writer, 'acct-a')).toEqual({
+      readOnly: false,
+      reason: null,
+      principal: 'writer@example.com',
+    })
+  })
+
+  it('builds pinned SinkSource envelopes for archive renditions and document parts', () => {
+    const entryAddr = create(EntryAddressSchema, { accountId: 'acct-a', archive: 'papers', entryId: 'e-1' })
+    expect(() =>
+      buildArchiveRenditionSinkSource({
+        address: entryAddr,
+        rendition: { name: 'parsed' },
+        revision: 0n,
+      }),
+    ).toThrow(SaveAsInputError)
+
+    const archiveSrc = buildArchiveRenditionSinkSource({
+      address: entryAddr,
+      rendition: { name: 'parsed', mediaType: 'application/x-protobuf' },
+      revision: 4n,
+      expectedSchemaFingerprint: 'fp-src',
+    })
+    expect(archiveSrc.kind.case).toBe('repositoryRevision')
+    if (archiveSrc.kind.case === 'repositoryRevision' && archiveSrc.kind.value.target.case === 'archiveRendition') {
+      expect(archiveSrc.kind.value.target.value.revision?.selector).toEqual({ case: 'revision', value: 4n })
+      expect(archiveSrc.kind.value.target.value.rendition?.name).toBe('parsed')
+      expect(archiveSrc.kind.value.target.value.expectedSchemaFingerprint).toBe('fp-src')
+    }
+
+    const coreSelector = create(PartSelectorSchema, { selector: { case: 'part', value: DocumentPart.CORE } })
+    const docSrc = buildDocumentPartSinkSource({
+      address: testAddress(),
+      selector: coreSelector,
+      revision: 7n,
+      occurrenceFieldPath: 'structured_data',
+    })
+    if (docSrc.kind.case === 'repositoryRevision' && docSrc.kind.value.target.case === 'documentPart') {
+      expect(docSrc.kind.value.target.value.revision?.selector).toEqual({ case: 'revision', value: 7n })
+      expect(docSrc.kind.value.target.value.occurrenceFieldPath).toBe('structured_data')
+    }
+  })
+
+  it('describes capabilities without inventing unconfigured formats and filters out non-rendition transport schemes', () => {
+    const empty = describeSaveAsCapabilities(create(ListSaveAsCapabilitiesResponseSchema))
+    expect(empty.hasAnyProviders).toBe(false)
+    expect(empty.compatible).toEqual([])
+    expect(empty.incompatible).toEqual([])
+    expect(empty.emptyStateMessage).toBe(ZERO_PROVIDERS_MESSAGE)
+
+    const mixed = describeSaveAsCapabilities(
+      create(ListSaveAsCapabilitiesResponseSchema, {
+        resolvedSourceRevision: 5n,
+        sourceSchemaType: 'ai.protomolt.CustomerRow',
+        sourceSchemaFingerprint: 'fp-row',
+        sourceSizeBytes: 256n,
+        capabilities: [
+          create(SaveAsCapabilitySchema, {
+            capability: parquetCapability,
+            status: SaveAsCompatibilityStatus.COMPATIBLE,
+          }),
+          create(SaveAsCapabilitySchema, {
+            capability: create(RendererCapabilitySchema, {
+              providerId: 'avro-v1',
+              providerVersion: '1.2.0',
+              sourceProfile: 'strict-record',
+              mediaType: 'application/vnd.apache.avro',
+              extension: 'avro',
+            }),
+            status: SaveAsCompatibilityStatus.INCOMPATIBLE,
+            incompatibilityReason: 'Source contains unsupported map<int32, bytes> field.',
+          }),
+          create(SaveAsCapabilitySchema, {
+            capability: create(RendererCapabilitySchema, {
+              providerId: 'kafka-sink',
+              providerVersion: '1.0.0',
+              sourceProfile: 'events',
+              mediaType: 'kafka://events-topic',
+            }),
+            status: SaveAsCompatibilityStatus.COMPATIBLE,
+          }),
+        ],
+      }),
+    )
+
+    expect(mixed.hasAnyProviders).toBe(true)
+    expect(mixed.sourceRevision).toBe(5n)
+    expect(mixed.compatible).toHaveLength(1)
+    expect(mixed.compatible[0]!.providerId).toBe('parquet-v1')
+    expect(mixed.compatible[0]!.optionsKind).toBe('parquet')
+    expect(mixed.compatible[0]!.defaultRenditionName).toBe('parquet')
+    expect(mixed.incompatible).toHaveLength(1)
+    expect(mixed.incompatible[0]!.providerId).toBe('avro-v1')
+    expect(mixed.incompatible[0]!.incompatibilityReason).toContain('unsupported map<int32, bytes>')
+  })
+
+  it('validates and binary-encodes ParquetRendererOptions and PublishRepositorySinkRequest', () => {
+    const encoded = encodeParquetRendererOptions(
+      {
+        columnsText: 'doc_id, title\ncreated_epoch',
+        maskedSensitivityClassesText: 'PII, SECRET, PII',
+        maskStrategy: ParquetMaskStrategy.REDACT,
+        maxOutputBytesText: '524288',
+        mappingId: 'map-finance',
+        policyId: 'pol-redacted',
+      },
+      1_048_576n,
+    )
+    const decoded = fromBinary(ParquetRendererOptionsSchema, encoded.bytes)
+    expect(decoded.columns).toEqual(['doc_id', 'title', 'created_epoch'])
+    expect(decoded.maskedSensitivityClasses).toEqual(['PII', 'SECRET'])
+    expect(decoded.maskStrategy).toBe(ParquetMaskStrategy.REDACT)
+    expect(decoded.maxOutputBytes).toBe(524288n)
+    expect(decoded.mappingId).toBe('map-finance')
+    expect(decoded.policyId).toBe('pol-redacted')
+
+    expect(() =>
+      encodeParquetRendererOptions({
+        columnsText: 'nested.field',
+        maskedSensitivityClassesText: '',
+        maskStrategy: ParquetMaskStrategy.UNSPECIFIED,
+        maxOutputBytesText: '',
+        mappingId: '',
+        policyId: '',
+      }),
+    ).toThrow('without dots')
+
+    expect(() =>
+      encodeParquetRendererOptions({
+        columnsText: 'dup, dup',
+        maskedSensitivityClassesText: '',
+        maskStrategy: ParquetMaskStrategy.UNSPECIFIED,
+        maxOutputBytesText: '',
+        mappingId: '',
+        policyId: '',
+      }),
+    ).toThrow('duplicate column')
+
+
+    expect(() =>
+      encodeParquetRendererOptions(
+        {
+          columnsText: '',
+          maskedSensitivityClassesText: '',
+          maskStrategy: ParquetMaskStrategy.UNSPECIFIED,
+          maxOutputBytesText: '2000000',
+          mappingId: '',
+          policyId: '',
+        },
+        1_048_576n,
+      ),
+    ).toThrow('exceeds provider ceiling')
+
+    const capView = describeSaveAsCapabilities(
+      create(ListSaveAsCapabilitiesResponseSchema, {
+        capabilities: [
+          create(SaveAsCapabilitySchema, {
+            capability: parquetCapability,
+            status: SaveAsCompatibilityStatus.COMPATIBLE,
+          }),
+        ],
+      }),
+    )
+    const source = buildArchiveRenditionSinkSource({
+      address: create(EntryAddressSchema, { accountId: 'acct-a', archive: 'papers', entryId: 'e-1' }),
+      rendition: { name: 'parsed' },
+      revision: 3n,
+    })
+
+    // Forbid overwriting 'parsed' with non-protobuf output
+    expect(() =>
+      buildPublishSaveAsRequest({
+        operationId: 'op-1',
+        source,
+        capability: capView.compatible[0]!,
+        destination: {
+          accountId: 'acct-a',
+          archive: 'papers',
+          entryId: 'e-1',
+          renditionName: 'parsed',
+          preconditionMode: 'expected-version',
+          expectedDestinationVersionText: '3',
+        },
+      }),
+    ).toThrow("cannot overwrite the 'parsed' protobuf slot")
+
+    const req = buildPublishSaveAsRequest({
+      operationId: 'op-1',
+      source,
+      capability: capView.compatible[0]!,
+      destination: {
+        accountId: 'acct-a',
+        archive: 'papers',
+        entryId: 'e-1',
+        renditionName: 'parquet',
+        preconditionMode: 'expected-version',
+        expectedDestinationVersionText: '3',
+      },
+      parquetOptions: {
+        columnsText: 'doc_id',
+        maskedSensitivityClassesText: '',
+        maskStrategy: ParquetMaskStrategy.UNSPECIFIED,
+        maxOutputBytesText: '',
+        mappingId: 'm1',
+        policyId: 'p1',
+      },
+    })
+    expect(req.operationId).toBe('op-1')
+    expect(req.destination?.expectedDestinationVersion).toBe(3n)
+    expect(req.destination?.createOnly).toBe(false)
+    expect(req.destination?.rendition?.name).toBe('parquet')
+    expect(req.destination?.rendition?.mediaType).toBe('application/vnd.apache.parquet')
+    expect(req.conversion?.mappingId).toBe('m1')
+    expect(req.conversion?.policyId).toBe('p1')
+    expect(defaultRenditionSlotName('parsed', 'p')).toBe('parsed-derived')
+  })
+
+  it('models sink job lifecycle states and classifies lost responses vs version conflicts', () => {
+    const running = describeSinkJob(
+      create(RepositorySinkJobSchema, {
+        operationId: 'op-run',
+        state: RepositorySinkJobState.RUNNING,
+        frozenSourceRevision: 2n,
+      }),
+    )
+    expect(running.canCancel).toBe(true)
+    expect(running.canReconcile).toBe(true)
+    expect(running.terminal).toBe(false)
+
+    const unresolved = describeSinkJob(
+      create(RepositorySinkJobSchema, {
+        operationId: 'op-unres',
+        state: RepositorySinkJobState.UNRESOLVED,
+      }),
+    )
+    expect(unresolved.phase).toBe('unresolved')
+    expect(unresolved.terminal).toBe(false)
+    expect(unresolved.canReconcile).toBe(true)
+    expect(unresolved.canRetrySameOperation).toBe(true)
+
+    const conflictFailed = describeSinkJob(
+      create(RepositorySinkJobSchema, {
+        operationId: 'op-conflict',
+        state: RepositorySinkJobState.FAILED,
+        failure: create(RepositorySinkFailureSchema, {
+          grpcCode: Code.Aborted,
+          conflict: true,
+          message: 'Destination version advanced to 9',
+        }),
+      }),
+    )
+    expect(conflictFailed.isConflict).toBe(true)
+    expect(conflictFailed.canRetrySameOperation).toBe(false)
+
+    expect(classifySinkRpcError(new ConnectError('connection reset', Code.Unavailable))).toMatchObject({
+      kind: 'unsettled',
+      canReconcile: true,
+    })
+    expect(classifySinkRpcError(new ConnectError('version mismatch', Code.Aborted))).toMatchObject({
+      kind: 'conflict',
+      canReconcile: false,
+    })
+  })
+
+  it('enriches renditions with provenance, detects stale derived renditions, and guards external URLs', () => {
+    const entryAddr = create(EntryAddressSchema, { accountId: 'acct-a', archive: 'papers', entryId: 'e-1' })
+    const manifest = create(VersionManifestSchema, {
+      address: entryAddr,
+      version: 4n,
+      renditions: [
+        create(RenditionManifestEntrySchema, {
+          rendition: create(RenditionDescriptorSchema, { name: 'parsed', mediaType: 'application/x-protobuf' }),
+          state: RenditionState.PRESENT,
+          sizeBytes: 128n,
+        }),
+        create(RenditionManifestEntrySchema, {
+          rendition: create(RenditionDescriptorSchema, { name: 'parquet', mediaType: 'application/vnd.apache.parquet' }),
+          state: RenditionState.PRESENT,
+          sizeBytes: 1024n,
+        }),
+        create(RenditionManifestEntrySchema, {
+          rendition: create(RenditionDescriptorSchema, { name: 'original', mediaType: 'application/pdf' }),
+          state: RenditionState.PRESENT,
+          sizeBytes: 2048n,
+        }),
+      ],
+    })
+
+    const provResp = create(ListRenditionProvenanceResponseSchema, {
+      entries: [
+        create(RenditionProvenanceEntrySchema, {
+          rendition: create(RenditionDescriptorSchema, { name: 'parsed', mediaType: 'application/x-protobuf' }),
+          provenance: create(RenditionProvenanceSchema, {
+            authoritativeProtobuf: true,
+            sourceRevision: 4n,
+            committedAt: at('2026-11-14T00:00:00Z'),
+          }),
+          currentSourceRevision: 4n,
+          sourceStale: false,
+        }),
+        create(RenditionProvenanceEntrySchema, {
+          rendition: create(RenditionDescriptorSchema, { name: 'parquet', mediaType: 'application/vnd.apache.parquet' }),
+          provenance: create(RenditionProvenanceSchema, {
+            authoritativeProtobuf: false,
+            providerId: 'parquet-v1',
+            providerVersion: '1.0.0',
+            sourceProfile: 'tabular-scalar-v1',
+            sourceRevision: 2n,
+            sourceEntry: entryAddr,
+            destinationAddress: entryAddr,
+            mappingId: 'map-1',
+            policyId: 'pol-1',
+            lossDescription: 'Scalar columns only',
+          }),
+          currentSourceRevision: 4n,
+          sourceStale: true,
+        }),
+      ],
+    })
+
+    // Provenance could not be read: nothing may be claimed authoritative or offered as a source.
+    const unknown = mergeRenditionsWithProvenance(renditionRows(manifest), null, {
+      viewedEntryVersion: 4n,
+      provenanceUnavailable: true,
+    })
+    expect(unknown.every((row) => !row.authoritativeProtobuf)).toBe(true)
+    expect(unknown.every((row) => !row.canSaveAsSource)).toBe(true)
+    // The server has no provenance service at all: the protobuf slots are read as before.
+    const compat = mergeRenditionsWithProvenance(renditionRows(manifest), null, { viewedEntryVersion: 4n })
+    expect(compat.some((row) => row.authoritativeProtobuf)).toBe(true)
+
+    const enriched = mergeRenditionsWithProvenance(renditionRows(manifest), provResp, {
+      viewedEntryVersion: 4n,
+      originalFilename: 'paper.pdf',
+      sourceUri: 'javascript:alert(1)',
+    })
+
+    const parsed = enriched.find((r) => r.name === 'parsed')!
+    expect(parsed.authoritativeProtobuf).toBe(true)
+    expect(parsed.isDerived).toBe(false)
+    expect(parsed.isStale).toBe(false)
+    expect(parsed.canSaveAsSource).toBe(true)
+
+    const parquet = enriched.find((r) => r.name === 'parquet')!
+    expect(parquet.isDerived).toBe(true)
+    expect(parquet.isStale).toBe(true)
+    expect(parquet.staleExplanation).toContain('r2')
+    expect(parquet.staleExplanation).toContain('r4')
+    expect(parquet.canSaveAsSource).toBe(false)
+    expect(parquet.providerId).toBe('parquet-v1')
+    expect(parquet.lossDescription).toBe('Scalar columns only')
+
+    const original = enriched.find((r) => r.name === 'original')!
+    expect(original.safeExternalUrl).toBeNull()
+    expect(original.canSaveAsSource).toBe(false)
+  })
+
+  it('reconstructs occurrence_field_path options from RevisionValidation for decoded parts', () => {
+    const core = create(PartSelectorSchema, { selector: { case: 'part', value: DocumentPart.CORE } })
+    const validation = create(RevisionValidationSchema, {
+      resolvedOccurrences: [
+        {
+          occurrence: {
+            part: core,
+            steps: [{ step: { case: 'fieldNumber', value: 4 } }],
+          },
+          schema: {
+            typeUrl: 'type.googleapis.com/google.protobuf.StringValue',
+            descriptorSha256: 'a'.repeat(64),
+          },
+          payloadLength: 24n,
+        },
+      ],
+    })
+    const options = listPartOccurrenceOptions(validation, core, DocumentSchema)
+    expect(options).toEqual([
+      {
+        fieldPath: 'structured_data',
+        typeName: 'google.protobuf.StringValue',
+        typeUrl: 'type.googleapis.com/google.protobuf.StringValue',
+        payloadSizeBytes: 24n,
+      },
+    ])
+  })
+
+  it('sends provider identity exactly as advertised, however long, and shortens it only for display', () => {
+    const providerId = `provider-${'p'.repeat(140)}`
+    const providerVersion = `1.0.0+${'v'.repeat(80)}`
+    const sourceProfile = `profile-${'s'.repeat(140)}`
+    const extension = `.${'x'.repeat(40)}`
+    const view = describeSaveAsCapabilities(
+      create(ListSaveAsCapabilitiesResponseSchema, {
+        capabilities: [
+          create(SaveAsCapabilitySchema, {
+            status: SaveAsCompatibilityStatus.COMPATIBLE,
+            capability: create(RendererCapabilitySchema, {
+              providerId,
+              providerVersion,
+              sourceProfile,
+              mediaType: 'text/csv',
+              extension,
+              maxInputBytes: 1024,
+              maxOutputBytes: 1024,
+            }),
+          }),
+        ],
+      }),
+    )
+    const capability = view.compatible[0]
+    // The labels are bounded for the page.
+    expect(capability.providerId.length).toBeLessThan(providerId.length)
+    expect(capability.providerVersion.length).toBeLessThan(providerVersion.length)
+
+    const published = buildPublishSaveAsRequest({
+      operationId: 'op-long',
+      source: buildArchiveRenditionSinkSource({
+        address: create(EntryAddressSchema, { accountId: 'acct-a', archive: 'datasets', entryId: 'e-1' }),
+        rendition: { name: 'original' },
+        revision: 1n,
+      }),
+      capability,
+      destination: {
+        accountId: 'acct-a',
+        archive: 'datasets',
+        entryId: 'e-1',
+        renditionName: 'csv',
+        preconditionMode: 'unconditional',
+      },
+    })
+    expect(published.conversion?.providerId).toBe(providerId)
+    expect(published.conversion?.providerVersion).toBe(providerVersion)
+    expect(published.conversion?.sourceProfile).toBe(sourceProfile)
+    expect(published.conversion?.extension).toBe(extension)
+  })
+
+  it('resolves a nested Any by where it occurs, not by its type URL alone', () => {
+    const core = create(PartSelectorSchema, { selector: { case: 'part', value: DocumentPart.CORE } })
+    const typeUrl = 'type.googleapis.com/ai.protomolt.proto.repo.v1.Document'
+    const boundary = {
+      step: {
+        case: 'anyBoundary' as const,
+        value: { typeUrl, valueSha256: 'b'.repeat(64), valueSizeBytes: 8n },
+      },
+    }
+    const validation = create(RevisionValidationSchema, {
+      resolvedOccurrences: [
+        {
+          occurrence: {
+            part: core,
+            steps: [
+              { step: { case: 'fieldNumber', value: 4 } },
+              boundary,
+              { step: { case: 'fieldNumber', value: 4 } },
+            ],
+          },
+          schema: { typeUrl: 'type.googleapis.com/google.protobuf.StringValue', descriptorSha256: 'a'.repeat(64) },
+          payloadLength: 5n,
+        },
+      ],
+    })
+    const asked: string[][] = []
+    const options = listPartOccurrenceOptions(validation, core, DocumentSchema, (part, stepsBefore) => {
+      expect(part).toBe(core)
+      asked.push(stepsBefore.map((step) => `${step.step.case}:${String(step.step.value)}`))
+      return DocumentSchema
+    })
+    // The lookup is told which occurrence it is resolving: the Any at field 4.
+    expect(asked).toEqual([['fieldNumber:4']])
+    expect(options.map((option) => option.fieldPath)).toEqual(['structured_data.structured_data'])
+  })
+
+  it('addresses the selected source and destination exactly, including surrounding spaces', () => {
+    // " foo " and "foo" are different entries; trimming would act on one the operator did not pick.
+    const spaced = create(EntryAddressSchema, { accountId: 'acct-a', archive: 'datasets', entryId: ' foo ' })
+    const source = buildArchiveRenditionSinkSource({ address: spaced, rendition: { name: 'original' }, revision: 1n })
+    const target = source.kind.case === 'repositoryRevision' ? source.kind.value.target : undefined
+    expect(target?.case === 'archiveRendition' ? target.value.address?.entryId : undefined).toBe(' foo ')
+    expect(buildListRenditionProvenanceRequest(spaced, 1n).address?.entryId).toBe(' foo ')
+
+    const view = describeSaveAsCapabilities(
+      create(ListSaveAsCapabilitiesResponseSchema, {
+        capabilities: [
+          create(SaveAsCapabilitySchema, {
+            status: SaveAsCompatibilityStatus.COMPATIBLE,
+            capability: create(RendererCapabilitySchema, {
+              providerId: 'csv', providerVersion: '1', sourceProfile: 'row', mediaType: 'text/csv',
+            }),
+          }),
+        ],
+      }),
+    )
+    const destination = {
+      accountId: 'acct-a',
+      archive: 'datasets',
+      entryId: ' foo ',
+      renditionName: 'csv',
+      preconditionMode: 'unconditional' as const,
+    }
+    const published = buildPublishSaveAsRequest({
+      operationId: 'op-spaced', source, capability: view.compatible[0], destination,
+    })
+    expect(published.destination?.address?.entryId).toBe(' foo ')
+    expect(() =>
+      buildPublishSaveAsRequest({
+        operationId: 'op-blank', source, capability: view.compatible[0],
+        destination: { ...destination, entryId: '   ' },
+      }),
+    ).toThrow(SaveAsInputError)
+
+    // An entry ID is free-form, up to 500 characters: a URI is an ordinary one.
+    for (const entryId of ['https://example.org/report', 'a\\b', '..', `urn:x:${'k'.repeat(400)}`]) {
+      const sent = buildPublishSaveAsRequest({
+        operationId: 'op-free', source, capability: view.compatible[0],
+        destination: { ...destination, entryId },
+      })
+      expect(sent.destination?.address?.entryId).toBe(entryId)
+    }
+    expect(() =>
+      buildPublishSaveAsRequest({
+        operationId: 'op-long', source, capability: view.compatible[0],
+        destination: { ...destination, entryId: 'e'.repeat(501) },
+      }),
+    ).toThrow(SaveAsInputError)
+    // A rendition name is a path segment and stays path-safe.
+    expect(() =>
+      buildPublishSaveAsRequest({
+        operationId: 'op-slash', source, capability: view.compatible[0],
+        destination: { ...destination, renditionName: 'a/b' },
+      }),
+    ).toThrow(SaveAsInputError)
+  })
+
+  it('treats an Internal error and an unrecognized job state as outcomes still unknown', () => {
+    // The sink reports INTERNAL when a commit may or may not have happened.
+    const internal = classifySinkRpcError(new ConnectError('commit interrupted', Code.Internal))
+    expect(internal.kind).toBe('unsettled')
+    expect(internal.canReconcile).toBe(true)
+
+    for (const state of [RepositorySinkJobState.UNSPECIFIED, 99 as RepositorySinkJobState]) {
+      const unknown = describeSinkJob(create(RepositorySinkJobSchema, { operationId: 'op-odd', state }))
+      expect(unknown.phase).toBe('unresolved')
+      expect(unknown.terminal).toBe(false)
+      expect(unknown.canReconcile).toBe(true)
+      expect(unknown.stateLabel).toContain('not recognized')
+    }
+  })
+
+  it('counts every arrival at succeeded as a commit to announce, whichever call reported it', () => {
+    expect(enteredSucceeded('running', 'succeeded')).toBe(true)
+    expect(enteredSucceeded(undefined, 'succeeded')).toBe(true)
+    expect(enteredSucceeded('unresolved', 'succeeded')).toBe(true)
+    expect(enteredSucceeded('succeeded', 'succeeded')).toBe(false)
+    expect(enteredSucceeded('running', 'cancelled')).toBe(false)
+  })
+
+  it('describes each mask strategy as the Parquet renderer applies it', () => {
+    const titles = new Map(PARQUET_MASK_STRATEGY_CHOICES.map((choice) => [choice.value, choice.title]))
+    // REDACT writes "***" into strings and clears everything else; nothing is nulled out.
+    expect(titles.get(ParquetMaskStrategy.REDACT)).toContain('"***"')
+    expect(titles.get(ParquetMaskStrategy.REDACT)).not.toContain('null')
+    // REMOVE clears values; the column stays unless it is left out of the column list.
+    expect(titles.get(ParquetMaskStrategy.REMOVE)).toContain('column stays')
+    expect(titles.get(ParquetMaskStrategy.REMOVE)).not.toContain('omit')
+  })
+
+  it('says that a blank column list exports every field, not only scalars', () => {
+    // The renderer expands an empty column list to all fields: nested messages, maps and
+    // repeated fields included.
+    expect(PARQUET_COLUMNS_HINT).not.toContain('scalar')
+    expect(PARQUET_COLUMNS_HINT).toContain('every field')
+    expect(PARQUET_COLUMNS_HINT).toContain('nested')
+  })
+
+  it('follows a commit into the page only from the open dialog that made it', () => {
+    const base = { dialogOpen: true, sameEntry: true, viewedVersion: 2n as bigint | null, committedVersion: 5n }
+    // The operator is still in the dialog on the entry it wrote to.
+    expect(commitFollowUp(base)).toBe('open-version')
+    expect(commitFollowUp({ ...base, viewedVersion: null })).toBe('reload')
+    expect(commitFollowUp({ ...base, viewedVersion: 5n })).toBe('reload')
+    // The dialog was closed and the operator moved on: the banner reports the job, and the
+    // page they are reading is left alone.
+    expect(commitFollowUp({ ...base, dialogOpen: false })).toBe('none')
+    expect(commitFollowUp({ ...base, dialogOpen: false, viewedVersion: null })).toBe('none')
+    expect(commitFollowUp({ ...base, sameEntry: false })).toBe('none')
+  })
+
+  it('refuses an expected destination version that no int64 can hold, before anything is tracked', () => {
+    const view = describeSaveAsCapabilities(
+      create(ListSaveAsCapabilitiesResponseSchema, {
+        capabilities: [
+          create(SaveAsCapabilitySchema, {
+            status: SaveAsCompatibilityStatus.COMPATIBLE,
+            capability: create(RendererCapabilitySchema, {
+              providerId: 'csv', providerVersion: '1', sourceProfile: 'row', mediaType: 'text/csv',
+            }),
+          }),
+        ],
+      }),
+    )
+    const source = buildArchiveRenditionSinkSource({
+      address: create(EntryAddressSchema, { accountId: 'acct-a', archive: 'datasets', entryId: 'e-1' }),
+      rendition: { name: 'original' },
+      revision: 1n,
+    })
+    const build = (expectedDestinationVersionText: string) =>
+      buildPublishSaveAsRequest({
+        operationId: 'op-range', source, capability: view.compatible[0],
+        destination: {
+          accountId: 'acct-a', archive: 'datasets', entryId: 'e-1', renditionName: 'csv',
+          preconditionMode: 'expected-version', expectedDestinationVersionText,
+        },
+      })
+    expect(build('9223372036854775807').destination?.expectedDestinationVersion).toBe(9223372036854775807n)
+    expect(() => build('9223372036854775808')).toThrow(SaveAsInputError)
+  })
+
+  it('matches writer scopes on the account ID exactly as given', () => {
+    const writer = create(ConsoleSessionStatusSchema, {
+      authenticated: true,
+      principal: 'writer@example.com',
+      intakeWriters: [create(IntakeWriterScopeSchema, { accountId: ' acct-a ', datasourceId: 'ds-1' })],
+    })
+    expect(evaluateSaveAsSessionAccess(writer, ' acct-a ').readOnly).toBe(false)
+    // "acct-a" is a different account from " acct-a ".
+    expect(evaluateSaveAsSessionAccess(writer, 'acct-a').readOnly).toBe(true)
+  })
+
+  it('treats a publish cancelled by the server side as an outcome still unknown', () => {
+    // Cancellation can arrive after the job was admitted; only the console's own abort is ours.
+    const cancelled = classifySinkRpcError(new ConnectError('stream reset', Code.Canceled))
+    expect(cancelled.kind).toBe('unsettled')
+    expect(cancelled.canReconcile).toBe(true)
+  })
+
+  it('refuses a mask strategy with no sensitivity classes, as the renderer would', () => {
+    for (const maskStrategy of [ParquetMaskStrategy.REDACT, ParquetMaskStrategy.REMOVE]) {
+      expect(() =>
+        encodeParquetRendererOptions({
+          columnsText: '', maskedSensitivityClassesText: '', maskStrategy,
+          maxOutputBytesText: '', mappingId: '', policyId: '',
+        }),
+      ).toThrow(SaveAsInputError)
+    }
+  })
+
+  it('does not call a rendition authoritative on its media type alone', () => {
+    const entryAddr = create(EntryAddressSchema, { accountId: 'acct-a', archive: 'datasets', entryId: 'e-1' })
+    const manifest = create(VersionManifestSchema, {
+      address: entryAddr,
+      version: 1n,
+      renditions: [
+        create(RenditionManifestEntrySchema, {
+          rendition: create(RenditionDescriptorSchema, { name: 'parsed', mediaType: 'application/x-protobuf' }),
+          state: RenditionState.PRESENT,
+        }),
+        // An upload that merely says it is protobuf: no retained schema, no provenance.
+        create(RenditionManifestEntrySchema, {
+          rendition: create(RenditionDescriptorSchema, { name: 'upload', mediaType: 'application/x-protobuf' }),
+          state: RenditionState.PRESENT,
+        }),
+      ],
+    })
+    const rows = mergeRenditionsWithProvenance(renditionRows(manifest), null, { viewedEntryVersion: 1n })
+    const upload = rows.find((row) => row.name === 'upload')!
+    expect(upload.authoritativeProtobuf).toBe(false)
+    expect(upload.canSaveAsSource).toBe(false)
+    // It is still shown as a protobuf file.
+    expect(upload.format.family).toBe('protobuf')
+    expect(rows.find((row) => row.name === 'parsed')!.authoritativeProtobuf).toBe(true)
+  })
+
+  it('recognizes the document behind an archive entry', () => {
+    const dest = create(EntryAddressSchema, { accountId: 'acct-a', archive: 'datasets', entryId: 'e-1' })
+    const doc = { accountId: 'acct-a', graphId: 'archive:acct-a', graphAddressId: 'datasets', docId: 'e-1' }
+    expect(documentBacksEntry(doc, dest)).toBe(true)
+    expect(documentBacksEntry({ ...doc, docId: 'e-2' }, dest)).toBe(false)
+    expect(documentBacksEntry({ ...doc, graphId: 'intake:acct-a' }, dest)).toBe(false)
+    expect(documentBacksEntry(doc, undefined)).toBe(false)
+  })
+
+  it('refuses a column or class list that was typed and names nothing', () => {
+    const form = {
+      columnsText: '', maskedSensitivityClassesText: '', maskStrategy: ParquetMaskStrategy.UNSPECIFIED,
+      maxOutputBytesText: '', mappingId: '', policyId: '',
+    }
+    // "," is not "blank": taking it as an empty list would export every field unasked.
+    for (const columnsText of [',', ' , ,', '\n,\n']) {
+      expect(() => encodeParquetRendererOptions({ ...form, columnsText })).toThrow(SaveAsInputError)
+    }
+    expect(() =>
+      encodeParquetRendererOptions({
+        ...form, maskedSensitivityClassesText: ' , ', maskStrategy: ParquetMaskStrategy.REDACT,
+      }),
+    ).toThrow(SaveAsInputError)
+    // Truly blank still means every field.
+    expect(fromBinary(ParquetRendererOptionsSchema, encodeParquetRendererOptions(form).bytes).columns).toEqual([])
+  })
+
+  it('tells the operator that sensitivity classes match exactly, with examples as fields declare them', () => {
+    expect(PARQUET_CLASSES_HINT).toContain('exactly')
+    expect(PARQUET_CLASSES_HINT).toContain('pii')
+    expect(PARQUET_CLASSES_HINT).not.toContain('PII')
+  })
+
+  it('reads a viewed version\'s filename and source link from that version, not from the current entry', () => {
+    const current = create(EntryInfoSchema, {
+      filename: 'v2.pdf', sourceUri: 'https://example.org/v2', currentVersion: 2n,
+    })
+    const v1 = create(VersionManifestSchema, {
+      version: 1n,
+      metadataSnapshot: create(EntryInfoSchema, { filename: 'v1.pdf', sourceUri: 'https://example.org/v1' }),
+    })
+    expect(viewedVersionMetadata(v1, current)).toEqual({ filename: 'v1.pdf', sourceUri: 'https://example.org/v1' })
+    // A version that kept no snapshot shows no link; the current entry's is not borrowed.
+    expect(viewedVersionMetadata(create(VersionManifestSchema, { version: 1n }), current)).toEqual({
+      filename: undefined,
+      sourceUri: undefined,
+    })
+    // The current version is what the entry's own metadata describes.
+    expect(viewedVersionMetadata(create(VersionManifestSchema, { version: 2n }), current)).toEqual({
+      filename: 'v2.pdf',
+      sourceUri: 'https://example.org/v2',
+    })
+  })
+
+  it('validates classes, mapping IDs and policy IDs each by its own contract', () => {
+    const form = {
+      columnsText: '', maskedSensitivityClassesText: 'pii', maskStrategy: ParquetMaskStrategy.REDACT,
+      maxOutputBytesText: '', mappingId: '', policyId: '',
+    }
+    // A sensitivity class is a path-safe name: the renderer refuses anything else.
+    for (const bad of ['pii/secret', '.pii', 'p ii', 'pii!']) {
+      expect(() => encodeParquetRendererOptions({ ...form, maskedSensitivityClassesText: bad })).toThrow(SaveAsInputError)
+    }
+    expect(() => encodeParquetRendererOptions({ ...form, maskedSensitivityClassesText: 'pii, pci-dss, secret.v2' })).not.toThrow()
+
+    // Mapping and policy IDs are free text up to 256 characters, sent exactly as given.
+    const spaced = encodeParquetRendererOptions({ ...form, mappingId: ' map one ', policyId: 'p'.repeat(256) })
+    expect(spaced.mappingId).toBe(' map one ')
+    expect(spaced.policyId).toBe('p'.repeat(256))
+    expect(() => encodeParquetRendererOptions({ ...form, mappingId: 'm'.repeat(257) })).toThrow(SaveAsInputError)
+  })
+
+  it('accepts sensitivity classes with the mask strategy left unspecified, which the renderer redacts', () => {
+    const encoded = encodeParquetRendererOptions({
+      columnsText: '', maskedSensitivityClassesText: 'pii', maskStrategy: ParquetMaskStrategy.UNSPECIFIED,
+      maxOutputBytesText: '', mappingId: '', policyId: '',
+    })
+    const decoded = fromBinary(ParquetRendererOptionsSchema, encoded.bytes)
+    expect(decoded.maskedSensitivityClasses).toEqual(['pii'])
+    expect(decoded.maskStrategy).toBe(ParquetMaskStrategy.UNSPECIFIED)
+  })
+
+  it('holds Parquet options to the limits of their schema', () => {
+    const form = {
+      columnsText: '', maskedSensitivityClassesText: '', maskStrategy: ParquetMaskStrategy.UNSPECIFIED,
+      maxOutputBytesText: '', mappingId: '', policyId: '',
+    }
+    expect(() => encodeParquetRendererOptions({ ...form, maxOutputBytesText: '67108864' })).not.toThrow()
+    expect(() => encodeParquetRendererOptions({ ...form, maxOutputBytesText: '67108865' })).toThrow(SaveAsInputError)
+    expect(() => encodeParquetRendererOptions({ ...form, mappingId: '   ' })).toThrow(SaveAsInputError)
+    expect(() => encodeParquetRendererOptions({ ...form, policyId: '\t' })).toThrow(SaveAsInputError)
+  })
+
+  it('validates the destination archive and rendition names by their own contracts', () => {
+    const view = describeSaveAsCapabilities(
+      create(ListSaveAsCapabilitiesResponseSchema, {
+        capabilities: [
+          create(SaveAsCapabilitySchema, {
+            status: SaveAsCompatibilityStatus.COMPATIBLE,
+            capability: create(RendererCapabilitySchema, {
+              providerId: 'csv', providerVersion: '1', sourceProfile: 'row', mediaType: 'text/csv',
+            }),
+          }),
+        ],
+      }),
+    )
+    const source = buildArchiveRenditionSinkSource({
+      address: create(EntryAddressSchema, { accountId: 'acct-a', archive: 'datasets', entryId: 'e-1' }),
+      rendition: { name: 'original' },
+      revision: 1n,
+    })
+    const build = (destination: Partial<{ archive: string; renditionName: string; subKey: string }>) =>
+      buildPublishSaveAsRequest({
+        operationId: 'op-dest', source, capability: view.compatible[0],
+        destination: {
+          accountId: 'acct-a', archive: 'datasets', entryId: 'e-1', renditionName: 'csv',
+          preconditionMode: 'unconditional', ...destination,
+        },
+      })
+    // An archive is a lowercase slug of at most 100 characters.
+    for (const archive of ['My Archive', 'Datasets', 'data..sets', '-data', 'data-', 'a'.repeat(101)]) {
+      expect(() => build({ archive })).toThrow(SaveAsInputError)
+    }
+    expect(build({ archive: 'data.sets_2-b' }).destination?.address?.archive).toBe('data.sets_2-b')
+    // A rendition name or sub-key is a path-safe name of at most 200 characters.
+    for (const renditionName of ['my rendition', '.hidden', 'a/b', 'n'.repeat(201)]) {
+      expect(() => build({ renditionName })).toThrow(SaveAsInputError)
+    }
+    expect(build({ renditionName: 'N'.repeat(200) }).destination?.rendition?.name).toBe('N'.repeat(200))
+    expect(() => build({ subKey: 'sub key' })).toThrow(SaveAsInputError)
+    expect(build({ subKey: 'Part-1.v2' }).destination?.rendition?.subKey).toBe('Part-1.v2')
+  })
+
+  it('does not offer Save-as when the session lookup failed', () => {
+    const verdict = evaluateSaveAsSessionAccess(null, 'acct-a', 'Unavailable: session service down')
+    expect(verdict.readOnly).toBe(true)
+    expect(verdict.reason).toContain('could not be confirmed')
+    expect(verdict.reason).toContain('session service down')
+    // Not asked yet is still only advisory: the server decides.
+    expect(evaluateSaveAsSessionAccess(null, 'acct-a').readOnly).toBe(false)
+  })
+
+  it('holds Parquet lists to the item limits of their schema', () => {
+    const form = {
+      columnsText: '', maskedSensitivityClassesText: '', maskStrategy: ParquetMaskStrategy.UNSPECIFIED,
+      maxOutputBytesText: '', mappingId: '', policyId: '',
+    }
+    const names = (count: number, prefix: string) =>
+      Array.from({ length: count }, (_, i) => `${prefix}${i}`).join(',')
+    expect(() => encodeParquetRendererOptions({ ...form, columnsText: names(512, 'c') })).not.toThrow()
+    expect(() => encodeParquetRendererOptions({ ...form, columnsText: names(513, 'c') })).toThrow(SaveAsInputError)
+    expect(() => encodeParquetRendererOptions({ ...form, maskedSensitivityClassesText: names(128, 's') })).not.toThrow()
+    expect(() => encodeParquetRendererOptions({ ...form, maskedSensitivityClassesText: names(129, 's') })).toThrow(SaveAsInputError)
+  })
+})

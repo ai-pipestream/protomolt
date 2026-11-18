@@ -11,7 +11,10 @@
               <div>{{ blob.filename ?? '(no filename recorded)' }}</div>
               <div class="text-caption text-mono text-medium-emphasis">{{ blob.blobId }}</div>
             </td>
-            <td class="text-mono text-caption">{{ blob.mimeType ?? '(not recorded)' }}</td>
+            <td>
+              <FormatIcon :media-type="blob.mimeType" :filename="blob.filename" show-media-type />
+              <span v-if="!blob.mimeType" class="text-caption text-medium-emphasis ml-1">(not recorded)</span>
+            </td>
             <td class="text-mono">{{ byteSize(blob.sizeBytes) }}</td>
             <td>
               <v-btn size="x-small" variant="tonal" :data-testid="`select-blob-${blob.blobId}`" @click="select(blob)">Select</v-btn>
@@ -35,6 +38,7 @@
 <script setup lang="ts">
 import { ref, watch } from 'vue'
 import ByteReader from './ByteReader.vue'
+import FormatIcon from './FormatIcon.vue'
 import RpcFailureAlert from './RpcFailureAlert.vue'
 import type { NodeAddress } from '@/gen/ai/protomolt/proto/repo/v1/address_pb'
 import { readBlob } from '@/repository/blobReadCore'

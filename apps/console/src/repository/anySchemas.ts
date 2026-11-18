@@ -125,6 +125,15 @@ export class AnySchemas {
       || retained.payloadSha256 !== new Sha256().update(any.value).hex()) return null
     return { desc, boundary }
   }
+
+  /**
+   * The descriptor retained for the `Any` occurring in `part` at `steps`, or null when not
+   * loaded. Occurrences are told apart by location, since two may share a type URL and retain
+   * different schemas.
+   */
+  descAt(part: PartSelector, steps: readonly RepositorySchemaOccurrenceStep[]): DescMessage | null {
+    return this.byOccurrence.get(locationKey({ part, steps: steps.map(stepKey) }))?.desc ?? null
+  }
 }
 
 export interface AnyLocation {
