@@ -255,11 +255,21 @@ final class ExternalSourceAccess {
      * replaces the rules on its ledger, takes the same.
      */
     private void requireWrite(OwnershipContext ownership) {
+        requireAccess(ownership, Access.ACCESS_WRITE,
+                "Publishing requires WRITE access to the source document");
+    }
+
+    /**
+     * Checks {@code access} for the caller against {@code ownership}, the rules of a source
+     * revision the coordinator judges by, rather than leaving the decision to whatever
+     * document the coordinator reads next.
+     */
+    private void requireAccess(OwnershipContext ownership, Access access, String deniedDescription) {
         RepositoryCaller current = Objects.requireNonNull(caller.current(), "caller.current()");
         boolean allowed;
         try {
             allowed = DocumentAccessPolicy.allows(current, ownership.getAccountId(),
-                    ownership.getSecurity(), null, Access.ACCESS_WRITE);
+                    ownership.getSecurity(), null, access);
         } catch (RepositoryException unresolved) {
             throw Status.FAILED_PRECONDITION
                     .withDescription("The source's access rules cannot be evaluated here: "
@@ -268,7 +278,7 @@ final class ExternalSourceAccess {
         }
         if (!allowed) {
             throw Status.PERMISSION_DENIED
-                    .withDescription("Publishing requires WRITE access to the source document")
+                    .withDescription(deniedDescription)
                     .asRuntimeException();
         }
     }
@@ -423,6 +433,14 @@ final class ExternalSourceAccess {
                                 .setSelection(CORE_SELECTION)
                                 .build());
                 return latest.getDocument().getOwnership().getSecurity();
+            }
+            if (revs.getRevisionsCount() > 0) {
+                // Deleted, not yet purged. The ledger may still carry rules from an older
+                // publication; the caller is judged by the source's last live revision, which
+                // may have revoked them.
+                requireAccess(latestLiveOwnership(sourceAddress).ownership(), Access.ACCESS_READ,
+                        "Reading this publication requires READ access to the source document's "
+                                + "last live revision");
             }
             return DocumentSecurity.getDefaultInstance();
         } catch (StatusRuntimeException e) {

@@ -660,6 +660,43 @@ class ExternalPublicationIT {
     }
 
     @Test
+    void aRevocationBeforeTheSourceWasDeletedStillHoldsForItsPublications(
+            @TempDir Path tempDir) throws Exception {
+        SimulatedManagedSearchProvider provider = new SimulatedManagedSearchProvider();
+        try (Harness h = Harness.boot(tempDir, provider)) {
+            h.saveActiveBinding(
+                    "tenant-alpha",
+                    "rust-search",
+                    "search-profile-v1",
+                    "ingest",
+                    "corpus-main",
+                    "ns-alpha",
+                    ExternalRetentionPolicy.EXTERNAL_RETENTION_POLICY_RETAIN_HISTORY,
+                    "op-bind-1");
+            NodeAddress sourceAddr = sourceAddress("tenant-alpha", "doc-revoked-then-deleted");
+            // Revision 1 lets Bob in and is published; revision 2 revokes him; revision 3 deletes.
+            h.saveSourceDocument("save-rd-1", sourceAddr, 0L, "Shared", "alice", "bob");
+            h.coordinator.publish(new ExternalPublicationCoordinator.PublishRequest(
+                    "pub-rd-1", sourceAddr, 1L, "rust-search", 1L, "ext-rd", null, null));
+            h.saveSourceDocument("save-rd-2", sourceAddr, 1L, "Alice only", "alice");
+            h.stub.deleteDocument(DeleteDocumentRequest.newBuilder()
+                    .setOperationId("del-rd-3")
+                    .setAddress(sourceAddr)
+                    .setExpected(ExpectedRevision.newBuilder().setRevision(2L))
+                    .build());
+
+            // Before any tombstone deletion updates the ledger, Bob is judged by revision 2.
+            h.useCaller(h.alphaBob);
+            assertGrpcCode(() -> h.coordinator.getLedgerView(sourceAddr, "rust-search"),
+                    Status.Code.PERMISSION_DENIED);
+            assertGrpcCode(() -> h.coordinator.reconcileOperation(sourceAddr, "rust-search", "pub-rd-1", true),
+                    Status.Code.PERMISSION_DENIED);
+            h.useCaller(h.alphaAlice);
+            assertThat(h.coordinator.getLedgerView(sourceAddr, "rust-search")).isPresent();
+        }
+    }
+
+    @Test
     void aPurgeIsRefusedWhileTheSourceDocumentStillExists(
             @TempDir Path tempDir) throws Exception {
         SimulatedManagedSearchProvider provider = new SimulatedManagedSearchProvider();

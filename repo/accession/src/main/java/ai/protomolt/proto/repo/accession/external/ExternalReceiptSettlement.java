@@ -1,9 +1,9 @@
 package ai.protomolt.proto.repo.accession.external;
 
+import static ai.protomolt.proto.repo.accession.external.ExternalLedgerStore.attemptStartedAt;
+import static ai.protomolt.proto.repo.accession.external.ExternalLedgerStore.attemptTrigger;
 import static ai.protomolt.proto.repo.accession.external.ExternalLedgerStore.findOperation;
 import static ai.protomolt.proto.repo.accession.external.ExternalLedgerStore.isTerminalOutcome;
-import static ai.protomolt.proto.repo.accession.external.ExternalLedgerStore.lastAttemptStartedAt;
-import static ai.protomolt.proto.repo.accession.external.ExternalLedgerStore.lastAttemptTrigger;
 import static ai.protomolt.proto.repo.accession.external.ExternalLedgerStore.optionalCurrentLink;
 import static ai.protomolt.proto.repo.accession.external.ExternalLedgerStore.replaceAttempt;
 import static ai.protomolt.proto.repo.accession.external.ExternalLedgerStore.replaceOperation;
@@ -93,10 +93,10 @@ final class ExternalReceiptSettlement {
                         }
                         ExternalAttemptTrigger trigger = explicitTrigger != null
                                 ? explicitTrigger
-                                : lastAttemptTrigger(op);
+                                : attemptTrigger(op, attemptNumber);
                         Timestamp startedAt = explicitTrigger != null
                                 ? fallbackStartedAt
-                                : lastAttemptStartedAt(op, fallbackStartedAt);
+                                : attemptStartedAt(op, attemptNumber);
                         ExternalPublicationAttempt failedAttempt = ExternalPublicationAttempt.newBuilder()
                                 .setAttemptNumber(attemptNumber)
                                 .setTrigger(trigger)
@@ -145,10 +145,10 @@ final class ExternalReceiptSettlement {
                     }
                     ExternalAttemptTrigger trigger = explicitTrigger != null
                             ? explicitTrigger
-                            : lastAttemptTrigger(op);
+                            : attemptTrigger(op, attemptNumber);
                     Timestamp startedAt = explicitTrigger != null
                             ? fallbackStartedAt
-                            : lastAttemptStartedAt(op, fallbackStartedAt);
+                            : attemptStartedAt(op, attemptNumber);
 
                     boolean settles = settlement
                                     == ExternalProviderSettlement.EXTERNAL_PROVIDER_SETTLEMENT_PUBLISHED
@@ -227,7 +227,7 @@ final class ExternalReceiptSettlement {
                                     .setProviderMayHoldObject(op.getIntent().getAction()
                                                     == ExternalPublicationAction.EXTERNAL_PUBLICATION_ACTION_PUBLISH
                                             && trigger != ExternalAttemptTrigger.EXTERNAL_ATTEMPT_TRIGGER_RECONCILIATION
-                                            && anEarlierSendIsUnresolved(op, attemptNumber))
+                                            && ExternalLedgerStore.anotherSendIsUnresolved(op, attemptNumber))
                                     .setFailureCode(code)
                                     .setFailureMessage("Provider rejected external operation")
                                     .setUpdatedAt(finishedAt)
@@ -485,22 +485,6 @@ final class ExternalReceiptSettlement {
                 .build();
     }
 
-    /**
-     * Whether an attempt other than {@code settledAttempt} sent the operation to the provider
-     * (an initial send or a retry, not a status query) and never learned its outcome.
-     */
-    static boolean anEarlierSendIsUnresolved(ExternalPublicationOperationRecord op, int settledAttempt) {
-        for (ExternalPublicationAttempt attempt : op.getAttemptsList()) {
-            boolean send = attempt.getTrigger() == ExternalAttemptTrigger.EXTERNAL_ATTEMPT_TRIGGER_INITIAL
-                    || attempt.getTrigger() == ExternalAttemptTrigger.EXTERNAL_ATTEMPT_TRIGGER_RETRY;
-            if (send
-                    && attempt.getAttemptNumber() != settledAttempt
-                    && attempt.getOutcome() == ExternalPublicationOutcome.EXTERNAL_PUBLICATION_OUTCOME_PENDING) {
-                return true;
-            }
-        }
-        return false;
-    }
 
     /**
      * True when the ledger records nothing still owed: no operation is pending, and every

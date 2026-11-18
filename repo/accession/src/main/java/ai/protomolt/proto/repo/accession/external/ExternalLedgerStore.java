@@ -418,20 +418,53 @@ final class ExternalLedgerStore {
         return builder;
     }
 
-    static ExternalAttemptTrigger lastAttemptTrigger(
-            ExternalPublicationOperationRecord op) {
-        if (op.getAttemptsCount() == 0) {
-            return ExternalAttemptTrigger.EXTERNAL_ATTEMPT_TRIGGER_INITIAL;
-        }
-        return op.getAttempts(op.getAttemptsCount() - 1).getTrigger();
+    /**
+     * The trigger of attempt {@code attemptNumber}: the attempt a result belongs to, not the
+     * newest one, which may be a later retry or a status query.
+     *
+     * @throws IllegalStateException when the operation records no such attempt
+     */
+    static ExternalAttemptTrigger attemptTrigger(
+            ExternalPublicationOperationRecord op, int attemptNumber) {
+        return attempt(op, attemptNumber).getTrigger();
     }
 
-    static Timestamp lastAttemptStartedAt(
-            ExternalPublicationOperationRecord op, Timestamp fallback) {
-        if (op.getAttemptsCount() == 0) {
-            return fallback;
+    /**
+     * When attempt {@code attemptNumber} started.
+     *
+     * @throws IllegalStateException when the operation records no such attempt
+     */
+    static Timestamp attemptStartedAt(ExternalPublicationOperationRecord op, int attemptNumber) {
+        return attempt(op, attemptNumber).getStartedAt();
+    }
+
+    private static ExternalPublicationAttempt attempt(
+            ExternalPublicationOperationRecord op, int attemptNumber) {
+        for (ExternalPublicationAttempt attempt : op.getAttemptsList()) {
+            if (attempt.getAttemptNumber() == attemptNumber) {
+                return attempt;
+            }
         }
-        return op.getAttempts(op.getAttemptsCount() - 1).getStartedAt();
+        throw new IllegalStateException("Operation '" + op.getOperationId()
+                + "' records no attempt " + attemptNumber);
+    }
+
+    /**
+     * Whether an attempt other than {@code settledAttempt} sent the operation to the provider
+     * (an initial send or a retry, not a status query) and has not learned its outcome. An
+     * attempt already settled, refused or answered, does not count.
+     */
+    static boolean anotherSendIsUnresolved(ExternalPublicationOperationRecord op, int settledAttempt) {
+        for (ExternalPublicationAttempt attempt : op.getAttemptsList()) {
+            boolean send = attempt.getTrigger() == ExternalAttemptTrigger.EXTERNAL_ATTEMPT_TRIGGER_INITIAL
+                    || attempt.getTrigger() == ExternalAttemptTrigger.EXTERNAL_ATTEMPT_TRIGGER_RETRY;
+            boolean unresolved = attempt.getOutcome() == ExternalPublicationOutcome.EXTERNAL_PUBLICATION_OUTCOME_PENDING
+                    || attempt.getOutcome() == ExternalPublicationOutcome.EXTERNAL_PUBLICATION_OUTCOME_DELETION_PENDING;
+            if (send && unresolved && attempt.getAttemptNumber() != settledAttempt) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**
@@ -452,18 +485,14 @@ final class ExternalLedgerStore {
         String message = sanitizeMessage(diagnosticMessage);
         ExternalPublicationAttempt refusedAttempt = ExternalPublicationAttempt.newBuilder()
                 .setAttemptNumber(attemptNumber)
-                .setTrigger(lastAttemptTrigger(op))
+                .setTrigger(attemptTrigger(op, attemptNumber))
                 .setOutcome(ExternalPublicationOutcome.EXTERNAL_PUBLICATION_OUTCOME_FAILED)
-                .setStartedAt(lastAttemptStartedAt(op, fallbackStartedAt))
+                .setStartedAt(attemptStartedAt(op, attemptNumber))
                 .setFinishedAt(finishedAt)
                 .setDiagnosticCode(diagnosticCode)
                 .setDiagnosticMessage(message)
                 .build();
-        boolean earlierAttemptUnknown = false;
-        for (ExternalPublicationAttempt attempt : op.getAttemptsList()) {
-            earlierAttemptUnknown |= attempt.getAttemptNumber() != attemptNumber;
-        }
-        if (earlierAttemptUnknown) {
+        if (anotherSendIsUnresolved(op, attemptNumber)) {
             // This attempt was refused, but the operation is only still open because an
             // earlier attempt was sent and never answered. That one may have gone through,
             // so the refusal is recorded against this attempt and the operation stays

@@ -1,9 +1,9 @@
 package ai.protomolt.proto.repo.accession.external;
 
+import static ai.protomolt.proto.repo.accession.external.ExternalLedgerStore.attemptStartedAt;
+import static ai.protomolt.proto.repo.accession.external.ExternalLedgerStore.attemptTrigger;
 import static ai.protomolt.proto.repo.accession.external.ExternalLedgerStore.findOperation;
 import static ai.protomolt.proto.repo.accession.external.ExternalLedgerStore.isTerminalOutcome;
-import static ai.protomolt.proto.repo.accession.external.ExternalLedgerStore.lastAttemptStartedAt;
-import static ai.protomolt.proto.repo.accession.external.ExternalLedgerStore.lastAttemptTrigger;
 import static ai.protomolt.proto.repo.accession.external.ExternalLedgerStore.optionalCurrentLink;
 import static ai.protomolt.proto.repo.accession.external.ExternalLedgerStore.refusedByProvider;
 import static ai.protomolt.proto.repo.accession.external.ExternalLedgerStore.replaceAttempt;
@@ -599,13 +599,13 @@ final class ExternalDeletionLifecycle {
                         }
                         ExternalPublicationAttempt attempt = ExternalPublicationAttempt.newBuilder()
                                 .setAttemptNumber(attemptNumber)
-                                .setTrigger(lastAttemptTrigger(op))
+                                .setTrigger(attemptTrigger(op, attemptNumber))
                                 .setOutcome(
                                         ExternalPublicationOutcome
                                                 .EXTERNAL_PUBLICATION_OUTCOME_DELETION_PENDING)
                                 .setPendingPhase(
                                         ExternalPendingPhase.EXTERNAL_PENDING_PHASE_DELETION_IN_FLIGHT)
-                                .setStartedAt(lastAttemptStartedAt(op, startedAt))
+                                .setStartedAt(attemptStartedAt(op, attemptNumber))
                                 .setFinishedAt(finishedAt)
                                 .setDiagnosticCode(unresolved.diagnosticCode())
                                 .setDiagnosticMessage(sanitizeMessage(unresolved.diagnosticMessage()))

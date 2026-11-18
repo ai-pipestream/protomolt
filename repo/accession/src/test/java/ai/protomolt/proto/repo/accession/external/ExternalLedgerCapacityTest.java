@@ -4,11 +4,12 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import ai.protomolt.proto.repo.external.v1.ExternalAttemptTrigger;
 import ai.protomolt.proto.repo.external.v1.ExternalLink;
+import ai.protomolt.proto.repo.external.v1.ExternalPendingPhase;
 import ai.protomolt.proto.repo.external.v1.ExternalPublicationAttempt;
 import ai.protomolt.proto.repo.external.v1.ExternalPublicationLedger;
 import ai.protomolt.proto.repo.external.v1.ExternalPublicationOperationRecord;
-import ai.protomolt.proto.repo.external.v1.ExternalPendingPhase;
 import ai.protomolt.proto.repo.external.v1.ExternalPublicationOutcome;
 import com.google.protobuf.Timestamp;
 import io.grpc.Status;
@@ -100,10 +101,12 @@ class ExternalLedgerCapacityTest {
                 .setOutcome(ExternalPublicationOutcome.EXTERNAL_PUBLICATION_OUTCOME_PENDING)
                 .setPendingPhase(ExternalPendingPhase.EXTERNAL_PENDING_PHASE_DISPATCHING)
                 .addAttempts(ExternalPublicationAttempt.newBuilder().setAttemptNumber(1)
+                        .setTrigger(ExternalAttemptTrigger.EXTERNAL_ATTEMPT_TRIGGER_INITIAL)
                         .setOutcome(ExternalPublicationOutcome.EXTERNAL_PUBLICATION_OUTCOME_PENDING)
                         .setPendingPhase(
                                 ExternalPendingPhase.EXTERNAL_PENDING_PHASE_UNRESOLVED_LOST_REPLY))
                 .addAttempts(ExternalPublicationAttempt.newBuilder().setAttemptNumber(2)
+                        .setTrigger(ExternalAttemptTrigger.EXTERNAL_ATTEMPT_TRIGGER_RETRY)
                         .setOutcome(ExternalPublicationOutcome.EXTERNAL_PUBLICATION_OUTCOME_PENDING)
                         .setPendingPhase(ExternalPendingPhase.EXTERNAL_PENDING_PHASE_DISPATCHING))
                 .build();
