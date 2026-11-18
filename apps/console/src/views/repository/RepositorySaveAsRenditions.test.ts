@@ -1147,4 +1147,180 @@ describe('Repository Save-as and format icons', () => {
     expect(wrapper.get('[data-testid="version-chip"]').text()).toBe('version 2 (current)')
     wrapper.unmount()
   })
+  it('withholds submission in an open dialog when the session check settles late as failed', async () => {
+    let failSession: (error: unknown) => void = () => {
+      throw new Error('session status was never requested')
+    }
+    const lateSession = {
+      status: () =>
+        new Promise<never>((_, reject) => {
+          failSession = reject
+        }),
+    }
+    const publishes: PublishRepositorySinkRequest[] = []
+    const { wrapper } = await mountRepositoryView(
+      RepositoryArchiveEntryView,
+      { name: 'repository-archive-entry', query: { account: 'acct-a', archive: 'datasets', entry: 'e-metrics' } },
+      (router: ConnectRouter) => {
+        router.service(ArchiveService, {
+          listArchives: () => create(ListArchivesResponseSchema, { archives: [create(ArchiveSchema, { accountId: 'acct-a', name: 'datasets' })] }),
+          getEntryManifest: () => create(GetEntryManifestResponseSchema, metricsEntry(1n, 1n)),
+          listVersions: () => create(ListVersionsResponseSchema, { versions: [] }),
+        })
+        router.service(RepositorySinkService, {
+          listRenditionProvenance: () => create(ListRenditionProvenanceResponseSchema),
+          listSaveAsCapabilities: () => compatibleParquet(1n),
+          publishRepositorySink: (req) => {
+            publishes.push(req)
+            throw new ConnectError('publish must not be reached', Code.Internal)
+          },
+        })
+      },
+      { [REPOSITORY_SESSION as symbol]: lateSession },
+    )
+
+    // The check is still pending, so the launcher is offered and the dialog opens.
+    await wrapper.get('[data-testid="save-as-rendition-parsed"]').trigger('click')
+    await settle()
+    const submit = () => document.body.querySelector('[data-testid="save-as-submit-btn"]') as HTMLButtonElement
+    expect(submit().disabled).toBe(false)
+    expect(document.body.querySelector('[data-testid="save-as-dialog-readonly-notice"]')).toBeNull()
+
+    failSession(new ConnectError('session store offline', Code.Unavailable))
+    await settle()
+
+    expect(document.body.querySelector('[data-testid="save-as-dialog-readonly-notice"]')!.textContent)
+      .toContain('session store offline')
+    expect(submit().disabled).toBe(true)
+    submit().click()
+    await settle()
+    expect(publishes).toHaveLength(0)
+    wrapper.unmount()
+  })
+
+  it('preconditions Save-as from a historical archive-backed revision on the entry\'s current version', async () => {
+    const publishes: PublishRepositorySinkRequest[] = []
+    const entryLookups: bigint[] = []
+    const { wrapper } = await mountArchiveBackedDocumentAtRevision(1n, {
+      getEntryManifest: (version) => {
+        entryLookups.push(version)
+        return create(GetEntryManifestResponseSchema, metricsEntry(3n, 3n))
+      },
+      publish: (req) => {
+        publishes.push(req)
+        return create(PublishRepositorySinkResponseSchema)
+      },
+    })
+
+    await wrapper.get('[data-testid="save-as-part-0"]').trigger('click')
+    await settle()
+    expect(entryLookups).toEqual([0n])
+    const expected = document.body.querySelector('[data-testid="save-as-expected-version-input"] input') as HTMLInputElement
+    expect(expected.value).toBe('3')
+    wrapper.unmount()
+  })
+
+  it('does not open Save-as from a historical archive-backed revision when the entry\'s current version cannot be read', async () => {
+    const { wrapper } = await mountArchiveBackedDocumentAtRevision(1n, {
+      getEntryManifest: () => {
+        throw new ConnectError('archive store offline', Code.Unavailable)
+      },
+      publish: () => {
+        throw new ConnectError('publish must not be reached', Code.Internal)
+      },
+    })
+
+    await wrapper.get('[data-testid="save-as-part-0"]').trigger('click')
+    await settle()
+    expect(wrapper.get('[data-testid="save-as-destination-failure"]').text()).toContain('archive store offline')
+    expect(document.body.querySelector('[data-testid="save-as-dialog"]')).toBeNull()
+    wrapper.unmount()
+  })
 })
+
+function metricsEntry(currentVersion: bigint, version: bigint) {
+  return {
+    info: create(EntryInfoSchema, { address: entryAddr(), currentVersion, title: 'Metrics' }),
+    manifest: create(VersionManifestSchema, {
+      address: entryAddr(),
+      version,
+      renditions: [
+        create(RenditionManifestEntrySchema, {
+          rendition: create(RenditionDescriptorSchema, { name: 'parsed', mediaType: 'application/x-protobuf' }),
+          state: RenditionState.PRESENT,
+          sizeBytes: BigInt(PROTO_BYTES.length),
+          sha256: PROTO_SHA,
+        }),
+      ],
+    }),
+  }
+}
+
+function compatibleParquet(revision: bigint) {
+  return create(ListSaveAsCapabilitiesResponseSchema, {
+    resolvedSourceRevision: revision,
+    sourceSchemaType: DocumentSchema.typeName,
+    sourceSizeBytes: BigInt(PROTO_BYTES.length),
+    capabilities: [create(SaveAsCapabilitySchema, { capability: parquetCap, status: SaveAsCompatibilityStatus.COMPATIBLE })],
+  })
+}
+
+/** RepositoryDocumentView on revision `revision` of the document behind archive entry datasets/e-metrics. */
+async function mountArchiveBackedDocumentAtRevision(
+  revision: bigint,
+  handlers: {
+    getEntryManifest: (version: bigint) => ReturnType<typeof create<typeof GetEntryManifestResponseSchema>>
+    publish: (req: PublishRepositorySinkRequest) => ReturnType<typeof create<typeof PublishRepositorySinkResponseSchema>>
+  },
+) {
+  const address = testAddress({ graphId: 'archive:acct-a', graphAddressId: 'datasets', docId: 'e-metrics' })
+  const coreSelector = create(PartSelectorSchema, { selector: { case: 'part', value: DocumentPart.CORE } })
+  const manifest = create(DocumentManifestSchema, {
+    address,
+    revision,
+    parts: [
+      create(PartManifestEntrySchema, {
+        selector: coreSelector,
+        state: PartState.PRESENT,
+        sizeBytes: BigInt(PROTO_BYTES.length),
+        sha256: PROTO_SHA,
+        writtenInRevision: revision,
+        contentIncluded: true,
+      }),
+    ],
+  })
+  return mountRepositoryView(
+    RepositoryDocumentView,
+    {
+      name: 'repository-document',
+      query: { account: 'acct-a', graph: 'archive:acct-a', node: 'datasets', doc: 'e-metrics', revision: revision.toString() },
+    },
+    (router: ConnectRouter) => {
+      router.service(ArchiveService, {
+        listArchives: () => create(ListArchivesResponseSchema, { archives: [create(ArchiveSchema, { accountId: 'acct-a', name: 'datasets' })] }),
+        getEntryManifest: (req) => handlers.getEntryManifest(req.version),
+      })
+      router.service(DocumentService, {
+        getManifest: () =>
+          create(GetManifestResponseSchema, {
+            manifest,
+            validation: create(RevisionValidationSchema, {
+              status: ValidationStatus.TYPED_VALID,
+              partSchemas: [
+                create(PartSchemaBindingSchema, {
+                  part: coreSelector,
+                  fragmentSchema: { typeUrl: `type.googleapis.com/${DocumentSchema.typeName}`, descriptorSha256: DOC_DESCRIPTORS_SHA },
+                }),
+              ],
+            }),
+          }),
+        getDocument: () => create(GetDocumentResponseSchema, { document: PROTO_DOC }),
+        listRevisions: () => create(ListRevisionsResponseSchema),
+      })
+      router.service(RepositorySinkService, {
+        listSaveAsCapabilities: () => compatibleParquet(revision),
+        publishRepositorySink: (req) => handlers.publish(req),
+      })
+    },
+  )
+}

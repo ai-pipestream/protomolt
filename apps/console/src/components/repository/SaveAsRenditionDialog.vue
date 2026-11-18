@@ -29,6 +29,17 @@
       </v-card-subtitle>
 
       <v-card-text>
+        <v-alert
+          v-if="access.readOnly"
+          type="warning"
+          variant="tonal"
+          density="compact"
+          class="mb-4"
+          data-testid="save-as-dialog-readonly-notice"
+        >
+          {{ access.reason }}
+        </v-alert>
+
         <!-- Optional unpacked Any occurrence selector for v2 document parts -->
         <div
           v-if="sourceKind === 'document-part' && occurrenceOptions.length > 0"
@@ -262,7 +273,7 @@
           color="primary"
           variant="flat"
           :loading="submitting"
-          :disabled="loadingCapabilities || lockedByActiveAttempt"
+          :disabled="access.readOnly || loadingCapabilities || lockedByActiveAttempt"
           data-testid="save-as-submit-btn"
           @click="submitSaveAs"
         >
@@ -300,6 +311,7 @@ import {
   type SaveAsCapabilitiesView,
   type SaveAsCapabilityItem,
   type SaveAsDestinationInput,
+  type SaveAsSessionAccess,
 } from '@/repository/saveAsCore'
 import {
   enteredSucceeded,
@@ -319,6 +331,12 @@ const props = withDefaults(
     sourceKind: 'archive-rendition' | 'document-part'
     sourceLabel: string
     accountId: string
+    /**
+     * The parent's current answer to whether this session may write. It can change while the
+     * dialog is open: a session check that settles late as failed or read-only withholds a new
+     * submission here too, not only the launcher.
+     */
+    access: SaveAsSessionAccess
     archiveSource?: ArchiveRenditionSourceInput | null
     documentSource?: Omit<DocumentPartSourceInput, 'occurrenceFieldPath'> | null
     occurrenceOptions?: readonly ResolvedOccurrenceOption[]
@@ -588,7 +606,7 @@ function onOccurrenceChanged() {
 }
 
 async function submitSaveAs() {
-  if (submitting.value || selectedCapability.value === null) return
+  if (props.access.readOnly || submitting.value || selectedCapability.value === null) return
   inputError.value = null
   releaseActiveJob()
   activeOperationId.value = null

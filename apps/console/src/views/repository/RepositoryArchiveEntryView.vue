@@ -822,6 +822,7 @@
     </v-card>
 
     <SaveAsRenditionDialog
+      :access="saveAsAccess"
       :open="saveAsDialogOpen"
       source-kind="archive-rendition"
       :source-label="saveAsSourceLabel"

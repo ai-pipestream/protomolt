@@ -81,6 +81,13 @@
                 >
                   {{ saveAsAccess.reason }}
                 </v-alert>
+                <RpcFailureAlert
+                  v-if="saveAsDestinationFailure"
+                  :failure="saveAsDestinationFailure"
+                  title="Reading the archive entry's current version for Save-as"
+                  class="mb-3"
+                  data-testid="save-as-destination-failure"
+                />
                 <v-table density="compact" data-testid="parts-table">
                   <thead>
                     <tr>
@@ -394,6 +401,7 @@
     </template>
 
     <SaveAsRenditionDialog
+      :access="saveAsAccess"
       :open="saveAsDialogOpen"
       source-kind="document-part"
       :source-label="saveAsSourceLabel"
@@ -402,7 +410,7 @@
       :occurrence-options="saveAsOccurrenceOptions"
       :default-destination-archive="defaultSaveAsArchive"
       :default-destination-entry-id="call?.docId ?? ''"
-      :default-expected-destination-version="defaultSaveAsExpectedVersion"
+      :default-expected-destination-version="saveAsExpectedVersion"
       @close="saveAsDialogOpen = false"
       @saved="onSaveAsCommitted"
       @reload-source="onSaveAsReloadSource"
@@ -426,6 +434,8 @@ import RevisionHistory from '@/components/repository/RevisionHistory.vue'
 import RpcFailureAlert from '@/components/repository/RpcFailureAlert.vue'
 import SaveAsRenditionDialog from '@/components/repository/SaveAsRenditionDialog.vue'
 import type { ConsoleSessionStatus } from '@/gen/ai/protomolt/proto/authz/v1/console_session_pb'
+import { GetEntryManifestRequestSchema } from '@/gen/ai/protomolt/proto/repo/archive/v1/archive_service_pb'
+import { EntryAddressSchema } from '@/gen/ai/protomolt/proto/repo/archive/v1/entry_pb'
 import type { NodeAddress } from '@/gen/ai/protomolt/proto/repo/v1/address_pb'
 import {
   GetDocumentRequestSchema,
@@ -582,12 +592,43 @@ const defaultSaveAsArchive = computed(() => {
   return ''
 })
 
-const defaultSaveAsExpectedVersion = computed<bigint | null>(() => {
+const saveAsExpectedVersion = ref<bigint | null>(null)
+const saveAsDestinationFailure = ref<RpcFailure | null>(null)
+
+/**
+ * The destination precondition for a Save-as into the archive entry this document is behind is
+ * that entry's current version, which is independent of the source revision being exported.
+ * Viewing the current revision, that is the revision on screen. Viewing a historical one, the
+ * entry is asked; if it cannot answer, Save-as does not open rather than guess.
+ */
+async function prepareSaveAsDestination(): Promise<boolean> {
+  saveAsDestinationFailure.value = null
+  saveAsExpectedVersion.value = null
   const c = call.value
-  if (c === null || manifest.value === null) return null
-  if (c.graphId === `archive:${c.accountId}`) return manifest.value.revision
-  return null
-})
+  if (c === null || manifest.value === null) return false
+  if (c.graphId !== `archive:${c.accountId}`) return true
+  if (requested.value === null) {
+    saveAsExpectedVersion.value = manifest.value.revision
+    return true
+  }
+  try {
+    const answer = await clients.archives.getEntryManifest(
+      create(GetEntryManifestRequestSchema, {
+        address: create(EntryAddressSchema, { accountId: c.accountId, archive: c.graphAddressId, entryId: c.docId }),
+        version: 0n,
+      }),
+    )
+    const current = answer.info?.currentVersion
+    if (current === undefined || current <= 0n) {
+      throw new Error('GetEntryManifest answered without the entry\'s current version.')
+    }
+    saveAsExpectedVersion.value = current
+    return true
+  } catch (error) {
+    saveAsDestinationFailure.value = rpcFailure(error)
+    return false
+  }
+}
 
 function hasRetainedPartSchema(index: number): boolean {
   const selector = manifest.value?.parts[index]?.selector
@@ -603,10 +644,11 @@ function canSavePartAs(index: number): boolean {
   return hasRetainedPartSchema(index)
 }
 
-function openSaveAsForPartIndex(index: number) {
+async function openSaveAsForPartIndex(index: number) {
   const entry = manifest.value?.parts[index]
   const row = parts.value[index]
   if (saveAsAccess.value.readOnly || !entry?.selector || !row || !address.value || pinned.value === null) return
+  if (!(await prepareSaveAsDestination())) return
   saveAsDocumentSource.value = {
     address: address.value,
     selector: entry.selector,
@@ -621,9 +663,10 @@ function openSaveAsForPartIndex(index: number) {
   saveAsDialogOpen.value = true
 }
 
-function openSaveAsForLoadedPart() {
+async function openSaveAsForLoadedPart() {
   const pv = partView.value
   if (saveAsAccess.value.readOnly || !pv || pv.decoded.kind !== 'decoded' || !address.value) return
+  if (!(await prepareSaveAsDestination())) return
   saveAsDocumentSource.value = {
     address: address.value,
     selector: pv.selector,
