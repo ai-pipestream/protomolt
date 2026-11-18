@@ -109,7 +109,7 @@ final class ExternalDeletionLifecycle {
         String intentSha256 = intentDigest(intent);
         String operationId = (request.operationId() == null || request.operationId().isEmpty())
                 ? ExternalOperationKeys.deriveOperationId(intent)
-                : request.operationId();
+                : ExternalPublicationCoordinates.requireCallerKey(request.operationId(), "operationId");
 
         return executeDeleteLifecycle(
                 ledgerAddr,
@@ -134,7 +134,7 @@ final class ExternalDeletionLifecycle {
         Objects.requireNonNull(request, "request");
         ExternalPublicationCoordinates.requireSourceAddress(request.sourceAddress());
         ExternalPublicationCoordinates.requireBindingId(request.bindingId());
-        ExternalPublicationCoordinates.requireNonBlankCoordinate(request.purgeId(), "purgeId");
+        ExternalPublicationCoordinates.requireCallerKey(request.purgeId(), "purgeId");
 
         NodeAddress ledgerAddr = ExternalPublicationCoordinates.ledgerAddress(
                 request.sourceAddress().getAccountId(), request.bindingId(), request.sourceAddress());
@@ -216,7 +216,7 @@ final class ExternalDeletionLifecycle {
     ExternalPublicationCoordinator.OperationResult handlePurge(ExternalPublicationCoordinator.PurgeRequest request) {
         Objects.requireNonNull(request, "request");
         ExternalPublicationCoordinates.requireSourceAddress(request.sourceAddress());
-        ExternalPublicationCoordinates.requireNonBlankCoordinate(request.purgeId(), "purgeId");
+        ExternalPublicationCoordinates.requireCallerKey(request.purgeId(), "purgeId");
 
         String accountId = request.sourceAddress().getAccountId();
         sources.requireSourcePurged(request.sourceAddress());
@@ -262,7 +262,7 @@ final class ExternalDeletionLifecycle {
         String intentSha256 = intentDigest(intent);
         String operationId = (request.operationId() == null || request.operationId().isEmpty())
                 ? ExternalOperationKeys.deriveOperationId(intent)
-                : request.operationId();
+                : ExternalPublicationCoordinates.requireCallerKey(request.operationId(), "operationId");
 
         return executeDeleteLifecycle(
                 ledgerAddr,
@@ -296,8 +296,7 @@ final class ExternalDeletionLifecycle {
         if (next.hasCurrentLink()
                 && claimable(next.getCurrentLink(), bindingSnapshot, externalObjectId,
                         coveredUpToSourceRevision)) {
-            next.setCurrentLink(next.getCurrentLink().toBuilder()
-                    .setDeletionClaimedByOperationId(operationId));
+            next.setCurrentLink(withDeletionClaim(next.getCurrentLink(), operationId));
         }
         for (int i = 0; i < current.getHistoricalLinksCount(); i++) {
             ExternalLink historical = current.getHistoricalLinks(i);
@@ -305,10 +304,21 @@ final class ExternalDeletionLifecycle {
                             != ExternalProjectionLifecycle.EXTERNAL_PROJECTION_LIFECYCLE_DELETED
                     && claimable(historical, bindingSnapshot, externalObjectId,
                             coveredUpToSourceRevision)) {
-                next.setHistoricalLinks(i, historical.toBuilder()
-                        .setDeletionClaimedByOperationId(operationId));
+                next.setHistoricalLinks(i, withDeletionClaim(historical, operationId));
             }
         }
+    }
+
+    /**
+     * Adds {@code operationId} to the deletions that claim {@code link}. Claims of other
+     * deletions stay: one still in flight may settle later, and its evidence must still find
+     * the link it named.
+     */
+    private static ExternalLink withDeletionClaim(ExternalLink link, String operationId) {
+        if (link.getDeletionClaimedByOperationIdsList().contains(operationId)) {
+            return link;
+        }
+        return link.toBuilder().addDeletionClaimedByOperationIds(operationId).build();
     }
 
     private static boolean claimable(ExternalLink link, ExternalSystemBinding bindingSnapshot,

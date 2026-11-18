@@ -459,7 +459,7 @@ final class ExternalReceiptSettlement {
         // itself on the links that were on record when it was sent; a link without that name
         // was recorded later and may be a publication the provider ran after the deletion.
         boolean recordedBeforeDeletionWasSent =
-                link.getDeletionClaimedByOperationId().equals(deletedOp.getOperationId());
+                link.getDeletionClaimedByOperationIdsList().contains(deletedOp.getOperationId());
         return publishedBeforeDeletion
                 && recordedBeforeDeletionWasSent
                 && link.getExternalObjectId().equals(deletion.getExternalObjectId())

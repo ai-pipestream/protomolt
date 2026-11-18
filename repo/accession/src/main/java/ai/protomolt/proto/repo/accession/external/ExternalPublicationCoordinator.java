@@ -409,7 +409,7 @@ public final class ExternalPublicationCoordinator {
         }
         String operationId = (request.operationId() == null || request.operationId().isEmpty())
                 ? ExternalOperationKeys.deriveOperationId(intent)
-                : request.operationId();
+                : ExternalPublicationCoordinates.requireCallerKey(request.operationId(), "operationId");
 
         NodeAddress ledgerAddr = ExternalPublicationCoordinates.ledgerAddress(
                 accountId, request.bindingId(), request.sourceAddress());

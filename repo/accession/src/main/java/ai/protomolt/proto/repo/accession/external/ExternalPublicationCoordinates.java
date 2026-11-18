@@ -446,6 +446,27 @@ public final class ExternalPublicationCoordinates {
         }
     }
 
+    /**
+     * Validates a key the caller supplies, such as an operation ID or a purge ID. Such a key is
+     * stored on the ledger, readable by anyone who may read the source, so beyond being
+     * non-blank it must not read as a credential.
+     *
+     * @return {@code value}
+     * @throws io.grpc.StatusRuntimeException INVALID_ARGUMENT when the key is blank, longer than
+     *         200 characters, or reads as a credential
+     */
+    static String requireCallerKey(String value, String fieldName) {
+        try {
+            requireNonBlankCoordinate(value, fieldName);
+            requireNonSecretText(value, fieldName, 200);
+        } catch (IllegalArgumentException invalid) {
+            throw io.grpc.Status.INVALID_ARGUMENT
+                    .withDescription(invalid.getMessage())
+                    .asRuntimeException();
+        }
+        return value;
+    }
+
     static void requireNonBlankCoordinate(String value, String fieldName) {
         if (value == null || value.isEmpty() || value.indexOf('\0') >= 0) {
             throw new IllegalArgumentException(fieldName + " must be non-blank and free of NUL");

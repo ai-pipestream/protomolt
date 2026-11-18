@@ -82,7 +82,7 @@ class ExternalReceiptSettlementTest {
                         && (bound == 0L || link.getSourceRevision() <= bound);
         if (ledger.hasCurrentLink() && covers.test(ledger.getCurrentLink())) {
             claimed.setCurrentLink(ledger.getCurrentLink().toBuilder()
-                    .setDeletionClaimedByOperationId(deleteOp.getOperationId()));
+                    .addDeletionClaimedByOperationIds(deleteOp.getOperationId()));
         }
         for (int i = 0; i < ledger.getHistoricalLinksCount(); i++) {
             ExternalLink historical = ledger.getHistoricalLinks(i);
@@ -90,7 +90,7 @@ class ExternalReceiptSettlementTest {
                             != ExternalProjectionLifecycle.EXTERNAL_PROJECTION_LIFECYCLE_DELETED
                     && covers.test(historical)) {
                 claimed.setHistoricalLinks(i, historical.toBuilder()
-                        .setDeletionClaimedByOperationId(deleteOp.getOperationId()));
+                        .addDeletionClaimedByOperationIds(deleteOp.getOperationId()));
             }
         }
         return claimed.build();
@@ -409,7 +409,7 @@ class ExternalReceiptSettlementTest {
         ExternalDeletionLifecycle.DeletionRegistration retry =
                 register(withLatePublication, purgeDelete);
         assertThat(retry.attemptNumber()).isEqualTo(2);
-        assertThat(retry.ledger().getCurrentLink().hasDeletionClaimedByOperationId()).isFalse();
+        assertThat(retry.ledger().getCurrentLink().getDeletionClaimedByOperationIdsList()).isEmpty();
 
         ExternalPublicationLedger after = settled(retry.ledger(),
                 ExternalLedgerStore.findOperation(retry.ledger(), "op-purge-del").orElseThrow());
@@ -430,11 +430,11 @@ class ExternalReceiptSettlementTest {
                 .build();
         ExternalDeletionLifecycle.DeletionRegistration first = register(onRecord, purgeDelete);
         assertThat(first.attemptNumber()).isEqualTo(1);
-        assertThat(first.ledger().getCurrentLink().getDeletionClaimedByOperationId()).isEqualTo("op-purge-del");
+        assertThat(first.ledger().getCurrentLink().getDeletionClaimedByOperationIdsList()).containsExactly("op-purge-del");
         assertThat(first.ledger().getCurrentLink().getProjectionLifecycle()).isEqualTo(
                 ExternalProjectionLifecycle.EXTERNAL_PROJECTION_LIFECYCLE_DELETION_PENDING);
         // A different object is not this deletion's.
-        assertThat(first.ledger().getHistoricalLinks(0).hasDeletionClaimedByOperationId()).isFalse();
+        assertThat(first.ledger().getHistoricalLinks(0).getDeletionClaimedByOperationIdsList()).isEmpty();
     }
 
     @Test
@@ -491,7 +491,7 @@ class ExternalReceiptSettlementTest {
         ExternalLink displaced = republished.getHistoricalLinksList().stream()
                 .filter(link -> link.getSourceRevision() == 3L).findFirst().orElseThrow();
         assertThat(displaced.getRetiredByOperationId()).isEqualTo("op-pub-r5");
-        assertThat(displaced.getDeletionClaimedByOperationId()).isEqualTo("op-del-d");
+        assertThat(displaced.getDeletionClaimedByOperationIdsList()).containsExactly("op-del-d");
 
         ExternalPublicationLedger after = settled(republished, tombstoneDelete);
         assertThat(after.getHistoricalLinksList())
@@ -532,6 +532,31 @@ class ExternalReceiptSettlementTest {
                 .setBindingSnapshot(target)
                 .setOutcome(ExternalPublicationOutcome.EXTERNAL_PUBLICATION_OUTCOME_DELETED)
                 .build();
+    }
+
+    @Test
+    void aLaterDeletionDoesNotEraseTheClaimOfOneStillInFlight() {
+        // D1 is registered and sent; its reply is lost. D2, another purge deletion of the same
+        // object, is registered and claims the same link. D1's receipt is reconciled after.
+        ExternalPublicationOperationRecord d1 = operation("op-del-1",
+                ExternalPublicationAction.EXTERNAL_PUBLICATION_ACTION_DELETE, "object-a", 1L, 0L);
+        ExternalPublicationOperationRecord d2 = operation("op-del-2",
+                ExternalPublicationAction.EXTERNAL_PUBLICATION_ACTION_DELETE, "object-a", 1L, 0L);
+        ExternalPublicationLedger onRecord = ExternalPublicationLedger.newBuilder()
+                .setCurrentLink(link("object-a", 1L, 3L,
+                        ExternalProjectionLifecycle.EXTERNAL_PROJECTION_LIFECYCLE_ACTIVE))
+                .build();
+        ExternalPublicationLedger afterD1 = register(onRecord, d1).ledger();
+        ExternalPublicationLedger afterD2 = register(afterD1, d2).ledger();
+        assertThat(afterD2.getCurrentLink().getDeletionClaimedByOperationIdsList())
+                .containsExactly("op-del-1", "op-del-2");
+
+        ExternalPublicationLedger after = settled(afterD2,
+                ExternalLedgerStore.findOperation(afterD2, "op-del-1").orElseThrow());
+        assertThat(after.hasCurrentLink()).isFalse();
+        assertThat(after.getHistoricalLinksList()).singleElement().satisfies(link ->
+                assertThat(link.getProjectionLifecycle()).isEqualTo(
+                        ExternalProjectionLifecycle.EXTERNAL_PROJECTION_LIFECYCLE_DELETED));
     }
 
     /** Registers an attempt of a purge deletion, as the lifecycle does before sending it. */

@@ -70,11 +70,13 @@ parameters, or private key material:
    [linksCore.ts](../../apps/console/src/repository/linksCore.ts)) re-validates
    `display_url` before emitting an anchor `href`, rendering unsafe values as
    non-navigable text.
-4. An operation's intent is checked the same way before it is first saved:
+4. Keys the caller supplies, operation IDs and purge IDs, are checked the same
+   way and refused with `INVALID_ARGUMENT`.
+5. An operation's intent is checked the same way before it is first saved:
    any of its string fields, such as `external_object_id` or
    `processing.mapping_id`, that reads as a credential makes the request
    `INVALID_ARGUMENT`.
-5. Provider evidence is stored on the ledger, so `ExternalProviderVerifier`
+6. Provider evidence is stored on the ledger, so `ExternalProviderVerifier`
    refuses evidence (`EVIDENCE_CARRIES_CREDENTIAL`) when any string field of it,
    or of the `WorkRecord` manifest inside a signed work record, at any depth,
    reads as a credential. A valid signature proves who wrote the text, not that
@@ -108,7 +110,10 @@ the `bindingWriters` identities the store is constructed with. A binding decides
 where publications go and which credentials they use, so an account member with
 a writer grant for the bindings datasource still cannot rotate or retire a
 binding unless named as a binding writer. The store refuses an empty writer set
-and a `public` writer.
+and a `public` writer. Calls that change nothing still prove the caller is a
+writer: retiring an already retired binding (accepted only with the same
+reason) and `mirrorRevision` save the current binding document again,
+unchanged, so the repository checks `WRITE` on it.
 
 When an endpoint changes or a binding is rotated or retired:
 
@@ -243,9 +248,10 @@ Ordering invariants:
    lands directly in `historical_links` as `SUPERSEDED` (with
    `retired_by_operation_id` pointing to `r2`'s operation), leaving `current_link`
    untouched at `r2`.
-2. **Deletion claims**: when a deletion is first registered it writes its
-   operation ID into `deletion_claimed_by_operation_id` on every link on record
-   that it covers. Only that deletion's verified evidence retires those links;
+2. **Deletion claims**: when a deletion is first registered it adds its
+   operation ID to `deletion_claimed_by_operation_ids` on every link on record
+   that it covers, beside any other deletion's claim still in flight. Only the
+   verified evidence of a claiming deletion retires those links;
    a retry claims nothing new, and a later supersession, which overwrites
    `retired_by_operation_id`, leaves the claim in place. Whether a superseded
    projection is covered by a later deletion is decided per object at one place

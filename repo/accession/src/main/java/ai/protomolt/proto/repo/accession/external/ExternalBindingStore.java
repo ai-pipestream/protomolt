@@ -59,6 +59,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.UUID;
 import java.util.Set;
 
 /**
@@ -363,8 +364,18 @@ public final class ExternalBindingStore {
                         .asRuntimeException());
         ExternalSystemBinding current = existing.binding();
         if (current.getLifecycle() == ExternalBindingLifecycle.EXTERNAL_BINDING_LIFECYCLE_RETIRED) {
-            // Retired already. An earlier call may have saved the revision and then failed to
-            // mirror it, so the mirror is written again before this one reports success.
+            // Retired already. Only a repeat of that retirement succeeds: another reason is a
+            // different request. The repeat saves the identical document again, so the
+            // repository authorizes it as a write on the binding (a reader is refused) and
+            // leaves the document unchanged. An earlier call may have saved the revision and
+            // then failed to mirror it, so the mirror is written again before success.
+            if (!current.getRetiredReason().equals(retiredReason)) {
+                throw Status.ALREADY_EXISTS
+                        .withDescription("External binding '" + bindingId
+                                + "' is already retired with a different reason")
+                        .asRuntimeException();
+            }
+            requireWriteBySavingUnchanged(address, existing, operationId);
             configLane.mirror(current);
             return current;
         }
@@ -595,8 +606,29 @@ public final class ExternalBindingStore {
                         .withDescription("ExternalSystemBinding '" + bindingId + "' revision "
                                 + bindingRevision + " not found")
                         .asRuntimeException());
+        // The mirror is written under the host's authority, so the caller must be a binding
+        // writer: reading the binding is not enough.
+        NodeAddress address = ExternalPublicationCoordinates.bindingAddress(accountId, bindingId);
+        LoadedBinding current = loadOptionalCurrent(address)
+                .orElseThrow(() -> Status.NOT_FOUND
+                        .withDescription("External binding not found: " + bindingId)
+                        .asRuntimeException());
+        requireWriteBySavingUnchanged(address, current,
+                "ext-binding-mirror:" + bindingId + ":" + bindingRevision + ":" + UUID.randomUUID());
         configLane.mirror(committed);
         return committed;
+    }
+
+    /**
+     * Proves the caller may write the binding by saving its current document again, unchanged,
+     * at its current revision. The repository checks WRITE on the binding for that save and
+     * records it without a new revision; a reader is refused with PERMISSION_DENIED.
+     */
+    private void requireWriteBySavingUnchanged(
+            NodeAddress address, LoadedBinding current, String operationId) {
+        persistBindingDocument(address,
+                ExpectedRevision.newBuilder().setRevision(current.documentRevision()).build(),
+                current.binding(), operationId);
     }
 
     private Optional<LoadedBinding> loadOptionalCurrent(NodeAddress address) {

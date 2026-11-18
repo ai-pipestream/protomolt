@@ -440,6 +440,16 @@ class ExternalPublicationIT {
                     "pub-rl-1", sourceAddr, 1L, "rust-search", 1L, "ext-rl", null, null));
             h.saveSourceDocument("save-rl-2", sourceAddr, 1L, "Alice only", "alice");
 
+            // Keys the caller supplies are stored on the ledger, so they cannot read as credentials.
+            assertGrpcCode(() -> h.coordinator.preparePurge(
+                            new ExternalPublicationCoordinator.PreparePurgeRequest(
+                                    sourceAddr, "Bearer abcdefghijklmnopqrstuvwxyz0123456789", "rust-search")),
+                    Status.Code.INVALID_ARGUMENT);
+            assertGrpcCode(() -> h.coordinator.publish(new ExternalPublicationCoordinator.PublishRequest(
+                            "Bearer abcdefghijklmnopqrstuvwxyz0123456789", sourceAddr, 2L, "rust-search", 1L,
+                            "ext-rl", null, null)),
+                    Status.Code.INVALID_ARGUMENT);
+
             // Prepared while the source exists, so the ledger takes revision 2's rules.
             ExternalPurgePreparation prepared = h.coordinator.preparePurge(
                     new ExternalPublicationCoordinator.PreparePurgeRequest(
@@ -1083,6 +1093,21 @@ class ExternalPublicationIT {
             assertThat(v3Retired.getBindingRevision()).isEqualTo(3L);
             assertThat(v3Retired.getLifecycle())
                     .isEqualTo(ExternalBindingLifecycle.EXTERNAL_BINDING_LIFECYCLE_RETIRED);
+
+            // Retiring it again is a repeat only with the same reason, and only for a writer.
+            assertThat(h.bindingStore.retireBinding("tenant-alpha", "rust-search",
+                            "Migrated search traffic to dedicated shard binding", "op-bind-retire-again"))
+                    .isEqualTo(v3Retired);
+            assertGrpcCode(() -> h.bindingStore.retireBinding("tenant-alpha", "rust-search",
+                            "Another reason", "op-bind-retire-other"),
+                    Status.Code.ALREADY_EXISTS);
+            h.useCaller(h.alphaBob);
+            assertGrpcCode(() -> h.bindingStore.retireBinding("tenant-alpha", "rust-search",
+                            "Migrated search traffic to dedicated shard binding", "op-bind-retire-bob"),
+                    Status.Code.PERMISSION_DENIED);
+            h.useCaller(h.alphaAlice);
+            assertThat(h.bindingStore.getCurrentBinding("tenant-alpha", "rust-search"))
+                    .contains(v3Retired);
 
             // Retired binding refuses new publications targeting either v2 or v3!
             h.saveSourceDocument("save-rot-r3", docAddr, 2L, "Rotation v3", "alice");

@@ -863,12 +863,21 @@ message ExternalLink {
   ];
   // Optional verified provider deletion evidence when projection_lifecycle is DELETED.
   optional ExternalProviderEvidence deletion_evidence = 16;
-  // The deletion operation that named this projection as one it covers, when that deletion
-  // was first sent. Only that deletion's evidence retires it. Kept apart from
-  // retired_by_operation_id, which a later supersession overwrites.
-  optional string deletion_claimed_by_operation_id = 17 [
-    (ai.protomolt.proto.validate.v1.field).string = {min_len: 1, max_len: 200, pattern: ".*\\S.*"},
-    (buf.validate.field).string = {min_len: 1, max_len: 200, pattern: ".*\\S.*"}
+  // The deletion operations that named this projection as one they cover, each when it was
+  // first sent. Only the evidence of one of them retires it. Kept apart from
+  // retired_by_operation_id, which a later supersession overwrites, and a list so a deletion
+  // registered later does not erase the claim of one still in flight.
+  repeated string deletion_claimed_by_operation_ids = 17 [
+    (ai.protomolt.proto.validate.v1.field).repeated = {
+      max_items: 256
+      unique: true
+      items: {string: {min_len: 1, max_len: 200, pattern: ".*\\S.*"}}
+    },
+    (buf.validate.field).repeated = {
+      max_items: 256
+      unique: true
+      items: {string: {min_len: 1, max_len: 200, pattern: ".*\\S.*"}}
+    }
   ];
 }
 
