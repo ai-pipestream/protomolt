@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 
+import ai.protomolt.proto.pipeline.v1.PipelineRunCheckpoint;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
@@ -43,7 +44,8 @@ public final class JdbcWorkflowRunStore implements WorkflowRunStore {
             job_id, workflow_name, workflow_definition, input, input_ref, status, attempt,
             max_attempts, run_after, outstanding_step, checkpoints, result,
             result_ref, verdict, error, lease_owner, lease_until, created_at,
-            updated_at, completed_at
+            updated_at, completed_at, pipeline_definition_pb, pipeline_checkpoints_pb,
+            pipeline_result_pb
             """;
 
     private static final String EVENT_COLUMNS = """
@@ -51,16 +53,18 @@ public final class JdbcWorkflowRunStore implements WorkflowRunStore {
             published_at, last_error
             """;
 
-    private static final String CLAIM_GUARD = " AND status = 'RUNNING'"
+    static final String CLAIM_GUARD = " AND status = 'RUNNING'"
             + " AND lease_owner = ? AND attempt = ? AND lease_until > clock_timestamp()";
 
     private final WorkflowRunDatabase database;
+    private final JdbcPipelineRunWrites pipelineWrites;
 
     /**
      * @param database the jobs store's database wrapper
      */
     public JdbcWorkflowRunStore(WorkflowRunDatabase database) {
         this.database = database;
+        this.pipelineWrites = new JdbcPipelineRunWrites(this.database);
     }
 
     @Override
@@ -70,9 +74,11 @@ public final class JdbcWorkflowRunStore implements WorkflowRunStore {
                     INSERT INTO workflow_run (job_id, workflow_name, workflow_definition, input,
                                               input_ref, status, attempt, max_attempts, run_after,
                                               outstanding_step, checkpoints, result, result_ref,
-                                              verdict, error, lease_owner, lease_until, completed_at)
+                                              verdict, error, lease_owner, lease_until, completed_at,
+                                              pipeline_definition_pb, pipeline_checkpoints_pb,
+                                              pipeline_result_pb)
                     VALUES (?, ?, ?::jsonb, ?::jsonb, ?, ?, ?, ?, ?, ?, ?::jsonb,
-                            ?::jsonb, ?, ?, ?, ?, ?, ?)
+                            ?::jsonb, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     ON CONFLICT (job_id) DO NOTHING""";
             int inserted;
             try (PreparedStatement ps = c.prepareStatement(sql)) {
@@ -87,7 +93,7 @@ public final class JdbcWorkflowRunStore implements WorkflowRunStore {
                 WorkflowRunJdbcMapping.setInstant(ps, 9,
                         job.runAfter == null ? Instant.now() : job.runAfter);
                 WorkflowRunJdbcMapping.setText(ps, 10, job.outstandingStep);
-                ps.setObject(11, job.checkpoints == null ? "[]" : job.checkpoints, Types.OTHER);
+                ps.setObject(11, workflowCheckpoints(job), Types.OTHER);
                 ps.setObject(12, job.result, Types.OTHER);
                 WorkflowRunJdbcMapping.setText(ps, 13, job.resultRef);
                 WorkflowRunJdbcMapping.setText(ps, 14, job.verdict);
@@ -95,6 +101,9 @@ public final class JdbcWorkflowRunStore implements WorkflowRunStore {
                 WorkflowRunJdbcMapping.setText(ps, 16, job.leaseOwner);
                 WorkflowRunJdbcMapping.setInstant(ps, 17, job.leaseUntil);
                 WorkflowRunJdbcMapping.setInstant(ps, 18, job.completedAt);
+                ps.setBytes(19, job.pipelineDefinition);
+                ps.setBytes(20, job.pipelineCheckpoints);
+                ps.setBytes(21, job.pipelineResult);
                 inserted = ps.executeUpdate();
             } catch (SQLException e) {
                 throw WorkflowRunStoreException.wrap("insert workflow run failed", e);
@@ -286,6 +295,32 @@ public final class JdbcWorkflowRunStore implements WorkflowRunStore {
     }
 
     @Override
+    public void savePipelineCheckpoints(WorkerClaim claim, byte[] checkpoints,
+            WorkflowRunEventRecord stepEvent) {
+        pipelineWrites.saveCheckpoints(claim, checkpoints, stepEvent);
+    }
+
+    @Override
+    public void markPipelineWaiting(WorkerClaim claim, String stepName, byte[] checkpoints,
+            WorkflowRunEventRecord event) {
+        pipelineWrites.markWaiting(claim, stepName, checkpoints, event);
+    }
+
+    @Override
+    public void markPipelineCompleted(WorkerClaim claim, byte[] result, String verdict,
+            WorkflowRunEventRecord event) {
+        pipelineWrites.markCompleted(claim, result, verdict, event);
+    }
+
+    @Override
+    public ParkedCompletion completeParkedPipelineStep(UUID jobId, String stepName,
+            PipelineRunCheckpoint checkpoint, WorkflowRunEventRecord stepEvent,
+            String validationError) {
+        return pipelineWrites.completeParkedStep(
+                jobId, stepName, checkpoint, stepEvent, validationError);
+    }
+
+    @Override
     public void markFailed(WorkerClaim claim, String error, WorkflowRunEventRecord event) {
         markTerminal("FAILED", claim, error, event);
     }
@@ -361,7 +396,7 @@ public final class JdbcWorkflowRunStore implements WorkflowRunStore {
             // Idempotent redelivery: the step's checkpoint already persisted.
             for (JsonNode entry : checkpoints) {
                 if (stepName.equals(entry.path("name").asText())) {
-                    return entry.path("response").equals(candidate.path("response"))
+                    return sameCompletion(entry, candidate)
                             ? new ParkedCompletion.AlreadyDone(status)
                             : new ParkedCompletion.Conflict(status);
                 }
@@ -488,7 +523,7 @@ public final class JdbcWorkflowRunStore implements WorkflowRunStore {
      * @param c the caller's connection (its transaction is the commit unit)
      * @param event the event to outbox
      */
-    private static void enqueue(Connection c, WorkflowRunEventRecord event) {
+    static void enqueue(Connection c, WorkflowRunEventRecord event) {
         String sql = """
                 INSERT INTO workflow_run_events_outbox (event_id, event_type, payload,
                                                         kafka_key, attempts, status, created_at)
@@ -506,7 +541,7 @@ public final class JdbcWorkflowRunStore implements WorkflowRunStore {
     }
 
     /** One conditional update with parameter binding; the row must exist. */
-    private static void update(Connection c, String sql, SqlBinder binder, UUID jobId) {
+    static void update(Connection c, String sql, SqlBinder binder, UUID jobId) {
         try (PreparedStatement ps = c.prepareStatement(sql)) {
             binder.bind(ps);
             if (ps.executeUpdate() != 1) {
@@ -518,7 +553,7 @@ public final class JdbcWorkflowRunStore implements WorkflowRunStore {
     }
 
     /** The row update and lease check are one statement under PostgreSQL's row lock. */
-    private static void updateClaimed(Connection c, String sql, SqlBinder binder,
+    static void updateClaimed(Connection c, String sql, SqlBinder binder,
             WorkerClaim claim) {
         try (PreparedStatement ps = c.prepareStatement(sql)) {
             binder.bind(ps);
@@ -530,7 +565,7 @@ public final class JdbcWorkflowRunStore implements WorkflowRunStore {
         }
     }
 
-    private static void bindClaim(PreparedStatement ps, int firstIndex, WorkerClaim claim)
+    static void bindClaim(PreparedStatement ps, int firstIndex, WorkerClaim claim)
             throws SQLException {
         ps.setObject(firstIndex, claim.jobId());
         ps.setString(firstIndex + 1, claim.leaseOwner());
@@ -538,8 +573,16 @@ public final class JdbcWorkflowRunStore implements WorkflowRunStore {
     }
 
     @FunctionalInterface
-    private interface SqlBinder {
+    interface SqlBinder {
         void bind(PreparedStatement ps) throws SQLException;
+    }
+
+    /** A workflow run's checkpoint JSON; a pipeline run stores none. */
+    private static String workflowCheckpoints(WorkflowRunRecord job) {
+        if (job.pipelineDefinition != null) {
+            return null;
+        }
+        return job.checkpoints == null ? "[]" : job.checkpoints;
     }
 
     private static ArrayNode readArray(String json, UUID jobId) {
@@ -561,5 +604,16 @@ public final class JdbcWorkflowRunStore implements WorkflowRunStore {
             return null;
         }
         return error.length() <= MAX_ERROR_LENGTH ? error : error.substring(0, MAX_ERROR_LENGTH);
+    }
+
+    private static boolean sameCompletion(JsonNode stored, JsonNode candidate) {
+        if (stored.path("skipped").asBoolean(false)
+                != candidate.path("skipped").asBoolean(false)) {
+            return false;
+        }
+        if (!stored.path("response").equals(candidate.path("response"))) {
+            return false;
+        }
+        return true;
     }
 }

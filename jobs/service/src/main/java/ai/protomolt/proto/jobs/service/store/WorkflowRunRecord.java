@@ -5,10 +5,10 @@ import java.util.UUID;
 
 /**
  * One {@code workflow_run} row, detached. Public fields, no behavior — same
- * convention as the account module's store record. The JSONB columns ride as
+ * convention as the account module's store record. A workflow run's JSONB columns ride as
  * their raw JSON text ({@code workflowDefinition}, {@code input},
- * {@code checkpoints}, {@code result}); Jackson work happens at the edges
- * (the worker, the actions), not in the row carrier.
+ * {@code checkpoints}, {@code result}); a pipeline run's protobuf columns ride as their
+ * serialized bytes. Decoding happens at the edges, not in the row carrier.
  */
 public final class WorkflowRunRecord {
 
@@ -40,6 +40,16 @@ public final class WorkflowRunRecord {
     public String input;
     /** Future repo-service claim-check for the input; null now. */
     public String inputRef;
+    /**
+     * A serialized {@code PipelineRunDefinition}; set on a pipeline run and null on a workflow
+     * run. A pipeline run leaves {@code workflowDefinition}, {@code input}, {@code checkpoints}
+     * and {@code result} null.
+     */
+    public byte[] pipelineDefinition;
+    /** A serialized {@code PipelineRunCheckpoints}; null until a pipeline step is saved. */
+    public byte[] pipelineCheckpoints;
+    /** A serialized {@code PipelineRunResult}; set when a pipeline run completes. */
+    public byte[] pipelineResult;
     /** QUEUED / RUNNING / WAITING / COMPLETED / FAILED / DEAD. */
     public String status = STATUS_QUEUED;
     /** 1-based execution counter; claim increments it. */
@@ -50,7 +60,7 @@ public final class WorkflowRunRecord {
     public Instant runAfter;
     /** The external step the job is parked on; set only while WAITING. */
     public String outstandingStep;
-    /** The ordered checkpoint array (raw JSON text). */
+    /** The ordered checkpoint array (raw JSON text); null on a pipeline run. */
     public String checkpoints = "[]";
     /** The workflow's composed output (raw JSON text); set on COMPLETED. */
     public String result;

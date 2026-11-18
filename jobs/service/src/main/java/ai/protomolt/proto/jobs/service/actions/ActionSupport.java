@@ -2,6 +2,7 @@ package ai.protomolt.proto.jobs.service.actions;
 
 import ai.protomolt.proto.actions.ActionException;
 import ai.protomolt.proto.actions.Reply;
+import ai.protomolt.proto.jobs.service.PipelineJobCoordinator;
 import ai.protomolt.proto.jobs.service.store.WorkflowRunRecord;
 import ai.protomolt.proto.jobs.service.store.WorkflowRunStore;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -140,8 +141,9 @@ final class ActionSupport {
                 .set("attempt", job.attempt)
                 .set("outstandingStep", text(job.outstandingStep));
         if (full) {
-            run.set("input", parse(job.input));
-            for (JsonNode entry : parse(job.checkpoints == null ? "[]" : job.checkpoints)) {
+            RunDocuments documents = RunDocuments.of(job);
+            run.set("input", documents.input());
+            for (JsonNode entry : documents.checkpoints()) {
                 var checkpoint = run.append("checkpoints")
                         .set("name", entry.path("name").asText())
                         .set("skipped", entry.path("skipped").asBoolean());
@@ -153,8 +155,8 @@ final class ActionSupport {
                 }
                 checkpoint.build();
             }
-            if (job.result != null) {
-                run.set("result", parse(job.result));
+            if (documents.result() != null) {
+                run.set("result", documents.result());
             }
         }
         run.set("verdict", text(job.verdict))
@@ -192,10 +194,11 @@ final class ActionSupport {
         node.put("attempt", job.attempt);
         putText(node, "outstandingStep", job.outstandingStep);
         if (full) {
-            node.set("input", parse(job.input));
-            node.set("checkpoints", parse(job.checkpoints == null ? "[]" : job.checkpoints));
-            if (job.result != null) {
-                node.set("result", parse(job.result));
+            RunDocuments documents = RunDocuments.of(job);
+            node.set("input", documents.input());
+            node.set("checkpoints", documents.checkpoints());
+            if (documents.result() != null) {
+                node.set("result", documents.result());
             }
         }
         putText(node, "verdict", job.verdict);
@@ -204,6 +207,23 @@ final class ActionSupport {
         putText(node, "updatedAt", iso(job.updatedAt));
         putText(node, "completedAt", iso(job.completedAt));
         return node;
+    }
+
+    /**
+     * A run's input, checkpoints and result as JSON for a reply. A workflow run stores them
+     * as JSON; a pipeline run stores protobuf, rendered here for display only.
+     */
+    private record RunDocuments(JsonNode input, JsonNode checkpoints, JsonNode result) {
+        static RunDocuments of(WorkflowRunRecord job) {
+            if (PipelineJobCoordinator.isPipelineJob(job)) {
+                PipelineJobCoordinator.RunView view = PipelineJobCoordinator.view(job);
+                return new RunDocuments(view.input(), view.checkpoints(), view.result());
+            }
+            return new RunDocuments(
+                    parse(job.input),
+                    parse(job.checkpoints == null ? "[]" : job.checkpoints),
+                    job.result == null ? null : parse(job.result));
+        }
     }
 
     private static JsonNode parse(String json) {

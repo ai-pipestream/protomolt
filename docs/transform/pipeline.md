@@ -66,8 +66,50 @@ explicit item and concurrency limits, stable branch order, and `FAIL_FAST` or
 `CONTINUE` failure behavior. Branch work runs on virtual threads while a
 semaphore enforces the declared concurrency cap.
 
-Pipeline and step deadlines bound the run. External-completion steps require a
-durable job coordinator and are rejected by the in-process executor.
+Pipeline and step deadlines bound the run. Synchronous `PipelineExecutor.run`
+evaluates each step's `when` gate first and rejects unskipped
+`STEP_COMPLETION_EXTERNAL` steps with `FailureKind.EXTERNAL`.
+
+## Segmented execution and durable job coordination
+
+`PipelineExecutor.runSegment` executes a pipeline up to completion or the next
+unskipped `STEP_COMPLETION_EXTERNAL` step, returning a sealed `Segment`
+(`Segment.Completed` or `Segment.Parked`). Prior `Checkpoint` entries replay
+completed steps in order without re-invoking upstream services after verifying:
+
+- canonical SHA-256 fingerprints of the `Pipeline` + descriptor set and the
+  binary input message;
+- ordered step identity, output `Descriptor` full name and structural
+  fingerprint, cardinality (`ONE` or `MANY`), and `max_stream_messages` bounds;
+- `StepOutcome` request/response counts (a called step's request count must
+  equal what its edge sends), fan-out `BranchOutcome` evidence, declared
+  `validate_response` constraints, and linear stream consumption;
+- the step's `when` gate, evaluated again over the replayed bindings: a
+  checkpoint may record a skip only where the gate is false and a response
+  only where it is true.
+
+When an `ExecutionIdentity` (`jobId` + `attempt`) is supplied,
+`DynamicPipelineTransport` stamps `x-protomolt-job-id`,
+`x-protomolt-step-name`, `x-protomolt-branch-id`, and
+`x-protomolt-operation-id` (`<jobId>/<stepName>` or `<jobId>/<stepName>#<index>`)
+onto outbound gRPC calls so side-effecting services deduplicate retries across
+worker reassignments.
+
+`protomolt-jobs-service` (`PipelineJobCoordinator`,
+`WorkflowRunSubmitter.submitPipeline`, `WorkflowRunWorker`, and `complete-step`)
+persists a pipeline run in `workflow_run` as protobuf: a `PipelineRunDefinition`
+(the pipeline, its transitive descriptor set, the input bytes and both
+fingerprints), a `PipelineRunCheckpoints` and, on completion, a
+`PipelineRunResult`, each in its own `BYTEA` column. A pipeline row writes none
+of the workflow JSON columns. `get-job` and `list-jobs` render the stored
+protobuf to JSON for display only; nothing reads that JSON back. Production
+workers (`JobsFleetMount`, `JobsModule`, and policy-backed `WorkflowRunWorker`
+constructors) resolve `ServiceDependency` endpoints from
+`ServiceProfileRepository` and enforce `OutboundChannelPolicy` allowlists,
+plaintext/TLS rules, and deadline bounds before opening any channel. External
+completions validate against the parked step's descriptor and
+`validate_response` rules, accept idempotent redeliveries, and refuse altered
+intent or conflicting payloads without mutating committed outcomes.
 
 ## Workflows
 

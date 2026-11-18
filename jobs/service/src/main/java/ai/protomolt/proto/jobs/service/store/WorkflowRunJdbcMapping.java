@@ -44,6 +44,9 @@ final class WorkflowRunJdbcMapping {
         record.workflowDefinition = rs.getString("workflow_definition");
         record.input = rs.getString("input");
         record.inputRef = rs.getString("input_ref");
+        record.pipelineDefinition = rs.getBytes("pipeline_definition_pb");
+        record.pipelineCheckpoints = rs.getBytes("pipeline_checkpoints_pb");
+        record.pipelineResult = rs.getBytes("pipeline_result_pb");
         record.status = rs.getString("status");
         record.attempt = rs.getInt("attempt");
         record.maxAttempts = rs.getInt("max_attempts");

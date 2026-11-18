@@ -90,7 +90,8 @@ The failure model rides `WorkflowRunner.WorkflowExecutionException.kind()`:
 
 ## Park / resume (external steps)
 
-A step declaring `completion: "external"` parks the job: the worker persists
+A step declaring `completion: "external"` (or `STEP_COMPLETION_EXTERNAL` in a
+`Pipeline`) parks the job: the worker persists
 the checkpoint prefix, writes the WAITING event, and stops (the workflow
 deadline bounds a segment, not the hours a human may take). `complete-step`
 supplies the response: the job's state is gated first (only a WAITING job
@@ -98,17 +99,70 @@ parked on exactly that step accepts it), the response is parsed against the
 step's output type and — when the step declares `validate` — checked against
 its declared rules (a rejection fails the job as a verdict). Accepted, the
 checkpoint appends and the job requeues in one transaction; the worker fleet
-runs the next segment. Redelivering a completed step is idempotent.
+runs the next segment. Redelivering a completed step is idempotent, while
+reusing a `jobId` or completing an already-settled step with an altered
+definition, input, or response payload is refused as a conflict without
+mutating the committed outcome.
+
+## Durable pipeline runs
+
+`PipelineJobCoordinator` and `WorkflowRunSubmitter.submitPipeline` run compiled
+`ai.protomolt.proto.pipeline.v1.Pipeline` definitions on the same `workflow_run`
+state machine, lease sweeper, `WorkerClaim` fencing, and outbox relay:
+
+- A pipeline run is stored as protobuf. `pipeline_definition_pb` holds a
+  `PipelineRunDefinition`: the `Pipeline`, its topological `FileDescriptorSet`
+  closure, the input message bytes (`bytes`, `uint64`, `google.protobuf.Any`,
+  and unknown fields remain intact across restarts) and the SHA-256 pipeline
+  and input fingerprints. A pipeline row leaves the workflow JSON columns
+  (`workflow_definition`, `input`, `checkpoints`, `result`) null, and a table
+  constraint refuses a row that is both kinds.
+- `WorkflowRunWorker` executes segments via `PipelineExecutor.runSegment` with
+  `ExecutionIdentity(jobId, attempt)` so outbound calls propagate
+  `x-protomolt-operation-id` (`<jobId>/<stepName>` or `<jobId>/<step>#<branch>`)
+  to downstream gRPC services. Production workers resolve pipeline
+  `ServiceDependency` targets and transport security from
+  `ServiceProfileRepository` and validate every target, TLS setting, and call
+  deadline through `OutboundChannelPolicy` / `ChannelFactory` before opening
+  outbound channels, closing owned channels on worker shutdown.
+- `pipeline_checkpoints_pb` holds a `PipelineRunCheckpoints`: per step, the
+  output message bytes, cardinality (`ONE` or `MANY`), `StepOutcome` counts and
+  fan-out `BranchOutcome` evidence. `pipeline_result_pb` holds the
+  `PipelineRunResult`. `get-job` and `list-jobs` render these to JSON for
+  display (`{"items": [...]}` for streams); that JSON is output only.
+- `complete-step` settles both unary (`ONE`) and server-streaming (`MANY`, via
+  `{"items": [...]}`) external pipeline steps, enforcing `max_stream_messages`
+  and `validate_response` before requeuing.
+- A message type that does not print as a JSON object (the wrapper types,
+  `Timestamp`, `Duration`, `FieldMask`, `ListValue`, `Value`) is carried as
+  `{"value": <its proto3 JSON>}` wherever these verbs need an object: a run's
+  input and result in `get-job`, and a unary `complete-step` response. Stream
+  items are carried as they print.
+- `JobsModule` contributes all four job verbs (`submit-workflow`, `get-job`,
+  `list-jobs`, and `complete-step`).
 
 ## Per-target concurrency
 
-A worker acquires a permit (bounded at `maxConcurrentPerTarget`) for the
-target of the job's NEXT unexecuted step before running a segment, and
-releases it when the segment ends. This is a documented approximation — a
-segment may call several targets, so the cap throttles the step each job is
-about to run rather than every call in flight. It exists because the
-inference tier's bottleneck is one box per model, and an uncapped worker
-fleet will DDoS it.
+The cap exists because the inference tier's bottleneck is one box per
+model, and an uncapped worker fleet will DDoS it. Each worker allows
+`maxConcurrentPerTarget` calls in flight to one target.
+
+- **Workflow runs** acquire a permit for the target of the job's NEXT
+  unexecuted step before running a segment and release it when the segment
+  ends. This is an approximation: a segment may call several targets, so
+  the cap throttles the step each job is about to run rather than every
+  call in flight.
+- **Pipeline runs** acquire the permit at each call, keyed by the endpoint's
+  `host:port` exactly as its service profile spells it, and release it when
+  the call returns. Two spellings of one host (a DNS alias, different
+  letter case) are two targets to the cap. Every call is covered,
+  including each fan-out branch, and a step that its gate skips or that
+  parks for external completion takes no permit and reads no service
+  profile. Waiting for a permit counts against the step deadline; when the
+  deadline passes first the call is not made and the run is retried.
+
+When a worker is closed while a pipeline call is in flight, the run is not
+failed: it keeps its claim and is recovered when the lease expires.
 
 ## Wiring
 

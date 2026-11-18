@@ -1,47 +1,35 @@
 package ai.protomolt.proto.jobs.service.worker;
 
 import ai.protomolt.proto.actions.ActionContext;
-import ai.protomolt.proto.workflow.CompiledWorkflow;
-import ai.protomolt.proto.workflow.WorkflowJson;
-import ai.protomolt.proto.workflow.WorkflowRepository;
-import ai.protomolt.proto.workflow.WorkflowRunner;
-import ai.protomolt.proto.workflow.WorkflowVerifier;
+import ai.protomolt.proto.grpc.invoke.ChannelFactory;
+import ai.protomolt.proto.grpc.policy.OutboundChannelPolicy;
+import ai.protomolt.proto.grpc.profile.ServiceProfileRepository;
+import ai.protomolt.proto.grpc.profile.v1.ServiceEndpoint;
+import ai.protomolt.proto.grpc.profile.v1.ServiceProfile;
+import ai.protomolt.proto.grpc.workflow.v1.ServiceDependency;
+import ai.protomolt.proto.inference.structured.StructuredGenerator;
+import ai.protomolt.proto.jobs.service.PipelineJobCoordinator;
 import ai.protomolt.proto.jobs.service.WorkflowRunSubmitter;
 import ai.protomolt.proto.jobs.service.WorkflowRunsConfig;
 import ai.protomolt.proto.jobs.service.events.WorkflowRunEventFactory;
-import ai.protomolt.proto.jobs.service.store.WorkflowRunRecord;
-import ai.protomolt.proto.jobs.service.store.WorkflowRunStore;
-import ai.protomolt.proto.jobs.service.store.WorkflowRunStoreException;
 import ai.protomolt.proto.jobs.service.store.ClaimLostException;
 import ai.protomolt.proto.jobs.service.store.WorkerClaim;
+import ai.protomolt.proto.jobs.service.store.WorkflowRunRecord;
+import ai.protomolt.proto.jobs.service.store.WorkflowRunStore;
 import ai.protomolt.proto.jobs.v1.WorkflowRunRequest;
-import ai.protomolt.proto.http.json.MalformedProtobufJsonException;
-import ai.protomolt.proto.kafka.serde.ProtoMoltProtobufDeserializer;
-import ai.protomolt.proto.kafka.serde.ProtoMoltSerdeConfig;
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.node.ArrayNode;
-import com.fasterxml.jackson.databind.node.ObjectNode;
-import com.google.protobuf.DynamicMessage;
+import ai.protomolt.proto.pipeline.PipelineExecutor;
+import ai.protomolt.proto.workflow.WorkflowRepository;
+import ai.protomolt.proto.workflow.WorkflowRunner;
 import com.google.protobuf.Message;
-import com.google.protobuf.util.JsonFormat;
-import io.grpc.Status;
-import org.apache.kafka.clients.consumer.ConsumerConfig;
-import org.apache.kafka.clients.consumer.ConsumerRecord;
-import org.apache.kafka.clients.consumer.ConsumerRecords;
-import org.apache.kafka.clients.consumer.KafkaConsumer;
-import org.apache.kafka.common.serialization.StringDeserializer;
+import io.grpc.ChannelCredentials;
+import io.grpc.Metadata;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.time.Duration;
-import java.util.ArrayList;
 import java.util.List;
-import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
-import java.util.Properties;
-import java.util.UUID;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
@@ -90,13 +78,59 @@ public final class WorkflowRunWorker implements AutoCloseable {
 
     private static final Logger LOG = LoggerFactory.getLogger(WorkflowRunWorker.class);
 
+    /**
+     * Resolves host-owned call headers and TLS channel credentials for a service endpoint.
+     * Unconfigured credential or TLS references fail closed before any channel opens.
+     */
+    public interface EndpointCredentials {
+
+        /** Fails closed whenever an endpoint names a credential, trust, or client-cert reference. */
+        EndpointCredentials NONE = new EndpointCredentials() {
+        };
+
+        /**
+         * Resolves call headers for {@code endpoint}.
+         *
+         * @param profile the owning service profile
+         * @param endpoint the selected service endpoint
+         * @return call metadata headers (empty when uncredentialed)
+         */
+        default Metadata headers(ServiceProfile profile, ServiceEndpoint endpoint) {
+            if (!endpoint.getCredentialRef().isBlank()) {
+                throw new IllegalArgumentException("endpoint '" + endpoint.getName()
+                        + "' of service profile '" + profile.getName()
+                        + "' requires credential_ref resolution, which is not configured");
+            }
+            return new Metadata();
+        }
+
+        /**
+         * Resolves custom TLS channel credentials for {@code endpoint}, or {@code null} when the
+         * endpoint uses default system trust roots.
+         *
+         * @param profile the owning service profile
+         * @param endpoint the selected service endpoint
+         * @return custom TLS channel credentials, or {@code null} when none are referenced
+         */
+        default ChannelCredentials channelCredentials(ServiceProfile profile,
+                                                      ServiceEndpoint endpoint) {
+            if (!endpoint.getTrustRef().isBlank()
+                    || !endpoint.getClientCertificateRef().isBlank()) {
+                throw new IllegalArgumentException("endpoint '" + endpoint.getName()
+                        + "' of service profile '" + profile.getName()
+                        + "' requires custom TLS credentials, which are not configured");
+            }
+            return null;
+        }
+    }
+
     private final WorkflowRunStore store;
-    private final ActionContext context;
-    private final WorkflowRepository repository;
-    private final WorkflowRunner runner;
+    private final ServiceProfilePipelineTransport pipelineTransport;
     private final WorkflowRunsConfig config;
-    private final WorkflowRunSubmitter submitter;
-    private final ConcurrentHashMap<String, Semaphore> targetPermits = new ConcurrentHashMap<>();
+    private final WorkflowSegmentRunner workflowRunner;
+    private final PipelineSegmentRunner pipelineRunner;
+    private final WorkflowRequestConsumer requestConsumer;
+    private final TargetPermits targetPermits;
     private final List<Thread> threads = new CopyOnWriteArrayList<>();
     private volatile boolean closed;
 
@@ -111,12 +145,106 @@ public final class WorkflowRunWorker implements AutoCloseable {
      */
     public WorkflowRunWorker(WorkflowRunStore store, ActionContext context,
             WorkflowRepository repository, WorkflowRunner runner, WorkflowRunsConfig config) {
+        this(store, context, repository, runner, OutboundChannelPolicy.defaults(),
+                null, null, config);
+    }
+
+    /**
+     * Creates a worker whose durable pipeline execution resolves endpoints from
+     * {@code serviceProfiles} and enforces {@code outboundPolicy} on every outbound gRPC call.
+     *
+     * @param store the jobs store (the truth)
+     * @param context type resolution and JSON machinery
+     * @param repository resolves stored workflow names, or null for inline-only
+     * @param runner the workflow executor
+     * @param outboundPolicy host outbound channel policy; null selects
+     *        {@link OutboundChannelPolicy#defaults()}
+     * @param serviceProfiles resolves pipeline {@link ServiceDependency} entries, or null when
+     *        no service workspace is mounted
+     * @param structured optional structured-generation coordinator for structured pipeline steps
+     * @param config worker/consumer settings
+     */
+    public WorkflowRunWorker(WorkflowRunStore store, ActionContext context,
+            WorkflowRepository repository, WorkflowRunner runner,
+            OutboundChannelPolicy outboundPolicy,
+            ServiceProfileRepository serviceProfiles,
+            StructuredGenerator structured,
+            WorkflowRunsConfig config) {
+        this(store, context, repository, runner,
+                ChannelFactory.standard(outboundPolicy == null
+                        ? OutboundChannelPolicy.defaults() : outboundPolicy),
+                serviceProfiles, structured, EndpointCredentials.NONE, config);
+    }
+
+    /**
+     * Creates a worker whose durable pipeline execution uses a policy-enforcing
+     * {@link ChannelFactory}, {@code serviceProfiles}, and host-owned {@code credentials}.
+     *
+     * @param store the jobs store (the truth)
+     * @param context type resolution and JSON machinery
+     * @param repository resolves stored workflow names, or null for inline-only
+     * @param runner the workflow executor
+     * @param channelFactory policy-enforcing outbound channel factory
+     * @param serviceProfiles resolves pipeline {@link ServiceDependency} entries, or null when
+     *        no service workspace is mounted
+     * @param structured optional structured-generation coordinator for structured pipeline steps
+     * @param credentials resolves host-owned call headers and custom TLS credentials
+     * @param config worker/consumer settings
+     */
+    public WorkflowRunWorker(WorkflowRunStore store, ActionContext context,
+            WorkflowRepository repository, WorkflowRunner runner,
+            ChannelFactory channelFactory,
+            ServiceProfileRepository serviceProfiles,
+            StructuredGenerator structured,
+            EndpointCredentials credentials,
+            WorkflowRunsConfig config) {
         this.store = Objects.requireNonNull(store, "store");
-        this.context = Objects.requireNonNull(context, "context");
-        this.repository = repository;
-        this.runner = Objects.requireNonNull(runner, "runner");
+        Objects.requireNonNull(context, "context");
+        Objects.requireNonNull(runner, "runner");
         this.config = Objects.requireNonNull(config, "config");
-        this.submitter = new WorkflowRunSubmitter(store, repository, config.maxAttemptsDefault());
+        this.targetPermits = new TargetPermits(config.maxConcurrentPerTarget());
+        this.pipelineTransport = new ServiceProfilePipelineTransport(
+                Objects.requireNonNull(channelFactory, "channelFactory"),
+                serviceProfiles,
+                Objects.requireNonNull(credentials, "credentials"),
+                targetPermits);
+        PipelineExecutor executor = new PipelineExecutor(this.pipelineTransport, structured);
+        WorkflowRunSubmitter submitter = new WorkflowRunSubmitter(
+                store, repository, config.maxAttemptsDefault());
+        this.workflowRunner = new WorkflowSegmentRunner(store, context, runner, this);
+        this.pipelineRunner = new PipelineSegmentRunner(store, executor, this);
+        this.requestConsumer = new WorkflowRequestConsumer(
+                store, context, repository, config, submitter);
+    }
+
+    /**
+     * Creates a worker with explicit workflow and pipeline executors.
+     *
+     * @param store the jobs store (the truth)
+     * @param context type resolution and JSON machinery
+     * @param repository resolves stored workflow names, or null for inline-only
+     * @param runner the workflow executor
+     * @param pipelineExecutor the pipeline executor used for durable pipeline runs; its
+     *        transport is used as it is, so the per-target call limit of
+     *        {@code config} applies only to workers built with the other constructors
+     * @param config worker/consumer settings
+     */
+    public WorkflowRunWorker(WorkflowRunStore store, ActionContext context,
+            WorkflowRepository repository, WorkflowRunner runner,
+            PipelineExecutor pipelineExecutor, WorkflowRunsConfig config) {
+        this.store = Objects.requireNonNull(store, "store");
+        Objects.requireNonNull(context, "context");
+        Objects.requireNonNull(runner, "runner");
+        Objects.requireNonNull(pipelineExecutor, "pipelineExecutor");
+        this.pipelineTransport = null;
+        this.config = Objects.requireNonNull(config, "config");
+        this.targetPermits = new TargetPermits(config.maxConcurrentPerTarget());
+        WorkflowRunSubmitter submitter = new WorkflowRunSubmitter(
+                store, repository, config.maxAttemptsDefault());
+        this.workflowRunner = new WorkflowSegmentRunner(store, context, runner, this);
+        this.pipelineRunner = new PipelineSegmentRunner(store, pipelineExecutor, this);
+        this.requestConsumer = new WorkflowRequestConsumer(
+                store, context, repository, config, submitter);
     }
 
     /**
@@ -133,7 +261,7 @@ public final class WorkflowRunWorker implements AutoCloseable {
         if (config.requestTopic() != null) {
             Thread thread = Thread.ofVirtual()
                     .name("workflow-run-request-consumer-" + config.workerId())
-                    .start(this::consumeLoop);
+                    .start(() -> requestConsumer.consumeLoop(() -> closed));
             threads.add(thread);
         }
         LOG.info("workflow-run worker '{}' started: {} loop(s), lease {}, request topic {}",
@@ -149,12 +277,36 @@ public final class WorkflowRunWorker implements AutoCloseable {
      *         immediately), false when none was eligible
      */
     public boolean workOnce() {
-        Optional<WorkflowRunRecord> claimed = store.claim(config.workerId(), config.leaseDuration());
+        Optional<WorkflowRunRecord> claimed = store.claim(
+                config.workerId(), config.leaseDuration());
         if (claimed.isEmpty()) {
             return false;
         }
         execute(claimed.get());
         return true;
+    }
+
+    void submitRequest(Message value) {
+        requestConsumer.submitRequest(value);
+    }
+
+    Semaphore acquireTargetPermit(String target) {
+        return targetPermits.acquire(target);
+    }
+
+    /** True once {@link #close()} has begun: calls still in flight are being cut short. */
+    boolean isClosing() {
+        return closed;
+    }
+
+    Duration backoff(int attempt) {
+        long shift = Math.min(Math.max(attempt - 1, 0), WorkflowRunsConfig.MAX_BACKOFF_EXPONENT);
+        return Duration.ofSeconds(Math.multiplyExact(config.backoffBaseSeconds(), 1L << shift));
+    }
+
+    void failJob(WorkflowRunRecord job, WorkerClaim claim, String step, String detail) {
+        store.markFailed(claim, detail, WorkflowRunEventFactory.failed(job, step, detail));
+        LOG.warn("workflow run {} FAILED: {}", job.jobId, detail);
     }
 
     private void claimLoop() {
@@ -163,8 +315,6 @@ public final class WorkflowRunWorker implements AutoCloseable {
             try {
                 worked = workOnce();
             } catch (RuntimeException e) {
-                // A claimed job whose execution blew up unexpectedly keeps
-                // its lease; the sweeper requeues it when the lease expires.
                 LOG.error("workflow-run worker iteration failed (loop continues): {}",
                         e.getMessage(), e);
                 worked = false;
@@ -180,371 +330,22 @@ public final class WorkflowRunWorker implements AutoCloseable {
         }
     }
 
-    /**
-     * Execute one segment of a claimed job: parse + verify the snapshotted
-     * definition, rebuild the checkpoint prefix, run until completion or
-     * park, and settle the row.
-     */
     private void execute(WorkflowRunRecord job) {
         WorkerClaim claim = WorkerClaim.from(job);
         try {
             executeClaimed(job, claim);
         } catch (ClaimLostException lost) {
-            // A replacement attempt owns this row now. Do not settle or
-            // requeue work performed under the expired claim.
             LOG.info("workflow run {} lost claim for attempt {} (owner {}); stopping",
                     claim.jobId(), claim.attempt(), claim.leaseOwner());
         }
     }
 
     private void executeClaimed(WorkflowRunRecord job, WorkerClaim claim) {
-        CompiledWorkflow definition = parseAndVerify(job, claim);
-        if (definition == null) {
+        if (PipelineJobCoordinator.isPipelineJob(job)) {
+            pipelineRunner.execute(job, claim);
             return;
         }
-        DynamicMessage input;
-        try {
-            input = context.transcoder().fromJsonDynamic(job.input, definition.inputType());
-        } catch (MalformedProtobufJsonException e) {
-            fail(job, claim, "", "MAPPING: stored input is not valid proto3 JSON for "
-                    + definition.inputType().getFullName() + ": " + e.getMessage());
-            return;
-        }
-        List<WorkflowRunner.Checkpoint> prior;
-        try {
-            prior = rebuildCheckpoints(job, definition);
-        } catch (CorruptJobException e) {
-            fail(job, claim, "", "WORKFLOW: " + e.getMessage());
-            return;
-        }
-        List<WorkflowRunner.Checkpoint> accumulated = new ArrayList<>(prior);
-        Semaphore permit = acquirePermit(definition, prior.size());
-        try {
-            WorkflowRunner.Segment segment = runner.runSegment(definition, input, prior,
-                    checkpoint -> {
-                        accumulated.add(checkpoint);
-                        // The FULL array so far, in the same transaction as
-                        // the event — a crash never leaves a checkpoint
-                        // without its event or vice versa.
-                        store.saveCheckpoint(claim, checkpointsJson(accumulated),
-                                WorkflowRunEventFactory.stepCheckpoint(job, checkpoint.name()));
-                    });
-            // Segment is sealed: the switch is exhaustive, so a third outcome
-            // would fail the compile rather than fall through to a cast.
-            switch (segment) {
-                case WorkflowRunner.Segment.Completed completed -> {
-                    String resultJson = context.transcoder().toJson(completed.result().output());
-                    String verdict = completed.result().steps().size() + " steps, output "
-                            + completed.result().output().getDescriptorForType().getFullName();
-                    store.markCompleted(claim, resultJson, verdict,
-                            WorkflowRunEventFactory.completed(job, verdict));
-                    LOG.info("workflow run {} completed: {}", job.jobId, verdict);
-                }
-                case WorkflowRunner.Segment.Parked parked -> {
-                    store.markWaiting(claim, parked.step(), checkpointsJson(accumulated),
-                            WorkflowRunEventFactory.waiting(job, parked.step()));
-                    LOG.info("workflow run {} parked on external step '{}'",
-                            job.jobId, parked.step());
-                }
-            }
-        } catch (WorkflowRunner.WorkflowExecutionException e) {
-            if (e.getCause() instanceof ClaimLostException lost) {
-                throw lost;
-            }
-            handleFailure(job, claim, e);
-        } finally {
-            if (permit != null) {
-                permit.release();
-            }
-        }
-    }
-
-    /** Parse + verify the snapshotted definition; null means the job was failed. */
-    private CompiledWorkflow parseAndVerify(WorkflowRunRecord job, WorkerClaim claim) {
-        JsonNode tree;
-        try {
-            tree = context.objectMapper().readTree(job.workflowDefinition);
-        } catch (Exception e) {
-            fail(job, claim, "", "WORKFLOW: stored workflow definition is not readable JSON: "
-                    + e.getMessage());
-            return null;
-        }
-        if (!(tree instanceof ObjectNode workflowNode)) {
-            fail(job, claim, "", "WORKFLOW: stored workflow definition is not a JSON object");
-            return null;
-        }
-        CompiledWorkflow definition;
-        try {
-            definition = WorkflowJson.parse(workflowNode, context);
-        } catch (WorkflowJson.WorkflowParseException e) {
-            fail(job, claim, e.step, "WORKFLOW: stored workflow does not parse"
-                    + (e.step == null || e.step.isEmpty() ? "" : " (step '" + e.step + "')")
-                    + ": " + e.getMessage());
-            return null;
-        }
-        List<WorkflowVerifier.Finding> findings = new WorkflowVerifier().verify(definition);
-        if (!findings.isEmpty()) {
-            StringBuilder detail = new StringBuilder("WORKFLOW: stored workflow does not verify (")
-                    .append(findings.size()).append(" finding")
-                    .append(findings.size() == 1 ? "" : "s").append(")");
-            for (WorkflowVerifier.Finding finding : findings) {
-                detail.append("; [").append(finding.kind()).append("] ")
-                        .append(finding.step()).append(": ").append(finding.error());
-            }
-            fail(job, claim, findings.getFirst().step(), detail.toString());
-            return null;
-        }
-        return definition;
-    }
-
-    /**
-     * Rebuild the resume prefix from the stored checkpoint array: entry i
-     * must name step i of the definition (a workflow edited under a live job
-     * fails loud, matching the runner's own replay check), and each
-     * response is parsed against that step's output type.
-     */
-    private List<WorkflowRunner.Checkpoint> rebuildCheckpoints(WorkflowRunRecord job,
-            CompiledWorkflow definition) throws CorruptJobException {
-        JsonNode tree;
-        try {
-            tree = context.objectMapper().readTree(
-                    job.checkpoints == null ? "[]" : job.checkpoints);
-        } catch (Exception e) {
-            throw new CorruptJobException("stored checkpoints are not readable JSON: "
-                    + e.getMessage());
-        }
-        if (!(tree instanceof ArrayNode array)) {
-            throw new CorruptJobException("stored checkpoints are not an array");
-        }
-        if (array.size() > definition.steps().size()) {
-            throw new CorruptJobException("stored checkpoints (" + array.size()
-                    + ") outnumber the workflow's steps (" + definition.steps().size() + ")");
-        }
-        List<WorkflowRunner.Checkpoint> prior = new ArrayList<>(array.size());
-        for (int i = 0; i < array.size(); i++) {
-            JsonNode entry = array.get(i);
-            CompiledWorkflow.Step step = definition.steps().get(i);
-            String name = entry.path("name").asText();
-            if (!step.name().equals(name)) {
-                throw new CorruptJobException("checkpoint " + i + " belongs to step '" + name
-                        + "' but the workflow's step " + i + " is '" + step.name()
-                        + "'; the workflow definition changed under the job");
-            }
-            boolean skipped = entry.path("skipped").asBoolean(false);
-            try {
-                prior.add(WorkflowCheckpointCodec.readCheckpoint(
-                        name, skipped, entry, step.method().getOutputType(), context));
-            } catch (WorkflowCheckpointCodec.CorruptCheckpointException e) {
-                throw new CorruptJobException(e.getMessage());
-            }
-        }
-        return prior;
-    }
-
-    /**
-     * The failure settlement: retryable-with-attempts-left requeues with
-     * exponential backoff; retryable-exhausted lands DEAD; everything else
-     * FAILS — VALIDATION being the verdict path, its violations the error.
-     */
-    private void handleFailure(WorkflowRunRecord job, WorkerClaim claim,
-            WorkflowRunner.WorkflowExecutionException e) {
-        boolean retryable = isRetryable(e);
-        String detail = e.kind() + ": " + e.getMessage();
-        if (retryable && job.attempt < job.maxAttempts) {
-            Duration backoff = backoff(job.attempt);
-            store.requeue(claim, backoff);
-            LOG.info("workflow run {} attempt {}/{} failed retryably ({}); requeued in {}s",
-                    job.jobId, job.attempt, job.maxAttempts, detail, backoff.toSeconds());
-        } else if (retryable) {
-            store.markDead(claim, detail, WorkflowRunEventFactory.dead(job, detail));
-            LOG.warn("workflow run {} is DEAD after {} attempt(s): {}",
-                    job.jobId, job.attempt, detail);
-        } else {
-            fail(job, claim, e.step(), detail);
-        }
-    }
-
-    /**
-     * The retry contract: GRPC with UNAVAILABLE/DEADLINE_EXCEEDED/
-     * RESOURCE_EXHAUSTED, or DEADLINE — plus the checkpoint-observer case, a
-     * WORKFLOW-kind failure whose cause is the store itself (the step's
-     * response may not have persisted; never settle it as failed work).
-     */
-    private static boolean isRetryable(WorkflowRunner.WorkflowExecutionException e) {
-        if (e.kind() == WorkflowRunner.FailureKind.DEADLINE) {
-            return true;
-        }
-        if (e.kind() == WorkflowRunner.FailureKind.GRPC) {
-            return e.grpcCode() == Status.Code.UNAVAILABLE
-                    || e.grpcCode() == Status.Code.DEADLINE_EXCEEDED
-                    || e.grpcCode() == Status.Code.RESOURCE_EXHAUSTED;
-        }
-        return e.kind() == WorkflowRunner.FailureKind.WORKFLOW
-                && e.getCause() instanceof WorkflowRunStoreException;
-    }
-
-    private Duration backoff(int attempt) {
-        // attempt is the 1-based counter of the attempt that just failed.
-        long shift = Math.min(Math.max(attempt - 1, 0), WorkflowRunsConfig.MAX_BACKOFF_EXPONENT);
-        return Duration.ofSeconds(Math.multiplyExact(config.backoffBaseSeconds(), 1L << shift));
-    }
-
-    private void fail(WorkflowRunRecord job, WorkerClaim claim, String step, String detail) {
-        store.markFailed(claim, detail, WorkflowRunEventFactory.failed(job, step, detail));
-        LOG.warn("workflow run {} FAILED: {}", job.jobId, detail);
-    }
-
-    /**
-     * Acquire the per-target permit for the job's next unexecuted step; null
-     * when nothing remains but the output mapping (all steps checkpointed).
-     */
-    private Semaphore acquirePermit(CompiledWorkflow definition, int nextStepIndex) {
-        if (nextStepIndex >= definition.steps().size()) {
-            return null;
-        }
-        String target = definition.steps().get(nextStepIndex).target();
-        Semaphore semaphore = targetPermits.computeIfAbsent(target,
-                key -> new Semaphore(config.maxConcurrentPerTarget()));
-        try {
-            semaphore.acquire();
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            throw new IllegalStateException("interrupted acquiring the per-target permit "
-                    + "for " + target, e);
-        }
-        return semaphore;
-    }
-
-    private String checkpointsJson(List<WorkflowRunner.Checkpoint> checkpoints) {
-        ArrayNode array = context.objectMapper().createArrayNode();
-        for (WorkflowRunner.Checkpoint checkpoint : checkpoints) {
-            ObjectNode entry = array.addObject();
-            entry.put("name", checkpoint.name());
-            entry.put("skipped", checkpoint.skipped());
-            WorkflowCheckpointCodec.writeResponse(entry, checkpoint, context);
-        }
-        return array.toString();
-    }
-
-    // ---- the request-topic consumer (broker-native submission) ----
-
-    private void consumeLoop() {
-        Properties props = new Properties();
-        props.put(ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, config.kafkaBootstrapServers());
-        props.put(ConsumerConfig.GROUP_ID_CONFIG, WorkflowRunsConfig.CONSUMER_GROUP);
-        props.put(ConsumerConfig.ENABLE_AUTO_COMMIT_CONFIG, "false");
-        props.put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "earliest");
-        try (ProtoMoltProtobufDeserializer deserializer = configuredDeserializer();
-                KafkaConsumer<String, Message> consumer =
-                        new KafkaConsumer<>(props, new StringDeserializer(), deserializer)) {
-            consumer.subscribe(List.of(config.requestTopic()));
-            while (!closed) {
-                ConsumerRecords<String, Message> records =
-                        consumer.poll(Duration.ofMillis(500));
-                for (ConsumerRecord<String, Message> record : records) {
-                    submitRequest(record.value());
-                }
-                if (!records.isEmpty()) {
-                    // The offset commits only after every row in the batch
-                    // did — at-least-once; the insert is idempotent on
-                    // job_id, so a redelivered request returns the existing
-                    // job.
-                    consumer.commitSync();
-                }
-            }
-        } catch (RuntimeException e) {
-            // A poison record or a dead store kills the consumer thread, not
-            // the worker: the claim loops keep serving verb-submitted jobs,
-            // and the broker retains the unconsumed records. Fail loud.
-            LOG.error("workflow-run request consumer died: {}", e.getMessage(), e);
-        }
-    }
-
-    private static ProtoMoltProtobufDeserializer configuredDeserializer() {
-        ProtoMoltProtobufDeserializer deserializer = new ProtoMoltProtobufDeserializer();
-        deserializer.configure(Map.of(
-                ProtoMoltSerdeConfig.DESCRIPTOR_SET_BASE64,
-                WorkflowRunEventFactory.descriptorSetBase64(),
-                ProtoMoltSerdeConfig.MESSAGE_TYPE,
-                WorkflowRunRequest.getDescriptor().getFullName()), false);
-        return deserializer;
-    }
-
-    void submitRequest(Message value) {
-        WorkflowRunRequest request;
-        try {
-            request = value instanceof WorkflowRunRequest typed
-                    ? typed
-                    : WorkflowRunRequest.parseFrom(value.toByteArray());
-        } catch (Exception e) {
-            // Not a WorkflowRunRequest at all: there is no job_id to key a row
-            // on. Log loud and let the batch commit past the poison record.
-            LOG.error("dropping an undecodable WorkflowRunRequest record: {}", e.getMessage(), e);
-            return;
-        }
-        UUID jobId;
-        try {
-            jobId = UUID.fromString(request.getJobId());
-        } catch (IllegalArgumentException e) {
-            LOG.error("dropping a WorkflowRunRequest whose job_id is not a uuid: '{}'",
-                    request.getJobId());
-            return;
-        }
-        String inputJson;
-        try {
-            inputJson = JsonFormat.printer().print(request.getInput());
-        } catch (Exception e) {
-            failAtBirth(jobId, request.getWorkflowName(), null, "{}",
-                    "the request's input Struct is not printable: " + e.getMessage());
-            return;
-        }
-        WorkflowRunSubmitter.Outcome outcome;
-        try {
-            outcome = submitter.submit(null, request.getWorkflowName(),
-                    context.objectMapper().readTree(inputJson), request.getJobId(), context);
-        } catch (Exception e) {
-            throw WorkflowRunStoreException.wrap("broker-native submit of job " + jobId
-                    + " failed", e);
-        }
-        if (!outcome.ok()) {
-            if (outcome.conflict()) {
-                throw new IllegalStateException("conflicting WorkflowRunRequest for job "
-                        + jobId + ": " + outcome.error());
-            }
-            // No caller to answer: the failure lands on the row, loudly.
-            ObjectNode resolved = repository == null
-                    ? null
-                    : repository.workflow(request.getWorkflowName()).orElse(null);
-            failAtBirth(jobId, request.getWorkflowName(), resolved,
-                    inputJson, outcome.error());
-        }
-    }
-
-    /**
-     * Write a FAILED row for a request that can never run (unknown workflow,
-     * unverifiable definition). The row IS the loud failure — a broker-native
-     * submitter watches the events topic, and nothing is silently dropped.
-     */
-    private void failAtBirth(UUID jobId, String workflowName, ObjectNode workflowDefinition,
-            String inputJson, String error) {
-        WorkflowRunRecord record = new WorkflowRunRecord();
-        record.jobId = jobId;
-        record.workflowName = workflowName == null || workflowName.isBlank() ? "(unknown)" : workflowName;
-        record.workflowDefinition = workflowDefinition == null ? "{}" : workflowDefinition.toString();
-        record.input = inputJson == null ? "{}" : inputJson;
-        record.status = WorkflowRunRecord.STATUS_FAILED;
-        record.error = error;
-        record.maxAttempts = config.maxAttemptsDefault();
-        record.runAfter = java.time.Instant.now();
-        record.completedAt = java.time.Instant.now();
-        WorkflowRunStore.InsertOutcome inserted =
-                store.insert(record, WorkflowRunEventFactory.failed(record, "", error));
-        if (inserted.conflict()) {
-            throw new IllegalStateException("conflicting failed WorkflowRunRequest for job "
-                    + jobId + ": " + error);
-        } else if (inserted.created()) {
-            LOG.warn("workflow run {} FAILED at birth: {}", jobId, error);
-        }
+        workflowRunner.execute(job, claim);
     }
 
     /** Stop every loop; the store's lifecycle stays with the caller. */
@@ -563,6 +364,9 @@ public final class WorkflowRunWorker implements AutoCloseable {
             }
         }
         threads.clear();
+        if (pipelineTransport != null) {
+            pipelineTransport.close();
+        }
     }
 
     private static void sleep(long millis) {
@@ -570,13 +374,6 @@ public final class WorkflowRunWorker implements AutoCloseable {
             Thread.sleep(millis);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
-        }
-    }
-
-    /** The stored checkpoint prefix is corrupt; the job FAILS as WORKFLOW. */
-    private static final class CorruptJobException extends Exception {
-        CorruptJobException(String message) {
-            super(message);
         }
     }
 }
