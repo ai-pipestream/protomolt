@@ -379,7 +379,7 @@ public final class ExternalPublicationCoordinator {
         }
 
         String accountId = request.sourceAddress().getAccountId();
-        DocumentSecurity retainedSecurity = sources.verifyCallerSourceAccessForMutation(request.sourceAddress());
+        LedgerAccess retainedSecurity = sources.verifyCallerSourceAccessForMutation(request.sourceAddress());
 
         ExternalPublicationIntent.Builder intentBuilder = ExternalPublicationIntent.newBuilder()
                 .setEncodingVersion(1)
@@ -516,7 +516,7 @@ public final class ExternalPublicationCoordinator {
                 .setUpdatedAt(startedAt)
                 .build();
 
-        final DocumentSecurity securityForSave = retainedSecurity;
+        final LedgerAccess securityForSave = retainedSecurity;
         // Set inside the ledger update: true only when this call registered the operation.
         final boolean[] registeredHere = new boolean[] {false};
         ExternalPublicationLedger afterPreSave = ledgers.updateLedgerWithCas(
@@ -540,23 +540,31 @@ public final class ExternalPublicationCoordinator {
                     }
                     registeredHere[0] = true;
                     ExternalLedgerStore.requireRoomForNewOperation(current);
-                    if (isSourceRevisionFenced(current, request.sourceRevision())) {
+                    boolean fencedByState = isSourceRevisionFenced(current, request.sourceRevision());
+                    boolean fencedByBinding = !fencedByState && ExternalLedgerStore.heldByNewerBinding(
+                            current, requestedBinding, intent.getExternalObjectId(), request.sourceRevision());
+                    if (fencedByState || fencedByBinding) {
                         Timestamp now = timestamp(clock.instant());
+                        String fenceCode = fencedByState ? "FENCED_BY_NEWER_STATE" : "FENCED_BY_NEWER_BINDING";
+                        String fenceMessage = fencedByState
+                                ? "Source revision " + request.sourceRevision()
+                                        + " is fenced by a newer revision, tombstone, or purge"
+                                : "External object '" + intent.getExternalObjectId()
+                                        + "' is already held for this source revision or a later one"
+                                        + " under a newer binding revision at the same place";
                         ExternalPublicationAttempt fencedAttempt = dispatchingAttempt.toBuilder()
                                 .setOutcome(ExternalPublicationOutcome.EXTERNAL_PUBLICATION_OUTCOME_FAILED)
                                 .setPendingPhase(ExternalPendingPhase.EXTERNAL_PENDING_PHASE_UNSPECIFIED)
                                 .setFinishedAt(now)
-                                .setDiagnosticCode("FENCED_BY_NEWER_STATE")
-                                .setDiagnosticMessage(
-                                        "Source revision " + request.sourceRevision()
-                                                + " is fenced by a newer revision, tombstone, or purge")
+                                .setDiagnosticCode(fenceCode)
+                                .setDiagnosticMessage(fenceMessage)
                                 .build();
                         ExternalPublicationOperationRecord fencedOp = initialRecord.toBuilder()
                                 .setOutcome(ExternalPublicationOutcome.EXTERNAL_PUBLICATION_OUTCOME_FAILED)
                                 .setPendingPhase(ExternalPendingPhase.EXTERNAL_PENDING_PHASE_UNSPECIFIED)
                                 .clearAttempts()
                                 .addAttempts(fencedAttempt)
-                                .setFailureCode("FENCED_BY_NEWER_STATE")
+                                .setFailureCode(fenceCode)
                                 .setFailureMessage(fencedAttempt.getDiagnosticMessage())
                                 .setUpdatedAt(now)
                                 .build();
@@ -681,7 +689,7 @@ public final class ExternalPublicationCoordinator {
         ExternalPublicationCoordinates.requireBindingId(bindingId);
         ExternalPublicationCoordinates.requireNonBlankCoordinate(operationId, "operationId");
 
-        DocumentSecurity liveOrRetainedSecurity = sources.authorizeReadOrReconcile(sourceAddress, bindingId);
+        LedgerAccess liveOrRetainedSecurity = sources.authorizeReadOrReconcile(sourceAddress, bindingId);
         NodeAddress ledgerAddr = ExternalPublicationCoordinates.ledgerAddress(
                 sourceAddress.getAccountId(), bindingId, sourceAddress);
         ExternalLedgerStore.LoadedLedger loaded = ledgers.loadOptionalLedger(ledgerAddr, sourceAddress)

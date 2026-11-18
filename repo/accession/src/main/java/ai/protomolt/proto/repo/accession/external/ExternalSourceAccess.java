@@ -219,7 +219,7 @@ final class ExternalSourceAccess {
         }
     }
 
-    DocumentSecurity verifyCallerSourceAccessForMutation(NodeAddress sourceAddress) {
+    LedgerAccess verifyCallerSourceAccessForMutation(NodeAddress sourceAddress) {
         ListRevisionsResponse revisions = documents.listRevisions(
                 ListRevisionsRequest.newBuilder()
                         .setAddress(sourceAddress)
@@ -235,7 +235,7 @@ final class ExternalSourceAccess {
             // A tombstone carries no rules of its own; the right to publish is still judged by
             // the source's last live revision, so a reader is refused here too.
             requireWrite(latestLiveOwnership(sourceAddress).ownership());
-            return DocumentSecurity.getDefaultInstance();
+            return LedgerAccess.keep();
         }
         GetDocumentResponse latestCore = documents.getDocument(
                 GetDocumentRequest.newBuilder()
@@ -245,7 +245,7 @@ final class ExternalSourceAccess {
                         .build());
         OwnershipContext ownership = latestCore.getDocument().getOwnership();
         requireWrite(ownership);
-        return ownership.getSecurity();
+        return LedgerAccess.liveSource(ownership.getSecurity());
     }
 
     /**
@@ -355,7 +355,7 @@ final class ExternalSourceAccess {
         return revisions.getRevisionsCount() > 0 && revisions.getRevisions(0).getTombstone();
     }
 
-    DocumentSecurity verifyTombstoneRevision(
+    LedgerAccess verifyTombstoneRevision(
             NodeAddress sourceAddress, long tombstoneRevision) {
         GetManifestResponse manifestResp = documents.getManifest(
                 GetManifestRequest.newBuilder()
@@ -384,10 +384,10 @@ final class ExternalSourceAccess {
                                         .setRevision(summary.getRevision()))
                                 .setSelection(CORE_SELECTION)
                                 .build());
-                return prior.getDocument().getOwnership().getSecurity();
+                return LedgerAccess.liveSource(prior.getDocument().getOwnership().getSecurity());
             }
         }
-        return DocumentSecurity.getDefaultInstance();
+        return LedgerAccess.keep();
     }
 
     /**
@@ -416,7 +416,7 @@ final class ExternalSourceAccess {
                 .asRuntimeException();
     }
 
-    DocumentSecurity authorizeReadOrReconcile(
+    LedgerAccess authorizeReadOrReconcile(
             NodeAddress sourceAddress, String bindingId) {
         try {
             ListRevisionsResponse revs = documents.listRevisions(
@@ -432,7 +432,7 @@ final class ExternalSourceAccess {
                                         .setRevision(revs.getRevisions(0).getRevision()))
                                 .setSelection(CORE_SELECTION)
                                 .build());
-                return latest.getDocument().getOwnership().getSecurity();
+                return LedgerAccess.liveSource(latest.getDocument().getOwnership().getSecurity());
             }
             if (revs.getRevisionsCount() > 0) {
                 // Deleted, not yet purged. The ledger may still carry rules from an older
@@ -442,7 +442,7 @@ final class ExternalSourceAccess {
                         "Reading this publication requires READ access to the source document's "
                                 + "last live revision");
             }
-            return DocumentSecurity.getDefaultInstance();
+            return LedgerAccess.keep();
         } catch (StatusRuntimeException e) {
             if (e.getStatus().getCode() != Status.Code.NOT_FOUND) {
                 throw e;
@@ -451,7 +451,7 @@ final class ExternalSourceAccess {
                     sourceAddress.getAccountId(), bindingId, sourceAddress);
             Optional<ExternalLedgerStore.LoadedLedger> retained = ledgers.loadOptionalLedger(ledgerAddr, sourceAddress);
             if (retained.isPresent() && retained.get().ledger().getSourcePurged()) {
-                return retained.get().security();
+                return LedgerAccess.keep();
             }
             throw e;
         }

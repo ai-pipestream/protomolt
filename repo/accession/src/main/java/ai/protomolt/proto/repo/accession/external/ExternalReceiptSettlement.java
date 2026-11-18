@@ -27,7 +27,6 @@ import ai.protomolt.proto.repo.external.v1.ExternalPublicationOutcome;
 import ai.protomolt.proto.repo.external.v1.ExternalRetentionPolicy;
 import ai.protomolt.proto.repo.external.v1.ExternalSystemBinding;
 import ai.protomolt.proto.repo.v1.Document;
-import ai.protomolt.proto.repo.v1.DocumentSecurity;
 import ai.protomolt.proto.repo.v1.NodeAddress;
 import ai.protomolt.proto.repo.v2.DocumentServiceGrpc;
 import ai.protomolt.proto.repo.v2.PurgeDocumentRequest;
@@ -64,7 +63,7 @@ final class ExternalReceiptSettlement {
             NodeAddress ledgerAddr,
             NodeAddress sourceAddress,
             String bindingId,
-            DocumentSecurity retainedSecurity,
+            LedgerAccess retainedSecurity,
             String operationId,
             int attemptNumber,
             ExternalAttemptTrigger explicitTrigger,

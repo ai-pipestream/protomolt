@@ -28,7 +28,6 @@ import ai.protomolt.proto.repo.external.v1.ExternalPublicationOutcome;
 import ai.protomolt.proto.repo.external.v1.ExternalPurgePreparation;
 import ai.protomolt.proto.repo.external.v1.ExternalSystemBinding;
 import ai.protomolt.proto.repo.v1.Document;
-import ai.protomolt.proto.repo.v1.DocumentSecurity;
 import ai.protomolt.proto.repo.v1.NodeAddress;
 import com.google.protobuf.Message;
 import com.google.protobuf.Timestamp;
@@ -78,7 +77,7 @@ final class ExternalDeletionLifecycle {
                     .asRuntimeException();
         }
         String accountId = request.sourceAddress().getAccountId();
-        DocumentSecurity retainedSecurity = sources.verifyTombstoneRevision(
+        LedgerAccess retainedSecurity = sources.verifyTombstoneRevision(
                 request.sourceAddress(), request.tombstoneRevision());
 
         NodeAddress ledgerAddr = ExternalPublicationCoordinates.ledgerAddress(
@@ -154,11 +153,11 @@ final class ExternalDeletionLifecycle {
                 .setRulesFromSourceRevision(rules.sourceRevision())
                 .setPreparedAt(timestamp(clock.instant()))
                 .build();
-        ExternalPublicationLedger updated = ledgers.updateLedgerReplacingSecurity(
+        ExternalPublicationLedger updated = ledgers.updateLedgerWithCas(
                 ledgerAddr,
                 request.sourceAddress(),
                 request.bindingId(),
-                rules.security(),
+                LedgerAccess.purgePreparation(rules.security()),
                 "ext-purge-prep:" + request.purgeId() + ":" + UUID.randomUUID(),
                 current -> {
                     requireNotPurgedUnderAnotherId(current, request.purgeId());
@@ -235,7 +234,7 @@ final class ExternalDeletionLifecycle {
                     .asRuntimeException();
         }
         requirePrepared(ledgerOpt.get().ledger(), request.purgeId());
-        DocumentSecurity retainedSecurity = ledgerOpt.get().security();
+        LedgerAccess retainedSecurity = LedgerAccess.keep();
 
         ResolvedDeleteTarget target = replayedTarget(
                         ledgerOpt.map(ExternalLedgerStore.LoadedLedger::ledger),
@@ -491,7 +490,7 @@ final class ExternalDeletionLifecycle {
             NodeAddress ledgerAddr,
             NodeAddress sourceAddress,
             String bindingId,
-            DocumentSecurity retainedSecurity,
+            LedgerAccess retainedSecurity,
             String operationId,
             ExternalPublicationIntent intent,
             String intentSha256,

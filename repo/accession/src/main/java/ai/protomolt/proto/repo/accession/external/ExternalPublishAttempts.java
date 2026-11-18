@@ -22,7 +22,6 @@ import ai.protomolt.proto.repo.external.v1.ExternalPublicationOperationRecord;
 import ai.protomolt.proto.repo.external.v1.ExternalPublicationOutcome;
 import ai.protomolt.proto.repo.external.v1.ExternalSystemBinding;
 import ai.protomolt.proto.repo.v1.Document;
-import ai.protomolt.proto.repo.v1.DocumentSecurity;
 import ai.protomolt.proto.repo.v1.NodeAddress;
 import com.google.protobuf.Message;
 import com.google.protobuf.Timestamp;
@@ -56,7 +55,7 @@ final class ExternalPublishAttempts {
 
     ExternalPublicationCoordinator.OperationResult retryPendingPublish(
             NodeAddress ledgerAddr,
-            DocumentSecurity retainedSecurity,
+            LedgerAccess retainedSecurity,
             ExternalPublicationOperationRecord priorOp,
             ExternalPublicationIntent intent,
             String intentSha256) {
@@ -82,8 +81,11 @@ final class ExternalPublishAttempts {
                     ExternalLedgerStore.requireRoomForRetry(latestOp);
                     int attemptNumber = latestOp.getAttemptsCount() + 1;
                     attemptHolder[0] = attemptNumber;
-                    if (isSourceRevisionFenced(current, intent.getSourceRevision())) {
-                        // A newer revision, tombstone or purge fences this one, so it is not
+                    if (isSourceRevisionFenced(current, intent.getSourceRevision())
+                            || ExternalLedgerStore.heldByNewerBinding(current, latestOp.getBindingSnapshot(),
+                                    intent.getExternalObjectId(), intent.getSourceRevision())) {
+                        // A newer revision, tombstone or purge fences this one, or a newer
+                        // binding revision already holds its object at the same place, so it is not
                         // sent again. It is not declared failed either: an earlier attempt
                         // was dispatched and nobody knows what the provider did with it.
                         // The operation stays as it is for reconciliation to settle.
@@ -129,7 +131,7 @@ final class ExternalPublishAttempts {
 
     ExternalPublicationCoordinator.OperationResult recordFencedPublishFailure(
             NodeAddress ledgerAddr,
-            DocumentSecurity retainedSecurity,
+            LedgerAccess retainedSecurity,
             String operationId,
             ExternalPublicationIntent intent,
             String intentSha256,
@@ -191,7 +193,7 @@ final class ExternalPublishAttempts {
 
     ExternalPublicationCoordinator.OperationResult executeAndSettlePublishAttempt(
             NodeAddress ledgerAddr,
-            DocumentSecurity retainedSecurity,
+            LedgerAccess retainedSecurity,
             String operationId,
             int attemptNumber,
             ExternalPublicationIntent intent,

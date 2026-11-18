@@ -697,6 +697,51 @@ class ExternalPublicationIT {
     }
 
     @Test
+    void anOlderBindingRevisionIsNotSentForAnObjectANewerRevisionHoldsAtTheSamePlace(
+            @TempDir Path tempDir) throws Exception {
+        SimulatedManagedSearchProvider provider = new SimulatedManagedSearchProvider();
+        try (Harness h = Harness.boot(tempDir, provider)) {
+            h.saveActiveBinding(
+                    "tenant-alpha",
+                    "rust-search",
+                    "search-profile-v1",
+                    "ingest",
+                    "corpus-main",
+                    "ns-alpha",
+                    ExternalRetentionPolicy.EXTERNAL_RETENTION_POLICY_RETAIN_HISTORY,
+                    "op-bind-1");
+            // Revision 2 of the binding changes nothing about where objects go.
+            h.saveActiveBinding(
+                    "tenant-alpha",
+                    "rust-search",
+                    "search-profile-v1",
+                    "ingest",
+                    "corpus-main",
+                    "ns-alpha",
+                    ExternalRetentionPolicy.EXTERNAL_RETENTION_POLICY_RETAIN_HISTORY,
+                    "op-bind-2");
+            NodeAddress sourceAddr = sourceAddress("tenant-alpha", "doc-newer-binding");
+            h.saveSourceDocument("save-nb-1", sourceAddr, 0L, "One", "alice");
+            assertThat(h.coordinator.publish(new ExternalPublicationCoordinator.PublishRequest(
+                            "pub-nb-v2", sourceAddr, 1L, "rust-search", 2L, "ext-nb", null, null))
+                    .operation().getOutcome())
+                    .isEqualTo(ExternalPublicationOutcome.EXTERNAL_PUBLICATION_OUTCOME_CONFIRMED);
+            int callsBefore = provider.executeCalls.get();
+
+            ExternalPublicationOperationRecord older = h.coordinator.publish(
+                    new ExternalPublicationCoordinator.PublishRequest(
+                            "pub-nb-v1", sourceAddr, 1L, "rust-search", 1L, "ext-nb", null, null))
+                    .operation();
+            assertThat(provider.executeCalls.get()).as("nothing sent through the older revision")
+                    .isEqualTo(callsBefore);
+            assertThat(older.getOutcome()).isEqualTo(ExternalPublicationOutcome.EXTERNAL_PUBLICATION_OUTCOME_FAILED);
+            assertThat(older.getFailureCode()).isEqualTo("FENCED_BY_NEWER_BINDING");
+            assertThat(h.coordinator.getLedgerView(sourceAddr, "rust-search").orElseThrow().currentLink()
+                    .orElseThrow().getBindingRevision()).isEqualTo(2L);
+        }
+    }
+
+    @Test
     void aPurgeIsRefusedWhileTheSourceDocumentStillExists(
             @TempDir Path tempDir) throws Exception {
         SimulatedManagedSearchProvider provider = new SimulatedManagedSearchProvider();

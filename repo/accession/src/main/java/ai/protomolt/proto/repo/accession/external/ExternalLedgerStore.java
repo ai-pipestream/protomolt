@@ -3,6 +3,7 @@ package ai.protomolt.proto.repo.accession.external;
 import ai.protomolt.proto.repo.external.v1.ExternalAttemptTrigger;
 import ai.protomolt.proto.repo.external.v1.ExternalLink;
 import ai.protomolt.proto.repo.external.v1.ExternalPendingPhase;
+import ai.protomolt.proto.repo.external.v1.ExternalProjectionLifecycle;
 import ai.protomolt.proto.repo.external.v1.ExternalPublicationAction;
 import ai.protomolt.proto.repo.external.v1.ExternalPublicationAttempt;
 import ai.protomolt.proto.repo.external.v1.ExternalPublicationLedger;
@@ -96,7 +97,7 @@ final class ExternalLedgerStore {
             NodeAddress ledgerAddr,
             NodeAddress sourceAddress,
             String bindingId,
-            DocumentSecurity security,
+            LedgerAccess security,
             String operationId,
             ExternalPublicationAttempt attempt) {
         return updateLedgerWithCas(
@@ -132,38 +133,10 @@ final class ExternalLedgerStore {
             NodeAddress ledgerAddr,
             NodeAddress sourceAddress,
             String bindingId,
-            DocumentSecurity security,
+            LedgerAccess access,
             String saveOperationPrefix,
             UnaryOperator<ExternalPublicationLedger> mutator) {
-        return updateLedger(ledgerAddr, sourceAddress, bindingId, security, false,
-                saveOperationPrefix, mutator);
-    }
-
-    /**
-     * As {@link #updateLedgerWithCas}, but the ledger takes {@code security} exactly as given,
-     * even with no explicit rules, in place of the rules it held. A purge preparation uses this:
-     * the source's rules as they are now replace whatever the ledger kept.
-     */
-    ExternalPublicationLedger updateLedgerReplacingSecurity(
-            NodeAddress ledgerAddr,
-            NodeAddress sourceAddress,
-            String bindingId,
-            DocumentSecurity security,
-            String saveOperationPrefix,
-            UnaryOperator<ExternalPublicationLedger> mutator) {
-        Objects.requireNonNull(security, "security");
-        return updateLedger(ledgerAddr, sourceAddress, bindingId, security, true,
-                saveOperationPrefix, mutator);
-    }
-
-    private ExternalPublicationLedger updateLedger(
-            NodeAddress ledgerAddr,
-            NodeAddress sourceAddress,
-            String bindingId,
-            DocumentSecurity security,
-            boolean replaceSecurity,
-            String saveOperationPrefix,
-            UnaryOperator<ExternalPublicationLedger> mutator) {
+        Objects.requireNonNull(access, "access");
         StatusRuntimeException lastConflict = null;
         for (int attempt = 0; attempt < MAX_CAS_RETRIES; attempt++) {
             Optional<LoadedLedger> existing = loadOptionalLedger(ledgerAddr, sourceAddress);
@@ -198,7 +171,7 @@ final class ExternalLedgerStore {
             String datasourceId = saveOwner.hasIntake()
                     ? saveOwner.getIntake().getDatasourceId()
                     : ExternalPublicationCoordinates.DEFAULT_PUBLICATIONS_DATASOURCE_ID;
-            DocumentSecurity effectiveSecurity = securityToSave(security, replaceSecurity, existing);
+            DocumentSecurity effectiveSecurity = securityToSave(access, existing);
 
             Document doc = Document.newBuilder()
                     .setDocId(ledgerAddr.getDocId())
@@ -246,24 +219,24 @@ final class ExternalLedgerStore {
     /**
      * The access rules a ledger save writes.
      * <ul>
-     *   <li>A purge preparation replaces them with the rules it read from the source, exactly.</li>
+     *   <li>A purge preparation writes the rules it read from the source, exactly.</li>
      *   <li>Once a purge is prepared, every other save keeps the prepared rules. An operation
      *       that captured older rules before then, and settles now, must not put them back:
      *       they may hold a grant the source has since revoked.</li>
-     *   <li>Otherwise the rules the operation carries, when it carries any explicit rule, else
-     *       the ledger's own.</li>
+     *   <li>Rules from the source's live revision are written exactly, even with no explicit
+     *       grant: that is a revocation, not an absence of rules.</li>
+     *   <li>With no live rules to give, the ledger keeps its own.</li>
      * </ul>
      */
-    private static DocumentSecurity securityToSave(
-            DocumentSecurity requested, boolean replaceSecurity, Optional<LoadedLedger> existing) {
-        if (replaceSecurity) {
-            return requested;
+    static DocumentSecurity securityToSave(LedgerAccess access, Optional<LoadedLedger> existing) {
+        if (access.kind() == LedgerAccess.Kind.PURGE_PREPARATION) {
+            return access.rules();
         }
         if (existing.isPresent() && existing.get().ledger().hasPurgePreparation()) {
             return existing.get().security();
         }
-        if (requested != null && requested.getPermissionsCount() > 0) {
-            return requested;
+        if (access.kind() == LedgerAccess.Kind.LIVE_SOURCE) {
+            return access.rules();
         }
         return existing.map(LoadedLedger::security).orElse(DocumentSecurity.getDefaultInstance());
     }
@@ -305,6 +278,41 @@ final class ExternalLedgerStore {
                     .withCause(corrupt)
                     .asRuntimeException();
         }
+    }
+
+    /**
+     * Whether a newer binding revision already holds {@code externalObjectId} at the same place
+     * in the external system for {@code sourceRevision} or a later one: as a current or live
+     * historical link, or as a publication that may have left it there. Sending the same object
+     * through {@code binding}, an older revision, would replace that projection at the provider
+     * while the ledger kept the newer one as current.
+     */
+    static boolean heldByNewerBinding(ExternalPublicationLedger ledger, ExternalSystemBinding binding,
+            String externalObjectId, long sourceRevision) {
+        List<ExternalLink> links = new ArrayList<>(ledger.getHistoricalLinksList());
+        if (ledger.hasCurrentLink()) {
+            links.add(ledger.getCurrentLink());
+        }
+        for (ExternalLink link : links) {
+            if (link.getProjectionLifecycle() != ExternalProjectionLifecycle.EXTERNAL_PROJECTION_LIFECYCLE_DELETED
+                    && link.getBindingRevision() > binding.getBindingRevision()
+                    && link.getSourceRevision() >= sourceRevision
+                    && link.getExternalObjectId().equals(externalObjectId)
+                    && ExternalDeletionLifecycle.sameExternalTarget(link.getBindingSnapshot(), binding)) {
+                return true;
+            }
+        }
+        for (int i = 0; i < ledger.getOperationsCount(); i++) {
+            ExternalPublicationOperationRecord publication = ledger.getOperations(i);
+            if (publicationMayHoldObject(ledger, i)
+                    && publication.getIntent().getBindingRevision() > binding.getBindingRevision()
+                    && publication.getIntent().getSourceRevision() >= sourceRevision
+                    && publication.getIntent().getExternalObjectId().equals(externalObjectId)
+                    && ExternalDeletionLifecycle.sameExternalTarget(publication.getBindingSnapshot(), binding)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     static boolean isSourceRevisionFenced(

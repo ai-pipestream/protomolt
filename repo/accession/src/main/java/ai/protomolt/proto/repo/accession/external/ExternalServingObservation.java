@@ -11,7 +11,6 @@ import ai.protomolt.proto.repo.external.v1.ManagedSearchIdentity;
 import ai.protomolt.proto.repo.external.v1.ExternalPublicationLedger;
 import ai.protomolt.proto.repo.external.v1.ExternalPublicationOperationRecord;
 import ai.protomolt.proto.repo.v1.Document;
-import ai.protomolt.proto.repo.v1.DocumentSecurity;
 import ai.protomolt.proto.repo.v1.NodeAddress;
 import com.google.protobuf.Message;
 import io.grpc.Status;
@@ -40,7 +39,7 @@ final class ExternalServingObservation {
 
     ExternalPublicationCoordinator.OperationResult refreshServingObservation(
             NodeAddress ledgerAddr,
-            DocumentSecurity security,
+            LedgerAccess security,
             ExternalPublicationLedger ledger,
             ExternalPublicationOperationRecord op) {
         ExternalProviderGateway.OutboundAuthContext outboundAuth =

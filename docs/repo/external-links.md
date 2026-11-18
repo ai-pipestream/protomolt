@@ -240,7 +240,11 @@ Each `ExternalPublicationLedger` maintains three monotonic fences:
 
 Ordering invariants:
 
-1. **Superseded revisions**: Once revision `r2 > r1` is published or tombstoned,
+1. **Older binding revisions**: a publication through a binding revision is
+   refused (`FENCED_BY_NEWER_BINDING`, nothing sent) when a newer revision
+   already holds the same object at the same place for that source revision or
+   a later one; sending it would replace the newer projection at the provider.
+2. **Superseded revisions**: Once revision `r2 > r1` is published or tombstoned,
    a new publish attempt for `r1` is refused (`FAILED_PRECONDITION`). If an
    earlier in-flight operation for `r1` suffered a lost reply after committing
    on the provider and reconciles after `r2` is already `ACTIVE`, `r1`'s
@@ -248,7 +252,7 @@ Ordering invariants:
    lands directly in `historical_links` as `SUPERSEDED` (with
    `retired_by_operation_id` pointing to `r2`'s operation), leaving `current_link`
    untouched at `r2`.
-2. **Deletion claims**: when a deletion is first registered it adds its
+3. **Deletion claims**: when a deletion is first registered it adds its
    operation ID to `deletion_claimed_by_operation_ids` on every link on record
    that it covers, beside any other deletion's claim still in flight. Only the
    verified evidence of a claiming deletion retires those links, all of them at
@@ -259,13 +263,13 @@ Ordering invariants:
    in the external system (provider, dataset, namespace, endpoint and object
    ID), so a binding revision that only rotated credentials names the same
    object.
-3. **Tombstone ordering**: `deleteForTombstone` verifies via `GetDocument` that
+4. **Tombstone ordering**: `deleteForTombstone` verifies via `GetDocument` that
    the source document is tombstoned at `tombstone_revision`, marks any active
    link `DELETION_PENDING`, advances `tombstoned_at_source_revision`, and settles
    to `DELETED` only on verified provider deletion evidence. Delayed pre-delete
    publish retries (`source_revision <= tombstoned_at_source_revision`) cannot
    restore `current_link`.
-4. **Revision-zero purges** run in two steps. First, while the source still
+5. **Revision-zero purges** run in two steps. First, while the source still
    exists, `preparePurge(source, purge_id, binding)` copies the access rules of
    the source's latest live revision onto the ledger, replacing whatever rules
    the last publication left there, and records `purge_preparation` (the purge
@@ -288,13 +292,16 @@ Ordering invariants:
      non-secret historical receipts preserved for audit.
    - `PURGE_WITH_SOURCE`: invokes `DocumentService.PurgeDocument` on the ledger
      document once external deletion settles.
-5. **Repository and account authorization**: An `ExternalLink` grants neither
+6. **Repository and account authorization**: An `ExternalLink` grants neither
    repository access nor external provider access. Every read (`getLedgerView`,
    `getActiveLinks`) and mutation (`publish`, `deleteForTombstone`,
    `preparePurge`, `handlePurge`, `reconcileOperation`) checks caller account membership
    and `DocumentAccessPolicy` permissions against the current source document
    (falling back to the ledger's retained `DocumentSecurity` ACL when the source
-   is tombstoned or purged). Cross-account and unauthorized callers receive
+   is tombstoned or purged). A ledger save writes the live source's rules
+   exactly, even when they hold no explicit grant (that is a revocation), keeps
+   the ledger's own rules only when no live rules exist, and keeps the rules a
+   purge preparation copied once one is recorded. Cross-account and unauthorized callers receive
    `PERMISSION_DENIED`. Publishing and preparing a purge also require `WRITE`
    on the source's latest live revision (the revision before a tombstone when the
    source is deleted), checked by the coordinator against
