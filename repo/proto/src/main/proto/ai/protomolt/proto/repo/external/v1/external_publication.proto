@@ -1242,6 +1242,16 @@ message ExternalPublicationLedger {
     message: "source_purged requires last_purge_id and forbids an ACTIVE current_link"
     expression: "!this.source_purged || (has(this.last_purge_id) && (!has(this.current_link) || this.current_link.projection_lifecycle == 3))"
   };
+  option (ai.protomolt.proto.validate.v1.message).cel = {
+    id: "ledger-purge-prepared"
+    message: "source_purged requires a purge_preparation naming last_purge_id"
+    expression: "!this.source_purged || (has(this.purge_preparation) && this.purge_preparation.purge_id == this.last_purge_id)"
+  };
+  option (buf.validate.message).cel = {
+    id: "ledger-purge-prepared"
+    message: "source_purged requires a purge_preparation naming last_purge_id"
+    expression: "!this.source_purged || (has(this.purge_preparation) && this.purge_preparation.purge_id == this.last_purge_id)"
+  };
 
   // Owning repository account ID.
   string account_id = 1 [
@@ -1320,5 +1330,35 @@ message ExternalPublicationLedger {
   repeated ExternalPublicationOperationRecord operations = 11 [
     (ai.protomolt.proto.validate.v1.field).repeated = {max_items: 1024},
     (buf.validate.field).repeated = {max_items: 1024}
+  ];
+  // The purge this ledger was prepared for, set while the source still existed. A purge is
+  // handled only for the purge ID prepared here.
+  optional ExternalPurgePreparation purge_preparation = 12;
+}
+
+// Records that a source purge was prepared while the source document still existed: its
+// current access rules were copied onto the ledger, so the ledger kept after the purge
+// answers to them rather than to the rules of the last publication.
+message ExternalPurgePreparation {
+  // Repository purge correlation ID this preparation is for.
+  string purge_id = 1 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      required: true
+      string: {min_len: 1, max_len: 200, pattern: ".*\\S.*"}
+    },
+    (buf.validate.field) = {
+      required: true
+      string: {min_len: 1, max_len: 200, pattern: ".*\\S.*"}
+    }
+  ];
+  // Latest live source revision whose access rules were copied onto the ledger.
+  int64 rules_from_source_revision = 2 [
+    (ai.protomolt.proto.validate.v1.field).int64 = {gt: 0},
+    (buf.validate.field).int64 = {gt: 0}
+  ];
+  // When the preparation was recorded.
+  google.protobuf.Timestamp prepared_at = 3 [
+    (ai.protomolt.proto.validate.v1.field).required = true,
+    (buf.validate.field).required = true
   ];
 }

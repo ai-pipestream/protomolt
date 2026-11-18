@@ -21,6 +21,7 @@ import ai.protomolt.proto.repo.external.v1.ExternalPublicationIntent;
 import ai.protomolt.proto.repo.external.v1.ExternalPublicationLedger;
 import ai.protomolt.proto.repo.external.v1.ExternalPublicationOperationRecord;
 import ai.protomolt.proto.repo.external.v1.ExternalPublicationOutcome;
+import ai.protomolt.proto.repo.external.v1.ExternalPurgePreparation;
 import ai.protomolt.proto.repo.external.v1.ExternalRetentionPolicy;
 import ai.protomolt.proto.repo.external.v1.ExternalSystemBinding;
 import ai.protomolt.proto.repo.v1.Document;
@@ -245,6 +246,23 @@ public final class ExternalPublicationCoordinator {
 
         /** Validates required purge request fields. */
         public PurgeRequest {
+            Objects.requireNonNull(sourceAddress, "sourceAddress");
+            Objects.requireNonNull(purgeId, "purgeId");
+            Objects.requireNonNull(bindingId, "bindingId");
+        }
+    }
+
+    /**
+     * Request to prepare a purge while the source document still exists.
+     *
+     * @param sourceAddress canonical source document address
+     * @param purgeId repository purge correlation ID the purge will carry
+     * @param bindingId target external-system binding ID
+     */
+    public record PreparePurgeRequest(NodeAddress sourceAddress, String purgeId, String bindingId) {
+
+        /** Validates required fields. */
+        public PreparePurgeRequest {
             Objects.requireNonNull(sourceAddress, "sourceAddress");
             Objects.requireNonNull(purgeId, "purgeId");
             Objects.requireNonNull(bindingId, "bindingId");
@@ -611,9 +629,24 @@ public final class ExternalPublicationCoordinator {
     }
 
     /**
+     * First step of a purge: while the source still exists, copies its current access rules
+     * onto the ledger and records {@code purgeId}. {@link #handlePurge} accepts only a purge ID
+     * prepared this way. Call it immediately before {@code PurgeDocument}: rules changed on the
+     * source after it are not on the ledger.
+     *
+     * @param request typed preparation request
+     * @return the recorded preparation
+     */
+    public ExternalPurgePreparation preparePurge(PreparePurgeRequest request) {
+        return deletion.preparePurge(request);
+    }
+
+    /**
      * Processes a revision-zero source purge event ({@code PurgeDocument}) without
      * fabricating a source revision, settling external deletion and applying the
      * binding's {@link ExternalRetentionPolicy}.
+     *
+     * <p>The purge must have been prepared with {@link #preparePurge} for the same purge ID.
      *
      * @param request typed purge request
      * @return durable deletion outcome (with {@code ledgerPurged == true} under {@code PURGE_WITH_SOURCE})

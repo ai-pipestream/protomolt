@@ -234,6 +234,53 @@ final class ExternalSourceAccess {
         return latestCore.getDocument().getOwnership().getSecurity();
     }
 
+    /** Access rules of the latest live source revision, and that revision. */
+    record SourceAccessRules(long sourceRevision, DocumentSecurity security) {
+    }
+
+    /**
+     * Reads the access rules a purge must leave on the ledger: those of the source's latest live
+     * revision, or, when the latest revision is a tombstone, of the live revision before it. The
+     * read is made as the caller, so a caller who may not read the source is refused by the
+     * repository.
+     *
+     * @throws StatusRuntimeException FAILED_PRECONDITION once the source is purged, or when no
+     *         live revision is within reach of the latest
+     */
+    SourceAccessRules accessRulesBeforePurge(NodeAddress sourceAddress) {
+        ListRevisionsResponse revisions;
+        try {
+            revisions = documents.listRevisions(ListRevisionsRequest.newBuilder()
+                    .setAddress(sourceAddress)
+                    .setPageSize(2)
+                    .build());
+        } catch (StatusRuntimeException e) {
+            if (e.getStatus().getCode() == Status.Code.NOT_FOUND) {
+                throw Status.FAILED_PRECONDITION
+                        .withDescription("Source document is already purged; a purge is prepared "
+                                + "before PurgeDocument removes it")
+                        .asRuntimeException();
+            }
+            throw e;
+        }
+        for (var summary : revisions.getRevisionsList()) {
+            if (summary.getTombstone()) {
+                continue;
+            }
+            GetDocumentResponse live = documents.getDocument(GetDocumentRequest.newBuilder()
+                    .setAddress(sourceAddress)
+                    .setRevision(RevisionSelector.newBuilder().setRevision(summary.getRevision()))
+                    .setSelection(CORE_SELECTION)
+                    .build());
+            return new SourceAccessRules(
+                    summary.getRevision(), live.getDocument().getOwnership().getSecurity());
+        }
+        throw Status.FAILED_PRECONDITION
+                .withDescription("Source document has no live revision next to its latest one; "
+                        + "there are no access rules to prepare the purge with")
+                .asRuntimeException();
+    }
+
     /** Whether the source's latest revision is a tombstone: the document is deleted now. */
     boolean isCurrentlyTombstoned(NodeAddress sourceAddress) {
         ListRevisionsResponse revisions = documents.listRevisions(

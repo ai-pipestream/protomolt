@@ -48,6 +48,7 @@ import ai.protomolt.proto.repo.external.v1.ExternalProviderEvidence;
 import ai.protomolt.proto.repo.external.v1.ExternalProviderSettlement;
 import ai.protomolt.proto.repo.external.v1.ExternalPublicationOperationRecord;
 import ai.protomolt.proto.repo.external.v1.ExternalPublicationOutcome;
+import ai.protomolt.proto.repo.external.v1.ExternalPurgePreparation;
 import ai.protomolt.proto.repo.external.v1.ExternalIdentityProof;
 import ai.protomolt.proto.repo.external.v1.ExternalRetentionPolicy;
 import ai.protomolt.proto.repo.external.v1.ExternalServingVisibility;
@@ -400,6 +401,8 @@ class ExternalPublicationIT {
 
             // After the source is purged the retained ledger answers for itself. It must
             // still refuse Bob: the access it kept is the revoked one, not revision 1's.
+            h.coordinator.preparePurge(new ExternalPublicationCoordinator.PreparePurgeRequest(
+                    sourceAddr, "purge-revoked-001", "rust-search"));
             h.stub.purgeDocument(PurgeDocumentRequest.newBuilder()
                     .setPurgeId("purge-revoked-001")
                     .setAddress(sourceAddr)
@@ -413,6 +416,66 @@ class ExternalPublicationIT {
                     Status.Code.PERMISSION_DENIED);
             h.useCaller(h.alphaAlice);
             assertThat(h.coordinator.getLedgerView(sourceAddr, "rust-search")).isPresent();
+        }
+    }
+
+    @Test
+    void aPurgeKeepsTheAccessTheSourceHadWhenItWasPreparedNotWhenItWasLastPublished(
+            @TempDir Path tempDir) throws Exception {
+        SimulatedManagedSearchProvider provider = new SimulatedManagedSearchProvider();
+        try (Harness h = Harness.boot(tempDir, provider)) {
+            h.saveActiveBinding(
+                    "tenant-alpha",
+                    "rust-search",
+                    "search-profile-v1",
+                    "ingest",
+                    "corpus-main",
+                    "ns-alpha",
+                    ExternalRetentionPolicy.EXTERNAL_RETENTION_POLICY_RETAIN_HISTORY,
+                    "op-bind-1");
+            NodeAddress sourceAddr = sourceAddress("tenant-alpha", "doc-revoked-later");
+            // Revision 1 lets Bob in and is published; revision 2 revokes him and is not.
+            h.saveSourceDocument("save-rl-1", sourceAddr, 0L, "Shared", "alice", "bob");
+            h.coordinator.publish(new ExternalPublicationCoordinator.PublishRequest(
+                    "pub-rl-1", sourceAddr, 1L, "rust-search", 1L, "ext-rl", null, null));
+            h.saveSourceDocument("save-rl-2", sourceAddr, 1L, "Alice only", "alice");
+
+            // Prepared while the source exists, so the ledger takes revision 2's rules.
+            ExternalPurgePreparation prepared = h.coordinator.preparePurge(
+                    new ExternalPublicationCoordinator.PreparePurgeRequest(
+                            sourceAddr, "purge-rl-001", "rust-search"));
+            assertThat(prepared.getRulesFromSourceRevision()).isEqualTo(2L);
+            h.stub.purgeDocument(PurgeDocumentRequest.newBuilder()
+                    .setPurgeId("purge-rl-001")
+                    .setAddress(sourceAddr)
+                    .setReason("Purge after a revocation that was never published")
+                    .build());
+            // A purge ID nobody prepared is not handled, whatever PurgeDocument did.
+            int callsBefore = provider.executeCalls.get();
+            assertRefusedAsUnprepared(() -> h.coordinator.handlePurge(
+                    new ExternalPublicationCoordinator.PurgeRequest(
+                            "op-purge-other", sourceAddr, "purge-rl-other", "rust-search", null)));
+            assertThat(provider.executeCalls.get()).isEqualTo(callsBefore);
+
+            // Once the source is gone there is nothing left to copy the rules from.
+            assertGrpcCode(() -> h.coordinator.preparePurge(
+                    new ExternalPublicationCoordinator.PreparePurgeRequest(
+                            sourceAddr, "purge-rl-late", "rust-search")),
+                    Status.Code.FAILED_PRECONDITION);
+
+            assertThat(h.coordinator.handlePurge(new ExternalPublicationCoordinator.PurgeRequest(
+                            "op-purge-rl", sourceAddr, "purge-rl-001", "rust-search", null))
+                    .operation().getOutcome())
+                    .isEqualTo(ExternalPublicationOutcome.EXTERNAL_PUBLICATION_OUTCOME_DELETED);
+
+            // The kept ledger answers to revision 2's rules: Bob was revoked there.
+            h.useCaller(h.alphaBob);
+            assertGrpcCode(
+                    () -> h.coordinator.getLedgerView(sourceAddr, "rust-search"),
+                    Status.Code.PERMISSION_DENIED);
+            h.useCaller(h.alphaAlice);
+            assertThat(h.coordinator.getLedgerView(sourceAddr, "rust-search").orElseThrow().sourcePurged())
+                    .isTrue();
         }
     }
 
@@ -1192,6 +1255,8 @@ class ExternalPublicationIT {
             assertThat(delayedPreDelete.currentLink()).isEmpty();
 
             // Now execute revision-zero PurgeDocument as administrator, then handlePurge under RETAIN_HISTORY.
+            h.coordinator.preparePurge(new ExternalPublicationCoordinator.PreparePurgeRequest(
+                    docRetain, "purge-retain-001", "search-retain"));
             h.stub.purgeDocument(PurgeDocumentRequest.newBuilder()
                     .setPurgeId("purge-retain-001")
                     .setAddress(docRetain)
@@ -1239,6 +1304,8 @@ class ExternalPublicationIT {
             h.coordinator.publish(new ExternalPublicationCoordinator.PublishRequest(
                     "op-pa-pub-1", docPurgeAll, 1L, "search-ephemeral", 1L, "ext-pa-1", null, null));
 
+            h.coordinator.preparePurge(new ExternalPublicationCoordinator.PreparePurgeRequest(
+                    docPurgeAll, "purge-all-002", "search-ephemeral"));
             h.stub.purgeDocument(PurgeDocumentRequest.newBuilder()
                     .setPurgeId("purge-all-002")
                     .setAddress(docPurgeAll)
@@ -1450,6 +1517,15 @@ class ExternalPublicationIT {
                 .setGraphAddressId("ds-1")
                 .setDocId(docId)
                 .build();
+    }
+
+    /** Refused because the purge ID was never prepared, not by some other precondition. */
+    private static void assertRefusedAsUnprepared(Runnable action) {
+        assertThatThrownBy(action::run)
+                .isInstanceOfSatisfying(StatusRuntimeException.class, ex -> {
+                    assertThat(ex.getStatus().getCode()).isEqualTo(Status.Code.FAILED_PRECONDITION);
+                    assertThat(ex.getStatus().getDescription()).contains("was not prepared");
+                });
     }
 
     /** Refused by the moved-endpoint check itself, not by some other precondition. */

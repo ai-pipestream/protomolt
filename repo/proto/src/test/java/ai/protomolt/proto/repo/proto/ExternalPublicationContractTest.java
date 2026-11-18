@@ -363,13 +363,36 @@ class ExternalPublicationContractTest {
                 .setSourcePurged(true)
                 .setLastPurgeId("purge-1")
                 .build(), false);
-        checkBothDialects(ledger.toBuilder()
+        ExternalPublicationLedger purged = ledger.toBuilder()
                 .setSourcePurged(true)
                 .setLastPurgeId("purge-1")
+                .setPurgePreparation(purgePreparation("purge-1"))
                 .clearCurrentLink()
                 .addHistoricalLinks(confirmedLink().toBuilder()
                         .setProjectionLifecycle(ExternalProjectionLifecycle.EXTERNAL_PROJECTION_LIFECYCLE_DELETED))
-                .build(), true);
+                .build();
+        checkBothDialects(purged, true);
+
+        // A purged ledger must have been prepared, and for the purge it records.
+        checkBothDialects(purged.toBuilder().clearPurgePreparation().build(), false);
+        checkBothDialects(purged.toBuilder().setPurgePreparation(purgePreparation("purge-2")).build(), false);
+        // A preparation alone, before the purge is handled, is a valid ledger.
+        checkBothDialects(ledger.toBuilder().setPurgePreparation(purgePreparation("purge-1")).build(), true);
+        // A preparation names its purge, the live revision its rules came from, and when.
+        checkBothDialects(ledger.toBuilder().setPurgePreparation(
+                purgePreparation("purge-1").toBuilder().setPurgeId(" ")).build(), false);
+        checkBothDialects(ledger.toBuilder().setPurgePreparation(
+                purgePreparation("purge-1").toBuilder().setRulesFromSourceRevision(0L)).build(), false);
+        checkBothDialects(ledger.toBuilder().setPurgePreparation(
+                purgePreparation("purge-1").toBuilder().clearPreparedAt()).build(), false);
+    }
+
+    private static ExternalPurgePreparation purgePreparation(String purgeId) {
+        return ExternalPurgePreparation.newBuilder()
+                .setPurgeId(purgeId)
+                .setRulesFromSourceRevision(5L)
+                .setPreparedAt(Timestamp.newBuilder().setSeconds(1_770_000_000L))
+                .build();
     }
 
     @Test

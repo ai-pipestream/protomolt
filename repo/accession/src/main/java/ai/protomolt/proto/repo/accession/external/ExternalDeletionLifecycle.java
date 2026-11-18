@@ -25,6 +25,7 @@ import ai.protomolt.proto.repo.external.v1.ExternalPublicationIntent;
 import ai.protomolt.proto.repo.external.v1.ExternalPublicationLedger;
 import ai.protomolt.proto.repo.external.v1.ExternalPublicationOperationRecord;
 import ai.protomolt.proto.repo.external.v1.ExternalPublicationOutcome;
+import ai.protomolt.proto.repo.external.v1.ExternalPurgePreparation;
 import ai.protomolt.proto.repo.external.v1.ExternalSystemBinding;
 import ai.protomolt.proto.repo.v1.Document;
 import ai.protomolt.proto.repo.v1.DocumentSecurity;
@@ -123,6 +124,66 @@ final class ExternalDeletionLifecycle {
                 Optional.empty());
     }
 
+    /**
+     * First step of a purge, made while the source still exists: copies the source's current
+     * access rules onto the ledger and records the purge ID. Without it, a ledger kept after the
+     * purge would answer to the rules of the last publication, including grants the source has
+     * since revoked. Preparing again for the same purge ID copies the rules again.
+     */
+    ExternalPurgePreparation preparePurge(ExternalPublicationCoordinator.PreparePurgeRequest request) {
+        Objects.requireNonNull(request, "request");
+        ExternalPublicationCoordinates.requireSourceAddress(request.sourceAddress());
+        ExternalPublicationCoordinates.requireBindingId(request.bindingId());
+        ExternalPublicationCoordinates.requireNonBlankCoordinate(request.purgeId(), "purgeId");
+
+        NodeAddress ledgerAddr = ExternalPublicationCoordinates.ledgerAddress(
+                request.sourceAddress().getAccountId(), request.bindingId(), request.sourceAddress());
+        ExternalSourceAccess.SourceAccessRules rules =
+                sources.accessRulesBeforePurge(request.sourceAddress());
+        ExternalPublicationLedger existing = ledgers.loadOptionalLedger(ledgerAddr, request.sourceAddress())
+                .orElseThrow(() -> Status.FAILED_PRECONDITION
+                        .withDescription("No external publication is recorded for this source under "
+                                + "binding '" + request.bindingId() + "'; there is nothing to prepare")
+                        .asRuntimeException())
+                .ledger();
+        requireNotPurgedUnderAnotherId(existing, request.purgeId());
+
+        ExternalPurgePreparation preparation = ExternalPurgePreparation.newBuilder()
+                .setPurgeId(request.purgeId())
+                .setRulesFromSourceRevision(rules.sourceRevision())
+                .setPreparedAt(timestamp(clock.instant()))
+                .build();
+        ExternalPublicationLedger updated = ledgers.updateLedgerReplacingSecurity(
+                ledgerAddr,
+                request.sourceAddress(),
+                request.bindingId(),
+                rules.security(),
+                "ext-purge-prep:" + request.purgeId() + ":" + UUID.randomUUID(),
+                current -> {
+                    requireNotPurgedUnderAnotherId(current, request.purgeId());
+                    return current.toBuilder().setPurgePreparation(preparation).build();
+                });
+        return updated.getPurgePreparation();
+    }
+
+    private static void requireNotPurgedUnderAnotherId(ExternalPublicationLedger ledger, String purgeId) {
+        if (ledger.getSourcePurged() && !ledger.getLastPurgeId().equals(purgeId)) {
+            throw Status.FAILED_PRECONDITION
+                    .withDescription("The source was already purged under purge ID '"
+                            + ledger.getLastPurgeId() + "'")
+                    .asRuntimeException();
+        }
+    }
+
+    private static void requirePrepared(ExternalPublicationLedger ledger, String purgeId) {
+        if (!ledger.hasPurgePreparation() || !ledger.getPurgePreparation().getPurgeId().equals(purgeId)) {
+            throw Status.FAILED_PRECONDITION
+                    .withDescription("Purge '" + purgeId + "' was not prepared on this ledger; "
+                            + "call preparePurge while the source still exists, before PurgeDocument")
+                    .asRuntimeException();
+        }
+    }
+
     ExternalPublicationCoordinator.OperationResult handlePurge(ExternalPublicationCoordinator.PurgeRequest request) {
         Objects.requireNonNull(request, "request");
         ExternalPublicationCoordinates.requireSourceAddress(request.sourceAddress());
@@ -144,6 +205,7 @@ final class ExternalDeletionLifecycle {
                             + "binding '" + request.bindingId() + "'; there is nothing to purge")
                     .asRuntimeException();
         }
+        requirePrepared(ledgerOpt.get().ledger(), request.purgeId());
         DocumentSecurity retainedSecurity = ledgerOpt.get().security();
 
         ResolvedDeleteTarget target = replayedTarget(

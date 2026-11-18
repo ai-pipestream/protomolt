@@ -220,6 +220,8 @@ Each `ExternalPublicationLedger` maintains three monotonic fences:
 - `tombstoned_at_source_revision`: records the latest tombstoned repository
   revision.
 - `source_purged` and `last_purge_id`: records revision-zero repository purges.
+- `purge_preparation`: the purge prepared while the source still existed; a
+  purge is handled only for this purge ID.
 
 Ordering invariants:
 
@@ -237,8 +239,20 @@ Ordering invariants:
    to `DELETED` only on verified provider deletion evidence. Delayed pre-delete
    publish retries (`source_revision <= tombstoned_at_source_revision`) cannot
    restore `current_link`.
-3. **Revision-zero purges**: `PurgeDocument` emits revision-zero purge identity
-   (`purge_id`) rather than a document revision. `handleSourcePurge` never
+3. **Revision-zero purges** run in two steps. First, while the source still
+   exists, `preparePurge(source, purge_id, binding)` copies the access rules of
+   the source's latest live revision onto the ledger, replacing whatever rules
+   the last publication left there, and records `purge_preparation` (the purge
+   ID, the source revision the rules came from, and the time). It is called
+   immediately before `PurgeDocument`; rules changed on the source after it are
+   not on the ledger. Without this step a ledger kept after the purge would
+   answer to the rules of the last publication, including grants the source had
+   since revoked, and nothing would be left to read the current rules from.
+   Second, after `PurgeDocument`, `handlePurge` runs, and only for the purge ID
+   that was prepared; any other ID is refused with `FAILED_PRECONDITION`, and the
+   ledger's validation rule `ledger-purge-prepared` refuses a purged ledger with
+   no matching preparation. `PurgeDocument` emits revision-zero purge identity
+   (`purge_id`) rather than a document revision. `handlePurge` never
    fabricates a synthetic `source_revision`: it records `PURGE_DELETE` keyed by
    `purge_id`, sets `source_purged = true`, settles external deletion, and then
    applies the binding's `ExternalRetentionPolicy`:
@@ -249,7 +263,7 @@ Ordering invariants:
 4. **Repository and account authorization**: An `ExternalLink` grants neither
    repository access nor external provider access. Every read (`getLedgerView`,
    `getActiveLinks`) and mutation (`publish`, `deleteForTombstone`,
-   `handleSourcePurge`, `reconcileOperation`) checks caller account membership
+   `preparePurge`, `handlePurge`, `reconcileOperation`) checks caller account membership
    and `DocumentAccessPolicy` permissions against the current source document
    (falling back to the ledger's retained `DocumentSecurity` ACL when the source
    is tombstoned or purged). Cross-account and unauthorized callers receive

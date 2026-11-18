@@ -42,6 +42,7 @@ import java.time.Clock;
 import java.time.Instant;
 import java.util.HexFormat;
 import java.util.List;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.function.UnaryOperator;
@@ -131,6 +132,35 @@ final class ExternalLedgerStore {
             DocumentSecurity security,
             String saveOperationPrefix,
             UnaryOperator<ExternalPublicationLedger> mutator) {
+        return updateLedger(ledgerAddr, sourceAddress, bindingId, security, false,
+                saveOperationPrefix, mutator);
+    }
+
+    /**
+     * As {@link #updateLedgerWithCas}, but the ledger takes {@code security} exactly as given,
+     * even with no explicit rules, in place of the rules it held. A purge preparation uses this:
+     * the source's rules as they are now replace whatever the ledger kept.
+     */
+    ExternalPublicationLedger updateLedgerReplacingSecurity(
+            NodeAddress ledgerAddr,
+            NodeAddress sourceAddress,
+            String bindingId,
+            DocumentSecurity security,
+            String saveOperationPrefix,
+            UnaryOperator<ExternalPublicationLedger> mutator) {
+        Objects.requireNonNull(security, "security");
+        return updateLedger(ledgerAddr, sourceAddress, bindingId, security, true,
+                saveOperationPrefix, mutator);
+    }
+
+    private ExternalPublicationLedger updateLedger(
+            NodeAddress ledgerAddr,
+            NodeAddress sourceAddress,
+            String bindingId,
+            DocumentSecurity security,
+            boolean replaceSecurity,
+            String saveOperationPrefix,
+            UnaryOperator<ExternalPublicationLedger> mutator) {
         StatusRuntimeException lastConflict = null;
         for (int attempt = 0; attempt < MAX_CAS_RETRIES; attempt++) {
             Optional<LoadedLedger> existing = loadOptionalLedger(ledgerAddr, sourceAddress);
@@ -165,8 +195,9 @@ final class ExternalLedgerStore {
             String datasourceId = saveOwner.hasIntake()
                     ? saveOwner.getIntake().getDatasourceId()
                     : ExternalPublicationCoordinates.DEFAULT_PUBLICATIONS_DATASOURCE_ID;
-            DocumentSecurity effectiveSecurity =
-                    (security != null && security.getPermissionsCount() > 0)
+            DocumentSecurity effectiveSecurity = replaceSecurity
+                    ? security
+                    : (security != null && security.getPermissionsCount() > 0)
                             ? security
                             : (existing.isPresent()
                                     ? existing.get().security()
