@@ -471,6 +471,10 @@ final class ExternalDeletionLifecycle {
                 .setIntentSha256(intentSha256)
                 .setIntent(intent)
                 .setBindingSnapshot(bindingSnapshot)
+                // Fixed at first registration, like the link claims: publications whose doubt
+                // is recorded after this point are not what this deletion was sent for.
+                .addAllCoversUncertainPublicationIds(ExternalLedgerStore.uncertainPublicationsCoveredBy(
+                        current, bindingSnapshot, intent.getExternalObjectId()))
                 .setOutcome(
                         ExternalPublicationOutcome
                                 .EXTERNAL_PUBLICATION_OUTCOME_DELETION_PENDING)

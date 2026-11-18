@@ -200,7 +200,7 @@ with `ALREADY_EXISTS`.
 | `PENDING` | `UNRESOLVED_LOST_REPLY` | Outbound call timed out, lost its reply, or hit an unavailable endpoint; external outcome is unknown |
 | `PENDING` | `ACCEPTED_AWAITING_PUBLICATION` | Provider durably accepted source input (`accepted_version`), awaiting catalog publication |
 | `CONFIRMED` | `NONE` | `ExternalProviderVerifier` verified publication receipt (and optional Ed25519 `SignedWorkRecord`) |
-| `FAILED` | `NONE` | Provider rejected the request or verification failed; no active `ExternalLink` is created. When a sent publication's answer failed verification, or the provider rejected an attempt after an earlier attempt's outcome was lost, `provider_may_hold_object` is set: the provider may hold the object, so it stays a deletion target and keeps a `PURGE_WITH_SOURCE` ledger until a verified deletion of the same object at the same place is registered after it |
+| `FAILED` | `NONE` | Provider rejected the request or verification failed; no active `ExternalLink` is created. When a sent publication's answer failed verification, or the provider rejected an attempt after an earlier attempt's outcome was lost, `provider_may_hold_object` is set: the provider may hold the object, so it stays a deletion target and keeps a `PURGE_WITH_SOURCE` ledger until a verified deletion settles it. A deletion settles only the publications already marked when it was first registered (`covers_uncertain_publication_ids`): registration order does not show which one the provider ran first |
 | `DELETION_PENDING` | `DELETION_IN_FLIGHT` | Tombstone or purge deletion recorded durably; outbound delete in flight or awaiting settlement |
 | `DELETED` | `NONE` | `ExternalProviderVerifier` verified external deletion receipt; active link retired to `DELETED` |
 
@@ -251,7 +251,8 @@ Ordering invariants:
 2. **Deletion claims**: when a deletion is first registered it adds its
    operation ID to `deletion_claimed_by_operation_ids` on every link on record
    that it covers, beside any other deletion's claim still in flight. Only the
-   verified evidence of a claiming deletion retires those links;
+   verified evidence of a claiming deletion retires those links, all of them at
+   once when late publications left several owed for the same object;
    a retry claims nothing new, and a later supersession, which overwrites
    `retired_by_operation_id`, leaves the claim in place. Whether a superseded
    projection is covered by a later deletion is decided per object at one place

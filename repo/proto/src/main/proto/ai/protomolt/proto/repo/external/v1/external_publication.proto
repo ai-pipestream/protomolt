@@ -1246,6 +1246,22 @@ message ExternalPublicationOperationRecord {
   // had its outcome learned. The object stays a deletion target and keeps the ledger from
   // being purged until a verified deletion of it is registered after it.
   bool provider_may_hold_object = 13;
+  // On a DELETE: the PUBLISH operations of the same object at the same place that were already
+  // marked provider_may_hold_object when this deletion was first registered. Only these does
+  // its verified deletion settle. Registration order does not show what the provider ran
+  // first, so a publication whose doubt was recorded later needs a deletion of its own.
+  repeated string covers_uncertain_publication_ids = 14 [
+    (ai.protomolt.proto.validate.v1.field).repeated = {
+      max_items: 1024
+      unique: true
+      items: {string: {min_len: 1, max_len: 200, pattern: ".*\\S.*"}}
+    },
+    (buf.validate.field).repeated = {
+      max_items: 1024
+      unique: true
+      items: {string: {min_len: 1, max_len: 200, pattern: ".*\\S.*"}}
+    }
+  ];
 }
 
 // Per-(account, binding, source_address) ledger persisted as typed structured_data

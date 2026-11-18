@@ -155,6 +155,7 @@ class ExternalDeleteTargetTest {
                         .setExternalObjectId("object-unverified").setBindingRevision(2L))
                 .setBindingSnapshot(binding(2L, "dataset-two"))
                 .setOutcome(ExternalPublicationOutcome.EXTERNAL_PUBLICATION_OUTCOME_DELETED)
+                .addCoversUncertainPublicationIds("op-unverified")
                 .build();
         assertThat(recorded(withUnverified.toBuilder().addOperations(verifiedDeletion).build(), 0L, ""))
                 .isEmpty();

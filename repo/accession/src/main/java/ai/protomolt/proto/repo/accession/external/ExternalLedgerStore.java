@@ -8,6 +8,7 @@ import ai.protomolt.proto.repo.external.v1.ExternalPublicationAttempt;
 import ai.protomolt.proto.repo.external.v1.ExternalPublicationLedger;
 import ai.protomolt.proto.repo.external.v1.ExternalPublicationOperationRecord;
 import ai.protomolt.proto.repo.external.v1.ExternalPublicationOutcome;
+import ai.protomolt.proto.repo.external.v1.ExternalSystemBinding;
 import ai.protomolt.proto.repo.v1.Document;
 import ai.protomolt.proto.repo.v1.DocumentSecurity;
 import ai.protomolt.proto.repo.v1.NodeAddress;
@@ -41,6 +42,7 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.Clock;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Objects;
@@ -319,9 +321,10 @@ final class ExternalLedgerStore {
 
     /**
      * Whether the publication at {@code index} may have left an object at the provider that no
-     * link records: it is still pending, or it was sent and its answer failed verification and
-     * no verified deletion of the same object at the same place follows it on the ledger.
-     * Operations are kept in registration order, so "follows" is that order, not a clock.
+     * link records: it is still pending, or it is marked {@code provider_may_hold_object} and no
+     * verified deletion has settled it. A deletion settles such a publication only when it
+     * named the publication at its first registration, which it does for publications already
+     * marked then; registration order alone does not show what the provider ran first.
      */
     static boolean publicationMayHoldObject(ExternalPublicationLedger ledger, int index) {
         ExternalPublicationOperationRecord publication = ledger.getOperations(index);
@@ -335,18 +338,32 @@ final class ExternalLedgerStore {
         if (!publication.getProviderMayHoldObject()) {
             return false;
         }
-        for (int later = index + 1; later < ledger.getOperationsCount(); later++) {
-            ExternalPublicationOperationRecord deletion = ledger.getOperations(later);
+        for (ExternalPublicationOperationRecord deletion : ledger.getOperationsList()) {
             if (deletion.getIntent().getAction() == ExternalPublicationAction.EXTERNAL_PUBLICATION_ACTION_DELETE
                     && deletion.getOutcome() == ExternalPublicationOutcome.EXTERNAL_PUBLICATION_OUTCOME_DELETED
-                    && deletion.getIntent().getExternalObjectId()
-                            .equals(publication.getIntent().getExternalObjectId())
-                    && ExternalDeletionLifecycle.sameExternalTarget(
-                            deletion.getBindingSnapshot(), publication.getBindingSnapshot())) {
+                    && deletion.getCoversUncertainPublicationIdsList().contains(publication.getOperationId())) {
                 return false;
             }
         }
         return true;
+    }
+
+    /**
+     * The publications a deletion of {@code externalObjectId} at {@code target}, registered now,
+     * covers among those marked {@code provider_may_hold_object}.
+     */
+    static List<String> uncertainPublicationsCoveredBy(
+            ExternalPublicationLedger ledger, ExternalSystemBinding target, String externalObjectId) {
+        List<String> covered = new ArrayList<>();
+        for (ExternalPublicationOperationRecord publication : ledger.getOperationsList()) {
+            if (publication.getIntent().getAction() == ExternalPublicationAction.EXTERNAL_PUBLICATION_ACTION_PUBLISH
+                    && publication.getProviderMayHoldObject()
+                    && publication.getIntent().getExternalObjectId().equals(externalObjectId)
+                    && ExternalDeletionLifecycle.sameExternalTarget(publication.getBindingSnapshot(), target)) {
+                covered.add(publication.getOperationId());
+            }
+        }
+        return covered;
     }
 
     static boolean isTerminalOutcome(ExternalPublicationOutcome outcome) {

@@ -452,20 +452,34 @@ class ExternalReceiptSettlementTest {
         assertThat(ExternalReceiptSettlement.nothingOutstanding(ledger)).isFalse();
 
         // A verified deletion of a different object, or at a different place, does not cover it.
-        ExternalPublicationOperationRecord otherObject = deletedOperation("op-del-b", "object-b", binding(1L));
-        ExternalPublicationOperationRecord otherPlace = deletedOperation("op-del-elsewhere", "object-a",
+        ExternalPublicationOperationRecord otherObject = deletedAfterRegistration(ledger, "op-del-b", "object-b", binding(1L));
+        ExternalPublicationOperationRecord otherPlace = deletedAfterRegistration(ledger, "op-del-elsewhere", "object-a",
                 binding(1L).toBuilder().setDataset("another-dataset").build());
+        assertThat(otherObject.getCoversUncertainPublicationIdsList()).isEmpty();
+        assertThat(otherPlace.getCoversUncertainPublicationIdsList()).isEmpty();
         assertThat(ExternalReceiptSettlement.nothingOutstanding(ledger.toBuilder()
                 .addOperations(otherObject).addOperations(otherPlace).build())).isFalse();
 
-        // A verified deletion of the object at the same place, registered after it, does.
+        // A verified deletion of the object at the same place, registered once the doubt was
+        // recorded, names the publication and settles it, under a binding revision that moved
+        // nowhere.
+        ExternalPublicationOperationRecord sameObject = deletedAfterRegistration(ledger, "op-del-a", "object-a", binding(2L));
+        assertThat(sameObject.getCoversUncertainPublicationIdsList()).containsExactly("op-unverified");
         assertThat(ExternalReceiptSettlement.nothingOutstanding(ledger.toBuilder()
-                .addOperations(deletedOperation("op-del-a", "object-a", binding(2L))).build())).isTrue();
+                .addOperations(sameObject).build())).isTrue();
 
-        // One registered before it does not.
+        // A deletion registered while the publication was still pending does not: the provider
+        // may have run that deletion first and the publication after it.
+        ExternalPublicationLedger whilePending = ExternalPublicationLedger.newBuilder()
+                .addOperations(unverified.toBuilder()
+                        .setOutcome(ExternalPublicationOutcome.EXTERNAL_PUBLICATION_OUTCOME_PENDING)
+                        .setProviderMayHoldObject(false))
+                .build();
+        ExternalPublicationOperationRecord earlyDeletion =
+                deletedAfterRegistration(whilePending, "op-del-early", "object-a", binding(1L));
         assertThat(ExternalReceiptSettlement.nothingOutstanding(ExternalPublicationLedger.newBuilder()
-                .addOperations(deletedOperation("op-del-a", "object-a", binding(1L)))
-                .addOperations(unverified).build())).isFalse();
+                .addOperations(unverified)
+                .addOperations(earlyDeletion).build())).isFalse();
 
         // A publication the provider refused, with verified evidence, left nothing.
         assertThat(ExternalReceiptSettlement.nothingOutstanding(ExternalPublicationLedger.newBuilder()
@@ -523,6 +537,42 @@ class ExternalReceiptSettlementTest {
                 .build();
         assertThat(ExternalReceiptSettlement.nothingOutstanding(ledger.toBuilder()
                 .setHistoricalLinks(0, elsewhere).build())).isFalse();
+    }
+
+    /**
+     * A deletion registered against {@code ledger} as it stands, naming the uncertain
+     * publications it covers as the lifecycle does, then settled DELETED.
+     */
+    private static ExternalPublicationOperationRecord deletedAfterRegistration(
+            ExternalPublicationLedger ledger, String operationId, String objectId, ExternalSystemBinding target) {
+        return deletedOperation(operationId, objectId, target).toBuilder()
+                .addAllCoversUncertainPublicationIds(
+                        ExternalLedgerStore.uncertainPublicationsCoveredBy(ledger, target, objectId))
+                .build();
+    }
+
+    @Test
+    void oneVerifiedDeletionRetiresEveryLinkOfTheObjectItClaimed() {
+        // Late publications left the object owed a deletion in history as well as current.
+        ExternalPublicationOperationRecord purgeDelete = operation("op-purge-del",
+                ExternalPublicationAction.EXTERNAL_PUBLICATION_ACTION_DELETE, "object-a", 1L, 0L);
+        ExternalPublicationLedger owed = ExternalPublicationLedger.newBuilder()
+                .setSourcePurged(true).setLastPurgeId("purge-1")
+                .setCurrentLink(link("object-a", 1L, 5L,
+                        ExternalProjectionLifecycle.EXTERNAL_PROJECTION_LIFECYCLE_DELETION_PENDING))
+                .addHistoricalLinks(link("object-a", 1L, 4L,
+                        ExternalProjectionLifecycle.EXTERNAL_PROJECTION_LIFECYCLE_DELETION_PENDING))
+                .addHistoricalLinks(link("object-a", 1L, 3L,
+                        ExternalProjectionLifecycle.EXTERNAL_PROJECTION_LIFECYCLE_DELETION_PENDING))
+                .build();
+        ExternalPublicationLedger registered = register(owed, purgeDelete).ledger();
+        ExternalPublicationLedger after = settled(registered,
+                ExternalLedgerStore.findOperation(registered, "op-purge-del").orElseThrow());
+        assertThat(after.hasCurrentLink()).isFalse();
+        assertThat(after.getHistoricalLinksList()).hasSize(3).allSatisfy(link ->
+                assertThat(link.getProjectionLifecycle()).isEqualTo(
+                        ExternalProjectionLifecycle.EXTERNAL_PROJECTION_LIFECYCLE_DELETED));
+        assertThat(ExternalReceiptSettlement.nothingOutstanding(after)).isTrue();
     }
 
     private static ExternalPublicationOperationRecord deletedOperation(

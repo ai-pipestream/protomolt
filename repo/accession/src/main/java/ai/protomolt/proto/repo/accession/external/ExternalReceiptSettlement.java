@@ -428,28 +428,28 @@ final class ExternalReceiptSettlement {
     }
 
     /**
-     * Marks as deleted the one projection the evidence is for: the link published under the
-     * deleted object's ID and the binding revision the deletion ran against. A deletion of
-     * anything else leaves every link as it was, because that evidence says nothing about them.
+     * Marks as deleted every projection the deletion claimed and the evidence covers: the
+     * current link and any historical link of the deleted object at the same place in the
+     * external system. Late publications can leave several such links owed a deletion, and one
+     * verified deletion of the object settles them all. Links the deletion did not claim stay
+     * as they were, because its evidence says nothing about them.
      */
     private static ExternalPublicationLedger retireDeletedProjection(
             ExternalPublicationLedger ledger,
             ExternalPublicationOperationRecord deletedOp,
             ExternalProviderEvidence evidence) {
         ExternalPublicationLedger.Builder next = ledger.toBuilder();
-        if (ledger.hasCurrentLink() && isDeletionTarget(ledger.getCurrentLink(), deletedOp)) {
-            next.clearCurrentLink();
-            next.addHistoricalLinks(retired(ledger.getCurrentLink(), deletedOp, evidence));
-            return next.build();
-        }
-        for (int i = ledger.getHistoricalLinksCount() - 1; i >= 0; i--) {
+        for (int i = 0; i < ledger.getHistoricalLinksCount(); i++) {
             ExternalLink historical = ledger.getHistoricalLinks(i);
             if (historical.getProjectionLifecycle()
                             != ExternalProjectionLifecycle.EXTERNAL_PROJECTION_LIFECYCLE_DELETED
                     && isDeletionTarget(historical, deletedOp)) {
                 next.setHistoricalLinks(i, retired(historical, deletedOp, evidence));
-                break;
             }
+        }
+        if (ledger.hasCurrentLink() && isDeletionTarget(ledger.getCurrentLink(), deletedOp)) {
+            next.clearCurrentLink();
+            next.addHistoricalLinks(retired(ledger.getCurrentLink(), deletedOp, evidence));
         }
         return next.build();
     }
