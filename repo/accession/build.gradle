@@ -9,10 +9,16 @@ dependencies {
     api project(':protomolt-repo-catalog')
     api project(':protomolt-repo-stack')
     api project(':protomolt-repo-spi')
+    api project(':protomolt-repo-admission')
+    api project(':protomolt-grpc-service-profile')
+    api project(':protomolt-grpc-service-workspace')
+    api project(':protomolt-registry')
+    api project(':protomolt-receipt')
     implementation project(':protomolt-repo-codec')
     implementation project(':protomolt-descriptors')
-    implementation project(':protomolt-repo-admission')
+    implementation project(':protomolt-formats')
     implementation project(':protomolt-protobuf-validation')
+    implementation project(':protomolt-protobuf-validation-protovalidate')
     implementation project(':protomolt-authz-grpc')
     // A concept filter expands against the host's mounted concept schemes.
     api project(':protomolt-config')
@@ -51,6 +57,8 @@ dependencies {
     testRuntimeOnly libs.slf4j.simple
     // The corpus test checks the metadata values against the house format parsers.
     testImplementation project(':protomolt-formats')
+    testImplementation project(':protomolt-schema-registry-git')
+    testImplementation project(':protomolt-inference-spi')
 }
 
 ext.forbiddenRuntimeModules = ['protomolt-repo-container', 'protomolt-repo-engine', 'protomolt-repo-service',
