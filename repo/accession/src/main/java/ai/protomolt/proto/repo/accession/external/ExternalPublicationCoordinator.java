@@ -668,6 +668,9 @@ public final class ExternalPublicationCoordinator {
 
         ExternalProviderGateway.OutboundAuthContext outboundAuth =
                 bindingStore.resolveOutboundAuth(op.getBindingSnapshot());
+        // A status query carries the operation's intent and credentials; it goes only to the
+        // endpoint the operation's binding snapshot recorded.
+        ExternalDeletionLifecycle.requireEndpointUnmoved(op.getBindingSnapshot(), outboundAuth);
 
         Timestamp startedAt = timestamp(clock.instant());
         int nextAttemptNumber = op.getAttemptsCount() + 1;

@@ -252,6 +252,136 @@ final class ExternalDeletionLifecycle {
         }
     }
 
+    /** The ledger with a deletion attempt registered, and that attempt's number. */
+    record DeletionRegistration(ExternalPublicationLedger ledger, int attemptNumber) {
+    }
+
+    /**
+     * Registers an attempt of deletion {@code operationId} on the ledger as it stands before the
+     * deletion is sent. The first registration names, on each link on record that the deletion
+     * covers, this operation as the one retiring it; that coverage is fixed then. A retry adds
+     * an attempt and claims nothing new.
+     */
+    static DeletionRegistration registerDeletionAttempt(
+            ExternalPublicationLedger current,
+            String operationId,
+            String intentSha256,
+            ExternalPublicationIntent intent,
+            ExternalSystemBinding bindingSnapshot,
+            Optional<Long> tombstoneRevision,
+            Optional<String> purgeId,
+            Timestamp startedAt) {
+        boolean settledAlready = findOperation(current, operationId)
+                .map(known -> isTerminalOutcome(known.getOutcome()))
+                .orElse(false);
+        if (!settledAlready && tombstoneRevision.isPresent()) {
+            // Checked again here, against the ledger as it is when the deletion
+            // is about to be sent: the target may have been republished since it
+            // was resolved, or since an earlier attempt of this same operation.
+            requireNotRepublished(
+                    current,
+                    new ResolvedDeleteTarget(bindingSnapshot, intent.getExternalObjectId()),
+                    tombstoneRevision.get());
+        }
+        ExternalPublicationLedger.Builder next = current.toBuilder();
+        if (tombstoneRevision.isPresent()) {
+            long tr = tombstoneRevision.get();
+            long maxTombstone = current.hasTombstonedAtSourceRevision()
+                    ? Math.max(current.getTombstonedAtSourceRevision(), tr)
+                    : tr;
+            next.setTombstonedAtSourceRevision(maxTombstone);
+            next.setHighestFencedSourceRevision(
+                    Math.max(current.getHighestFencedSourceRevision(), tr));
+        }
+        if (purgeId.isPresent()) {
+            next.setSourcePurged(true);
+            next.setLastPurgeId(purgeId.get());
+        }
+        // A tombstone covers what was published up to it. A publication made
+        // after the source was restored is not owed this deletion.
+        boolean coversCurrent = current.hasCurrentLink()
+                && (tombstoneRevision.isEmpty()
+                        || current.getCurrentLink().getSourceRevision()
+                                <= tombstoneRevision.get());
+        if (coversCurrent
+                && current.getCurrentLink().getProjectionLifecycle()
+                        == ExternalProjectionLifecycle.EXTERNAL_PROJECTION_LIFECYCLE_ACTIVE) {
+            next.setCurrentLink(current.getCurrentLink().toBuilder()
+                    .setProjectionLifecycle(
+                            ExternalProjectionLifecycle
+                                    .EXTERNAL_PROJECTION_LIFECYCLE_DELETION_PENDING));
+        }
+        Optional<ExternalPublicationOperationRecord> existingOp =
+                findOperation(current, operationId);
+        if (existingOp.isPresent()) {
+            ExternalPublicationOperationRecord op = existingOp.get();
+            if (!op.getIntentSha256().equals(intentSha256)) {
+                throw Status.ALREADY_EXISTS
+                        .withDescription("Operation '" + operationId
+                                + "' bound to different intent")
+                        .asRuntimeException();
+            }
+            if (isTerminalOutcome(op.getOutcome())) {
+                return new DeletionRegistration(next.build(), op.getAttemptsCount());
+            }
+            ExternalLedgerStore.requireRoomForRetry(op);
+            int retryNum = op.getAttemptsCount() + 1;
+            ExternalPublicationAttempt retryAttempt = ExternalPublicationAttempt.newBuilder()
+                    .setAttemptNumber(retryNum)
+                    .setTrigger(ExternalAttemptTrigger.EXTERNAL_ATTEMPT_TRIGGER_RETRY)
+                    .setOutcome(
+                            ExternalPublicationOutcome
+                                    .EXTERNAL_PUBLICATION_OUTCOME_DELETION_PENDING)
+                    .setPendingPhase(
+                            ExternalPendingPhase.EXTERNAL_PENDING_PHASE_DELETION_IN_FLIGHT)
+                    .setStartedAt(startedAt)
+                    .build();
+            ExternalPublicationOperationRecord updatedOp = op.toBuilder()
+                    .setOutcome(
+                            ExternalPublicationOutcome
+                                    .EXTERNAL_PUBLICATION_OUTCOME_DELETION_PENDING)
+                    .setPendingPhase(
+                            ExternalPendingPhase.EXTERNAL_PENDING_PHASE_DELETION_IN_FLIGHT)
+                    .addAttempts(retryAttempt)
+                    .setUpdatedAt(startedAt)
+                    .build();
+            // A retry keeps the coverage its first registration fixed. A link recorded since
+            // is not this deletion's to retire, even if the provider answers the retry with
+            // the original deletion's receipt; it stays owed a deletion of its own.
+            return new DeletionRegistration(replaceOperation(next.build(), updatedOp), retryNum);
+        }
+
+        ExternalLedgerStore.requireRoomForNewOperation(current);
+        claimLinksForDeletion(next, current, operationId, bindingSnapshot,
+                intent.getExternalObjectId(),
+                tombstoneRevision.orElse(ALL_REVISIONS));
+                ExternalPublicationAttempt initialAttempt = ExternalPublicationAttempt.newBuilder()
+                .setAttemptNumber(1)
+                .setTrigger(ExternalAttemptTrigger.EXTERNAL_ATTEMPT_TRIGGER_INITIAL)
+                .setOutcome(
+                        ExternalPublicationOutcome
+                                .EXTERNAL_PUBLICATION_OUTCOME_DELETION_PENDING)
+                .setPendingPhase(
+                        ExternalPendingPhase.EXTERNAL_PENDING_PHASE_DELETION_IN_FLIGHT)
+                .setStartedAt(startedAt)
+                .build();
+        ExternalPublicationOperationRecord newOp = ExternalPublicationOperationRecord.newBuilder()
+                .setOperationId(operationId)
+                .setIntentSha256(intentSha256)
+                .setIntent(intent)
+                .setBindingSnapshot(bindingSnapshot)
+                .setOutcome(
+                        ExternalPublicationOutcome
+                                .EXTERNAL_PUBLICATION_OUTCOME_DELETION_PENDING)
+                .setPendingPhase(
+                        ExternalPendingPhase.EXTERNAL_PENDING_PHASE_DELETION_IN_FLIGHT)
+                .addAttempts(initialAttempt)
+                .setCreatedAt(startedAt)
+                .setUpdatedAt(startedAt)
+                .build();
+        return new DeletionRegistration(next.addOperations(newOp).build(), 1);
+    }
+
     ExternalPublicationCoordinator.OperationResult executeDeleteLifecycle(
             NodeAddress ledgerAddr,
             NodeAddress sourceAddress,
@@ -300,117 +430,11 @@ final class ExternalDeletionLifecycle {
                 retainedSecurity,
                 "ext-del-pre:" + operationId + ":" + UUID.randomUUID(),
                 current -> {
-                    boolean settledAlready = findOperation(current, operationId)
-                            .map(known -> isTerminalOutcome(known.getOutcome()))
-                            .orElse(false);
-                    if (!settledAlready && tombstoneRevision.isPresent()) {
-                        // Checked again here, against the ledger as it is when the deletion
-                        // is about to be sent: the target may have been republished since it
-                        // was resolved, or since an earlier attempt of this same operation.
-                        requireNotRepublished(
-                                current,
-                                new ResolvedDeleteTarget(bindingSnapshot, intent.getExternalObjectId()),
-                                tombstoneRevision.get());
-                    }
-                    ExternalPublicationLedger.Builder next = current.toBuilder();
-                    if (tombstoneRevision.isPresent()) {
-                        long tr = tombstoneRevision.get();
-                        long maxTombstone = current.hasTombstonedAtSourceRevision()
-                                ? Math.max(current.getTombstonedAtSourceRevision(), tr)
-                                : tr;
-                        next.setTombstonedAtSourceRevision(maxTombstone);
-                        next.setHighestFencedSourceRevision(
-                                Math.max(current.getHighestFencedSourceRevision(), tr));
-                    }
-                    if (purgeId.isPresent()) {
-                        next.setSourcePurged(true);
-                        next.setLastPurgeId(purgeId.get());
-                    }
-                    // A tombstone covers what was published up to it. A publication made
-                    // after the source was restored is not owed this deletion.
-                    boolean coversCurrent = current.hasCurrentLink()
-                            && (tombstoneRevision.isEmpty()
-                                    || current.getCurrentLink().getSourceRevision()
-                                            <= tombstoneRevision.get());
-                    if (coversCurrent
-                            && current.getCurrentLink().getProjectionLifecycle()
-                                    == ExternalProjectionLifecycle.EXTERNAL_PROJECTION_LIFECYCLE_ACTIVE) {
-                        next.setCurrentLink(current.getCurrentLink().toBuilder()
-                                .setProjectionLifecycle(
-                                        ExternalProjectionLifecycle
-                                                .EXTERNAL_PROJECTION_LIFECYCLE_DELETION_PENDING));
-                    }
-                    if (!settledAlready) {
-                        claimLinksForDeletion(next, current, operationId, bindingSnapshot,
-                                intent.getExternalObjectId(),
-                                tombstoneRevision.orElse(ALL_REVISIONS));
-                    }
-
-                    Optional<ExternalPublicationOperationRecord> existingOp =
-                            findOperation(current, operationId);
-                    if (existingOp.isPresent()) {
-                        ExternalPublicationOperationRecord op = existingOp.get();
-                        if (!op.getIntentSha256().equals(intentSha256)) {
-                            throw Status.ALREADY_EXISTS
-                                    .withDescription("Operation '" + operationId
-                                            + "' bound to different intent")
-                                    .asRuntimeException();
-                        }
-                        if (isTerminalOutcome(op.getOutcome())) {
-                            return next.build();
-                        }
-                        ExternalLedgerStore.requireRoomForRetry(op);
-                        int retryNum = op.getAttemptsCount() + 1;
-                        attemptHolder[0] = retryNum;
-                        ExternalPublicationAttempt retryAttempt = ExternalPublicationAttempt.newBuilder()
-                                .setAttemptNumber(retryNum)
-                                .setTrigger(ExternalAttemptTrigger.EXTERNAL_ATTEMPT_TRIGGER_RETRY)
-                                .setOutcome(
-                                        ExternalPublicationOutcome
-                                                .EXTERNAL_PUBLICATION_OUTCOME_DELETION_PENDING)
-                                .setPendingPhase(
-                                        ExternalPendingPhase.EXTERNAL_PENDING_PHASE_DELETION_IN_FLIGHT)
-                                .setStartedAt(startedAt)
-                                .build();
-                        ExternalPublicationOperationRecord updatedOp = op.toBuilder()
-                                .setOutcome(
-                                        ExternalPublicationOutcome
-                                                .EXTERNAL_PUBLICATION_OUTCOME_DELETION_PENDING)
-                                .setPendingPhase(
-                                        ExternalPendingPhase.EXTERNAL_PENDING_PHASE_DELETION_IN_FLIGHT)
-                                .addAttempts(retryAttempt)
-                                .setUpdatedAt(startedAt)
-                                .build();
-                        return replaceOperation(next.build(), updatedOp);
-                    }
-
-                    ExternalLedgerStore.requireRoomForNewOperation(current);
-                    attemptHolder[0] = 1;
-                    ExternalPublicationAttempt initialAttempt = ExternalPublicationAttempt.newBuilder()
-                            .setAttemptNumber(1)
-                            .setTrigger(ExternalAttemptTrigger.EXTERNAL_ATTEMPT_TRIGGER_INITIAL)
-                            .setOutcome(
-                                    ExternalPublicationOutcome
-                                            .EXTERNAL_PUBLICATION_OUTCOME_DELETION_PENDING)
-                            .setPendingPhase(
-                                    ExternalPendingPhase.EXTERNAL_PENDING_PHASE_DELETION_IN_FLIGHT)
-                            .setStartedAt(startedAt)
-                            .build();
-                    ExternalPublicationOperationRecord newOp = ExternalPublicationOperationRecord.newBuilder()
-                            .setOperationId(operationId)
-                            .setIntentSha256(intentSha256)
-                            .setIntent(intent)
-                            .setBindingSnapshot(bindingSnapshot)
-                            .setOutcome(
-                                    ExternalPublicationOutcome
-                                            .EXTERNAL_PUBLICATION_OUTCOME_DELETION_PENDING)
-                            .setPendingPhase(
-                                    ExternalPendingPhase.EXTERNAL_PENDING_PHASE_DELETION_IN_FLIGHT)
-                            .addAttempts(initialAttempt)
-                            .setCreatedAt(startedAt)
-                            .setUpdatedAt(startedAt)
-                            .build();
-                    return next.addOperations(newOp).build();
+                    DeletionRegistration registration = registerDeletionAttempt(current,
+                            operationId, intentSha256, intent, bindingSnapshot,
+                            tombstoneRevision, purgeId, startedAt);
+                    attemptHolder[0] = registration.attemptNumber();
+                    return registration.ledger();
                 });
 
         ExternalPublicationOperationRecord preOp =

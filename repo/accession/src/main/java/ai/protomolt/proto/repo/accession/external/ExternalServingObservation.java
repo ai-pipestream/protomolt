@@ -45,6 +45,7 @@ final class ExternalServingObservation {
             ExternalPublicationOperationRecord op) {
         ExternalProviderGateway.OutboundAuthContext outboundAuth =
                 bindingStore.resolveOutboundAuth(op.getBindingSnapshot());
+        ExternalDeletionLifecycle.requireEndpointUnmoved(op.getBindingSnapshot(), outboundAuth);
         ExternalProviderGateway.ProviderStatusResult statusResult;
         try {
             statusResult = gateway.queryStatus(new ExternalProviderGateway.ProviderStatusQuery(

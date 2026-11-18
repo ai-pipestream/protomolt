@@ -607,6 +607,76 @@ class ExternalPublicationIT {
     }
 
     @Test
+    void nothingIsSentOrQueriedOnceTheBindingsProfileResolvesToADifferentEndpoint(
+            @TempDir Path tempDir) throws Exception {
+        SimulatedManagedSearchProvider provider = new SimulatedManagedSearchProvider();
+        try (Harness h = Harness.boot(tempDir, provider)) {
+            h.saveActiveBinding(
+                    "tenant-alpha",
+                    "rust-search",
+                    "search-profile-v1",
+                    "ingest",
+                    "corpus-main",
+                    "ns-alpha",
+                    ExternalRetentionPolicy.EXTERNAL_RETENTION_POLICY_RETAIN_HISTORY,
+                    "op-bind-1");
+
+            // One publication is confirmed; another commits at the provider and loses its reply.
+            NodeAddress confirmedDoc = sourceAddress("tenant-alpha", "doc-moved-confirmed");
+            h.saveSourceDocument("save-moved-c", confirmedDoc, 0L, "Confirmed", "alice");
+            h.coordinator.publish(new ExternalPublicationCoordinator.PublishRequest(
+                    "op-moved-confirmed", confirmedDoc, 1L, "rust-search", 1L, "ext-moved-c", null, null));
+            NodeAddress pendingDoc = sourceAddress("tenant-alpha", "doc-moved-pending");
+            h.saveSourceDocument("save-moved-p", pendingDoc, 0L, "Pending", "alice");
+            provider.nextExecuteBehavior = ctx -> {
+                provider.recordPublishedSilently(ctx, 1L, 101L, 15L, SHA_MANIFEST);
+                return new ExternalProviderGateway.ProviderCallResult.Unresolved(
+                        "DEADLINE_EXCEEDED", "Transport deadline expired after commit");
+            };
+            assertThat(h.coordinator.publish(new ExternalPublicationCoordinator.PublishRequest(
+                            "op-moved-pending", pendingDoc, 1L, "rust-search", 1L, "ext-moved-p", null, null))
+                    .operation().getOutcome())
+                    .isEqualTo(ExternalPublicationOutcome.EXTERNAL_PUBLICATION_OUTCOME_PENDING);
+            NodeAddress newDoc = sourceAddress("tenant-alpha", "doc-moved-new");
+            h.saveSourceDocument("save-moved-n", newDoc, 0L, "New", "alice");
+
+            // The profile now points somewhere else, a host approved for this credential, so
+            // the only thing standing in the way is that the binding revision recorded the old one.
+            h.profileRepo.save(serviceProfile(
+                    "search-profile-v1",
+                    "ingest",
+                    "decommissioned-host.internal",
+                    9999,
+                    Transport.TRANSPORT_TLS,
+                    "env:PROTOMOLT_TEST_SEARCH_TOKEN_V1"));
+            int executeBefore = provider.executeCalls.get();
+            int statusBefore = provider.statusCalls.get();
+
+            assertRefusedAsMoved(() -> h.coordinator.publish(new ExternalPublicationCoordinator.PublishRequest(
+                    "op-moved-new", newDoc, 1L, "rust-search", 1L, "ext-moved-n", null, null)));
+            assertRefusedAsMoved(() -> h.coordinator.reconcileOperation(
+                    pendingDoc, "rust-search", "op-moved-pending", false));
+            assertRefusedAsMoved(() -> h.coordinator.reconcileOperation(
+                    confirmedDoc, "rust-search", "op-moved-confirmed", true));
+            assertThat(provider.executeCalls.get()).as("no publication sent").isEqualTo(executeBefore);
+            assertThat(provider.statusCalls.get()).as("no status query sent").isEqualTo(statusBefore);
+
+            // Put back, the pending operation is still there to reconcile.
+            h.profileRepo.save(serviceProfile(
+                    "search-profile-v1",
+                    "ingest",
+                    "search-v1.internal",
+                    9443,
+                    Transport.TRANSPORT_TLS,
+                    "env:PROTOMOLT_TEST_SEARCH_TOKEN_V1"));
+            assertThat(h.coordinator.reconcileOperation(
+                            pendingDoc, "rust-search", "op-moved-pending", false)
+                    .operation().getOutcome())
+                    .isEqualTo(ExternalPublicationOutcome.EXTERNAL_PUBLICATION_OUTCOME_CONFIRMED);
+        }
+    }
+
+    @Test
     void retryingAFencedOperationWithAnUnknownOutcomeKeepsItReconcilable(
             @TempDir Path tempDir) throws Exception {
         SimulatedManagedSearchProvider provider = new SimulatedManagedSearchProvider();
@@ -1382,6 +1452,16 @@ class ExternalPublicationIT {
                 .build();
     }
 
+    /** Refused by the moved-endpoint check itself, not by some other precondition. */
+    private static void assertRefusedAsMoved(Runnable action) {
+        assertThatThrownBy(action::run)
+                .isInstanceOfSatisfying(StatusRuntimeException.class, ex -> {
+                    assertThat(ex.getStatus().getCode()).isEqualTo(Status.Code.FAILED_PRECONDITION);
+                    assertThat(ex.getStatus().getDescription())
+                            .contains("nothing is sent to a different endpoint");
+                });
+    }
+
     private static void assertGrpcCode( Runnable action, Status.Code expectedCode) {
         assertThatThrownBy(action::run)
                 .isInstanceOfSatisfying(
@@ -1914,6 +1994,7 @@ class ExternalPublicationIT {
         private final AtomicLong seqCounter = new AtomicLong(100L);
         private final AtomicLong epochCounter = new AtomicLong(10L);
         final AtomicInteger executeCalls = new AtomicInteger();
+        final AtomicInteger statusCalls = new AtomicInteger();
         final AtomicReference<String> lastAuthorizationHeader = new AtomicReference<>();
         final Map<String, ExternalProviderEvidence> recordedByOperation = new ConcurrentHashMap<>();
         final Map<String, ProviderCallRequest> requestByOperation = new ConcurrentHashMap<>();
@@ -1975,6 +2056,7 @@ class ExternalPublicationIT {
 
         @Override
         public ProviderStatusResult queryStatus(ProviderStatusQuery query) {
+            statusCalls.incrementAndGet();
             String authHeader = query.auth().resolvedHeaders().get(AUTHORIZATION_KEY);
             if (authHeader == null || !authHeader.startsWith("Bearer ")) {
                 throw Status.UNAUTHENTICATED
