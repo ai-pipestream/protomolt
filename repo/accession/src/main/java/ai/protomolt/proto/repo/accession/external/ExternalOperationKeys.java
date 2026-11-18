@@ -111,7 +111,8 @@ public final class ExternalOperationKeys {
     }
 
     /**
-     * Validates {@code intent} structurally, semantically, and for safe non-secret URLs.
+     * Validates {@code intent} structurally, semantically, for safe non-secret URLs, and for
+     * credential text in any of its fields.
      *
      * @param intent the intent to validate
      */
@@ -126,6 +127,11 @@ public final class ExternalOperationKeys {
         if (intent.hasDisplayUrl()) {
             ExternalPublicationCoordinates.validateDisplayUrl(intent.getDisplayUrl());
         }
+        // The intent is stored on the ledger, readable by anyone who may read the source.
+        ExternalCredentialTextScan.firstCredentialField(intent, "intent").ifPresent(path -> {
+            throw new IllegalArgumentException("Invalid ExternalPublicationIntent: " + path
+                    + " carries text that reads as a credential");
+        });
     }
 
     static String sha256Hex(byte[] bytes) {

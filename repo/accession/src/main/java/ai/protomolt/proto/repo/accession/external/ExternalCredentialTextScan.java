@@ -7,14 +7,15 @@ import java.util.Map;
 import java.util.Optional;
 
 /**
- * Finds text in provider evidence that reads as a credential. Evidence is stored on the ledger,
- * where anyone who may read the source may read it, and a valid signature proves only who wrote
- * the text, not that it is safe to keep. Every string field is checked, at any depth, through the
- * message descriptors; bytes fields are not text and are not read.
+ * Finds text that reads as a credential in a message bound for the ledger: an operation's intent
+ * before it is first saved, and provider evidence before it is accepted. The ledger is readable by
+ * anyone who may read the source, and a valid signature proves only who wrote a text, not that it
+ * is safe to keep. Every string field is checked, at any depth, through the message descriptors;
+ * bytes fields are not text and are not read.
  */
-final class ExternalEvidenceTextScan {
+final class ExternalCredentialTextScan {
 
-    private ExternalEvidenceTextScan() {
+    private ExternalCredentialTextScan() {
     }
 
     /**

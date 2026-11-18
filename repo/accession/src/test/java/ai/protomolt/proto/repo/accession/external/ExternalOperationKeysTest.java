@@ -1,6 +1,7 @@
 package ai.protomolt.proto.repo.accession.external;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import ai.protomolt.proto.repo.external.v1.ExternalPartDigest;
@@ -149,6 +150,28 @@ class ExternalOperationKeysTest {
             assertThat(ExternalOperationKeys.deriveOperationId(mutated))
                     .isNotEqualTo(baseOpId);
         }
+    }
+
+    @Test
+    void validateIntentRejectsCredentialTextInAnyField() {
+        String token = "Bearer abcdefghijklmnopqrstuvwxyz0123456789";
+        ExternalPublicationIntent tokenObjectId = basePublishIntent().toBuilder()
+                .setExternalObjectId(token).build();
+        assertThatThrownBy(() -> ExternalOperationKeys.intentSha256(tokenObjectId))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("intent.external_object_id")
+                .hasMessageNotContaining("abcdefghij");
+
+        ExternalPublicationIntent tokenMappingId = basePublishIntent().toBuilder()
+                .setProcessing(basePublishIntent().getProcessing().toBuilder()
+                        .setMappingId("-----BEGIN PRIVATE KEY-----"))
+                .build();
+        assertThatThrownBy(() -> ExternalOperationKeys.intentSha256(tokenMappingId))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("intent.processing.mapping_id");
+
+        assertThatCode(() -> ExternalOperationKeys.intentSha256(basePublishIntent()))
+                .doesNotThrowAnyException();
     }
 
     @Test

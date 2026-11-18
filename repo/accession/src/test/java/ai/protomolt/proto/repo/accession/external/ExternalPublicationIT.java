@@ -445,6 +445,14 @@ class ExternalPublicationIT {
                     new ExternalPublicationCoordinator.PreparePurgeRequest(
                             sourceAddr, "purge-rl-001", "rust-search"));
             assertThat(prepared.getRulesFromSourceRevision()).isEqualTo(2L);
+            // While it is prepared, another purge ID cannot take its place; the same ID can prepare again.
+            assertGrpcCode(() -> h.coordinator.preparePurge(
+                            new ExternalPublicationCoordinator.PreparePurgeRequest(
+                                    sourceAddr, "purge-rl-002", "rust-search")),
+                    Status.Code.FAILED_PRECONDITION);
+            assertThat(h.coordinator.preparePurge(new ExternalPublicationCoordinator.PreparePurgeRequest(
+                            sourceAddr, "purge-rl-001", "rust-search")).getPurgeId())
+                    .isEqualTo("purge-rl-001");
             h.stub.purgeDocument(PurgeDocumentRequest.newBuilder()
                     .setPurgeId("purge-rl-001")
                     .setAddress(sourceAddr)
@@ -517,7 +525,27 @@ class ExternalPublicationIT {
                             new ExternalPublicationCoordinator.PreparePurgeRequest(
                                     sourceAddr, "purge-ro-bob", "rust-search")),
                     Status.Code.PERMISSION_DENIED);
+
+            // A tombstone has no rules of its own; Bob is still judged by the last live revision.
+            // This source was never published, so no ledger exists to refuse him on its own.
             h.useCaller(h.alphaAlice);
+            NodeAddress deletedAddr = sourceAddress("tenant-alpha", "doc-read-only-deleted");
+            h.saveSourceDocument("save-rod-1", deletedAddr, 0L, "Bob reads, then deleted",
+                    List.of("alice"), List.of("bob"));
+            h.stub.deleteDocument(DeleteDocumentRequest.newBuilder()
+                    .setOperationId("del-rod-1")
+                    .setAddress(deletedAddr)
+                    .setExpected(ExpectedRevision.newBuilder().setRevision(1L))
+                    .build());
+            h.useCaller(h.alphaBob);
+            int callsBefore = provider.executeCalls.get();
+            assertGrpcCode(() -> h.coordinator.publish(new ExternalPublicationCoordinator.PublishRequest(
+                            "pub-rod-bob", deletedAddr, 1L, "rust-search", 1L, "ext-rod", null, null)),
+                    Status.Code.PERMISSION_DENIED);
+            h.useCaller(h.alphaAlice);
+            assertThat(provider.executeCalls.get()).isEqualTo(callsBefore);
+            assertThat(h.coordinator.getLedgerView(deletedAddr, "rust-search"))
+                    .as("no ledger, so no fenced operation, for Bob's refused call").isEmpty();
         }
     }
 

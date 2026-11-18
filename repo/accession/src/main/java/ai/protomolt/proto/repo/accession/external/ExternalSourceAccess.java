@@ -232,6 +232,9 @@ final class ExternalSourceAccess {
         }
         long latestRev = revisions.getRevisions(0).getRevision();
         if (revisions.getRevisions(0).getTombstone()) {
+            // A tombstone carries no rules of its own; the right to publish is still judged by
+            // the source's last live revision, so a reader is refused here too.
+            requireWrite(latestLiveOwnership(sourceAddress).ownership());
             return DocumentSecurity.getDefaultInstance();
         }
         GetDocumentResponse latestCore = documents.getDocument(
@@ -284,6 +287,22 @@ final class ExternalSourceAccess {
      *         live revision is within reach of the latest
      */
     SourceAccessRules accessRulesBeforePurge(NodeAddress sourceAddress) {
+        LiveRevision live = latestLiveOwnership(sourceAddress);
+        requireWrite(live.ownership());
+        return new SourceAccessRules(live.sourceRevision(), live.ownership().getSecurity());
+    }
+
+    private record LiveRevision(long sourceRevision, OwnershipContext ownership) {
+    }
+
+    /**
+     * The ownership of the source's latest live revision: the latest revision, or the one before
+     * it when the latest is a tombstone. Read as the caller.
+     *
+     * @throws StatusRuntimeException FAILED_PRECONDITION once the source is purged, or when no
+     *         live revision is within reach of the latest
+     */
+    private LiveRevision latestLiveOwnership(NodeAddress sourceAddress) {
         ListRevisionsResponse revisions;
         try {
             revisions = documents.listRevisions(ListRevisionsRequest.newBuilder()
@@ -308,13 +327,11 @@ final class ExternalSourceAccess {
                     .setRevision(RevisionSelector.newBuilder().setRevision(summary.getRevision()))
                     .setSelection(CORE_SELECTION)
                     .build());
-            OwnershipContext ownership = live.getDocument().getOwnership();
-            requireWrite(ownership);
-            return new SourceAccessRules(summary.getRevision(), ownership.getSecurity());
+            return new LiveRevision(summary.getRevision(), live.getDocument().getOwnership());
         }
         throw Status.FAILED_PRECONDITION
                 .withDescription("Source document has no live revision next to its latest one; "
-                        + "there are no access rules to prepare the purge with")
+                        + "there are no access rules to judge the caller by")
                 .asRuntimeException();
     }
 

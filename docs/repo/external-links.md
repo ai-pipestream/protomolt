@@ -70,7 +70,11 @@ parameters, or private key material:
    [linksCore.ts](../../apps/console/src/repository/linksCore.ts)) re-validates
    `display_url` before emitting an anchor `href`, rendering unsafe values as
    non-navigable text.
-4. Provider evidence is stored on the ledger, so `ExternalProviderVerifier`
+4. An operation's intent is checked the same way before it is first saved:
+   any of its string fields, such as `external_object_id` or
+   `processing.mapping_id`, that reads as a credential makes the request
+   `INVALID_ARGUMENT`.
+5. Provider evidence is stored on the ledger, so `ExternalProviderVerifier`
    refuses evidence (`EVIDENCE_CARRIES_CREDENTIAL`) when any string field of it,
    or of the `WorkRecord` manifest inside a signed work record, at any depth,
    reads as a credential. A valid signature proves who wrote the text, not that
@@ -260,7 +264,9 @@ Ordering invariants:
    the last publication left there, and records `purge_preparation` (the purge
    ID, the source revision the rules came from, and the time). It is called
    immediately before `PurgeDocument`; rules changed on the source after it are
-   not on the ledger. Without this step a ledger kept after the purge would
+   not on the ledger. Preparing again under the same purge ID refreshes the
+   copy; preparing under another ID while one is recorded is refused, since the
+   purge announced under the first ID would then find nothing prepared. Without this step a ledger kept after the purge would
    answer to the rules of the last publication, including grants the source had
    since revoked, and nothing would be left to read the current rules from.
    Second, after `PurgeDocument`, `handlePurge` runs, and only for the purge ID
@@ -283,7 +289,8 @@ Ordering invariants:
    (falling back to the ledger's retained `DocumentSecurity` ACL when the source
    is tombstoned or purged). Cross-account and unauthorized callers receive
    `PERMISSION_DENIED`. Publishing and preparing a purge also require `WRITE`
-   on the source's latest live revision, checked by the coordinator against
+   on the source's latest live revision (the revision before a tombstone when the
+   source is deleted), checked by the coordinator against
    the caller the host supplies through `ExternalPublicationCaller` (the same
    identity it forwards to `DocumentService`). Reading the source is not enough
    to publish it, as in search engines that tie indexing to write access on the

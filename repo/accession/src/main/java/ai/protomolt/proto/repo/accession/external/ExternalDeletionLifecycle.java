@@ -106,7 +106,7 @@ final class ExternalDeletionLifecycle {
                 .setAction(ExternalPublicationAction.EXTERNAL_PUBLICATION_ACTION_DELETE)
                 .setExternalObjectId(target.externalObjectId())
                 .build();
-        String intentSha256 = ExternalOperationKeys.intentSha256(intent);
+        String intentSha256 = intentDigest(intent);
         String operationId = (request.operationId() == null || request.operationId().isEmpty())
                 ? ExternalOperationKeys.deriveOperationId(intent)
                 : request.operationId();
@@ -147,6 +147,7 @@ final class ExternalDeletionLifecycle {
                         .asRuntimeException())
                 .ledger();
         requireNotPurgedUnderAnotherId(existing, request.purgeId());
+        requireNoOtherPreparation(existing, request.purgeId());
 
         ExternalPurgePreparation preparation = ExternalPurgePreparation.newBuilder()
                 .setPurgeId(request.purgeId())
@@ -161,9 +162,37 @@ final class ExternalDeletionLifecycle {
                 "ext-purge-prep:" + request.purgeId() + ":" + UUID.randomUUID(),
                 current -> {
                     requireNotPurgedUnderAnotherId(current, request.purgeId());
+                    requireNoOtherPreparation(current, request.purgeId());
                     return current.toBuilder().setPurgePreparation(preparation).build();
                 });
         return updated.getPurgePreparation();
+    }
+
+    /** The intent's digest; an intent that fails validation is the caller's error. */
+    private static String intentDigest(ExternalPublicationIntent intent) {
+        try {
+            return ExternalOperationKeys.intentSha256(intent);
+        } catch (IllegalArgumentException badIntent) {
+            throw Status.INVALID_ARGUMENT
+                    .withDescription(badIntent.getMessage())
+                    .withCause(badIntent)
+                    .asRuntimeException();
+        }
+    }
+
+    /**
+     * A ledger holds one purge preparation. Preparing again under the same purge ID refreshes
+     * it; preparing under another ID while one is recorded is refused, since the repository
+     * purge already announced under the first ID would then find nothing prepared for it.
+     */
+    private static void requireNoOtherPreparation(ExternalPublicationLedger ledger, String purgeId) {
+        if (ledger.hasPurgePreparation() && !ledger.getPurgePreparation().getPurgeId().equals(purgeId)) {
+            throw Status.FAILED_PRECONDITION
+                    .withDescription("Purge '" + ledger.getPurgePreparation().getPurgeId()
+                            + "' is already prepared on this ledger; handle that purge, or prepare "
+                            + "again under the same purge ID")
+                    .asRuntimeException();
+        }
     }
 
     private static void requireNotPurgedUnderAnotherId(ExternalPublicationLedger ledger, String purgeId) {
@@ -230,7 +259,7 @@ final class ExternalDeletionLifecycle {
                 .setAction(ExternalPublicationAction.EXTERNAL_PUBLICATION_ACTION_DELETE)
                 .setExternalObjectId(target.externalObjectId())
                 .build();
-        String intentSha256 = ExternalOperationKeys.intentSha256(intent);
+        String intentSha256 = intentDigest(intent);
         String operationId = (request.operationId() == null || request.operationId().isEmpty())
                 ? ExternalOperationKeys.deriveOperationId(intent)
                 : request.operationId();

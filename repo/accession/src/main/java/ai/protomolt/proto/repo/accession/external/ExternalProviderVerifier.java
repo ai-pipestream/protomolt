@@ -336,7 +336,7 @@ public final class ExternalProviderVerifier {
      * keep, so evidence whose text carries credential material is not accepted.
      */
     private static void refuseCredentialText(Message message, String rootName) {
-        ExternalEvidenceTextScan.firstCredentialField(message, rootName).ifPresent(path -> {
+        ExternalCredentialTextScan.firstCredentialField(message, rootName).ifPresent(path -> {
             throw new ProviderVerificationException(
                     "EVIDENCE_CARRIES_CREDENTIAL",
                     "Provider evidence field " + path + " carries text that reads as a credential");

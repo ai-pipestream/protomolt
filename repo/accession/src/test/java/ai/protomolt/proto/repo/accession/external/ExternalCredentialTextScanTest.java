@@ -11,7 +11,7 @@ import java.nio.charset.StandardCharsets;
 import org.junit.jupiter.api.Test;
 
 /** The scan reaches string fields at any depth, in lists and maps, and reads no bytes field. */
-class ExternalEvidenceTextScanTest {
+class ExternalCredentialTextScanTest {
 
     private static final String TOKEN = "Bearer abcdefghijklmnopqrstuvwxyz0123456789";
 
@@ -19,9 +19,9 @@ class ExternalEvidenceTextScanTest {
     void namesTheFirstFieldCarryingACredentialAtAnyDepth() {
         ExternalProviderEvidence clean = ExternalProviderEvidence.newBuilder()
                 .setDiagnosticCode("OK").setExternalObjectId("object-a").build();
-        assertThat(ExternalEvidenceTextScan.firstCredentialField(clean, "evidence")).isEmpty();
+        assertThat(ExternalCredentialTextScan.firstCredentialField(clean, "evidence")).isEmpty();
 
-        assertThat(ExternalEvidenceTextScan.firstCredentialField(
+        assertThat(ExternalCredentialTextScan.firstCredentialField(
                         clean.toBuilder().setExternalVersion(TOKEN).build(), "evidence"))
                 .contains("evidence.external_version");
 
@@ -30,7 +30,7 @@ class ExternalEvidenceTextScanTest {
                 .addHistoricalLinks(ExternalLink.newBuilder().setExternalObjectId("object-a"))
                 .addHistoricalLinks(ExternalLink.newBuilder().setExternalObjectId(TOKEN))
                 .build();
-        assertThat(ExternalEvidenceTextScan.firstCredentialField(ledger, "ledger"))
+        assertThat(ExternalCredentialTextScan.firstCredentialField(ledger, "ledger"))
                 .contains("ledger.historical_links[1].external_object_id");
 
         // Inside a map value.
@@ -38,7 +38,7 @@ class ExternalEvidenceTextScanTest {
                 .putLabels("team", "search")
                 .putLabels("note", TOKEN)
                 .build();
-        assertThat(ExternalEvidenceTextScan.firstCredentialField(labelled, "binding"))
+        assertThat(ExternalCredentialTextScan.firstCredentialField(labelled, "binding"))
                 .hasValueSatisfying(path -> assertThat(path).startsWith("binding.labels["));
     }
 
@@ -47,6 +47,6 @@ class ExternalEvidenceTextScanTest {
         ExternalProviderEvidence withBytes = ExternalProviderEvidence.newBuilder()
                 .setSignedWorkRecordBytes(ByteString.copyFrom(TOKEN, StandardCharsets.UTF_8))
                 .build();
-        assertThat(ExternalEvidenceTextScan.firstCredentialField(withBytes, "evidence")).isEmpty();
+        assertThat(ExternalCredentialTextScan.firstCredentialField(withBytes, "evidence")).isEmpty();
     }
 }
