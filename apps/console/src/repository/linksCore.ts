@@ -517,6 +517,21 @@ export function buildLinkNeighborhoodGraph(
 }
 
 /**
+ * Joins key components so that different component lists never give the same key, whatever
+ * characters the components hold: each is written with its length, and an absent component
+ * is marked apart from an empty one.
+ */
+export function unambiguousKey(parts: readonly (string | bigint | null)[]): string {
+  return parts
+    .map((part) => {
+      if (part === null) return '~'
+      const text = part.toString()
+      return `${text.length}:${text}`
+    })
+    .join('|')
+}
+
+/**
  * One confirmed external-system derived artifact projection.
  * Canonical identity comes exclusively from bindingId + bindingRevision +
  * externalObjectId (+ optional externalVersion) and exact sourceRevision.
@@ -568,7 +583,7 @@ export function externalLinkRow(link: ExternalLink): ExternalLinkRow {
   return {
     // Everything that tells two projections apart: the same source and binding revision can
     // have been projected to different objects or object versions, and in different accounts.
-    key: [
+    key: unambiguousKey([
       link.bindingId,
       link.bindingRevision,
       link.sourceAddress?.accountId ?? '',
@@ -577,8 +592,8 @@ export function externalLinkRow(link: ExternalLink): ExternalLinkRow {
       sourceCall.docId,
       link.sourceRevision,
       link.externalObjectId,
-      link.externalVersion ?? '',
-    ].join('\u0000'),
+      link.externalVersion ?? null,
+    ]),
     bindingId: link.bindingId,
     bindingRevision: link.bindingRevision,
     provider: snapshot.provider,

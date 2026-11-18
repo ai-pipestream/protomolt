@@ -140,7 +140,7 @@ class ExternalDeleteTargetTest {
         ExternalPublicationOperationRecord unverified = failedPublish.toBuilder()
                 .setOperationId("op-unverified")
                 .setIntent(failedPublish.getIntent().toBuilder().setExternalObjectId("object-unverified"))
-                .setProviderAnswerUnverified(true)
+                .setProviderMayHoldObject(true)
                 .build();
         ExternalPublicationLedger withUnverified = ExternalPublicationLedger.newBuilder()
                 .addOperations(failedPublish).addOperations(unverified).build();

@@ -200,7 +200,7 @@ with `ALREADY_EXISTS`.
 | `PENDING` | `UNRESOLVED_LOST_REPLY` | Outbound call timed out, lost its reply, or hit an unavailable endpoint; external outcome is unknown |
 | `PENDING` | `ACCEPTED_AWAITING_PUBLICATION` | Provider durably accepted source input (`accepted_version`), awaiting catalog publication |
 | `CONFIRMED` | `NONE` | `ExternalProviderVerifier` verified publication receipt (and optional Ed25519 `SignedWorkRecord`) |
-| `FAILED` | `NONE` | Provider rejected the request or verification failed; no active `ExternalLink` is created. When a sent publication's answer failed verification, `provider_answer_unverified` is set: the provider may hold the object, so it stays a deletion target and keeps a `PURGE_WITH_SOURCE` ledger until a verified deletion of the same object at the same place is registered after it |
+| `FAILED` | `NONE` | Provider rejected the request or verification failed; no active `ExternalLink` is created. When a sent publication's answer failed verification, or the provider rejected an attempt after an earlier attempt's outcome was lost, `provider_may_hold_object` is set: the provider may hold the object, so it stays a deletion target and keeps a `PURGE_WITH_SOURCE` ledger until a verified deletion of the same object at the same place is registered after it |
 | `DELETION_PENDING` | `DELETION_IN_FLIGHT` | Tombstone or purge deletion recorded durably; outbound delete in flight or awaiting settlement |
 | `DELETED` | `NONE` | `ExternalProviderVerifier` verified external deletion receipt; active link retired to `DELETED` |
 

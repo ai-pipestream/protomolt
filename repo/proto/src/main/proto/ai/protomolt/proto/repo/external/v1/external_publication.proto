@@ -1152,13 +1152,13 @@ message ExternalPublicationOperationRecord {
   };
   option (ai.protomolt.proto.validate.v1.message).cel = {
     id: "operation-unverified-answer-is-a-failed-publish"
-    message: "provider_answer_unverified is set only on a FAILED PUBLISH"
-    expression: "!this.provider_answer_unverified || (this.outcome == 3 && this.intent.action == 1)"
+    message: "provider_may_hold_object is set only on a FAILED PUBLISH"
+    expression: "!this.provider_may_hold_object || (this.outcome == 3 && this.intent.action == 1)"
   };
   option (buf.validate.message).cel = {
     id: "operation-unverified-answer-is-a-failed-publish"
-    message: "provider_answer_unverified is set only on a FAILED PUBLISH"
-    expression: "!this.provider_answer_unverified || (this.outcome == 3 && this.intent.action == 1)"
+    message: "provider_may_hold_object is set only on a FAILED PUBLISH"
+    expression: "!this.provider_may_hold_object || (this.outcome == 3 && this.intent.action == 1)"
   };
   option (buf.validate.message).cel = {
     id: "operation-confirmation-requires-evidence"
@@ -1241,10 +1241,11 @@ message ExternalPublicationOperationRecord {
     (ai.protomolt.proto.validate.v1.field).required = true,
     (buf.validate.field).required = true
   ];
-  // Set on a PUBLISH that was sent and whose provider answer failed verification. The
-  // operation FAILED, but the provider may hold its object, so the object stays a deletion
-  // target and keeps the ledger from being purged until a verified deletion of it follows.
-  bool provider_answer_unverified = 13;
+  // Set on a FAILED PUBLISH when the provider may hold its object all the same: an answer
+  // to it failed verification, or an attempt sent before the one the provider rejected never
+  // had its outcome learned. The object stays a deletion target and keeps the ledger from
+  // being purged until a verified deletion of it is registered after it.
+  bool provider_may_hold_object = 13;
 }
 
 // Per-(account, binding, source_address) ledger persisted as typed structured_data

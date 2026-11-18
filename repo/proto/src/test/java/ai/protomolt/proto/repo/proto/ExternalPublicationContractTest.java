@@ -352,10 +352,10 @@ class ExternalPublicationContractTest {
                 .setOutcome(ExternalPublicationOutcome.EXTERNAL_PUBLICATION_OUTCOME_FAILED)
                 .clearTerminalEvidence()
                 .setFailureCode("SIGNED_WORK_RECORD_INVALID")
-                .setProviderAnswerUnverified(true)
+                .setProviderMayHoldObject(true)
                 .build();
         checkBothDialects(failedUnverified, true);
-        checkBothDialects(confirmedOp.toBuilder().setProviderAnswerUnverified(true).build(), false);
+        checkBothDialects(confirmedOp.toBuilder().setProviderMayHoldObject(true).build(), false);
         checkBothDialects(failedUnverified.toBuilder().setIntent(tombstoneDelete).build(), false);
 
         ExternalPublicationLedger ledger = ExternalPublicationLedger.newBuilder()

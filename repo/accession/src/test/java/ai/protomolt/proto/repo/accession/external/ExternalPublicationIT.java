@@ -560,6 +560,106 @@ class ExternalPublicationIT {
     }
 
     @Test
+    void aPublicationThatSettlesAfterThePurgeWasPreparedKeepsThePreparedAccess(
+            @TempDir Path tempDir) throws Exception {
+        SimulatedManagedSearchProvider provider = new SimulatedManagedSearchProvider();
+        try (Harness h = Harness.boot(tempDir, provider)) {
+            h.saveActiveBinding(
+                    "tenant-alpha",
+                    "rust-search",
+                    "search-profile-v1",
+                    "ingest",
+                    "corpus-main",
+                    "ns-alpha",
+                    ExternalRetentionPolicy.EXTERNAL_RETENTION_POLICY_RETAIN_HISTORY,
+                    "op-bind-1");
+            NodeAddress sourceAddr = sourceAddress("tenant-alpha", "doc-prepared-mid-flight");
+            h.saveSourceDocument("save-pm-1", sourceAddr, 0L, "Shared", "alice", "bob");
+            h.coordinator.publish(new ExternalPublicationCoordinator.PublishRequest(
+                    "pub-pm-0", sourceAddr, 1L, "rust-search", 1L, "ext-pm", null, null));
+
+            // A second publication of revision 1 captures its rules (Alice and Bob). While it is
+            // with the provider, revision 2 revokes Bob and the purge is prepared with those rules.
+            provider.nextExecuteBehavior = ctx -> {
+                h.saveSourceDocument("save-pm-2", sourceAddr, 1L, "Alice only", "alice");
+                h.coordinator.preparePurge(new ExternalPublicationCoordinator.PreparePurgeRequest(
+                        sourceAddr, "purge-pm-001", "rust-search"));
+                provider.recordPublishedSilently(ctx, 1L, 102L, 16L, SHA_MANIFEST);
+                return new ExternalProviderGateway.ProviderCallResult.Receipt(
+                        provider.recordedByOperation.get(ctx.operationId()));
+            };
+            h.coordinator.publish(new ExternalPublicationCoordinator.PublishRequest(
+                    "pub-pm-1", sourceAddr, 1L, "rust-search", 1L, "ext-pm-1", null, null));
+
+            h.stub.purgeDocument(PurgeDocumentRequest.newBuilder()
+                    .setPurgeId("purge-pm-001")
+                    .setAddress(sourceAddr)
+                    .setReason("Purge with a publication that settled after preparation")
+                    .build());
+            h.coordinator.handlePurge(new ExternalPublicationCoordinator.PurgeRequest(
+                    "op-purge-pm", sourceAddr, "purge-pm-001", "rust-search", null));
+
+            // The publication's settlement did not put Bob's grant back on the ledger.
+            h.useCaller(h.alphaBob);
+            assertGrpcCode(
+                    () -> h.coordinator.getLedgerView(sourceAddr, "rust-search"),
+                    Status.Code.PERMISSION_DENIED);
+            h.useCaller(h.alphaAlice);
+            assertThat(h.coordinator.getLedgerView(sourceAddr, "rust-search")).isPresent();
+        }
+    }
+
+    @Test
+    void aRejectedRetryAfterALostReplyKeepsTheObjectADeletionTarget(
+            @TempDir Path tempDir) throws Exception {
+        SimulatedManagedSearchProvider provider = new SimulatedManagedSearchProvider();
+        try (Harness h = Harness.boot(tempDir, provider)) {
+            h.saveActiveBinding(
+                    "tenant-alpha",
+                    "rust-search",
+                    "search-profile-v1",
+                    "ingest",
+                    "corpus-main",
+                    "ns-alpha",
+                    ExternalRetentionPolicy.EXTERNAL_RETENTION_POLICY_RETAIN_HISTORY,
+                    "op-bind-1");
+            NodeAddress sourceAddr = sourceAddress("tenant-alpha", "doc-rejected-retry");
+            h.saveSourceDocument("save-rr-1", sourceAddr, 0L, "Lost then rejected", "alice");
+            ExternalPublicationCoordinator.PublishRequest request = new ExternalPublicationCoordinator.PublishRequest(
+                    "pub-rr-1", sourceAddr, 1L, "rust-search", 1L, "ext-rr", null, null);
+
+            // The first send commits at a provider that does not deduplicate, and its reply is lost.
+            provider.nextExecuteBehavior = ctx -> new ExternalProviderGateway.ProviderCallResult.Unresolved(
+                    "DEADLINE_EXCEEDED", "Transport deadline expired");
+            assertThat(h.coordinator.publish(request).operation().getOutcome())
+                    .isEqualTo(ExternalPublicationOutcome.EXTERNAL_PUBLICATION_OUTCOME_PENDING);
+            // The retry is rejected, with verified evidence.
+            provider.nextExecuteBehavior = ctx -> {
+                provider.recordRejectedSilently(ctx, "QUOTA_EXCEEDED");
+                return new ExternalProviderGateway.ProviderCallResult.Receipt(
+                        provider.recordedByOperation.get(ctx.operationId()));
+            };
+            ExternalPublicationOperationRecord rejected = h.coordinator.publish(request).operation();
+            assertThat(rejected.getOutcome())
+                    .isEqualTo(ExternalPublicationOutcome.EXTERNAL_PUBLICATION_OUTCOME_FAILED);
+            assertThat(rejected.getProviderMayHoldObject())
+                    .as("the first send may have committed").isTrue();
+
+            // A rejection with nothing unresolved before it leaves nothing behind.
+            NodeAddress cleanAddr = sourceAddress("tenant-alpha", "doc-rejected-once");
+            h.saveSourceDocument("save-ro-1", cleanAddr, 0L, "Rejected once", "alice");
+            provider.nextExecuteBehavior = ctx -> {
+                provider.recordRejectedSilently(ctx, "QUOTA_EXCEEDED");
+                return new ExternalProviderGateway.ProviderCallResult.Receipt(
+                        provider.recordedByOperation.get(ctx.operationId()));
+            };
+            assertThat(h.coordinator.publish(new ExternalPublicationCoordinator.PublishRequest(
+                            "pub-ro-1", cleanAddr, 1L, "rust-search", 1L, "ext-ro-1", null, null))
+                    .operation().getProviderMayHoldObject()).isFalse();
+        }
+    }
+
+    @Test
     void aPurgeIsRefusedWhileTheSourceDocumentStillExists(
             @TempDir Path tempDir) throws Exception {
         SimulatedManagedSearchProvider provider = new SimulatedManagedSearchProvider();
@@ -1058,6 +1158,10 @@ class ExternalPublicationIT {
             h.coordinator.publish(new ExternalPublicationCoordinator.PublishRequest(
                     "op-rot-1", docAddr, 1L, "rust-search", 1L, "ext-rot", null, null));
 
+            // Mirroring proves the caller is a writer with an unchanged save, which must not add a
+            // repository revision: binding revision N is read back from repository revision N.
+            assertThat(h.bindingStore.mirrorRevision("tenant-alpha", "rust-search", 1L)).isEqualTo(v1);
+
             // Rotate binding to revision 2 pointing at a new profile, host, port, dataset, and namespace.
             ExternalSystemBinding v2 = h.saveActiveBinding(
                     "tenant-alpha",
@@ -1101,6 +1205,10 @@ class ExternalPublicationIT {
             assertGrpcCode(() -> h.bindingStore.retireBinding("tenant-alpha", "rust-search",
                             "Another reason", "op-bind-retire-other"),
                     Status.Code.ALREADY_EXISTS);
+            // A retry under the operation ID of the retirement itself, as after a lost mirror.
+            assertThat(h.bindingStore.retireBinding("tenant-alpha", "rust-search",
+                            "Migrated search traffic to dedicated shard binding", "op-bind-retire"))
+                    .isEqualTo(v3Retired);
             h.useCaller(h.alphaBob);
             assertGrpcCode(() -> h.bindingStore.retireBinding("tenant-alpha", "rust-search",
                             "Migrated search traffic to dedicated shard binding", "op-bind-retire-bob"),

@@ -115,7 +115,7 @@ final class ExternalReceiptSettlement {
                                 .setPendingPhase(ExternalPendingPhase.EXTERNAL_PENDING_PHASE_UNSPECIFIED)
                                 // The operation fails hard, but the provider answered: it may
                                 // have committed before sending evidence that does not verify.
-                                .setProviderAnswerUnverified(op.getIntent().getAction()
+                                .setProviderMayHoldObject(op.getIntent().getAction()
                                         == ExternalPublicationAction.EXTERNAL_PUBLICATION_ACTION_PUBLISH)
                                 .setFailureCode(invalidEvidence.diagnosticCode())
                                 .setFailureMessage(sanitizeMessage(invalidEvidence.getMessage()))
@@ -221,6 +221,13 @@ final class ExternalReceiptSettlement {
                             ExternalPublicationOperationRecord updatedOp = opBuilder
                                     .setOutcome(ExternalPublicationOutcome.EXTERNAL_PUBLICATION_OUTCOME_FAILED)
                                     .setPendingPhase(ExternalPendingPhase.EXTERNAL_PENDING_PHASE_UNSPECIFIED)
+                                    // A rejection of a send settles that send. An earlier send
+                                    // whose outcome was never learned may still have committed.
+                                    // A status query's answer is about the operation as a whole.
+                                    .setProviderMayHoldObject(op.getIntent().getAction()
+                                                    == ExternalPublicationAction.EXTERNAL_PUBLICATION_ACTION_PUBLISH
+                                            && trigger != ExternalAttemptTrigger.EXTERNAL_ATTEMPT_TRIGGER_RECONCILIATION
+                                            && anEarlierSendIsUnresolved(op, attemptNumber))
                                     .setFailureCode(code)
                                     .setFailureMessage("Provider rejected external operation")
                                     .setUpdatedAt(finishedAt)
@@ -476,6 +483,23 @@ final class ExternalReceiptSettlement {
                 .setRetiredByOperationId(deletedOp.getOperationId())
                 .setDeletionEvidence(evidence)
                 .build();
+    }
+
+    /**
+     * Whether an attempt other than {@code settledAttempt} sent the operation to the provider
+     * (an initial send or a retry, not a status query) and never learned its outcome.
+     */
+    static boolean anEarlierSendIsUnresolved(ExternalPublicationOperationRecord op, int settledAttempt) {
+        for (ExternalPublicationAttempt attempt : op.getAttemptsList()) {
+            boolean send = attempt.getTrigger() == ExternalAttemptTrigger.EXTERNAL_ATTEMPT_TRIGGER_INITIAL
+                    || attempt.getTrigger() == ExternalAttemptTrigger.EXTERNAL_ATTEMPT_TRIGGER_RETRY;
+            if (send
+                    && attempt.getAttemptNumber() != settledAttempt
+                    && attempt.getOutcome() == ExternalPublicationOutcome.EXTERNAL_PUBLICATION_OUTCOME_PENDING) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**

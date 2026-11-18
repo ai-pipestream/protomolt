@@ -196,13 +196,7 @@ final class ExternalLedgerStore {
             String datasourceId = saveOwner.hasIntake()
                     ? saveOwner.getIntake().getDatasourceId()
                     : ExternalPublicationCoordinates.DEFAULT_PUBLICATIONS_DATASOURCE_ID;
-            DocumentSecurity effectiveSecurity = replaceSecurity
-                    ? security
-                    : (security != null && security.getPermissionsCount() > 0)
-                            ? security
-                            : (existing.isPresent()
-                                    ? existing.get().security()
-                                    : DocumentSecurity.getDefaultInstance());
+            DocumentSecurity effectiveSecurity = securityToSave(security, replaceSecurity, existing);
 
             Document doc = Document.newBuilder()
                     .setDocId(ledgerAddr.getDocId())
@@ -245,6 +239,31 @@ final class ExternalLedgerStore {
                 .withDescription("Exceeded optimistic concurrency retries updating ExternalPublicationLedger")
                 .withCause(lastConflict)
                 .asRuntimeException();
+    }
+
+    /**
+     * The access rules a ledger save writes.
+     * <ul>
+     *   <li>A purge preparation replaces them with the rules it read from the source, exactly.</li>
+     *   <li>Once a purge is prepared, every other save keeps the prepared rules. An operation
+     *       that captured older rules before then, and settles now, must not put them back:
+     *       they may hold a grant the source has since revoked.</li>
+     *   <li>Otherwise the rules the operation carries, when it carries any explicit rule, else
+     *       the ledger's own.</li>
+     * </ul>
+     */
+    private static DocumentSecurity securityToSave(
+            DocumentSecurity requested, boolean replaceSecurity, Optional<LoadedLedger> existing) {
+        if (replaceSecurity) {
+            return requested;
+        }
+        if (existing.isPresent() && existing.get().ledger().hasPurgePreparation()) {
+            return existing.get().security();
+        }
+        if (requested != null && requested.getPermissionsCount() > 0) {
+            return requested;
+        }
+        return existing.map(LoadedLedger::security).orElse(DocumentSecurity.getDefaultInstance());
     }
 
     Optional<LoadedLedger> loadOptionalLedger(
@@ -313,7 +332,7 @@ final class ExternalLedgerStore {
         if (publication.getOutcome() == ExternalPublicationOutcome.EXTERNAL_PUBLICATION_OUTCOME_PENDING) {
             return true;
         }
-        if (!publication.getProviderAnswerUnverified()) {
+        if (!publication.getProviderMayHoldObject()) {
             return false;
         }
         for (int later = index + 1; later < ledger.getOperationsCount(); later++) {

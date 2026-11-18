@@ -445,7 +445,7 @@ class ExternalReceiptSettlementTest {
                 ExternalPublicationAction.EXTERNAL_PUBLICATION_ACTION_PUBLISH, "object-a", 1L, 3L)
                 .toBuilder()
                 .setOutcome(ExternalPublicationOutcome.EXTERNAL_PUBLICATION_OUTCOME_FAILED)
-                .setProviderAnswerUnverified(true)
+                .setProviderMayHoldObject(true)
                 .build();
         ExternalPublicationLedger ledger = ExternalPublicationLedger.newBuilder()
                 .addOperations(unverified).build();
@@ -469,7 +469,7 @@ class ExternalReceiptSettlementTest {
 
         // A publication the provider refused, with verified evidence, left nothing.
         assertThat(ExternalReceiptSettlement.nothingOutstanding(ExternalPublicationLedger.newBuilder()
-                .addOperations(unverified.toBuilder().setProviderAnswerUnverified(false)).build())).isTrue();
+                .addOperations(unverified.toBuilder().setProviderMayHoldObject(false)).build())).isTrue();
     }
 
     @Test

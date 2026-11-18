@@ -36,7 +36,9 @@ import ai.protomolt.proto.repo.v2.PartSelector;
 import ai.protomolt.proto.repo.v2.PartWrite;
 import ai.protomolt.proto.repo.v2.RevisionSelector;
 import ai.protomolt.proto.repo.v2.SaveDocumentRequest;
+import ai.protomolt.proto.repo.v2.SaveDocumentResponse;
 import ai.protomolt.proto.repo.v2.SaveOwner;
+import ai.protomolt.proto.repo.v2.UnchangedPolicy;
 import ai.protomolt.proto.repo.v2.ValidationMode;
 import ai.protomolt.proto.repo.v2.WriteAction;
 import ai.protomolt.proto.validate.ProtoValidator;
@@ -59,8 +61,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
-import java.util.UUID;
 import java.util.Set;
+import java.util.UUID;
 
 /**
  * Account-scoped versioned store for {@link ExternalSystemBinding} configurations,
@@ -375,7 +377,7 @@ public final class ExternalBindingStore {
                                 + "' is already retired with a different reason")
                         .asRuntimeException();
             }
-            requireWriteBySavingUnchanged(address, existing, operationId);
+            requireWriteBySavingUnchanged(address, existing);
             configLane.mirror(current);
             return current;
         }
@@ -613,22 +615,33 @@ public final class ExternalBindingStore {
                 .orElseThrow(() -> Status.NOT_FOUND
                         .withDescription("External binding not found: " + bindingId)
                         .asRuntimeException());
-        requireWriteBySavingUnchanged(address, current,
-                "ext-binding-mirror:" + bindingId + ":" + bindingRevision + ":" + UUID.randomUUID());
+        requireWriteBySavingUnchanged(address, current);
         configLane.mirror(committed);
         return committed;
     }
 
     /**
      * Proves the caller may write the binding by saving its current document again, unchanged,
-     * at its current revision. The repository checks WRITE on the binding for that save and
-     * records it without a new revision; a reader is refused with PERMISSION_DENIED.
+     * at its current revision, under {@code UNCHANGED_POLICY_RECORD_OUTCOME}: the repository
+     * checks WRITE on the binding, records the outcome and writes no new revision, so binding
+     * revision N stays at repository revision N. A reader is refused with PERMISSION_DENIED.
+     * The save has an operation ID of its own; the caller's operation ID stays bound to the
+     * save it first named, so a retry with it is not a different request.
      */
-    private void requireWriteBySavingUnchanged(
-            NodeAddress address, LoadedBinding current, String operationId) {
-        persistBindingDocument(address,
+    private void requireWriteBySavingUnchanged(NodeAddress address, LoadedBinding current) {
+        SaveDocumentRequest request = bindingSaveRequest(address,
                 ExpectedRevision.newBuilder().setRevision(current.documentRevision()).build(),
-                current.binding(), operationId);
+                current.binding(), "ext-binding-authz:" + UUID.randomUUID())
+                .toBuilder()
+                .setUnchanged(UnchangedPolicy.UNCHANGED_POLICY_RECORD_OUTCOME)
+                .build();
+        SaveDocumentResponse response = documents.saveDocument(request);
+        if (!response.getUnchanged()) {
+            throw Status.INTERNAL
+                    .withDescription("An authorization save of binding '" + current.binding().getBindingId()
+                            + "' changed the document; it must leave it unchanged")
+                    .asRuntimeException();
+        }
     }
 
     private Optional<LoadedBinding> loadOptionalCurrent(NodeAddress address) {
@@ -654,6 +667,14 @@ public final class ExternalBindingStore {
             ExpectedRevision expected,
             ExternalSystemBinding binding,
             String operationId) {
+        documents.saveDocument(bindingSaveRequest(address, expected, binding, operationId));
+    }
+
+    private SaveDocumentRequest bindingSaveRequest(
+            NodeAddress address,
+            ExpectedRevision expected,
+            ExternalSystemBinding binding,
+            String operationId) {
         String datasourceId = saveOwner.hasIntake()
                 ? saveOwner.getIntake().getDatasourceId()
                 : ExternalPublicationCoordinates.DEFAULT_BINDINGS_DATASOURCE_ID;
@@ -671,7 +692,7 @@ public final class ExternalBindingStore {
                 .setStructuredData(Any.pack(binding))
                 .build();
 
-        SaveDocumentRequest request = SaveDocumentRequest.newBuilder()
+        return SaveDocumentRequest.newBuilder()
                 .setOperationId(operationId)
                 .setTarget(DocumentTarget.newBuilder().setAddress(address))
                 .setExpected(expected)
@@ -681,7 +702,6 @@ public final class ExternalBindingStore {
                 .setDrive(drive)
                 .setOwner(saveOwner)
                 .build();
-        documents.saveDocument(request);
     }
 
     private static ExternalSystemBinding unpackBinding(Document document) {

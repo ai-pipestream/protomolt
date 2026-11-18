@@ -35,6 +35,7 @@ import {
   evidenceView,
   externalLinkRow,
   externalLinkRows,
+  unambiguousKey,
   filterConditions,
   linkRow,
   linkRows,
@@ -372,6 +373,16 @@ describe('externalLinkRow', () => {
     expect(new Set(keys).size).toBe(3)
   })
 
+  it('keeps keys apart when an object ID holds the separator of the components after it', () => {
+    const base = sampleExternalLink({})
+    const joined = create(ExternalLinkSchema, { ...base, externalObjectId: 'a\u0000b', externalVersion: undefined })
+    const split = create(ExternalLinkSchema, { ...base, externalObjectId: 'a', externalVersion: 'b' })
+    const [joinedKey, splitKey] = externalLinkRows([joined, split]).map((row) => row.key)
+    expect(joinedKey).not.toBe(splitKey)
+    expect(unambiguousKey(['a|1:b'])).not.toBe(unambiguousKey(['a', 'b']))
+    expect(unambiguousKey([null])).not.toBe(unambiguousKey(['']))
+  })
+
   it('projects canonical external identity, historical binding snapshot, and guarded displayHref', () => {
     const row = externalLinkRow(
       sampleExternalLink({
@@ -381,7 +392,7 @@ describe('externalLinkRow', () => {
       }),
     )
     expect(row).toEqual({
-      key: 'search-primary\u00002\u0000acct-a\u0000intake:acct-a\u0000ds-files\u0000doc-1\u00007\u0000claims-index:doc-1\u0000v3-epoch9',
+      key: '14:search-primary|1:2|6:acct-a|13:intake:acct-a|8:ds-files|5:doc-1|1:7|18:claims-index:doc-1|9:v3-epoch9',
       bindingId: 'search-primary',
       bindingRevision: 2n,
       provider: 'protomolt-search',
