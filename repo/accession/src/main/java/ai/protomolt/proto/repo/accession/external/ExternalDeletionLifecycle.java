@@ -400,9 +400,8 @@ final class ExternalDeletionLifecycle {
         // A tombstone covers what was published up to it. A publication made
         // after the source was restored is not owed this deletion.
         boolean coversCurrent = current.hasCurrentLink()
-                && (tombstoneRevision.isEmpty()
-                        || current.getCurrentLink().getSourceRevision()
-                                <= tombstoneRevision.get());
+                && claimable(current.getCurrentLink(), bindingSnapshot, intent.getExternalObjectId(),
+                        tombstoneRevision.orElse(ALL_REVISIONS));
         if (coversCurrent
                 && current.getCurrentLink().getProjectionLifecycle()
                         == ExternalProjectionLifecycle.EXTERNAL_PROJECTION_LIFECYCLE_ACTIVE) {
@@ -658,13 +657,21 @@ final class ExternalDeletionLifecycle {
             String explicitExternalObjectId,
             long explicitBindingRevision) {
         boolean namesObject = explicitExternalObjectId != null && !explicitExternalObjectId.isEmpty();
-        if (ledgerOpt.isEmpty() || operationId == null || operationId.isEmpty() || namesObject) {
+        if (ledgerOpt.isEmpty() || operationId == null || operationId.isEmpty()) {
             return Optional.empty();
         }
         Optional<ExternalPublicationOperationRecord> recorded =
                 findOperation(ledgerOpt.get(), operationId)
                         .filter(operation -> operation.getIntent().getAction()
                                 == ExternalPublicationAction.EXTERNAL_PUBLICATION_ACTION_DELETE);
+        // A known operation is resolved from what it recorded, whether or not the retry names
+        // its object again; a retry that names another object is a different request.
+        if (recorded.isPresent() && namesObject
+                && !recorded.get().getIntent().getExternalObjectId().equals(explicitExternalObjectId)) {
+            throw Status.ALREADY_EXISTS
+                    .withDescription("Operation '" + operationId + "' deleted another external object")
+                    .asRuntimeException();
+        }
         if (recorded.isPresent() && explicitBindingRevision > 0L
                 && recorded.get().getIntent().getBindingRevision() != explicitBindingRevision) {
             throw Status.ALREADY_EXISTS

@@ -369,25 +369,14 @@ final class ExternalSourceAccess {
                             + " is not a tombstone")
                     .asRuntimeException();
         }
-        NodeAddress ledgercheck = sourceAddress;
-        ListRevisionsResponse revs = documents.listRevisions(
-                ListRevisionsRequest.newBuilder()
-                        .setAddress(ledgercheck)
-                        .setPageSize(2)
-                        .build());
-        for (var summary : revs.getRevisionsList()) {
-            if (!summary.getTombstone()) {
-                GetDocumentResponse prior = documents.getDocument(
-                        GetDocumentRequest.newBuilder()
-                                .setAddress(sourceAddress)
-                                .setRevision(RevisionSelector.newBuilder()
-                                        .setRevision(summary.getRevision()))
-                                .setSelection(CORE_SELECTION)
-                                .build());
-                return LedgerAccess.liveSource(prior.getDocument().getOwnership().getSecurity());
-            }
-        }
-        return LedgerAccess.keep();
+        // Deleting the publications of a source changes what the provider serves for it, so it
+        // takes WRITE on the source's last live revision, as publishing does; a writer demoted
+        // to READ since the last publication is refused before anything is sent.
+        LiveRevision live = latestLiveOwnership(sourceAddress);
+        requireAccess(live.ownership(), Access.ACCESS_WRITE,
+                "Deleting this publication requires WRITE access to the source document's "
+                        + "last live revision");
+        return LedgerAccess.liveSource(live.ownership().getSecurity());
     }
 
     /**

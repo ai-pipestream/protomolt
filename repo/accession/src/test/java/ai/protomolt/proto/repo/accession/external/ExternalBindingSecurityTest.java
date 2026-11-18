@@ -47,4 +47,17 @@ class ExternalBindingSecurityTest {
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("blank");
     }
+
+    @Test
+    void aBindingWithCredentialTextInAnyFieldIsRefused() {
+        ai.protomolt.proto.repo.external.v1.ExternalSystemBinding withJwtProvider =
+                ai.protomolt.proto.repo.external.v1.ExternalSystemBinding.newBuilder()
+                        .setProvider("eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ4In0.c2lnbmF0dXJlLXZhbHVl")
+                        .build();
+        assertThatThrownBy(() -> ExternalBindingStore.validateBindingContract(withJwtProvider))
+                .isInstanceOfSatisfying(io.grpc.StatusRuntimeException.class, ex -> {
+                    assertThat(ex.getStatus().getCode()).isEqualTo(io.grpc.Status.Code.INVALID_ARGUMENT);
+                    assertThat(ex.getStatus().getDescription()).contains("credential");
+                });
+    }
 }

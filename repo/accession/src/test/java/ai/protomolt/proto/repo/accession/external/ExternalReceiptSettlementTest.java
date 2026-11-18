@@ -609,6 +609,28 @@ class ExternalReceiptSettlementTest {
                         ExternalProjectionLifecycle.EXTERNAL_PROJECTION_LIFECYCLE_DELETED));
     }
 
+    @Test
+    void aTombstoneDeletionOfAHistoricalObjectLeavesTheCurrentObjectAlone() {
+        // The current link is object B; object A is live in history. A tombstone deletion of A
+        // is registered: B is neither claimed nor marked owed a deletion by it.
+        ExternalPublicationOperationRecord deleteA = operation("op-del-a",
+                ExternalPublicationAction.EXTERNAL_PUBLICATION_ACTION_DELETE, "object-a", 1L, 6L);
+        ExternalPublicationLedger ledger = ExternalPublicationLedger.newBuilder()
+                .setCurrentLink(link("object-b", 1L, 5L,
+                        ExternalProjectionLifecycle.EXTERNAL_PROJECTION_LIFECYCLE_ACTIVE))
+                .addHistoricalLinks(link("object-a", 1L, 3L,
+                        ExternalProjectionLifecycle.EXTERNAL_PROJECTION_LIFECYCLE_SUPERSEDED))
+                .build();
+        ExternalPublicationLedger registered = ExternalDeletionLifecycle.registerDeletionAttempt(ledger,
+                deleteA.getOperationId(), "intent-sha-a", deleteA.getIntent(), deleteA.getBindingSnapshot(),
+                java.util.Optional.of(6L), java.util.Optional.empty(), T0).ledger();
+        assertThat(registered.getCurrentLink().getProjectionLifecycle())
+                .isEqualTo(ExternalProjectionLifecycle.EXTERNAL_PROJECTION_LIFECYCLE_ACTIVE);
+        assertThat(registered.getCurrentLink().getDeletionClaimedByOperationIdsList()).isEmpty();
+        assertThat(registered.getHistoricalLinks(0).getDeletionClaimedByOperationIdsList())
+                .containsExactly("op-del-a");
+    }
+
     /** Registers an attempt of a purge deletion, as the lifecycle does before sending it. */
     private static ExternalDeletionLifecycle.DeletionRegistration register(
             ExternalPublicationLedger ledger, ExternalPublicationOperationRecord deleteOp) {

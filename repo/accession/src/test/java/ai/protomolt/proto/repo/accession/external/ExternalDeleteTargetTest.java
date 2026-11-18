@@ -257,10 +257,16 @@ class ExternalDeleteTargetTest {
         assertThat(replay.externalObjectId()).isEqualTo("object-b");
         assertThat(replay.binding().getDataset()).isEqualTo("dataset-two");
 
-        // A request that names its own object is not a blind replay: it is resolved as given,
-        // and a changed target under the same operation ID is refused later as a conflict.
+        // Naming the recorded object again still replays what was recorded, so a settled
+        // deletion is answered from the ledger rather than resolved anew.
         assertThat(ExternalDeletionLifecycle.replayedTarget(
-                Optional.of(ledger), "op-d", "object-a", 0L)).isEmpty();
+                Optional.of(ledger), "op-d", "object-b", 0L).orElseThrow().binding().getDataset())
+                .isEqualTo("dataset-two");
+        // Naming another object under the same operation ID is a different request.
+        assertThatThrownBy(() -> ExternalDeletionLifecycle.replayedTarget(
+                        Optional.of(ledger), "op-d", "object-a", 0L))
+                .isInstanceOfSatisfying(io.grpc.StatusRuntimeException.class, ex ->
+                        assertThat(ex.getStatus().getCode()).isEqualTo(io.grpc.Status.Code.ALREADY_EXISTS));
         // Naming only the binding revision still replays, when it is the recorded one.
         assertThat(ExternalDeletionLifecycle.replayedTarget(
                 Optional.of(ledger), "op-d", "", 2L).orElseThrow().externalObjectId())

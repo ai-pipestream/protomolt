@@ -742,6 +742,48 @@ class ExternalPublicationIT {
     }
 
     @Test
+    void aWriterDemotedToReaderCannotDeleteThePublicationsOfTheDeletedSource(
+            @TempDir Path tempDir) throws Exception {
+        SimulatedManagedSearchProvider provider = new SimulatedManagedSearchProvider();
+        try (Harness h = Harness.boot(tempDir, provider)) {
+            h.saveActiveBinding(
+                    "tenant-alpha",
+                    "rust-search",
+                    "search-profile-v1",
+                    "ingest",
+                    "corpus-main",
+                    "ns-alpha",
+                    ExternalRetentionPolicy.EXTERNAL_RETENTION_POLICY_RETAIN_HISTORY,
+                    "op-bind-1");
+            NodeAddress sourceAddr = sourceAddress("tenant-alpha", "doc-demoted-writer");
+            // Bob writes revision 1, which is published; revision 2 leaves him only READ;
+            // revision 3 deletes the source.
+            h.saveSourceDocument("save-dw-1", sourceAddr, 0L, "Bob writes", "alice", "bob");
+            h.coordinator.publish(new ExternalPublicationCoordinator.PublishRequest(
+                    "pub-dw-1", sourceAddr, 1L, "rust-search", 1L, "ext-dw", null, null));
+            h.saveSourceDocument("save-dw-2", sourceAddr, 1L, "Bob reads", List.of("alice"), List.of("bob"));
+            h.stub.deleteDocument(DeleteDocumentRequest.newBuilder()
+                    .setOperationId("del-dw-3")
+                    .setAddress(sourceAddr)
+                    .setExpected(ExpectedRevision.newBuilder().setRevision(2L))
+                    .build());
+            int callsBefore = provider.executeCalls.get();
+
+            h.useCaller(h.alphaBob);
+            assertGrpcCode(() -> h.coordinator.deleteForTombstone(new ExternalPublicationCoordinator.DeleteRequest(
+                            "del-ext-bob", sourceAddr, 3L, "rust-search", 0L, null)),
+                    Status.Code.PERMISSION_DENIED);
+            h.useCaller(h.alphaAlice);
+            assertThat(provider.executeCalls.get()).as("nothing sent for Bob").isEqualTo(callsBefore);
+
+            assertThat(h.coordinator.deleteForTombstone(new ExternalPublicationCoordinator.DeleteRequest(
+                            "del-ext-alice", sourceAddr, 3L, "rust-search", 0L, null))
+                    .operation().getOutcome())
+                    .isEqualTo(ExternalPublicationOutcome.EXTERNAL_PUBLICATION_OUTCOME_DELETED);
+        }
+    }
+
+    @Test
     void aPurgeIsRefusedWhileTheSourceDocumentStillExists(
             @TempDir Path tempDir) throws Exception {
         SimulatedManagedSearchProvider provider = new SimulatedManagedSearchProvider();

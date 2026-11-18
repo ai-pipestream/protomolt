@@ -723,7 +723,15 @@ public final class ExternalBindingStore {
         }
     }
 
-    private static void validateBindingContract(ExternalSystemBinding binding) {
+    static void validateBindingContract(ExternalSystemBinding binding) {
+        // A binding is readable by every account member and copied into source-readable
+        // snapshots, so no field of it may carry text that reads as a credential.
+        ExternalCredentialTextScan.firstCredentialField(binding, "binding").ifPresent(path -> {
+            throw Status.INVALID_ARGUMENT
+                    .withDescription("Invalid ExternalSystemBinding: " + path
+                            + " carries text that reads as a credential")
+                    .asRuntimeException();
+        });
         ValidationResult result = VALIDATOR.validate(binding);
         if (!result.valid()) {
             throw Status.INVALID_ARGUMENT
