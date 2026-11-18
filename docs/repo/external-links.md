@@ -267,7 +267,13 @@ Ordering invariants:
    and `DocumentAccessPolicy` permissions against the current source document
    (falling back to the ledger's retained `DocumentSecurity` ACL when the source
    is tombstoned or purged). Cross-account and unauthorized callers receive
-   `PERMISSION_DENIED`.
+   `PERMISSION_DENIED`. Publishing and preparing a purge also require `WRITE`
+   on the source's latest live revision, checked by the coordinator against
+   the caller the host supplies through `ExternalPublicationCaller` (the same
+   identity it forwards to `DocumentService`). Reading the source is not enough
+   to publish it, as in search engines that tie indexing to write access on the
+   index; a separate publish right can be added later without changing the
+   ledger.
 
 ## Canonical storage layout and avoiding circular publication updates
 

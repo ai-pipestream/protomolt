@@ -480,6 +480,48 @@ class ExternalPublicationIT {
     }
 
     @Test
+    void readingASourceIsNotEnoughToPublishItOrPrepareItsPurge(
+            @TempDir Path tempDir) throws Exception {
+        SimulatedManagedSearchProvider provider = new SimulatedManagedSearchProvider();
+        try (Harness h = Harness.boot(tempDir, provider)) {
+            h.saveActiveBinding(
+                    "tenant-alpha",
+                    "rust-search",
+                    "search-profile-v1",
+                    "ingest",
+                    "corpus-main",
+                    "ns-alpha",
+                    ExternalRetentionPolicy.EXTERNAL_RETENTION_POLICY_RETAIN_HISTORY,
+                    "op-bind-1");
+            NodeAddress sourceAddr = sourceAddress("tenant-alpha", "doc-read-only-bob");
+            h.saveSourceDocument("save-ro-1", sourceAddr, 0L, "Bob reads",
+                    List.of("alice"), List.of("bob"));
+
+            h.useCaller(h.alphaBob);
+            assertThat(h.coordinator.inspectSourceRevision(sourceAddr, 1L).sourceRevision())
+                    .as("Bob can read the source").isEqualTo(1L);
+            assertGrpcCode(() -> h.coordinator.publish(new ExternalPublicationCoordinator.PublishRequest(
+                            "pub-ro-bob", sourceAddr, 1L, "rust-search", 1L, "ext-ro", null, null)),
+                    Status.Code.PERMISSION_DENIED);
+            assertThat(provider.executeCalls.get()).as("nothing sent for Bob").isZero();
+            h.useCaller(h.alphaAlice);
+            assertThat(h.coordinator.getLedgerView(sourceAddr, "rust-search"))
+                    .as("Bob's refused call left no ledger").isEmpty();
+
+            assertThat(h.coordinator.publish(new ExternalPublicationCoordinator.PublishRequest(
+                            "pub-ro-alice", sourceAddr, 1L, "rust-search", 1L, "ext-ro", null, null))
+                    .operation().getOutcome())
+                    .isEqualTo(ExternalPublicationOutcome.EXTERNAL_PUBLICATION_OUTCOME_CONFIRMED);
+            h.useCaller(h.alphaBob);
+            assertGrpcCode(() -> h.coordinator.preparePurge(
+                            new ExternalPublicationCoordinator.PreparePurgeRequest(
+                                    sourceAddr, "purge-ro-bob", "rust-search")),
+                    Status.Code.PERMISSION_DENIED);
+            h.useCaller(h.alphaAlice);
+        }
+    }
+
+    @Test
     void aPurgeIsRefusedWhileTheSourceDocumentStillExists(
             @TempDir Path tempDir) throws Exception {
         SimulatedManagedSearchProvider provider = new SimulatedManagedSearchProvider();
@@ -1853,7 +1895,8 @@ class ExternalPublicationIT {
             ExternalProviderVerifier verifier = new ExternalProviderVerifier(
                     provider.trustSnapshot, true);
             ExternalPublicationCoordinator coordinator = new ExternalPublicationCoordinator(
-                    channel, bindingStore, provider, verifier, "default", clock);
+                    channel, bindingStore, provider, verifier, "default",
+                    () -> activeCaller.get().repoCaller(), clock);
 
             return new Harness(
                     jdbcUrl,
@@ -1906,8 +1949,20 @@ class ExternalPublicationIT {
                 long expectedRevision,
                 String title,
                 String... permittedPrincipals) {
+            saveSourceDocument(operationId, address, expectedRevision, title,
+                    List.of(permittedPrincipals), List.of());
+        }
+
+        /** Saves a source document that {@code writers} may read and write and {@code readers} may only read. */
+        void saveSourceDocument(
+                String operationId,
+                NodeAddress address,
+                long expectedRevision,
+                String title,
+                List<String> writers,
+                List<String> readers) {
             DocumentSecurity.Builder sec = DocumentSecurity.newBuilder();
-            for (String p : permittedPrincipals) {
+            for (String p : writers) {
                 sec.addPermissions(AccessRule.newBuilder()
                         .setIdentityType("service")
                         .setIdentity(p)
@@ -1916,6 +1971,12 @@ class ExternalPublicationIT {
                         .setIdentityType("service")
                         .setIdentity(p)
                         .setAccess(Access.ACCESS_WRITE));
+            }
+            for (String p : readers) {
+                sec.addPermissions(AccessRule.newBuilder()
+                        .setIdentityType("service")
+                        .setIdentity(p)
+                        .setAccess(Access.ACCESS_READ));
             }
             byte[] rawBytes = ("payload of " + title).getBytes(StandardCharsets.UTF_8);
             Document doc = Document.newBuilder()

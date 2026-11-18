@@ -5,9 +5,14 @@ import static ai.protomolt.proto.repo.accession.external.ExternalLedgerStore.sha
 import ai.protomolt.proto.repo.external.v1.ExternalPartDigest;
 import ai.protomolt.proto.repo.external.v1.ExternalProcessingIdentity;
 import ai.protomolt.proto.repo.semantic.v1.EmbeddingSetKey;
+import ai.protomolt.proto.repo.spi.DocumentAccessPolicy;
+import ai.protomolt.proto.repo.spi.RepositoryCaller;
+import ai.protomolt.proto.repo.spi.RepositoryException;
+import ai.protomolt.proto.repo.v1.Access;
 import ai.protomolt.proto.repo.v1.Document;
 import ai.protomolt.proto.repo.v1.DocumentSecurity;
 import ai.protomolt.proto.repo.v1.NodeAddress;
+import ai.protomolt.proto.repo.v1.OwnershipContext;
 import ai.protomolt.proto.repo.v1.RepositorySchemaAssetReference;
 import ai.protomolt.proto.repo.v2.DocumentManifest;
 import ai.protomolt.proto.repo.v2.DocumentPart;
@@ -34,6 +39,7 @@ import com.google.protobuf.Descriptors;
 import com.google.protobuf.Message;
 import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
+
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
@@ -44,6 +50,7 @@ import java.util.Iterator;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 
@@ -63,11 +70,13 @@ final class ExternalSourceAccess {
 
     private final DocumentServiceGrpc.DocumentServiceBlockingStub documents;
     private final ExternalLedgerStore ledgers;
+    private final ExternalPublicationCaller caller;
 
     ExternalSourceAccess(DocumentServiceGrpc.DocumentServiceBlockingStub documents,
-            ExternalLedgerStore ledgers) {
+            ExternalLedgerStore ledgers, ExternalPublicationCaller caller) {
         this.documents = documents;
         this.ledgers = ledgers;
+        this.caller = caller;
     }
 
     ExternalPublicationCoordinator.VerifiedSourceSnapshot inspectSourceRevision(
@@ -231,7 +240,34 @@ final class ExternalSourceAccess {
                         .setRevision(RevisionSelector.newBuilder().setRevision(latestRev))
                         .setSelection(CORE_SELECTION)
                         .build());
-        return latestCore.getDocument().getOwnership().getSecurity();
+        OwnershipContext ownership = latestCore.getDocument().getOwnership();
+        requireWrite(ownership);
+        return ownership.getSecurity();
+    }
+
+    /**
+     * Publishing a document sends it outside the repository under the account's binding, so it
+     * takes the same right as editing it: WRITE on the source, as search engines tie indexing to
+     * write access on the index. Reading the source is not enough. Preparing its purge, which
+     * replaces the rules on its ledger, takes the same.
+     */
+    private void requireWrite(OwnershipContext ownership) {
+        RepositoryCaller current = Objects.requireNonNull(caller.current(), "caller.current()");
+        boolean allowed;
+        try {
+            allowed = DocumentAccessPolicy.allows(current, ownership.getAccountId(),
+                    ownership.getSecurity(), null, Access.ACCESS_WRITE);
+        } catch (RepositoryException unresolved) {
+            throw Status.FAILED_PRECONDITION
+                    .withDescription("The source's access rules cannot be evaluated here: "
+                            + unresolved.getMessage())
+                    .asRuntimeException();
+        }
+        if (!allowed) {
+            throw Status.PERMISSION_DENIED
+                    .withDescription("Publishing requires WRITE access to the source document")
+                    .asRuntimeException();
+        }
     }
 
     /** Access rules of the latest live source revision, and that revision. */
@@ -242,7 +278,7 @@ final class ExternalSourceAccess {
      * Reads the access rules a purge must leave on the ledger: those of the source's latest live
      * revision, or, when the latest revision is a tombstone, of the live revision before it. The
      * read is made as the caller, so a caller who may not read the source is refused by the
-     * repository.
+     * repository; preparing a purge also takes WRITE on that revision, as publishing does.
      *
      * @throws StatusRuntimeException FAILED_PRECONDITION once the source is purged, or when no
      *         live revision is within reach of the latest
@@ -272,8 +308,9 @@ final class ExternalSourceAccess {
                     .setRevision(RevisionSelector.newBuilder().setRevision(summary.getRevision()))
                     .setSelection(CORE_SELECTION)
                     .build());
-            return new SourceAccessRules(
-                    summary.getRevision(), live.getDocument().getOwnership().getSecurity());
+            OwnershipContext ownership = live.getDocument().getOwnership();
+            requireWrite(ownership);
+            return new SourceAccessRules(summary.getRevision(), ownership.getSecurity());
         }
         throw Status.FAILED_PRECONDITION
                 .withDescription("Source document has no live revision next to its latest one; "

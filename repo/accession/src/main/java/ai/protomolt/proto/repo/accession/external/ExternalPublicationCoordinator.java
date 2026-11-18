@@ -85,6 +85,7 @@ public final class ExternalPublicationCoordinator {
      * @param gateway outbound provider execution and status SPI
      * @param verifier provider receipt verifier
      * @param drive named repository drive for ledger saves
+     * @param caller the caller each call acts for, as forwarded to {@code DocumentService}
      * @param clock clock stamping operation and link transitions
      */
     public ExternalPublicationCoordinator(
@@ -93,6 +94,7 @@ public final class ExternalPublicationCoordinator {
             ExternalProviderGateway gateway,
             ExternalProviderVerifier verifier,
             String drive,
+            ExternalPublicationCaller caller,
             Clock clock) {
         this(
                 documents,
@@ -100,6 +102,7 @@ public final class ExternalPublicationCoordinator {
                 gateway,
                 verifier,
                 drive,
+                caller,
                 SaveOwner.newBuilder()
                         .setIntake(
                                 IntakeOrigin.newBuilder()
@@ -118,6 +121,7 @@ public final class ExternalPublicationCoordinator {
      * @param gateway outbound provider execution and status SPI
      * @param verifier provider receipt verifier
      * @param drive named repository drive for ledger saves
+     * @param caller the caller each call acts for, as forwarded to {@code DocumentService}
      * @param saveOwner explicit repository save owner for ledger writes
      * @param clock clock stamping operation and link transitions
      */
@@ -127,6 +131,7 @@ public final class ExternalPublicationCoordinator {
             ExternalProviderGateway gateway,
             ExternalProviderVerifier verifier,
             String drive,
+            ExternalPublicationCaller caller,
             SaveOwner saveOwner,
             Clock clock) {
         this.documents = DocumentServiceGrpc.newBlockingStub(
@@ -138,7 +143,8 @@ public final class ExternalPublicationCoordinator {
         Objects.requireNonNull(saveOwner, "saveOwner");
         this.clock = Objects.requireNonNull(clock, "clock");
         this.ledgers = new ExternalLedgerStore(this.documents, drive, saveOwner, clock);
-        this.sources = new ExternalSourceAccess(this.documents, ledgers);
+        this.sources = new ExternalSourceAccess(
+                this.documents, ledgers, Objects.requireNonNull(caller, "caller"));
         this.settlement = new ExternalReceiptSettlement(this.documents, ledgers, verifier, clock);
         this.serving = new ExternalServingObservation(ledgers, bindingStore, gateway, verifier);
         this.deletion = new ExternalDeletionLifecycle(
