@@ -3,7 +3,7 @@
 #   -f deploy/document-platform/compose.valkey.yml up --build
 services:
   valkey:
-    image: valkey/valkey:9.1.3-alpine
+    image: valkey/valkey:9.2.0-alpine
     # Disposable cache, reachable only on the Compose network; no published port.
     command: ["valkey-server", "--save", "", "--appendonly", "no", "--maxmemory", "256mb", "--maxmemory-policy", "allkeys-lru"]
     healthcheck:
