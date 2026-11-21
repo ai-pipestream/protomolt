@@ -39,7 +39,7 @@ apicurio = "3.3.5"
 # stack. The apicurio key above doubles as the registry image tag; the root
 # build injects both into every Test task as system properties, so the
 # Testcontainers suites track this file instead of hardcoding tags.
-opensearch-image = "3.9.0"
+opensearch-image = "3.10.0"
 spring = "7.1.0"
 # Boot line matching Spring Framework 7
 spring-boot = "4.2.0"
