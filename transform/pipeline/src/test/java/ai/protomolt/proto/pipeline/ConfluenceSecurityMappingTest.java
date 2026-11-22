@@ -285,17 +285,29 @@ class ConfluenceSecurityMappingTest {
         }
         CallerIdentityExpansion expansion = new CallerIdentityExpansion(mapped);
         // The caller's email is the one the site showed; it joins to the account and the group.
-        RepositoryCaller caller = expansion.expand(caller("email:user-1@example.invalid"));
+        RepositoryCaller caller = expansion.expand(caller("email:join-proof@example.invalid"));
         assertThat(caller.identities()).extracting(p -> p.getIdentityType() + ":" + p.getIdentity())
                 .contains("atlassian-account:account-1", "atlassian-group:" + group);
         assertThat(DocumentAccessPolicy.allows(caller, ACCOUNT, security, List.of(), Access.ACCESS_READ)).isTrue();
-        // account-2 may view the space but is not on the restricted parent.
-        assertThat(reads(security, "atlassian-account:account-2")).isFalse();
-        // account-4 is in the group on the parent, and views the space only as a licensed user.
-        RepositoryCaller member = expansion.expand(caller("atlassian-account:account-4"));
+        // A user the space grants directly but who is on neither the parent nor in its group.
+        Set<String> gated = security.getRequiredRuleSets(0).getRulesList().stream()
+                .map(r -> r.getIdentityType() + ":" + r.getIdentity()).collect(Collectors.toSet());
+        String spaceOnly = security.getPermissionsList().stream()
+                .filter(r -> r.getIdentityType().equals("atlassian-account"))
+                .map(r -> r.getIdentityType() + ":" + r.getIdentity())
+                .filter(id -> !gated.contains(id) && !expansion.expand(caller(id)).identities().stream()
+                        .anyMatch(p -> gated.contains(p.getIdentityType() + ":" + p.getIdentity())))
+                .findFirst().orElseThrow();
+        assertThat(reads(security, spaceOnly)).isFalse();
+        // Another member of the group on the parent views the space only as a licensed user.
+        String other = records.stream().filter(r -> field(r, "entity_id").toString()
+                        .startsWith("group:" + group + "/member/"))
+                .map(r -> field(r, "entity_id").toString().substring(("group:" + group + "/member/").length()))
+                .filter(id -> !id.equals("account-1")).findFirst().orElseThrow();
+        RepositoryCaller member = expansion.expand(caller("atlassian-account:" + other));
         assertThat(DocumentAccessPolicy.allows(member, ACCOUNT, security, List.of(), Access.ACCESS_READ))
                 .as("no access class among its identities").isFalse();
-        RepositoryCaller licensed = expansion.expand(caller("atlassian-account:account-4",
+        RepositoryCaller licensed = expansion.expand(caller("atlassian-account:" + other,
                 "atlassian-access-class:ALL_LICENSED_USERS"));
         assertThat(DocumentAccessPolicy.allows(licensed, ACCOUNT, security, List.of(), Access.ACCESS_READ)).isTrue();
     }
@@ -321,7 +333,7 @@ class ConfluenceSecurityMappingTest {
         }
         CallerIdentityExpansion expansion = new CallerIdentityExpansion(mapped);
         Map<String, RepositoryCaller> callers = new LinkedHashMap<>();
-        callers.put("email:user-1@example.invalid", expansion.expand(caller("email:user-1@example.invalid")));
+        callers.put("email:join-proof@example.invalid", expansion.expand(caller("email:join-proof@example.invalid")));
         callers.put("atlassian-account:account-2", expansion.expand(caller("atlassian-account:account-2")));
         callers.put("atlassian-account:account-4", expansion.expand(caller("atlassian-account:account-4")));
         callers.put("atlassian-account:account-4 licensed", expansion.expand(caller("atlassian-account:account-4",
@@ -363,7 +375,7 @@ class ConfluenceSecurityMappingTest {
             }
         }
         assertThat(restricted).as("items under a view-restricted owner").isPositive();
-        assertThat(decisions.get("email:user-1@example.invalid")).containsValue(true);
+        assertThat(decisions.get("email:join-proof@example.invalid")).containsValue(true);
         assertThat(decisions.get("atlassian-account:account-2")).containsValue(false);
 
         StringBuilder callerJson = new StringBuilder("[");
