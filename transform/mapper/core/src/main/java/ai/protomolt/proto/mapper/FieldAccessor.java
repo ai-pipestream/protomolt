@@ -145,7 +145,20 @@ final class FieldAccessor {
                 return;
             }
 
-            containerBuilder.setField(fd, convertForField(value, fd, fieldName, rule));
+            if (fd.isRepeated() && !fd.isMapField() && value instanceof List<?> items) {
+                // A list assigned to a repeated field replaces its elements, each converted
+                // like an appended element.
+                containerBuilder.clearField(fd);
+                for (Object item : items) {
+                    if (item == null) {
+                        throw new MappingException("Cannot assign a null element to field '"
+                                + fd.getName() + "'", rule);
+                    }
+                    containerBuilder.addRepeatedField(fd, convertForField(item, fd, fieldName, rule));
+                }
+            } else {
+                containerBuilder.setField(fd, convertForField(value, fd, fieldName, rule));
+            }
         }
         result.commit();
     }

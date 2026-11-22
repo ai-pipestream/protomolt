@@ -59,6 +59,16 @@ class SetValueConversionTest {
     }
 
     @Test
+    void aListReplacesTheElementsOfARepeatedField() throws Exception {
+        var builder = item();
+        mapper.appendValue(builder, "big_counts", 9L);
+        mapper.setValue(builder, "big_counts", List.of("1", 2L));
+        assertEquals(List.of(1L, 2L), mapper.getValue(builder.build(), "big_counts"));
+        assertThrows(MappingException.class, () -> mapper.setValue(builder, "big_counts",
+                java.util.Arrays.asList(1L, null)));
+    }
+
+    @Test
     void stringConvertsToInt64() throws Exception {
         var builder = item();
         mapper.setValue(builder, "big_count", "123");

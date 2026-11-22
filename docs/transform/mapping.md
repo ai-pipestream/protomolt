@@ -32,7 +32,9 @@ mapper.mapInPlace(builder, List.of(
 | Append | `target += source` | Append to a repeated `target` |
 | Clear | `-field` | Clear the field |
 
-Paths are dotted field paths; sources may be paths or literals. The mapper
+Paths are dotted field paths; sources may be paths or literals. Assigning a
+list to a repeated field replaces its elements; appending a list adds each
+element. The mapper
 also exposes the underlying path operations directly (`getValue`,
 `setValue`, `appendValue`, `clearField`) for programmatic use.
 
@@ -98,6 +100,13 @@ are `input.enabled` and `input.name`, not protobuf wrapper-field accesses.
 This example starts no services. The repository's samples module has broader
 dependencies than the mapper itself; a library consumer needs only the mapper
 modules and their dependencies.
+
+A selector can build messages and lists of them, so one rule can fill a
+repeated message field. The Confluence ACL mapping
+(`transform/pipeline/src/test/resources/acl/confluence-document-security.textproto`)
+turns the access records grpc-confluence Sync emits into a
+`DocumentSecurity` this way: space read grants become `permissions` and each
+view-restricted owner becomes one `required_rule_sets` entry.
 
 ## Where mapping sits
 
