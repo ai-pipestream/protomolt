@@ -130,6 +130,9 @@ import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.localstack.LocalStackContainer;
@@ -1317,9 +1320,190 @@ class RepositorySinkServiceIT {
         }
     }
 
+    @ParameterizedTest(name = "cancel={0}, recover through {1}")
+    @CsvSource({"false,get", "true,get", "true,cancel", "false,publish", "true,publish"})
+    void lateCommitCorrectsTerminalJobWithoutPublishingAgain(boolean cancel, String lookup)
+            throws Exception {
+        JdbcRepositorySinkJobStore directStore =
+                new JdbcRepositorySinkJobStore(services.ledgerDataSource());
+        RendererProvider renderer = immediateMarkdownProvider();
+        RepositorySinkRenderers mounted = RepositorySinkRenderers.of(
+                List.of(renderer), Set.of(renderer.capability().getProviderId()));
+        // A heartbeat interval far above the lease duration leaves owner A with only its
+        // pre-commit and final-commit renewals, so the lease lapses while its commit is held.
+        services.withRenderers(mounted)
+                .withSinkLeaseConfig(new RepositorySink.LeaseConfig(
+                        Duration.ofMillis(1500), Duration.ofSeconds(30), Duration.ofMillis(100)));
+
+        EntryAddress dest = entry("multi-instance-post-fence-stall");
+        String opId = "op-multi-post-fence-stall";
+        PublishRepositorySinkRequest request = PublishRepositorySinkRequest.newBuilder()
+                .setOperationId(opId)
+                .setAsync(true)
+                .setSource(processingSource(
+                        buildDomainRecord("rec-post-fence", "Post Fence Stall"),
+                        "run-post-fence",
+                        "render"))
+                .setConversion(markdownConversionSpec(renderer.capability()))
+                .setDestination(SinkDestination.newBuilder()
+                        .setAddress(dest)
+                        .setRendition(RenditionDescriptor.newBuilder()
+                                .setName("readme_md")
+                                .setMediaType("text/markdown")))
+                .build();
+
+        try (PeerHost instanceB = bootPeerHost(
+                        defaultAccountBindings(true), mounted, RepositorySink.LeaseConfig.DEFAULT);
+                Connection holder = services.ledgerDataSource().getConnection()) {
+            // Holding the outcome table against writers stalls owner A inside the repository
+            // commit, after its final lease renewal, while peer outcome lookups still read.
+            String outcomeTable = outcomeTableName(holder);
+            holder.setAutoCommit(false);
+            try (Statement lock = holder.createStatement()) {
+                lock.execute("LOCK TABLE " + outcomeTable + " IN EXCLUSIVE MODE");
+            }
+            try {
+                as(WRITER_TOKEN, RepositorySinkServiceGrpc.newBlockingStub(repoChannel))
+                        .publishRepositorySink(request);
+                awaitPreCommitRecorded(directStore, opId);
+                awaitBlockedCommitAndExpiredLease(holder, outcomeTable, directStore, opId);
+
+                var peer = as(WRITER_TOKEN,
+                        RepositorySinkServiceGrpc.newBlockingStub(instanceB.channel))
+                        .withDeadlineAfter(10, TimeUnit.SECONDS);
+                RepositorySinkJob fencedByB = cancel
+                        ? peer.cancelRepositorySinkJob(CancelRepositorySinkJobRequest.newBuilder()
+                                .setAccountId(accountId).setOperationId(opId).build()).getJob()
+                        : peer.getRepositorySinkJob(GetRepositorySinkJobRequest.newBuilder()
+                                .setAccountId(accountId).setOperationId(opId).build()).getJob();
+                assertThat(fencedByB.getState()).isEqualTo(cancel
+                        ? RepositorySinkJobState.REPOSITORY_SINK_JOB_STATE_CANCELLED
+                        : RepositorySinkJobState.REPOSITORY_SINK_JOB_STATE_FAILED);
+                // Repeated lookup before the commit must not invent success.
+                assertThat(peer.getRepositorySinkJob(GetRepositorySinkJobRequest.newBuilder()
+                                .setAccountId(accountId).setOperationId(opId).build()).getJob().getState())
+                        .isEqualTo(fencedByB.getState());
+                assertThat(directStore.find(accountId, opId).orElseThrow().lease().leaseEpoch())
+                        .isEqualTo(2L);
+            } finally {
+                holder.rollback();
+            }
+
+            // Owner A, already past its final lease check, completes the repository commit.
+            assertThat(awaitCommittedVersion(dest)).isEqualTo(1L);
+
+            var peer = as(WRITER_TOKEN,
+                    RepositorySinkServiceGrpc.newBlockingStub(instanceB.channel));
+            RepositorySinkJobStore.StoredJob terminal = directStore.find(accountId, opId).orElseThrow();
+            RepositorySinkJob recovered = lookup.equals("publish")
+                    ? peer.publishRepositorySink(request.toBuilder().setAsync(false).build()).getJob()
+                    : lookup.equals("cancel")
+                    ? peer.cancelRepositorySinkJob(CancelRepositorySinkJobRequest.newBuilder()
+                            .setAccountId(accountId).setOperationId(opId).build()).getJob()
+                    : as(READER_TOKEN, RepositorySinkServiceGrpc.newBlockingStub(instanceB.channel))
+                            .getRepositorySinkJob(GetRepositorySinkJobRequest.newBuilder()
+                                    .setAccountId(accountId).setOperationId(opId).build()).getJob();
+            assertThat(recovered.getState())
+                    .isEqualTo(RepositorySinkJobState.REPOSITORY_SINK_JOB_STATE_SUCCEEDED);
+            assertThat(recovered.getDestinationVersion()).isEqualTo(1L);
+            assertThat(recovered.getBytesCommitted()).isPositive();
+            assertThat(recovered.getBytesCommitted()).isEqualTo(recovered.getBytesRendered());
+            assertThat(recovered.hasFailure()).isFalse();
+            assertThat(recovered.getReplayed()).isTrue();
+            assertThat(recovered.getProvenance().getDestinationVersion()).isEqualTo(1L);
+            RepositorySinkJobStore.StoredJob durable = directStore.find(accountId, opId).orElseThrow();
+            assertThat(durable.job()).isEqualTo(recovered);
+            assertThat(directStore.reconcileTerminalCommit(terminal, recovered)).isFalse();
+            byte[] committedBytes = readAllRenditionBytes(dest, "readme_md");
+            assertThat(new String(committedBytes, StandardCharsets.UTF_8))
+                    .isEqualTo("# Post Fence Stall\n\nRecord: rec-post-fence\n");
+            assertThat(recovered.getBytesCommitted()).isEqualTo(committedBytes.length);
+            RenditionProvenance retained = as(READER_TOKEN,
+                            RepositorySinkServiceGrpc.newBlockingStub(instanceB.channel))
+                    .listRenditionProvenance(ListRenditionProvenanceRequest.newBuilder()
+                            .setAddress(dest).setVersion(1L).build())
+                    .getEntries(0).getProvenance();
+            assertThat(recovered.getProvenance().getSourceDigestsList())
+                    .isEqualTo(retained.getSourceDigestsList());
+            assertThat(durable.lease().leaseEpoch()).isEqualTo(2L);
+            assertThat(directStore.transitionOwned(durable, "stale-owner", 1L)).isFalse();
+
+            // The retry the failure invites replays the one commit instead of adding a version.
+            RepositorySinkJob retried = as(
+                            WRITER_TOKEN,
+                            RepositorySinkServiceGrpc.newBlockingStub(instanceB.channel))
+                    .publishRepositorySink(request.toBuilder().setAsync(false).build())
+                    .getJob();
+            assertThat(retried.getState())
+                    .isEqualTo(RepositorySinkJobState.REPOSITORY_SINK_JOB_STATE_SUCCEEDED);
+            assertThat(retried.getDestinationVersion()).isEqualTo(1L);
+            assertThat(retried.getReplayed()).isTrue();
+            assertThat(awaitCommittedVersion(dest)).isEqualTo(1L);
+        }
+    }
+
+    @ParameterizedTest(name = "durable store={0}")
+    @ValueSource(booleans = {false, true})
+    void terminalCommitCorrectionCannotOverwriteNewerAttemptsOrSuccess(boolean durable) {
+        RepositorySinkJobStore store = durable
+                ? new JdbcRepositorySinkJobStore(services.ledgerDataSource())
+                : new ai.protomolt.proto.repo.archive.InMemoryRepositorySinkJobStore();
+        var now = java.time.Instant.now().truncatedTo(java.time.temporal.ChronoUnit.MICROS);
+        RepositorySinkJob failed = RepositorySinkJob.newBuilder()
+                .setAccountId(accountId).setOperationId("correction-fencing")
+                .setState(RepositorySinkJobState.REPOSITORY_SINK_JOB_STATE_FAILED).build();
+        var expected = new RepositorySinkJobStore.StoredJob(failed,
+                PublishRepositorySinkRequest.getDefaultInstance(), null,
+                new RepositorySinkJobStore.JobLease("owner-A", 1L, now), false, "");
+        store.insertOrGet(expected);
+        RepositorySinkJob success = failed.toBuilder()
+                .setState(RepositorySinkJobState.REPOSITORY_SINK_JOB_STATE_SUCCEEDED)
+                .setDestinationVersion(1L).build();
+        RepositorySinkJob queued = failed.toBuilder()
+                .setState(RepositorySinkJobState.REPOSITORY_SINK_JOB_STATE_QUEUED).build();
+        var retry = store.tryClaimRetryableFailure(accountId, failed.getOperationId(), 1L,
+                queued, "owner-B", now.plusSeconds(30)).orElseThrow();
+        assertThat(store.reconcileTerminalCommit(expected, success)).isFalse();
+        assertThat(store.reconcileTerminalCommit(retry, success)).isFalse();
+        assertThat(store.find(accountId, failed.getOperationId()).orElseThrow()).isEqualTo(retry);
+        var cancelled = retry.withTransition(failed.toBuilder()
+                .setState(RepositorySinkJobState.REPOSITORY_SINK_JOB_STATE_CANCELLED).build(), null, now);
+        assertThat(store.transitionOwned(cancelled, "owner-B", 2L)).isTrue();
+        // A stale outcome reader must still lose even after the newer attempt terminates.
+        assertThat(store.reconcileTerminalCommit(expected, success)).isFalse();
+        assertThat(store.reconcileTerminalCommit(cancelled, success)).isTrue();
+        assertThat(store.reconcileTerminalCommit(cancelled,
+                success.toBuilder().setDestinationVersion(2L).build())).isFalse();
+        assertThat(store.transitionOwned(retry, "owner-B", 2L)).isFalse();
+        assertThat(store.find(accountId, failed.getOperationId()).orElseThrow().job()).isEqualTo(success);
+    }
+
     // -------------------------------------------------------------------------
     // Helpers & Fixtures
     // -------------------------------------------------------------------------
+
+    private void awaitBlockedCommitAndExpiredLease(
+            Connection holder, String outcomeTable, JdbcRepositorySinkJobStore store, String operationId)
+            throws Exception {
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+        try (PreparedStatement waiting = holder.prepareStatement(
+                "SELECT EXISTS (SELECT 1 FROM pg_locks WHERE relation = ?::regclass AND NOT granted)")) {
+            waiting.setString(1, outcomeTable);
+            while (System.nanoTime() < deadline) {
+                boolean blocked;
+                try (ResultSet result = waiting.executeQuery()) {
+                    result.next();
+                    blocked = result.getBoolean(1);
+                }
+                if (blocked && !store.find(accountId, operationId).orElseThrow()
+                        .lease().isActiveAt(java.time.Instant.now())) {
+                    return;
+                }
+                Thread.sleep(25L);
+            }
+        }
+        throw new AssertionError("Owner did not block inside commit with an expired lease");
+    }
 
     private static String outcomeTableName(Connection connection) throws Exception {
         try (Statement statement = connection.createStatement();

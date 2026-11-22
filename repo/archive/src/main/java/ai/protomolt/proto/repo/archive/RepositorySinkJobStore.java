@@ -231,6 +231,18 @@ public interface RepositorySinkJobStore {
     boolean transitionOwned(StoredJob updated, String ownerId, long leaseEpoch);
 
     /**
+     * Corrects a FAILED or CANCELLED snapshot after an authorized outcome lookup proves that
+     * its repository commit succeeded. Unlike an execution transition, this does not claim a
+     * lease or requeue work. Compare the observed owner, epoch and state atomically; preserve
+     * the request, lease and cancellation flags. Never overwrite a newer attempt or success.
+     *
+     * @param expected terminal snapshot used for the outcome lookup
+     * @param committed successful receipt recovered from the recorded repository outcome
+     * @return whether the observed terminal snapshot was corrected
+     */
+    boolean reconcileTerminalCommit(StoredJob expected, RepositorySinkJob committed);
+
+    /**
      * Durably marks {@code cancel_requested = true} on a {@code QUEUED} or {@code RUNNING} job
      * without overwriting {@code state} or stealing an active owner's lease.
      *

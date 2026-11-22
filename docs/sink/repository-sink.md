@@ -17,7 +17,7 @@ Durable repository publication happens only when a workflow step or an authentic
 
 1. `ListSaveAsCapabilities`: inspects an authorized `SinkSource` against the host's enabled `RendererRegistry` capabilities without mutating state or authorizing writes. Source payloads on repository revisions decode strictly from closed retained `FileDescriptorSet` bytes (`GetSchemaDescriptor`), never from a live schema registry.
 2. `PublishRepositorySink`: admits, authorizes caller read and writer grants, freezes `current` source revisions once at admission, binds `operation_id` to the canonical `(source + conversion + destination)` SHA-256 intent digest, executes optional bounded conversion via `RendererRegistry` outside any catalog transaction, and streams output through `RenditionUploads` into v2 `DocumentService.UploadDocument`.
-3. `GetRepositorySinkJob`: returns the durable `RepositorySinkJob` (`QUEUED`, `RUNNING`, `SUCCEEDED`, `FAILED`, `CANCELLED`, or `UNRESOLVED`). Active jobs carry a renewable `owner_id` / `lease_epoch` / `lease_expires_at` lease so peer host instances never clobber a running job; only expired or `UNRESOLVED` jobs are fenced (`lease_epoch + 1`) and reconciled against `DocumentService.GetOperationOutcome`.
+3. `GetRepositorySinkJob`: returns the durable `RepositorySinkJob` (`QUEUED`, `RUNNING`, `SUCCEEDED`, `FAILED`, `CANCELLED`, or `UNRESOLVED`). Active jobs carry a renewable `owner_id` / `lease_epoch` / `lease_expires_at` lease so peer host instances never clobber a running job; expired or `UNRESOLVED` jobs are fenced (`lease_epoch + 1`) and reconciled against `DocumentService.GetOperationOutcome`. Failed and cancelled snapshots also check for a late recorded commit without claiming a new execution lease.
 4. `CancelRepositorySinkJob`: records durable cooperative cancellation (`cancel_requested = true`) without falsifying `CANCELLED` while a peer owner still holds a live lease; the active owner observes `cancel_requested` on heartbeat and pre-commit lease fencing, aborts before repository commit, and transitions the job to `CANCELLED`.
 5. `ListRenditionProvenance`: inspects current or historical archive entry versions and returns persisted `RenditionProvenance` records enriched with `current_source_revision` and `source_stale` currency metadata.
 
@@ -27,6 +27,22 @@ Durable repository publication happens only when a workflow step or an authentic
 - **Retry binding**: repeating `PublishRepositorySink` with the same `operation_id` and identical canonical intent replays the committed outcome (`replayed = true`) without creating a duplicate version; reusing `operation_id` with altered source, conversion, or destination intent fails with `ALREADY_EXISTS`.
 - **Live pre-commit writer verification**: `RepoSinkAuthorization` captures the admitting caller and re-evaluates both `RepoCallerBindings` and live `Catalog` writer grants immediately before staging and committing bytes (`callForCommit`). Revoking writer authority while an asynchronous conversion is running fails the job with `PERMISSION_DENIED` (`bytes_committed = 0`).
 - **Explicit representation loss**: direct protobuf saves stamp `authoritative_protobuf = true`; converted renditions (Markdown, HTML, PDF, Parquet) always stamp `authoritative_protobuf = false` with the provider's `loss_description` and are refused if later selected as a protobuf `ArchiveRenditionSource`.
+
+### Late commits after lease expiry or cancellation
+
+Cancellation is best effort once an upload has passed its final lease check. An
+empty operation-outcome lookup does not prove that the upload cannot commit later.
+`GetRepositorySinkJob`, repeated cancellation, and publish replay reconcile failed
+or cancelled snapshots against the same downstream operation ID. A recorded success
+corrects the job to `SUCCEEDED`, recovering bytes and provenance from the committed
+revision without rendering again or creating a new revision.
+
+The correction compares the observed owner, lease epoch and terminal state atomically.
+It cannot overwrite a newer retry or an existing success, and ordinary stale-worker
+transitions remain fenced. An absent outcome leaves the snapshot unchanged; lookup
+or provenance-read failures propagate without inventing success. Publish retries of
+retryable failures still require writer authority before changing the job; read-only
+callers can reconcile through `GetRepositorySinkJob`.
 
 ## Parquet Rendition Provider (`protomolt-emit-parquet`)
 

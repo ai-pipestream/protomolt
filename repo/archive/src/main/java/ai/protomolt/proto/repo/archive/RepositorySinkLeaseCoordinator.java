@@ -215,6 +215,11 @@ final class RepositorySinkLeaseCoordinator implements AutoCloseable {
                 () -> store.transitionOwned(updated, instanceId, leaseEpoch));
     }
 
+    boolean reconcileTerminalCommit(
+            RepositorySinkJobStore.StoredJob expected, RepositorySinkJob committed) {
+        return withInterruptCleared(() -> store.reconcileTerminalCommit(expected, committed));
+    }
+
     Optional<RepositorySinkJobStore.StoredJob> requestCancel(
             String accountId, String operationId, String reason) {
         return withInterruptCleared(() -> store.requestCancel(accountId, operationId, reason));

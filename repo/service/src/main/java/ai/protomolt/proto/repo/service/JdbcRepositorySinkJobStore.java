@@ -105,6 +105,17 @@ final class JdbcRepositorySinkJobStore implements RepositorySinkJobStore {
                )
             """;
 
+    private static final String RECONCILE_TERMINAL_COMMIT_SQL =
+            """
+            UPDATE sink_jobs
+               SET state = 'REPOSITORY_SINK_JOB_STATE_SUCCEEDED',
+                   job_pb = ?, pending_provenance_pb = ?, updated_at = now()
+             WHERE account_id = ? AND operation_id = ?
+               AND owner_id = ? AND lease_epoch = ? AND state = ?
+               AND state IN ('REPOSITORY_SINK_JOB_STATE_FAILED',
+                             'REPOSITORY_SINK_JOB_STATE_CANCELLED')
+            """;
+
     private static final String REQUEST_CANCEL_SQL =
             """
             UPDATE sink_jobs
@@ -320,6 +331,34 @@ final class JdbcRepositorySinkJobStore implements RepositorySinkJobStore {
             } catch (SQLException e) {
                 throw Status.UNAVAILABLE
                         .withDescription("Repository sink job conditional transition failed")
+                        .withCause(e)
+                        .asRuntimeException();
+            }
+        });
+    }
+
+    @Override
+    public boolean reconcileTerminalCommit(StoredJob expected, RepositorySinkJob committed) {
+        Objects.requireNonNull(expected, "expected");
+        Objects.requireNonNull(committed, "committed");
+        if (committed.getState() != RepositorySinkJobState.REPOSITORY_SINK_JOB_STATE_SUCCEEDED) {
+            throw new IllegalArgumentException("Reconciliation requires a committed success");
+        }
+        return withInterruptCleared(() -> {
+            try (Connection conn = openAutocommitConnection();
+                    PreparedStatement ps = conn.prepareStatement(RECONCILE_TERMINAL_COMMIT_SQL)) {
+                ps.setQueryTimeout(STATEMENT_TIMEOUT_SECONDS);
+                ps.setBytes(1, committed.toByteArray());
+                ps.setBytes(2, committed.getProvenance().toByteArray());
+                ps.setString(3, expected.job().getAccountId());
+                ps.setString(4, expected.job().getOperationId());
+                ps.setString(5, expected.lease().ownerId());
+                ps.setLong(6, expected.lease().leaseEpoch());
+                ps.setString(7, expected.job().getState().name());
+                return ps.executeUpdate() == 1;
+            } catch (SQLException e) {
+                throw Status.UNAVAILABLE
+                        .withDescription("Repository sink terminal commit reconciliation failed")
                         .withCause(e)
                         .asRuntimeException();
             }
