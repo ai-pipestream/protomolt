@@ -118,6 +118,14 @@ Atlassian account and groups that share its address. The repository service
 reads links from the file named by `PROTOMOLT_IDENTITY_LINKS`. The test runs
 the mappings on records from a live Sync run.
 
+For SharePoint, `sharepoint-document-security.textproto` maps the `SiteAcl`
+an item's `acl_owner_id` names into `permissions`: each role assignment whose
+permission levels include ViewListItems becomes a read rule on the SharePoint
+group (`sharepoint-group:<site id>/<group id>`), user (`user-principal-name`,
+or `email`), Entra group (`entra-group`) or other claim (`sharepoint-claim`).
+`sharepoint-identity-links.textproto` links the members of each site group to
+that group.
+
 ## Where mapping sits
 
 The REST gateway and the indexing pipeline both accept mapped messages,

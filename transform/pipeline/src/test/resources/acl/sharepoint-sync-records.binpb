@@ -1,0 +1,176 @@
+ß
+Ztenant-1.example,00000000-0000-4000-8000-000000000001,00000000-0000-4000-8000-000000000002±ÃçÿÇ‰˚ÜR∫
+Ztenant-1.example,00000000-0000-4000-8000-000000000001,00000000-0000-4000-8000-000000000002WelcomeToPipestreamWelcome to PipeStream"https://redacted.example/url/3*ORules regarding the architecture and contrib guidelines for Pipestream software2òÍ√◊ÄÙüƒ:≠∆çÿ`j
+tenant-1.examplerí"$00000000-0000-4000-8000-000000000001*https://redacted.example/url/32$00000000-0000-4000-8000-000000000007:$00000000-0000-4000-8000-000000000002î
+hsite_group/tenant-1.example,00000000-0000-4000-8000-000000000001,00000000-0000-4000-8000-000000000002/11±Ãçÿ”€‘ääò
+Ztenant-1.example,00000000-0000-4000-8000-000000000001,00000000-0000-4000-8000-0000000000028Principal 1Principal 1"Principal 1*Principal 28 î
+hsite_group/tenant-1.example,00000000-0000-4000-8000-000000000001,00000000-0000-4000-8000-000000000002/12±ÃçÿÎ„ﬂääò
+Ztenant-1.example,00000000-0000-4000-8000-000000000001,00000000-0000-4000-8000-0000000000028Principal 3Principal 3"Principal 3*Principal 28 î
+hsite_group/tenant-1.example,00000000-0000-4000-8000-000000000001,00000000-0000-4000-8000-000000000002/13±Ãçÿ“ßÄãäò
+Ztenant-1.example,00000000-0000-4000-8000-000000000001,00000000-0000-4000-8000-0000000000028Principal 4Principal 4"Principal 5*Principal 28 î
+hsite_group/tenant-1.example,00000000-0000-4000-8000-000000000001,00000000-0000-4000-8000-000000000002/10±Ãçÿ–™£ãäò
+Ztenant-1.example,00000000-0000-4000-8000-000000000001,00000000-0000-4000-8000-0000000000028
+Principal 6Principal 6"Principal 5*Principal 28 Ñ
+gsite_group/tenant-1.example,00000000-0000-4000-8000-000000000001,00000000-0000-4000-8000-000000000002/5±Ãçÿæ◊´ãäâ
+Ztenant-1.example,00000000-0000-4000-8000-000000000001,00000000-0000-4000-8000-000000000002)Principal 7Principal 7*Principal 8 ˜
+gsite_group/tenant-1.example,00000000-0000-4000-8000-000000000001,00000000-0000-4000-8000-000000000002/3±Ãçÿ”Ò≤ãä¸
+Ztenant-1.example,00000000-0000-4000-8000-000000000001,00000000-0000-4000-8000-000000000002)Principal 8Principal 8*Principal 8q)i:0#.f|membership|email-1@example.invalid"Principal 10*email-1@example.invalid2email-1@example.invalid@ Ñ
+gsite_group/tenant-1.example,00000000-0000-4000-8000-000000000001,00000000-0000-4000-8000-000000000002/4±Ãçÿáë∏ãäâ
+Ztenant-1.example,00000000-0000-4000-8000-000000000001,00000000-0000-4000-8000-000000000002)Principal 9Principal 9*Principal 8 ƒ
+hsite_acl/site/tenant-1.example,00000000-0000-4000-8000-000000000001,00000000-0000-4000-8000-000000000002±ÃçÿÙ€éçí»
+\
+Ztenant-1.example,00000000-0000-4000-8000-000000000001,00000000-0000-4000-8000-000000000002YPrincipal 8"Principal 85ÖÄÄÄFull ControlHas full control. 0ˇˇˇˇ8ˇˇˇˇqPrincipal 9"Principal 9MÇÄÄÄRead5Can view pages and list items and download documents. 0∞8·†åBóPrincipal 7"Principal 7sÜÄÄÄEditZCan add, edit and delete lists; can view, add, update and delete list items and documents. 0∞8Ôµå‚~Principal 3"Principal 3ZâÄÄÄWeb-Only Limited Access-Can only view the web when given permissions. 	(0∞8Ä†Ä@≈
+çsite_acl/list/tenant-1.example,00000000-0000-4000-8000-000000000001,00000000-0000-4000-8000-000000000002/00000000-0000-4000-8000-000000000005±Ãçÿôêåíí£
+ÖÇ
+Ztenant-1.example,00000000-0000-4000-8000-000000000001,00000000-0000-4000-8000-000000000002$00000000-0000-4000-8000-000000000005YPrincipal 8"Principal 85ÖÄÄÄFull ControlHas full control. 0ˇˇˇˇ8ˇˇˇˇqPrincipal 9"Principal 9MÇÄÄÄRead5Can view pages and list items and download documents. 0∞8·†åBóPrincipal 7"Principal 7sÜÄÄÄEditZCan add, edit and delete lists; can view, add, update and delete list items and documents. 0∞8Ôµå‚ÆPrincipal 1"Principal 1âÅÄÄÄLimited AccessfCan view specific lists, document libraries, list items, folders, or documents when given permissions. (008Ä†Ñ@¢
+ñsite_acl/list_item/tenant-1.example,00000000-0000-4000-8000-000000000001,00000000-0000-4000-8000-000000000002/00000000-0000-4000-8000-000000000005/153±Ãçÿÿ©õíí˜
+äá
+Ztenant-1.example,00000000-0000-4000-8000-000000000001,00000000-0000-4000-8000-000000000002$00000000-0000-4000-8000-000000000005153YPrincipal 8"Principal 85ÖÄÄÄFull ControlHas full control. 0ˇˇˇˇ8ˇˇˇˇqPrincipal 9"Principal 9MÇÄÄÄRead5Can view pages and list items and download documents. 0∞8·†åBóPrincipal 7"Principal 7sÜÄÄÄEditZCan add, edit and delete lists; can view, add, update and delete list items and documents. 0∞8Ôµå‚Ã
+b!drive-0001±ÃçÿéãﬁíZ≠
+b!drive-0001	DocumentsdocumentLibrary"https://redacted.example/url/42*Ztenant-1.example,00000000-0000-4000-8000-000000000001,00000000-0000-4000-8000-000000000002:Ó”¶÷Bü∆çÿJ
+
+Identity 7ZM
+K
+$00000000-0000-4000-8000-000000000013
+Identity 6email-1@example.invalidb"ÄÄÄÄÄ†Å°áã¨ûıˇü Ù≤⁄*normalj∏
+$00000000-0000-4000-8000-000000000005"$00000000-0000-4000-8000-000000000001*https://redacted.example/url/32$00000000-0000-4000-8000-000000000007:$00000000-0000-4000-8000-000000000002Ç$00000000-0000-4000-8000-000000000005äçsite_acl/list/tenant-1.example,00000000-0000-4000-8000-000000000001,00000000-0000-4000-8000-000000000002/00000000-0000-4000-8000-000000000005æ
+	item-0002±ÃçÿàÍûîb¢
+	item-0002rootb!drive-0001*https://redacted.example/url/42HRÓ”¶÷Z™∆çÿÄ∫https://redacted.example/url/42¬
+b!drive-0001documentLibrary 
+Ó”¶÷™∆çÿÿ∫ﬁ
+$00000000-0000-4000-8000-000000000005$00000000-0000-4000-8000-000000000006"$00000000-0000-4000-8000-000000000001*https://redacted.example/url/32$00000000-0000-4000-8000-000000000007:$00000000-0000-4000-8000-000000000002Úçsite_acl/list/tenant-1.example,00000000-0000-4000-8000-000000000001,00000000-0000-4000-8000-000000000002/00000000-0000-4000-8000-000000000005˝
+	item-0001±Ãçÿ¥±›îb·
+	item-0001.pipestream-live-write-20261122-214814-e3fbdc0bb!drive-0001"	item-0002*https://redacted.example/url/2HRü∆çÿZü∆çÿb
+
+Identity 2
+Identity 1j
+
+Identity 2
+Identity 1z*"{00000000-0000-4000-8000-000000000003},2"Ä∫https://redacted.example/url/2¬ß
+b!drive-0001documentLibrary	item-0002*/drives/b!drive-0001/root::$00000000-0000-4000-8000-000000000001B∏
+$00000000-0000-4000-8000-000000000005$00000000-0000-4000-8000-000000000006"$00000000-0000-4000-8000-000000000001*https://redacted.example/url/3:$00000000-0000-4000-8000-000000000002 
+ü∆çÿü∆çÿÚ
+users∫„
+$00000000-0000-4000-8000-000000000005153$00000000-0000-4000-8000-000000000003"$00000000-0000-4000-8000-000000000001*https://redacted.example/url/32$00000000-0000-4000-8000-000000000007:$00000000-0000-4000-8000-000000000002⁄153Úñsite_acl/list_item/tenant-1.example,00000000-0000-4000-8000-000000000001,00000000-0000-4000-8000-000000000002/00000000-0000-4000-8000-000000000005/153‰
+	item-0003±Ãçÿ≥Æîb»
+	item-0003renamed.txtb!drive-0001"	item-0001*https://redacted.example/url/20:
+text/plain@:R†∆çÿZß∆çÿb
+
+Identity 2
+Identity 1j
+
+Identity 2
+Identity 1z*"{00000000-0000-4000-8000-000000000008},2"äeZVKRSSPbM/pW/Jt3QeqkPULRHE=≤,"c:{00000000-0000-4000-8000-000000000008},1"∫https://redacted.example/url/20¬÷
+b!drive-0001documentLibrary	item-0001*I/drives/b!drive-0001/root:/pipestream-live-write-20261122-214814-e3fbdc0b:$00000000-0000-4000-8000-000000000001B∏
+$00000000-0000-4000-8000-000000000005$00000000-0000-4000-8000-000000000003"$00000000-0000-4000-8000-000000000001*https://redacted.example/url/3:$00000000-0000-4000-8000-000000000002 
+†∆çÿß∆çÿÚ
+users∫„
+$00000000-0000-4000-8000-000000000005154$00000000-0000-4000-8000-000000000008"$00000000-0000-4000-8000-000000000001*https://redacted.example/url/32$00000000-0000-4000-8000-000000000007:$00000000-0000-4000-8000-000000000002⁄154Úñsite_acl/list_item/tenant-1.example,00000000-0000-4000-8000-000000000001,00000000-0000-4000-8000-000000000002/00000000-0000-4000-8000-000000000005/153Û
+	item-0004±Ãçÿ°∑˛îb◊
+	item-0004	large.binb!drive-0001"	item-0001*https://redacted.example/url/12:application/octet-stream@˚Ä®R°∆çÿZ£∆çÿb
+
+Identity 2
+Identity 1j
+
+Identity 2
+Identity 1z*"{00000000-0000-4000-8000-000000000010},2"äcYOv1nVkZFwhcoEdvoyqia3vkrU=≤,"c:{00000000-0000-4000-8000-000000000010},2"∫https://redacted.example/url/12¬÷
+b!drive-0001documentLibrary	item-0001*I/drives/b!drive-0001/root:/pipestream-live-write-20261122-214814-e3fbdc0b:$00000000-0000-4000-8000-000000000001B∏
+$00000000-0000-4000-8000-000000000005$00000000-0000-4000-8000-000000000003"$00000000-0000-4000-8000-000000000001*https://redacted.example/url/3:$00000000-0000-4000-8000-000000000002 
+°∆çÿ£∆çÿÚ
+users∫„
+$00000000-0000-4000-8000-000000000005155$00000000-0000-4000-8000-000000000010"$00000000-0000-4000-8000-000000000001*https://redacted.example/url/32$00000000-0000-4000-8000-000000000007:$00000000-0000-4000-8000-000000000002⁄155Úñsite_acl/list_item/tenant-1.example,00000000-0000-4000-8000-000000000001,00000000-0000-4000-8000-000000000002/00000000-0000-4000-8000-000000000005/153ı
+	item-0005±Ãçÿ˙ãåïbŸ
+	item-0005resumed.binb!drive-0001"	item-0001*https://redacted.example/url/17:application/octet-stream@âÜòR£∆çÿZ¶∆çÿb
+
+Identity 2
+Identity 1j
+
+Identity 2
+Identity 1z*"{00000000-0000-4000-8000-000000000012},2"ä3CIISjwkse/DwEEEJ9jq0g4MxVw=≤,"c:{00000000-0000-4000-8000-000000000012},2"∫https://redacted.example/url/17¬÷
+b!drive-0001documentLibrary	item-0001*I/drives/b!drive-0001/root:/pipestream-live-write-20261122-214814-e3fbdc0b:$00000000-0000-4000-8000-000000000001B∏
+$00000000-0000-4000-8000-000000000005$00000000-0000-4000-8000-000000000003"$00000000-0000-4000-8000-000000000001*https://redacted.example/url/3:$00000000-0000-4000-8000-000000000002 
+£∆çÿ¶∆çÿÚ
+users∫„
+$00000000-0000-4000-8000-000000000005156$00000000-0000-4000-8000-000000000012"$00000000-0000-4000-8000-000000000001*https://redacted.example/url/32$00000000-0000-4000-8000-000000000007:$00000000-0000-4000-8000-000000000002⁄156Úñsite_acl/list_item/tenant-1.example,00000000-0000-4000-8000-000000000001,00000000-0000-4000-8000-000000000002/00000000-0000-4000-8000-000000000005/153≈
+	item-0006±ÃçÿÄˆóïb©
+	item-0006copy.txtb!drive-0001"	item-0001*https://redacted.example/url/25:
+text/plain@:R†∆çÿZ®∆çÿb
+
+Identity 2j
+
+Identity 2z*"{00000000-0000-4000-8000-000000000015},1"äeZVKRSSPbM/pW/Jt3QeqkPULRHE=≤,"c:{00000000-0000-4000-8000-000000000015},1"∫https://redacted.example/url/25¬÷
+b!drive-0001documentLibrary	item-0001*I/drives/b!drive-0001/root:/pipestream-live-write-20261122-214814-e3fbdc0b:$00000000-0000-4000-8000-000000000001B∏
+$00000000-0000-4000-8000-000000000005$00000000-0000-4000-8000-000000000003"$00000000-0000-4000-8000-000000000001*https://redacted.example/url/3:$00000000-0000-4000-8000-000000000002 
+†∆çÿ®∆çÿÚ
+users∫„
+$00000000-0000-4000-8000-000000000005157$00000000-0000-4000-8000-000000000015"$00000000-0000-4000-8000-000000000001*https://redacted.example/url/32$00000000-0000-4000-8000-000000000007:$00000000-0000-4000-8000-000000000002⁄157Úñsite_acl/list_item/tenant-1.example,00000000-0000-4000-8000-000000000001,00000000-0000-4000-8000-000000000002/00000000-0000-4000-8000-000000000005/153Ê
+	item-0007±ÃçÿØ¥¶ñb 
+	item-0007versioned.txtb!drive-0001"	item-0001*https://redacted.example/url/28:
+text/plain@R©∆çÿZ™∆çÿb
+
+Identity 2
+Identity 1j
+
+Identity 2
+Identity 1z*"{00000000-0000-4000-8000-000000000016},3"ädiiDHOaQhje4AQRvfEMZFAAAAAA=≤,"c:{00000000-0000-4000-8000-000000000016},0"∫https://redacted.example/url/28¬÷
+b!drive-0001documentLibrary	item-0001*I/drives/b!drive-0001/root:/pipestream-live-write-20261122-214814-e3fbdc0b:$00000000-0000-4000-8000-000000000001B∏
+$00000000-0000-4000-8000-000000000005$00000000-0000-4000-8000-000000000003"$00000000-0000-4000-8000-000000000001*https://redacted.example/url/3:$00000000-0000-4000-8000-000000000002 
+©∆çÿ™∆çÿÚ
+users∫„
+$00000000-0000-4000-8000-000000000005158$00000000-0000-4000-8000-000000000016"$00000000-0000-4000-8000-000000000001*https://redacted.example/url/32$00000000-0000-4000-8000-000000000007:$00000000-0000-4000-8000-000000000002⁄158Úñsite_acl/list_item/tenant-1.example,00000000-0000-4000-8000-000000000001,00000000-0000-4000-8000-000000000002/00000000-0000-4000-8000-000000000005/153≈
+$00000000-0000-4000-8000-000000000072±Ãçÿ˜…Êôré
+$00000000-0000-4000-8000-000000000072EventsEvents*https://redacted.example/url/542Ò”¶÷:Ò”¶÷B
+
+Identity 7R("00000000-0000-4000-8000-000000000072,0"ZZtenant-1.example,00000000-0000-4000-8000-000000000001,00000000-0000-4000-8000-000000000002b
+eventsj∏
+$00000000-0000-4000-8000-000000000072"$00000000-0000-4000-8000-000000000001*https://redacted.example/url/32$00000000-0000-4000-8000-000000000007:$00000000-0000-4000-8000-000000000002Ç\:Ztenant-1.example,00000000-0000-4000-8000-000000000001,00000000-0000-4000-8000-000000000002ähsite_acl/site/tenant-1.example,00000000-0000-4000-8000-000000000001,00000000-0000-4000-8000-000000000002û
+îsite_acl/list_item/tenant-1.example,00000000-0000-4000-8000-000000000001,00000000-0000-4000-8000-000000000002/00000000-0000-4000-8000-000000000019/1±Ãçÿı≤éõíı
+àÖ
+Ztenant-1.example,00000000-0000-4000-8000-000000000001,00000000-0000-4000-8000-000000000002$00000000-0000-4000-8000-0000000000191YPrincipal 8"Principal 85ÖÄÄÄFull ControlHas full control. 0ˇˇˇˇ8ˇˇˇˇqPrincipal 9"Principal 9MÇÄÄÄRead5Can view pages and list items and download documents. 0∞8·†åBóPrincipal 7"Principal 7sÜÄÄÄEditZCan add, edit and delete lists; can view, add, update and delete list items and documents. 0∞8Ôµå‚’
+$00000000-0000-4000-8000-000000000019±ÃçÿÁÂóõrû
+$00000000-0000-4000-8000-000000000019)pipestreamlivewrite20261122214814e3fbdc0b.pipestream-live-write-20261122-214814-e3fbdc0b"/Created by the live write test; safe to delete.*https://redacted.example/url/342´∆çÿ:≠∆çÿB
+
+Identity 2J
+
+Identity 2R)"00000000-0000-4000-8000-000000000019,21"ZZtenant-1.example,00000000-0000-4000-8000-000000000001,00000000-0000-4000-8000-000000000002bgenericListj∏
+$00000000-0000-4000-8000-000000000019"$00000000-0000-4000-8000-000000000001*https://redacted.example/url/32$00000000-0000-4000-8000-000000000007:$00000000-0000-4000-8000-000000000002Ç\:Ztenant-1.example,00000000-0000-4000-8000-000000000001,00000000-0000-4000-8000-000000000002ähsite_acl/site/tenant-1.example,00000000-0000-4000-8000-000000000001,00000000-0000-4000-8000-000000000002•
+
+&00000000-0000-4000-8000-000000000019/1±ÃçÿÚ˜âúzÏ	
+1https://redacted.example/url/41*¨∆çÿ2¨∆çÿ:B
+
+Identity 22
+$00000000-0000-4000-8000-000000000004
+Identity 1J&00000000-0000-4000-8000-000000000049,1RZtenant-1.example,00000000-0000-4000-8000-000000000001,00000000-0000-4000-8000-000000000002Z$00000000-0000-4000-8000-000000000019b.
+&0x0100B53E64A2C09964459FF9222834972BD9Itemj
+id1j
+Title
+live writej
+ContentTypeItemj
+Modified2¨∆çÿj
+Created2¨∆çÿj
+AuthorLookupId
+1073741822j
+EditorLookupId
+1073741822j
+_UIVersionString1.0j
+Attachments( j
+Edit j
+LinkTitleNoMenu
+live writej
+	LinkTitle
+live writej
+ItemChildCount0j
+FolderChildCount0j
+_ComplianceFlags j
+_ComplianceTag j
+_ComplianceTagWrittenTime j
+_ComplianceTagUserId j
+AppAuthorLookupId4j
+AppEditorLookupId4r·
+$00000000-0000-4000-8000-0000000000191$00000000-0000-4000-8000-000000000049"$00000000-0000-4000-8000-000000000001*https://redacted.example/url/32$00000000-0000-4000-8000-000000000007:$00000000-0000-4000-8000-000000000002äZ0*/Lists/pipestreamlivewrite20261122214814e3fbdc0b:$00000000-0000-4000-8000-000000000001öîsite_acl/list_item/tenant-1.example,00000000-0000-4000-8000-000000000001,00000000-0000-4000-8000-000000000002/00000000-0000-4000-8000-000000000019/1ß
+$00000000-0000-4000-8000-000000000074±Ãçÿ°‹‰úr
+$00000000-0000-4000-8000-000000000074Employee onboardingEmployee onboarding"ÇManage your new employee's onboarding process from day 1. Share resources and contacts, and get your new hire up-to-speed quickly.*https://redacted.example/url/562üÍ√◊:ÄÍãÿBM
+K
+$00000000-0000-4000-8000-000000000013
+Identity 6email-1@example.invalidR)"00000000-0000-4000-8000-000000000074,15"ZZtenant-1.example,00000000-0000-4000-8000-000000000001,00000000-0000-4000-8000-000000000002bgenericListj∏
+$00000000-0000-4000-8000-000000000074"$00000000-0000-4000-8000-000000000001*https://redacted.example/url/32$00000000-0000-4000-8000-000000000007:$00000000-0000-4000-8000-000000000002Ç\:Ztenant-1.example,00000000-0000-4000-8000-000000000001,00000000-0000-4000-8000-000000000002ähsite_acl/site/tenant-1.example,00000000-0000-4000-8000-000000000001,00000000-0000-4000-8000-000000000002
