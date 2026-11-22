@@ -106,7 +106,11 @@ repeated message field. The Confluence ACL mapping
 (`transform/pipeline/src/test/resources/acl/confluence-document-security.textproto`)
 turns the access records grpc-confluence Sync emits into a
 `DocumentSecurity` this way: space read grants become `permissions` and each
-view-restricted owner becomes one `required_rule_sets` entry.
+view-restricted owner becomes one `required_rule_sets` entry. A second
+config (`confluence-identity-links.textproto`) turns Sync's users and group
+memberships into `IdentityLink`s, which `CallerIdentityExpansion` follows to
+give a caller signed in with their email the Atlassian account and groups
+that go with it. The test runs both on records from a live Sync run.
 
 ## Where mapping sits
 

@@ -7,11 +7,13 @@ import ai.protomolt.proto.repo.spi.CallerIdentityExpansion;
 import ai.protomolt.proto.repo.spi.DocumentAccessPolicy;
 import ai.protomolt.proto.repo.spi.RepositoryCaller;
 import ai.protomolt.proto.repo.v1.Access;
+import ai.protomolt.proto.repo.v1.AccessRule;
 import ai.protomolt.proto.repo.v1.DocumentSecurity;
 import ai.protomolt.proto.repo.v1.IdentityLink;
 import ai.protomolt.proto.repo.v1.Principal;
 import com.google.protobuf.Descriptors.Descriptor;
 import com.google.protobuf.DynamicMessage;
+import com.google.protobuf.Message;
 import com.google.protobuf.TextFormat;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
@@ -198,6 +200,105 @@ class ConfluenceSecurityMappingTest {
                         .setIdentity("someone@example.com").build())));
         assertThat(DocumentAccessPolicy.allows(other, ACCOUNT, security, List.of(), Access.ACCESS_READ))
                 .as("no Atlassian account has this email").isFalse();
+    }
+
+    /**
+     * The records grpc-confluence Sync emitted in a live run on the test site
+     * (a child page under a parent view-restricted to the caller, with one of
+     * the caller's groups granted READ on the parent), as its recording replays
+     * them, scrubbed.
+     */
+    @Test
+    void theRecordedLiveSyncRecordsMapToTheSiteSecurity() throws Exception {
+        List<DynamicMessage> records = new java.util.ArrayList<>();
+        try (InputStream in = ConfluenceSecurityMappingTest.class.getClassLoader()
+                .getResourceAsStream("acl/confluence-sync-records.binpb")) {
+            DynamicMessage.Builder record = DynamicMessage.newBuilder(entity);
+            while (record.mergeDelimitedFrom(in)) {
+                records.add(record.build());
+                record = DynamicMessage.newBuilder(entity);
+            }
+        }
+        DynamicMessage space = records.stream().filter(r -> field(r, "entity_id").toString().startsWith("space:"))
+                .findFirst().orElseThrow();
+        DynamicMessage child = records.stream().filter(ConfluenceSecurityMappingTest::isRestrictedChild)
+                .findFirst().orElseThrow();
+
+        Map<String, DynamicMessage> values = new LinkedHashMap<>();
+        values.put("space", space);
+        values.put("item", child);
+        DocumentSecurity security = DocumentSecurity.parseFrom(EdgeMapping.map(
+                registry.findDescriptorByFullName(edge.getProduceType()), values, edge.getRulesList(),
+                edge.getCelRulesList(), registry, "confluence-acl").toByteString());
+        assertThat(security.getPermissionsList()).extracting(r -> r.getIdentityType() + ":" + r.getIdentity())
+                .contains("atlassian-account:account-1", "atlassian-access-class:ALL_LICENSED_USERS");
+        assertThat(security.getRequiredRuleSetsList()).singleElement().satisfies(set ->
+                assertThat(set.getRulesList()).extracting(AccessRule::getIdentityType)
+                        .containsExactlyInAnyOrder("atlassian-account", "atlassian-group"));
+        String group = security.getRequiredRuleSets(0).getRulesList().stream()
+                .filter(r -> r.getIdentityType().equals("atlassian-group")).findFirst().orElseThrow().getIdentity();
+
+        List<IdentityLink> mapped = new java.util.ArrayList<>();
+        for (DynamicMessage record : records) {
+            IdentityLink link = IdentityLink.parseFrom(EdgeMapping.map(
+                    registry.findDescriptorByFullName(links.getProduceType()), Map.of("entity", record),
+                    links.getRulesList(), links.getCelRulesList(), registry, "confluence-identity").toByteString());
+            if (link.hasFrom() && link.hasTo()) {
+                mapped.add(link);
+            }
+        }
+        CallerIdentityExpansion expansion = new CallerIdentityExpansion(mapped);
+        // The caller's email is the one the site showed; it joins to the account and the group.
+        RepositoryCaller caller = expansion.expand(caller("user-principal-name:user-1@example.invalid"));
+        assertThat(caller.identities()).extracting(p -> p.getIdentityType() + ":" + p.getIdentity())
+                .contains("atlassian-account:account-1", "atlassian-group:" + group);
+        assertThat(DocumentAccessPolicy.allows(caller, ACCOUNT, security, List.of(), Access.ACCESS_READ)).isTrue();
+        // account-2 may view the space but is not on the restricted parent.
+        assertThat(reads(security, "atlassian-account:account-2")).isFalse();
+        // account-4 is in the group on the parent, and views the space only as a licensed user.
+        RepositoryCaller member = expansion.expand(caller("atlassian-account:account-4"));
+        assertThat(DocumentAccessPolicy.allows(member, ACCOUNT, security, List.of(), Access.ACCESS_READ))
+                .as("no access class among its identities").isFalse();
+        RepositoryCaller licensed = expansion.expand(caller("atlassian-account:account-4",
+                "atlassian-access-class:ALL_LICENSED_USERS"));
+        assertThat(DocumentAccessPolicy.allows(licensed, ACCOUNT, security, List.of(), Access.ACCESS_READ)).isTrue();
+    }
+
+    /** An access chain whose second owner is view-restricted with a group on it. */
+    private static boolean isRestrictedChild(DynamicMessage record) {
+        if (!record.hasField(entity.findFieldByName("access_chain"))) {
+            return false;
+        }
+        Message chain = (Message) field(record, "access_chain");
+        List<?> owners = (List<?>) chain.getField(chain.getDescriptorForType().findFieldByName("owners"));
+        if (owners.size() < 2) {
+            return false;
+        }
+        Message parent = (Message) owners.get(1);
+        Message state = (Message) parent.getField(parent.getDescriptorForType().findFieldByName("restriction_state"));
+        boolean viewRestricted = state.getField(state.getDescriptorForType().findFieldByName("state")).toString()
+                .equals("CONTENT_RESTRICTION_STATE_VIEW_RESTRICTED");
+        boolean group = ((List<?>) parent.getField(parent.getDescriptorForType().findFieldByName("permissions")))
+                .stream().map(Message.class::cast).anyMatch(permission -> {
+                    Message principal = (Message) permission.getField(
+                            permission.getDescriptorForType().findFieldByName("principal"));
+                    return principal.getField(principal.getDescriptorForType().findFieldByName("principal_type"))
+                            .toString().equals("CONTENT_PERMISSION_PRINCIPAL_TYPE_GROUP");
+                });
+        return viewRestricted && group;
+    }
+
+    private static Object field(DynamicMessage message, String name) {
+        return message.getField(message.getDescriptorForType().findFieldByName(name));
+    }
+
+    private static RepositoryCaller caller(String... identities) {
+        Set<Principal> principals = java.util.Arrays.stream(identities).map(identity -> {
+            int colon = identity.indexOf(':');
+            return Principal.newBuilder().setIdentityType(identity.substring(0, colon))
+                    .setIdentity(identity.substring(colon + 1)).build();
+        }).collect(Collectors.toSet());
+        return new RepositoryCaller("reader", false, Set.of(ACCOUNT), principals);
     }
 
     private static DocumentSecurity map(String space, String item) throws Exception {
