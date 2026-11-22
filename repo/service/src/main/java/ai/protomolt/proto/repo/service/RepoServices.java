@@ -3,6 +3,7 @@ package ai.protomolt.proto.repo.service;
 import ai.protomolt.proto.repo.engine.DriveProvisioner;
 
 import ai.protomolt.proto.repo.spi.ArchiveRepository;
+import ai.protomolt.proto.repo.spi.CallerIdentityExpansion;
 
 import ai.protomolt.proto.authz.AccountBindingResolver;
 import ai.protomolt.proto.authz.CallerResolver;
@@ -37,6 +38,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.function.Supplier;
 
 /**
  * The repo service set, transport-agnostic: one factory wires the whole
@@ -363,6 +365,19 @@ public final class RepoServices implements AutoCloseable {
      */
     public RepoServices withAccountBindings(AccountBindingResolver resolver) {
         callerBindings.use(resolver);
+        return this;
+    }
+
+    /**
+     * Expands every scoped caller's ACL identities along the identity links {@code source}
+     * supplies, read again for each bound call so a refreshed link set applies at once.
+     * Composition roots call this before any transport starts serving.
+     *
+     * @param source the current identity expansion
+     * @return this instance, for chaining
+     */
+    public RepoServices withIdentityExpansion(Supplier<CallerIdentityExpansion> source) {
+        callerBindings.expandIdentities(source);
         return this;
     }
 
