@@ -281,11 +281,17 @@ final class RawIngests {
 
     /**
      * Adds read+write ACL rules for the configured pipeline step writers to a
-     * created document, so a credential-bound step save (the parse coordinator)
-     * passes the mandatory document write check under its writer grant
-     * (requirements §3, W1). A rule the caller already named is left alone.
+     * created document's permissions and to each of its required rule sets, so
+     * a credential-bound step save (the parse coordinator) passes the mandatory
+     * document write check under its writer grant (requirements §3, W1). A rule
+     * the caller already named is left alone.
      */
     private Document withStepWriters(Document document) {
+        return withStepWriters(document, stepWriters);
+    }
+
+    /** The document with read+write rules for {@code stepWriters}; see {@link #withStepWriters(Document)}. */
+    static Document withStepWriters(Document document, java.util.Set<String> stepWriters) {
         if (stepWriters.isEmpty()) {
             return document;
         }
@@ -294,18 +300,17 @@ final class RawIngests {
         var updated = security.toBuilder();
         boolean changed = false;
         for (String writer : stepWriters) {
-            boolean named = security.getPermissionsList().stream().anyMatch(rule ->
-                    rule.getIdentityType().equalsIgnoreCase("service") && rule.getIdentity().equalsIgnoreCase(writer));
-            if (named) {
-                continue;
+            if (!namesWriter(security.getPermissionsList(), writer)) {
+                updated.addAllPermissions(writerRules(writer));
+                changed = true;
             }
-            updated.addPermissions(ai.protomolt.proto.repo.v1.AccessRule.newBuilder()
-                    .setIdentityType("service").setIdentity(writer)
-                    .setAccess(ai.protomolt.proto.repo.v1.Access.ACCESS_READ));
-            updated.addPermissions(ai.protomolt.proto.repo.v1.AccessRule.newBuilder()
-                    .setIdentityType("service").setIdentity(writer)
-                    .setAccess(ai.protomolt.proto.repo.v1.Access.ACCESS_WRITE));
-            changed = true;
+            for (int i = 0; i < security.getRequiredRuleSetsCount(); i++) {
+                if (!namesWriter(updated.getRequiredRuleSets(i).getRulesList(), writer)) {
+                    updated.setRequiredRuleSets(i, updated.getRequiredRuleSets(i).toBuilder()
+                            .addAllRules(writerRules(writer)));
+                    changed = true;
+                }
+            }
         }
         if (!changed) {
             return document;
@@ -313,6 +318,19 @@ final class RawIngests {
         return document.toBuilder()
                 .setOwnership(ownership.toBuilder().setSecurity(updated.build()))
                 .build();
+    }
+
+    private static boolean namesWriter(java.util.List<ai.protomolt.proto.repo.v1.AccessRule> rules, String writer) {
+        return rules.stream().anyMatch(rule ->
+                rule.getIdentityType().equalsIgnoreCase("service") && rule.getIdentity().equalsIgnoreCase(writer));
+    }
+
+    private static java.util.List<ai.protomolt.proto.repo.v1.AccessRule> writerRules(String writer) {
+        return java.util.List.of(
+                ai.protomolt.proto.repo.v1.AccessRule.newBuilder().setIdentityType("service").setIdentity(writer)
+                        .setAccess(ai.protomolt.proto.repo.v1.Access.ACCESS_READ).build(),
+                ai.protomolt.proto.repo.v1.AccessRule.newBuilder().setIdentityType("service").setIdentity(writer)
+                        .setAccess(ai.protomolt.proto.repo.v1.Access.ACCESS_WRITE).build());
     }
 
     static byte[] sha256(byte[] data) {

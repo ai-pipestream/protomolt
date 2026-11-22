@@ -33,9 +33,10 @@ class StoragePlacementContractTest {
     }
 
     @Test void pinsThePublicPromotionClosureIncludingBothValidationDialects() {
-        // This new public-contract pin deliberately covers the additive placement field,
-        // its enum and both house/Buf annotations. The retained Document closure is unchanged.
+        // This public-contract pin deliberately covers the additive placement field,
+        // its enum and both house/Buf annotations, and the additive
+        // DocumentSecurity.required_rule_sets field in the Document closure.
         assertThat(DescriptorFingerprints.fingerprintOf(SaveDocumentRequest.getDescriptor()))
-                .isEqualTo("ab62987982c4b1b342d578697a751826882118ff9f79a1354b892d0709876a6c");
+                .isEqualTo("f8fff77ea7d1f7400cdfa85b14334fc6f3efdcd92dd477ad29255db132b0b5ce");
     }
 }

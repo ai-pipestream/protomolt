@@ -38,6 +38,15 @@ message AccessRule {
   Access access = 4;
 }
 
+// A set of access rules of which the caller must match at least one granting
+// rule; evaluated like DocumentSecurity.permissions.
+message AccessRuleSet {
+  // Where the set comes from (for example a restricted parent), for audit.
+  string source = 1;
+  // The rules of the set.
+  repeated AccessRule rules = 2;
+}
+
 // Document-level security. Extraction rides the document as first-class
 // metadata; evaluation is deny-wins with case-insensitive identity match
 // against the caller's principal + groups.
@@ -47,6 +56,9 @@ message DocumentSecurity {
   bool inheritance_enabled = 1;
   // The explicit ACL rules on this document; evaluated deny-wins.
   repeated AccessRule permissions = 2;
+  // Rule sets that must each also grant the requested access. A deny in any
+  // set denies. Empty means only permissions (and inherited rules) apply.
+  repeated AccessRuleSet required_rule_sets = 3;
 }
 
 // A person or service principal — same identity vocabulary as AccessRule
