@@ -40,12 +40,14 @@ class ConfluenceSecurityMappingTest {
     private static DescriptorRegistry registry;
     private static TypedEdge edge;
     private static TypedEdge links;
+    private static TypedEdge entraLinks;
     private static Descriptor entity;
 
     @BeforeAll
     static void load() throws Exception {
         registry = DescriptorRegistry.create(false);
         new GoogleDescriptorLoader("acl/confluence-v1.binpb").loadDescriptors().forEach(registry::registerFile);
+        new GoogleDescriptorLoader("acl/microsoft-v1.binpb").loadDescriptors().forEach(registry::registerFile);
         registry.registerFile(DocumentSecurity.getDescriptor().getFile());
         registry.registerFile(IdentityLink.getDescriptor().getFile());
         TypedEdge.Builder builder = TypedEdge.newBuilder();
@@ -54,6 +56,9 @@ class ConfluenceSecurityMappingTest {
         TypedEdge.Builder linkBuilder = TypedEdge.newBuilder();
         TextFormat.merge(resource("acl/confluence-identity-links.textproto"), linkBuilder);
         links = linkBuilder.build();
+        TypedEdge.Builder entraBuilder = TypedEdge.newBuilder();
+        TextFormat.merge(resource("acl/entra-identity-links.textproto"), entraBuilder);
+        entraLinks = entraBuilder.build();
         entity = registry.findDescriptorByFullName("ai.pipestream.confluence.v1.ConfluenceEntity");
     }
 
@@ -183,23 +188,36 @@ class ConfluenceSecurityMappingTest {
         }
         assertThat(mapped).extracting(l -> l.getFrom().getIdentityType() + ":" + l.getFrom().getIdentity()
                 + " -> " + l.getTo().getIdentityType() + ":" + l.getTo().getIdentity()).containsExactly(
-                "user-principal-name:Ada@Example.com -> atlassian-account:acc-1",
+                "email:Ada@Example.com -> atlassian-account:acc-1",
                 "atlassian-account:acc-1 -> atlassian-group:g-staff",
                 "atlassian-account:acc-2 -> atlassian-group:g-staff");
 
+        // Entra users: Ada's mail differs from her UPN; Bo has no mail, so his UPN is his address.
+        mapped.add(entraLink("user_principal_name: \"ada@contoso.onmicrosoft.com\" mail: \"ada@example.com\""));
+        mapped.add(entraLink("user_principal_name: \"someone@example.com\""));
+        assertThat(mapped.subList(3, 5)).extracting(l -> l.getFrom().getIdentity() + " -> " + l.getTo().getIdentityType()
+                + ":" + l.getTo().getIdentity()).containsExactly(
+                "ada@contoso.onmicrosoft.com -> email:ada@example.com",
+                "someone@example.com -> email:someone@example.com");
+
         CallerIdentityExpansion expansion = new CallerIdentityExpansion(mapped);
         DocumentSecurity security = map(SPACE, CHILD);
-        RepositoryCaller ada = expansion.expand(new RepositoryCaller("ada", false, Set.of(ACCOUNT),
-                Set.of(Principal.newBuilder().setIdentityType("user-principal-name")
-                        .setIdentity("ada@example.com").build())));
+        RepositoryCaller ada = expansion.expand(caller("user-principal-name:ada@contoso.onmicrosoft.com"));
         assertThat(ada.identities()).extracting(p -> p.getIdentityType() + ":" + p.getIdentity())
-                .contains("atlassian-account:acc-1", "atlassian-group:g-staff");
+                .contains("email:ada@example.com", "atlassian-account:acc-1", "atlassian-group:g-staff");
         assertThat(DocumentAccessPolicy.allows(ada, ACCOUNT, security, List.of(), Access.ACCESS_READ)).isTrue();
-        RepositoryCaller other = expansion.expand(new RepositoryCaller("other", false, Set.of(ACCOUNT),
-                Set.of(Principal.newBuilder().setIdentityType("user-principal-name")
-                        .setIdentity("someone@example.com").build())));
+        RepositoryCaller other = expansion.expand(caller("user-principal-name:someone@example.com"));
         assertThat(DocumentAccessPolicy.allows(other, ACCOUNT, security, List.of(), Access.ACCESS_READ))
                 .as("no Atlassian account has this email").isFalse();
+    }
+
+    private static IdentityLink entraLink(String graphUser) throws Exception {
+        DynamicMessage.Builder user = DynamicMessage.newBuilder(
+                registry.findDescriptorByFullName("ai.pipestream.microsoft.v1.GraphUser"));
+        TextFormat.merge(graphUser, user);
+        return IdentityLink.parseFrom(EdgeMapping.map(registry.findDescriptorByFullName(entraLinks.getProduceType()),
+                Map.of("user", user.build()), entraLinks.getRulesList(), entraLinks.getCelRulesList(), registry,
+                "entra-identity").toByteString());
     }
 
     /**
@@ -249,7 +267,7 @@ class ConfluenceSecurityMappingTest {
         }
         CallerIdentityExpansion expansion = new CallerIdentityExpansion(mapped);
         // The caller's email is the one the site showed; it joins to the account and the group.
-        RepositoryCaller caller = expansion.expand(caller("user-principal-name:user-1@example.invalid"));
+        RepositoryCaller caller = expansion.expand(caller("email:user-1@example.invalid"));
         assertThat(caller.identities()).extracting(p -> p.getIdentityType() + ":" + p.getIdentity())
                 .contains("atlassian-account:account-1", "atlassian-group:" + group);
         assertThat(DocumentAccessPolicy.allows(caller, ACCOUNT, security, List.of(), Access.ACCESS_READ)).isTrue();

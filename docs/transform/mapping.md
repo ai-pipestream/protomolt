@@ -108,9 +108,13 @@ turns the access records grpc-confluence Sync emits into a
 `DocumentSecurity` this way: space read grants become `permissions` and each
 view-restricted owner becomes one `required_rule_sets` entry. A second
 config (`confluence-identity-links.textproto`) turns Sync's users and group
-memberships into `IdentityLink`s, which `CallerIdentityExpansion` follows to
-give a caller signed in with their email the Atlassian account and groups
-that go with it. The test runs both on records from a live Sync run.
+memberships into `IdentityLink`s from an `email` identity, and a third
+(`entra-identity-links.textproto`) links each Entra user principal name to
+its mail (or the user principal name when it has no mail).
+`CallerIdentityExpansion` follows the links to give an Entra caller the
+Atlassian account and groups that share its address. The repository service
+reads links from the file named by `PROTOMOLT_IDENTITY_LINKS`. The test runs
+the mappings on records from a live Sync run.
 
 ## Where mapping sits
 
