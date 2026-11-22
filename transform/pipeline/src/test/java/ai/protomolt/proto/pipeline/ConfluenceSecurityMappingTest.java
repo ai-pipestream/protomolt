@@ -11,6 +11,7 @@ import ai.protomolt.proto.repo.v1.Access;
 import ai.protomolt.proto.repo.v1.AccessRule;
 import ai.protomolt.proto.repo.v1.DocumentSecurity;
 import ai.protomolt.proto.repo.v1.IdentityLink;
+import ai.protomolt.proto.repo.v1.IdentityLinks;
 import ai.protomolt.proto.repo.v1.Principal;
 import com.google.protobuf.Descriptors.Descriptor;
 import com.google.protobuf.DynamicMessage;
@@ -193,13 +194,26 @@ class ConfluenceSecurityMappingTest {
                 "atlassian-account:acc-1 -> atlassian-group:g-staff",
                 "atlassian-account:acc-2 -> atlassian-group:g-staff");
 
-        // Entra users: Ada's mail differs from her UPN; Bo has no mail, so his UPN is his address.
-        mapped.add(entraLink("user_principal_name: \"ada@contoso.onmicrosoft.com\" mail: \"ada@example.com\""));
-        mapped.add(entraLink("user_principal_name: \"someone@example.com\""));
-        assertThat(mapped.subList(3, 5)).extracting(l -> l.getFrom().getIdentity() + " -> " + l.getTo().getIdentityType()
+        // Entra users: Ada's mail differs from her UPN; Bo has no mail, so his UPN is his address;
+        // Cy signed up to Atlassian with an alias, listed as an other mail and a proxy address.
+        List<IdentityLink> entra = new java.util.ArrayList<>();
+        entra.addAll(entraLinks("user_principal_name: \"ada@contoso.onmicrosoft.com\" mail: \"ada@example.com\""
+                + " proxy_addresses: \"SMTP:ada@example.com\" proxy_addresses: \"x500:/o=ExchangeLabs\""));
+        entra.addAll(entraLinks("user_principal_name: \"someone@example.com\""));
+        entra.addAll(entraLinks("user_principal_name: \"cy@contoso.com\" mail: \"cy@contoso.com\""
+                + " other_mails: \"cy.signup@example.org\" proxy_addresses: \"smtp:Cy.Alias@Example.com\""));
+        assertThat(entra).extracting(l -> l.getFrom().getIdentity() + " -> " + l.getTo().getIdentityType()
                 + ":" + l.getTo().getIdentity()).containsExactly(
                 "ada@contoso.onmicrosoft.com -> email:ada@example.com",
-                "someone@example.com -> email:someone@example.com");
+                "ada@contoso.onmicrosoft.com -> email:ada@example.com",
+                "someone@example.com -> email:someone@example.com",
+                "cy@contoso.com -> email:cy@contoso.com",
+                "cy@contoso.com -> email:cy.signup@example.org",
+                "cy@contoso.com -> email:Cy.Alias@Example.com");
+        mapped.addAll(entra);
+        mapped.add(IdentityLink.newBuilder()
+                .setFrom(Principal.newBuilder().setIdentityType("email").setIdentity("cy.alias@example.com"))
+                .setTo(Principal.newBuilder().setIdentityType("atlassian-account").setIdentity("acc-1")).build());
 
         CallerIdentityExpansion expansion = new CallerIdentityExpansion(mapped);
         DocumentSecurity security = map(SPACE, CHILD);
@@ -207,18 +221,21 @@ class ConfluenceSecurityMappingTest {
         assertThat(ada.identities()).extracting(p -> p.getIdentityType() + ":" + p.getIdentity())
                 .contains("email:ada@example.com", "atlassian-account:acc-1", "atlassian-group:g-staff");
         assertThat(DocumentAccessPolicy.allows(ada, ACCOUNT, security, List.of(), Access.ACCESS_READ)).isTrue();
+        RepositoryCaller cy = expansion.expand(caller("user-principal-name:cy@contoso.com"));
+        assertThat(cy.identities()).extracting(p -> p.getIdentityType() + ":" + p.getIdentity())
+                .as("an alias joins too").contains("atlassian-account:acc-1");
         RepositoryCaller other = expansion.expand(caller("user-principal-name:someone@example.com"));
         assertThat(DocumentAccessPolicy.allows(other, ACCOUNT, security, List.of(), Access.ACCESS_READ))
                 .as("no Atlassian account has this email").isFalse();
     }
 
-    private static IdentityLink entraLink(String graphUser) throws Exception {
+    private static List<IdentityLink> entraLinks(String graphUser) throws Exception {
         DynamicMessage.Builder user = DynamicMessage.newBuilder(
                 registry.findDescriptorByFullName("ai.pipestream.microsoft.v1.GraphUser"));
         TextFormat.merge(graphUser, user);
-        return IdentityLink.parseFrom(EdgeMapping.map(registry.findDescriptorByFullName(entraLinks.getProduceType()),
+        return IdentityLinks.parseFrom(EdgeMapping.map(registry.findDescriptorByFullName(entraLinks.getProduceType()),
                 Map.of("user", user.build()), entraLinks.getRulesList(), entraLinks.getCelRulesList(), registry,
-                "entra-identity").toByteString());
+                "entra-identity").toByteString()).getLinksList();
     }
 
     /**

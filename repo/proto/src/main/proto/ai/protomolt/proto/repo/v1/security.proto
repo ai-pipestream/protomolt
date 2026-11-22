@@ -85,3 +85,10 @@ message IdentityLink {
   // The identity that comes with it.
   Principal to = 2;
 }
+
+// The identity links one source record yields, such as every address of one
+// directory user.
+message IdentityLinks {
+  // The links.
+  repeated IdentityLink links = 1;
+}

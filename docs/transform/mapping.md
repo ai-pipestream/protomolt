@@ -109,8 +109,10 @@ turns the access records grpc-confluence Sync emits into a
 view-restricted owner becomes one `required_rule_sets` entry. A second
 config (`confluence-identity-links.textproto`) turns Sync's users and group
 memberships into `IdentityLink`s from an `email` identity, and a third
-(`entra-identity-links.textproto`) links each Entra user principal name to
-its mail (or the user principal name when it has no mail).
+(`entra-identity-links.textproto`) produces `IdentityLinks` linking each
+Entra user principal name to every address of the user: its mail (or the
+user principal name when it has no mail), its other mails and its SMTP proxy
+addresses.
 `CallerIdentityExpansion` follows the links to give an Entra caller the
 Atlassian account and groups that share its address. The repository service
 reads links from the file named by `PROTOMOLT_IDENTITY_LINKS`. The test runs

@@ -2,19 +2,15 @@
 # proto-message: ai.protomolt.proto.grpc.workflow.v1.TypedEdge
 #
 # Maps one Entra user grpc-microsoft reads (ai.pipestream.microsoft.v1.GraphUser,
-# source `user`) into an identity link for caller expansion: the user principal
-# name links to the user's email address, its mail or, when it has none, the
-# user principal name itself. A source that links its accounts from `email`
-# joins on that address.
+# source `user`) into identity links for caller expansion: the user principal
+# name links to each of the user's email addresses, its mail (or the user
+# principal name when it has no mail), its other mails and the SMTP addresses
+# among its proxy addresses. A source that links its accounts from `email`
+# joins on any of them.
 sources: "user"
-produce_type: "ai.protomolt.proto.repo.v1.IdentityLink"
+produce_type: "ai.protomolt.proto.repo.v1.IdentityLinks"
 cel_rules {
   filter: "user.user_principal_name != ''"
-  selector: "ai.protomolt.proto.repo.v1.Principal{identity_type: 'user-principal-name', identity: user.user_principal_name}"
-  target: "from"
-}
-cel_rules {
-  filter: "user.user_principal_name != ''"
-  selector: "ai.protomolt.proto.repo.v1.Principal{identity_type: 'email', identity: user.mail != '' ? user.mail : user.user_principal_name}"
-  target: "to"
+  selector: "[user.mail != '' ? user.mail : user.user_principal_name].map(a, ai.protomolt.proto.repo.v1.IdentityLink{from: ai.protomolt.proto.repo.v1.Principal{identity_type: 'user-principal-name', identity: user.user_principal_name}, to: ai.protomolt.proto.repo.v1.Principal{identity_type: 'email', identity: a}}) + user.other_mails.filter(a, a != '').map(a, ai.protomolt.proto.repo.v1.IdentityLink{from: ai.protomolt.proto.repo.v1.Principal{identity_type: 'user-principal-name', identity: user.user_principal_name}, to: ai.protomolt.proto.repo.v1.Principal{identity_type: 'email', identity: a}}) + user.proxy_addresses.filter(p, p.lowerAscii().startsWith('smtp:') && p.size() > 5).map(p, ai.protomolt.proto.repo.v1.IdentityLink{from: ai.protomolt.proto.repo.v1.Principal{identity_type: 'user-principal-name', identity: user.user_principal_name}, to: ai.protomolt.proto.repo.v1.Principal{identity_type: 'email', identity: p.substring(5)}})"
+  target: "links"
 }
