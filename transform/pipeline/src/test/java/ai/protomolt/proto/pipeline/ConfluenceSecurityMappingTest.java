@@ -67,7 +67,7 @@ class ConfluenceSecurityMappingTest {
     /** The space: group g-staff and user acc-admin may view it; a role and a delete grant do not count. */
     private static final String SPACE = """
             entity_id: "space:100/access"
-            security_completeness: SECURITY_COMPLETENESS_COMPLETE
+            security_completeness: ACL_COMPLETENESS_COMPLETE
             space_access {
               space_id: "100"
               permissions { id: "1" principal { type: SPACE_PERMISSION_PRINCIPAL_TYPE_GROUP id: "g-staff" }
@@ -87,7 +87,7 @@ class ConfluenceSecurityMappingTest {
      */
     private static final String CHILD = """
             entity_id: "page:300/access"
-            security_completeness: SECURITY_COMPLETENESS_COMPLETE
+            security_completeness: ACL_COMPLETENESS_COMPLETE
             access_chain {
               space_id: "100"
               owners { content { type: CONTENT_TYPE_PAGE id: "300" } restriction_state { state: CONTENT_RESTRICTION_STATE_OPEN } }
@@ -139,12 +139,12 @@ class ConfluenceSecurityMappingTest {
     @Test
     void anIncompleteRecordMapsToNoRuleAndDenies() throws Exception {
         DocumentSecurity incomplete = map(SPACE, CHILD.replace(
-                "security_completeness: SECURITY_COMPLETENESS_COMPLETE",
-                "security_completeness: SECURITY_COMPLETENESS_UNAVAILABLE"));
+                "security_completeness: ACL_COMPLETENESS_COMPLETE",
+                "security_completeness: ACL_COMPLETENESS_UNAVAILABLE"));
 
         assertThat(incomplete.getPermissionsList()).isEmpty();
         assertThat(reads(incomplete, "atlassian-account:acc-1", "atlassian-group:g-staff")).isFalse();
-        assertThat(map(SPACE.replace("SECURITY_COMPLETENESS_COMPLETE", "SECURITY_COMPLETENESS_UNSPECIFIED"),
+        assertThat(map(SPACE.replace("ACL_COMPLETENESS_COMPLETE", "ACL_COMPLETENESS_UNSPECIFIED"),
                 CHILD).getPermissionsList()).isEmpty();
     }
 
