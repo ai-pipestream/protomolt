@@ -45,8 +45,12 @@ import {
 } from '@/gen/ai/protomolt/proto/repo/v2/manifest_pb'
 import type { ViewNode } from '@/lib/message-view/messageTree'
 import RepositoryDocumentView from '@/views/repository/RepositoryDocumentView.vue'
-import { at, descriptorSetOf, testAddress } from '@/repository/repositoryTestKit'
+import { at, descriptorSetOf, testAddress, routerClients } from '@/repository/repositoryTestKit'
 import { mountRepositoryView, settle } from '@/repository/repositoryViewKit'
+
+import { REPOSITORY_CLIENTS, REPOSITORY_SESSION } from '@/repository/clients'
+import { GetEntryManifestResponseSchema, type GetEntryManifestResponse } from '@/gen/ai/protomolt/proto/repo/archive/v1/archive_service_pb'
+import SaveAsRenditionDialog from '@/components/repository/SaveAsRenditionDialog.vue'
 
 const CORE = create(PartSelectorSchema, { selector: { case: 'part', value: DocumentPart.CORE } })
 const BLOBS = create(PartSelectorSchema, { selector: { case: 'part', value: DocumentPart.BLOBS } })
@@ -189,14 +193,14 @@ function repository(seen: { manifests: GetManifestRequest[]; blobs: ReadBlobRequ
       },
       async *readDocument(request) {
         if (seen.holdPartReads) await new Promise((resolve) => setTimeout(resolve, 20))
-        void request
+        const revision = request.revision?.selector.case === 'revision' ? request.revision.selector.value : 3n
         yield create(ReadDocumentResponseSchema, {
           frame: {
             case: 'manifest',
             value: create(DocumentManifestSchema, {
               address: testAddress(),
-              revision: 3n,
-              parts: [create(PartManifestEntrySchema, { selector: CORE, state: PartState.PRESENT, writtenInRevision: 3n, owner, contentIncluded: true })],
+              revision,
+              parts: [create(PartManifestEntrySchema, { selector: CORE, state: PartState.PRESENT, writtenInRevision: revision, owner, contentIncluded: true })],
             }),
           },
         })
@@ -208,7 +212,7 @@ function repository(seen: { manifests: GetManifestRequest[]; blobs: ReadBlobRequ
       getSchemaDescriptor(request) {
         if (request.descriptorSha256 === ANY_SET_SHA && !seen.wrongDigest) throw new ConnectError('schema store unavailable', Code.Unavailable)
         // For ANY_SET_SHA with wrongDigest set this answers DESCRIPTORS, which hashes to DESCRIPTORS_SHA, not ANY_SET_SHA.
-        return create(GetSchemaDescriptorResponseSchema, { revision: 3n, descriptorSha256: request.descriptorSha256, descriptorSet: DESCRIPTORS })
+        return create(GetSchemaDescriptorResponseSchema, { revision: request.revision?.selector.case === 'revision' ? request.revision.selector.value : 3n, descriptorSha256: request.descriptorSha256, descriptorSet: DESCRIPTORS })
       },
       async *readBlob(request) {
         seen.blobs.push(request)
@@ -521,4 +525,104 @@ describe('RepositoryDocumentView', () => {
     expect(wrapper.get('[data-testid="part-tree-no-matches"]').text()).toContain('No decoded fields or values match "no-such-field-value".')
     wrapper.unmount()
   })
+})
+
+/** Deferred clients ignore abort so the view must also reject stale responses. */
+async function mountSaveAsLookup() {
+  const clients = routerClients(repository(seenCalls()))
+  const getManifest = clients.documents.getManifest
+  vi.spyOn(clients.documents, 'getManifest').mockImplementation(async (...args) => {
+    const response = await getManifest(...args)
+    response.validation!.partSchemas.push(create(PartSchemaBindingSchema, {
+      part: BLOBS, fragmentSchema: response.validation!.partSchemas[0].fragmentSchema,
+    }))
+    return response
+  })
+  const pending: { resolve: (response: GetEntryManifestResponse) => void; reject: (error: Error) => void; signal?: AbortSignal }[] = []
+  vi.spyOn(clients.archives, 'getEntryManifest').mockImplementation((_request, options) =>
+    new Promise((resolve, reject) => pending.push({ resolve, reject, signal: options?.signal })),
+  )
+  const location = { ...DOC, query: { ...DOC.query, graph: 'archive:acct-a', node: 'files', revision: '1' } }
+  const mounted = await mountRepositoryView(RepositoryDocumentView, location, () => {}, {
+    [REPOSITORY_CLIENTS as symbol]: clients,
+    [REPOSITORY_SESSION as symbol]: { status: async () => { throw new ConnectError('No session service', Code.Unimplemented) } },
+  })
+  return { ...mounted, pending, location }
+}
+
+function currentEntryVersion(version: bigint) {
+  return create(GetEntryManifestResponseSchema, { info: { currentVersion: version } })
+}
+
+describe('Save-as destination lookup races', () => {
+  it('keeps the newer part and version when the first lookup finishes last', async () => {
+    const { wrapper, pending } = await mountSaveAsLookup()
+    try {
+      await wrapper.get('[data-testid="save-as-part-0"]').trigger('click')
+      await wrapper.get('[data-testid="save-as-part-1"]').trigger('click')
+      expect(pending).toHaveLength(2)
+      pending[1].resolve(currentEntryVersion(8n))
+      await settle()
+      pending[0].resolve(currentEntryVersion(3n))
+      await settle()
+      const dialog = wrapper.getComponent(SaveAsRenditionDialog)
+      expect(dialog.props('documentSource')).toMatchObject({ selector: BLOBS, revision: 1n })
+      expect(dialog.props('defaultExpectedDestinationVersion')).toBe(8n)
+      expect(pending[0].signal?.aborted).toBe(true)
+    } finally { wrapper.unmount() }
+  })
+
+  it.each(['resolve', 'reject', 'loaded-part', 'revision'] as const)('discards a %s lookup after navigation', async (completion) => {
+    const { wrapper, router, pending, location } = await mountSaveAsLookup()
+    try {
+      if (completion === 'loaded-part') {
+        await wrapper.get('[data-testid="read-part-0"]').trigger('click')
+        await settle()
+        await wrapper.get('[data-testid="save-as-open-part"]').trigger('click')
+      } else {
+        await wrapper.get('[data-testid="save-as-part-0"]').trigger('click')
+      }
+      const query = completion === 'revision'
+        ? { ...location.query, revision: '3' }
+        : { ...location.query, doc: 'doc-2' }
+      await router.push({ ...location, query })
+      await settle()
+      if (completion !== 'reject') pending[0].resolve(currentEntryVersion(9n))
+      else pending[0].reject(new ConnectError('stale lookup failed', Code.Unavailable))
+      await settle()
+      expect(wrapper.getComponent(SaveAsRenditionDialog).props('open')).toBe(false)
+      expect(wrapper.text()).not.toContain('stale lookup failed')
+      expect(wrapper.getComponent(SaveAsRenditionDialog).props('defaultExpectedDestinationVersion')).toBeNull()
+      expect(pending[0].signal?.aborted).toBe(true)
+    } finally { wrapper.unmount() }
+  })
+
+  it('shows an active lookup failure and allows a fresh successful selection', async () => {
+    const { wrapper, pending } = await mountSaveAsLookup()
+    try {
+      await wrapper.get('[data-testid="save-as-part-0"]').trigger('click')
+      pending[0].reject(new ConnectError('current lookup failed', Code.Unavailable))
+      await settle()
+      expect(wrapper.text()).toContain('current lookup failed')
+      expect(wrapper.getComponent(SaveAsRenditionDialog).props('open')).toBe(false)
+      await wrapper.get('[data-testid="save-as-part-1"]').trigger('click')
+      pending[1].resolve(currentEntryVersion(4n))
+      await settle()
+      expect(wrapper.text()).not.toContain('current lookup failed')
+      expect(wrapper.getComponent(SaveAsRenditionDialog).props('open')).toBe(true)
+      expect(wrapper.getComponent(SaveAsRenditionDialog).props('documentSource'))
+        .toMatchObject({ address: { docId: 'doc-1' }, selector: BLOBS, revision: 1n })
+      expect(wrapper.getComponent(SaveAsRenditionDialog).props('defaultExpectedDestinationVersion')).toBe(4n)
+    } finally { wrapper.unmount() }
+  })
+
+  it('aborts the pending destination lookup when the view unmounts', async () => {
+    const { wrapper, pending } = await mountSaveAsLookup()
+    await wrapper.get('[data-testid="save-as-part-0"]').trigger('click')
+    wrapper.unmount()
+    expect(pending[0].signal?.aborted).toBe(true)
+    pending[0].resolve(currentEntryVersion(9n))
+    await settle()
+  })
+
 })

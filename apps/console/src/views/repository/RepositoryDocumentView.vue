@@ -490,6 +490,7 @@ const router = useRouter()
 const readScope = useCallScope()
 const partScope = useCallScope()
 const schemaScope = useCallScope()
+const saveAsScope = useCallScope()
 
 const tab = ref('parts')
 const loading = ref(false)
@@ -601,7 +602,7 @@ const saveAsDestinationFailure = ref<RpcFailure | null>(null)
  * Viewing the current revision, that is the revision on screen. Viewing a historical one, the
  * entry is asked; if it cannot answer, Save-as does not open rather than guess.
  */
-async function prepareSaveAsDestination(): Promise<boolean> {
+async function prepareSaveAsDestination(signal: AbortSignal, isCurrent: () => boolean): Promise<boolean> {
   saveAsDestinationFailure.value = null
   saveAsExpectedVersion.value = null
   const c = call.value
@@ -617,7 +618,9 @@ async function prepareSaveAsDestination(): Promise<boolean> {
         address: create(EntryAddressSchema, { accountId: c.accountId, archive: c.graphAddressId, entryId: c.docId }),
         version: 0n,
       }),
+      { signal },
     )
+    if (!isCurrent()) return false
     const current = answer.info?.currentVersion
     if (current === undefined || current <= 0n) {
       throw new Error('GetEntryManifest answered without the entry\'s current version.')
@@ -625,9 +628,27 @@ async function prepareSaveAsDestination(): Promise<boolean> {
     saveAsExpectedVersion.value = current
     return true
   } catch (error) {
-    saveAsDestinationFailure.value = rpcFailure(error)
+    if (isCurrent()) saveAsDestinationFailure.value = rpcFailure(error)
     return false
   }
+}
+
+async function openSaveAs(
+  source: Omit<DocumentPartSourceInput, 'occurrenceFieldPath'>,
+  label: string,
+  occurrences: ResolvedOccurrenceOption[],
+) {
+  const signal = saveAsScope.next()
+  const key = routeDocumentKey()
+  const sourceManifest = manifest.value
+  // Each signal belongs to one selection. Even a transport ignoring abort cannot
+  // publish state for a superseded selection, reload, route or unmounted view.
+  const isCurrent = () => !signal.aborted && key === routeDocumentKey() && sourceManifest === manifest.value
+  if (!(await prepareSaveAsDestination(signal, isCurrent)) || !isCurrent()) return
+  saveAsDocumentSource.value = source
+  saveAsOccurrenceOptions.value = occurrences
+  saveAsSourceLabel.value = label
+  saveAsDialogOpen.value = true
 }
 
 function hasRetainedPartSchema(index: number): boolean {
@@ -648,33 +669,17 @@ async function openSaveAsForPartIndex(index: number) {
   const entry = manifest.value?.parts[index]
   const row = parts.value[index]
   if (saveAsAccess.value.readOnly || !entry?.selector || !row || !address.value || pinned.value === null) return
-  if (!(await prepareSaveAsDestination())) return
-  saveAsDocumentSource.value = {
-    address: address.value,
-    selector: entry.selector,
-    revision: pinned.value,
-  }
-  if (partView.value && equals(PartSelectorSchema, partView.value.selector, entry.selector)) {
-    saveAsOccurrenceOptions.value = partView.value.occurrenceOptions
-  } else {
-    saveAsOccurrenceOptions.value = []
-  }
-  saveAsSourceLabel.value = `${address.value.docId} · part ${row.label}`
-  saveAsDialogOpen.value = true
+  const source = { address: address.value, selector: entry.selector, revision: pinned.value }
+  const occurrences = partView.value && equals(PartSelectorSchema, partView.value.selector, entry.selector)
+    ? partView.value.occurrenceOptions : []
+  await openSaveAs(source, `${source.address.docId} · part ${row.label}`, occurrences)
 }
 
 async function openSaveAsForLoadedPart() {
   const pv = partView.value
   if (saveAsAccess.value.readOnly || !pv || pv.decoded.kind !== 'decoded' || !address.value) return
-  if (!(await prepareSaveAsDestination())) return
-  saveAsDocumentSource.value = {
-    address: address.value,
-    selector: pv.selector,
-    revision: pv.revision,
-  }
-  saveAsOccurrenceOptions.value = pv.occurrenceOptions
-  saveAsSourceLabel.value = `${address.value.docId} · part ${pv.label}`
-  saveAsDialogOpen.value = true
+  const source = { address: address.value, selector: pv.selector, revision: pv.revision }
+  await openSaveAs(source, `${source.address.docId} · part ${pv.label}`, pv.occurrenceOptions)
 }
 
 function onSaveAsReloadSource() {
@@ -755,6 +760,12 @@ async function load() {
   const signal = readScope.next()
   partScope.next()
   schemaScope.next()
+  saveAsScope.next()
+  saveAsExpectedVersion.value = null
+  saveAsDestinationFailure.value = null
+  saveAsDocumentSource.value = null
+  saveAsOccurrenceOptions.value = []
+  saveAsSourceLabel.value = ''
   partBusy.value = null
   schemaBusy.value = null
   // A delete dialog belongs to the document it opened on.
