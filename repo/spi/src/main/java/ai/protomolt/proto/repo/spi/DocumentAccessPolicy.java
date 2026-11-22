@@ -22,9 +22,24 @@ public final class DocumentAccessPolicy {
             throw new RepositoryException(RepositoryException.Code.FAILED_PRECONDITION, "Document ownership is missing");
         if (!caller.processAuthority() && !caller.accountIds().contains(owningAccount)) return false;
         if (security == null) return caller.processAuthority();
+        List<AccessRule> rules = validatedRules(security, inherited);
+        // Process authority is an explicit administrative bypass, never an inferred ACL identity.
+        if (caller.processAuthority()) return true;
+        Grant grant = evaluate(caller, rules, requested);
+        if (grant != Grant.ALLOW) return false;
+        for (AccessRuleSet set : security.getRequiredRuleSetsList()) {
+            if (evaluate(caller, set.getRulesList(), requested) != Grant.ALLOW) return false;
+        }
+        return true;
+    }
+
+    /**
+     * The document's own rules plus the inherited ones when inheritance is on, after checking
+     * every rule, including those of the required rule sets, is well formed.
+     */
+    static List<AccessRule> validatedRules(DocumentSecurity security, List<AccessRule> inherited) {
         if (!security.getUnknownFields().asMap().isEmpty())
             throw new RepositoryException(RepositoryException.Code.FAILED_PRECONDITION, "Document policy contains unknown fields");
-
         var rules = new ArrayList<>(security.getPermissionsList());
         if (security.getInheritanceEnabled()) {
             if (inherited == null)
@@ -37,14 +52,7 @@ public final class DocumentAccessPolicy {
                 throw new RepositoryException(RepositoryException.Code.FAILED_PRECONDITION, "Document policy contains unknown fields");
             for (AccessRule rule : set.getRulesList()) requireValid(rule);
         }
-        // Process authority is an explicit administrative bypass, never an inferred ACL identity.
-        if (caller.processAuthority()) return true;
-        Grant grant = evaluate(caller, rules, requested);
-        if (grant != Grant.ALLOW) return false;
-        for (AccessRuleSet set : security.getRequiredRuleSetsList()) {
-            if (evaluate(caller, set.getRulesList(), requested) != Grant.ALLOW) return false;
-        }
-        return true;
+        return rules;
     }
 
     private enum Grant { ALLOW, NONE, DENY }

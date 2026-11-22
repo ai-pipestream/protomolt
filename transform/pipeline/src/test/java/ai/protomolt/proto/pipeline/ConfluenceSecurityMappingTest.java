@@ -5,6 +5,7 @@ import ai.protomolt.proto.descriptors.GoogleDescriptorLoader;
 import ai.protomolt.proto.grpc.workflow.v1.TypedEdge;
 import ai.protomolt.proto.repo.spi.CallerIdentityExpansion;
 import ai.protomolt.proto.repo.spi.DocumentAccessPolicy;
+import ai.protomolt.proto.repo.spi.DocumentSecurityTerms;
 import ai.protomolt.proto.repo.spi.RepositoryCaller;
 import ai.protomolt.proto.repo.v1.Access;
 import ai.protomolt.proto.repo.v1.AccessRule;
@@ -280,6 +281,126 @@ class ConfluenceSecurityMappingTest {
         RepositoryCaller licensed = expansion.expand(caller("atlassian-account:account-4",
                 "atlassian-access-class:ALL_LICENSED_USERS"));
         assertThat(DocumentAccessPolicy.allows(licensed, ACCOUNT, security, List.of(), Access.ACCESS_READ)).isTrue();
+    }
+
+    /**
+     * Writes the OpenSearch fixture from the recorded live records: one NDJSON line per item
+     * with its security terms, and for each caller its expanded terms and the policy's READ
+     * decision on every item. The terms must answer what the policy answers.
+     */
+    @Test
+    void writesTheSearchFixtureFromTheRecordedLiveRecords() throws Exception {
+        List<DynamicMessage> records = recordedRecords();
+        DynamicMessage space = records.stream().filter(r -> field(r, "entity_id").toString().startsWith("space:"))
+                .findFirst().orElseThrow();
+        List<IdentityLink> mapped = new java.util.ArrayList<>();
+        for (DynamicMessage record : records) {
+            IdentityLink link = IdentityLink.parseFrom(EdgeMapping.map(
+                    registry.findDescriptorByFullName(links.getProduceType()), Map.of("entity", record),
+                    links.getRulesList(), links.getCelRulesList(), registry, "confluence-identity").toByteString());
+            if (link.hasFrom() && link.hasTo()) {
+                mapped.add(link);
+            }
+        }
+        CallerIdentityExpansion expansion = new CallerIdentityExpansion(mapped);
+        Map<String, RepositoryCaller> callers = new LinkedHashMap<>();
+        callers.put("email:user-1@example.invalid", expansion.expand(caller("email:user-1@example.invalid")));
+        callers.put("atlassian-account:account-2", expansion.expand(caller("atlassian-account:account-2")));
+        callers.put("atlassian-account:account-4", expansion.expand(caller("atlassian-account:account-4")));
+        callers.put("atlassian-account:account-4 licensed", expansion.expand(caller("atlassian-account:account-4",
+                "atlassian-access-class:ALL_LICENSED_USERS")));
+
+        StringBuilder items = new StringBuilder();
+        Map<String, Map<String, Boolean>> decisions = new LinkedHashMap<>();
+        callers.keySet().forEach(name -> decisions.put(name, new LinkedHashMap<>()));
+        int restricted = 0;
+        for (DynamicMessage item : records) {
+            if (!item.hasField(entity.findFieldByName("access_chain"))) {
+                continue;
+            }
+            Map<String, DynamicMessage> values = new LinkedHashMap<>();
+            values.put("space", space);
+            values.put("item", item);
+            DocumentSecurity security = DocumentSecurity.parseFrom(EdgeMapping.map(
+                    registry.findDescriptorByFullName(edge.getProduceType()), values, edge.getRulesList(),
+                    edge.getCelRulesList(), registry, "confluence-acl").toByteString());
+            DocumentSecurityTerms terms = DocumentSecurityTerms.of(security, List.of());
+            restricted += terms.gates().isEmpty() ? 0 : 1;
+            String id = field(item, "entity_id").toString();
+            items.append("{\"_id\":").append(json(id))
+                    .append(",\"acl_allow\":").append(json(terms.allow()))
+                    .append(",\"acl_deny\":").append(json(terms.deny()))
+                    .append(",\"acl_gates\":[");
+            for (int i = 0; i < terms.gates().size(); i++) {
+                DocumentSecurityTerms.Gate gate = terms.gates().get(i);
+                items.append(i == 0 ? "" : ",").append("{\"source\":").append(json(gate.source()))
+                        .append(",\"allow\":").append(json(gate.allow())).append('}');
+            }
+            items.append("],\"acl_complete\":true}\n");
+            for (var entry : callers.entrySet()) {
+                boolean allowed = DocumentAccessPolicy.allows(entry.getValue(), ACCOUNT, security, List.of(),
+                        Access.ACCESS_READ);
+                assertThat(terms.reads(DocumentSecurityTerms.callerTerms(entry.getValue().identities())))
+                        .as("%s on %s", entry.getKey(), id).isEqualTo(allowed);
+                decisions.get(entry.getKey()).put(id, allowed);
+            }
+        }
+        assertThat(restricted).as("items under a view-restricted owner").isPositive();
+        assertThat(decisions.get("email:user-1@example.invalid")).containsValue(true);
+        assertThat(decisions.get("atlassian-account:account-2")).containsValue(false);
+
+        StringBuilder callerJson = new StringBuilder("[");
+        int n = 0;
+        for (var entry : callers.entrySet()) {
+            callerJson.append(n++ == 0 ? "\n" : ",\n").append("{\"caller\":").append(json(entry.getKey()))
+                    .append(",\"terms\":").append(json(List.copyOf(
+                            DocumentSecurityTerms.callerTerms(entry.getValue().identities()))))
+                    .append(",\"reads\":{");
+            int m = 0;
+            for (var decision : decisions.get(entry.getKey()).entrySet()) {
+                callerJson.append(m++ == 0 ? "" : ",").append(json(decision.getKey())).append(':')
+                        .append(decision.getValue());
+            }
+            callerJson.append("}}");
+        }
+        callerJson.append("\n]\n");
+        java.nio.file.Path out = java.nio.file.Path.of("build", "acl-opensearch");
+        java.nio.file.Files.createDirectories(out);
+        java.nio.file.Files.writeString(out.resolve("confluence-items.ndjson"), items);
+        java.nio.file.Files.writeString(out.resolve("confluence-callers.json"), callerJson);
+    }
+
+    private static List<DynamicMessage> recordedRecords() throws IOException {
+        List<DynamicMessage> records = new java.util.ArrayList<>();
+        try (InputStream in = ConfluenceSecurityMappingTest.class.getClassLoader()
+                .getResourceAsStream("acl/confluence-sync-records.binpb")) {
+            DynamicMessage.Builder record = DynamicMessage.newBuilder(entity);
+            while (record.mergeDelimitedFrom(in)) {
+                records.add(record.build());
+                record = DynamicMessage.newBuilder(entity);
+            }
+        }
+        return records;
+    }
+
+    private static String json(String value) {
+        StringBuilder out = new StringBuilder("\"");
+        for (char c : value.toCharArray()) {
+            switch (c) {
+                case '"' -> out.append("\\\"");
+                case '\\' -> out.append("\\\\");
+                default -> {
+                    if (c < 0x20) out.append(String.format("\\u%04x", (int) c));
+                    else out.append(c);
+                }
+            }
+        }
+        return out.append('"').toString();
+    }
+
+    private static String json(List<String> values) {
+        return values.stream().map(ConfluenceSecurityMappingTest::json)
+                .collect(Collectors.joining(",", "[", "]"));
     }
 
     /** An access chain whose second owner is view-restricted with a group on it. */
