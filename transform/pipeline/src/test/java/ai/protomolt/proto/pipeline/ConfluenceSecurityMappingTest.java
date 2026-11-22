@@ -313,6 +313,77 @@ class ConfluenceSecurityMappingTest {
     }
 
     /**
+     * End to end on recorded live data: the tenant's one Entra user, as grpc-microsoft's mapper
+     * reads it from a live ListUsers response, signs in with its user principal name; its other
+     * mail is the Confluence login, so it expands to the Confluence account and groups, and it may
+     * read every page of the recorded live Sync, restricted ones included. Without the Entra links
+     * the same caller reads nothing. {@code acl/entra-users.binpb} is grpc-microsoft's
+     * {@code MicrosoftMapper.toUser} over its recording {@code list-users/001-GET-users.json}
+     * (commit 6c1a826, live run 45070237557), as delimited {@code GraphUser} messages.
+     */
+    @Test
+    void theRealEntraUserReadsTheRealConfluencePagesThroughTheEmailJoin() throws Exception {
+        Descriptor graphUser = registry.findDescriptorByFullName("ai.pipestream.microsoft.v1.GraphUser");
+        List<IdentityLink> entra = new java.util.ArrayList<>();
+        String upn = null;
+        try (InputStream in = ConfluenceSecurityMappingTest.class.getClassLoader()
+                .getResourceAsStream("acl/entra-users.binpb")) {
+            DynamicMessage.Builder user = DynamicMessage.newBuilder(graphUser);
+            while (user.mergeDelimitedFrom(in)) {
+                DynamicMessage record = user.build();
+                upn = field(record, "user_principal_name").toString();
+                entra.addAll(IdentityLinks.parseFrom(EdgeMapping.map(
+                        registry.findDescriptorByFullName(entraLinks.getProduceType()), Map.of("user", record),
+                        entraLinks.getRulesList(), entraLinks.getCelRulesList(), registry, "entra-identity")
+                        .toByteString()).getLinksList());
+                user = DynamicMessage.newBuilder(graphUser);
+            }
+        }
+        assertThat(upn).isNotBlank();
+        List<DynamicMessage> records = recordedRecords();
+        List<IdentityLink> confluence = new java.util.ArrayList<>();
+        for (DynamicMessage record : records) {
+            IdentityLink link = IdentityLink.parseFrom(EdgeMapping.map(
+                    registry.findDescriptorByFullName(links.getProduceType()), Map.of("entity", record),
+                    links.getRulesList(), links.getCelRulesList(), registry, "confluence-identity").toByteString());
+            if (link.hasFrom() && link.hasTo()) {
+                confluence.add(link);
+            }
+        }
+        List<IdentityLink> all = new java.util.ArrayList<>(entra);
+        all.addAll(confluence);
+        RepositoryCaller joined = new CallerIdentityExpansion(all).expand(caller("user-principal-name:" + upn));
+        RepositoryCaller unjoined = new CallerIdentityExpansion(confluence).expand(caller("user-principal-name:" + upn));
+        assertThat(joined.identities()).extracting(p -> p.getIdentityType() + ":" + p.getIdentity())
+                .contains("email:join-proof@example.invalid", "atlassian-account:account-1");
+
+        DynamicMessage space = records.stream().filter(r -> field(r, "entity_id").toString().startsWith("space:"))
+                .findFirst().orElseThrow();
+        int pages = 0;
+        int gated = 0;
+        for (DynamicMessage item : records) {
+            if (!item.hasField(entity.findFieldByName("access_chain"))) {
+                continue;
+            }
+            Map<String, DynamicMessage> values = new LinkedHashMap<>();
+            values.put("space", space);
+            values.put("item", item);
+            DocumentSecurity security = DocumentSecurity.parseFrom(EdgeMapping.map(
+                    registry.findDescriptorByFullName(edge.getProduceType()), values, edge.getRulesList(),
+                    edge.getCelRulesList(), registry, "confluence-acl").toByteString());
+            String id = field(item, "entity_id").toString();
+            pages++;
+            gated += security.getRequiredRuleSetsCount() > 0 ? 1 : 0;
+            assertThat(DocumentAccessPolicy.allows(joined, ACCOUNT, security, List.of(), Access.ACCESS_READ))
+                    .as("the Entra user on %s", id).isTrue();
+            assertThat(DocumentAccessPolicy.allows(unjoined, ACCOUNT, security, List.of(), Access.ACCESS_READ))
+                    .as("the Entra user without the join on %s", id).isFalse();
+        }
+        assertThat(pages).isPositive();
+        assertThat(gated).as("pages under a view-restricted parent").isPositive();
+    }
+
+    /**
      * Writes the OpenSearch fixture from the recorded live records: one NDJSON line per item
      * with its security terms, and for each caller its expanded terms and the policy's READ
      * decision on every item. The terms must answer what the policy answers.
