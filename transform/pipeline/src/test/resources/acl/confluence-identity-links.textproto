@@ -1,0 +1,31 @@
+# proto-file: ai/protomolt/proto/grpc/workflow/v1/grpc_workflow.proto
+# proto-message: ai.protomolt.proto.grpc.workflow.v1.TypedEdge
+#
+# Maps one directory record grpc-confluence Sync emits into an identity link
+# for caller expansion. Source `entity` is an
+# ai.pipestream.confluence.v1.ConfluenceEntity: a user with a visible email
+# links that address (as a user principal name) to the Atlassian account, and
+# a group membership links the account to the group. Other records, and users
+# whose email is hidden, map to an empty link.
+sources: "entity"
+produce_type: "ai.protomolt.proto.repo.v1.IdentityLink"
+cel_rules {
+  filter: "has(entity.user) && entity.user.email != ''"
+  selector: "ai.protomolt.proto.repo.v1.Principal{identity_type: 'user-principal-name', identity: entity.user.email}"
+  target: "from"
+}
+cel_rules {
+  filter: "has(entity.user) && entity.user.email != ''"
+  selector: "ai.protomolt.proto.repo.v1.Principal{identity_type: 'atlassian-account', identity: entity.user.account_id}"
+  target: "to"
+}
+cel_rules {
+  filter: "has(entity.group_member)"
+  selector: "ai.protomolt.proto.repo.v1.Principal{identity_type: 'atlassian-account', identity: entity.group_member.user.account_id}"
+  target: "from"
+}
+cel_rules {
+  filter: "has(entity.group_member)"
+  selector: "ai.protomolt.proto.repo.v1.Principal{identity_type: 'atlassian-group', identity: entity.group_member.group_id}"
+  target: "to"
+}

@@ -3,10 +3,12 @@ package ai.protomolt.proto.pipeline;
 import ai.protomolt.proto.descriptors.DescriptorRegistry;
 import ai.protomolt.proto.descriptors.GoogleDescriptorLoader;
 import ai.protomolt.proto.grpc.workflow.v1.TypedEdge;
+import ai.protomolt.proto.repo.spi.CallerIdentityExpansion;
 import ai.protomolt.proto.repo.spi.DocumentAccessPolicy;
 import ai.protomolt.proto.repo.spi.RepositoryCaller;
 import ai.protomolt.proto.repo.v1.Access;
 import ai.protomolt.proto.repo.v1.DocumentSecurity;
+import ai.protomolt.proto.repo.v1.IdentityLink;
 import ai.protomolt.proto.repo.v1.Principal;
 import com.google.protobuf.Descriptors.Descriptor;
 import com.google.protobuf.DynamicMessage;
@@ -35,6 +37,7 @@ class ConfluenceSecurityMappingTest {
     private static final String ACCOUNT = "ACC";
     private static DescriptorRegistry registry;
     private static TypedEdge edge;
+    private static TypedEdge links;
     private static Descriptor entity;
 
     @BeforeAll
@@ -42,9 +45,13 @@ class ConfluenceSecurityMappingTest {
         registry = DescriptorRegistry.create(false);
         new GoogleDescriptorLoader("acl/confluence-v1.binpb").loadDescriptors().forEach(registry::registerFile);
         registry.registerFile(DocumentSecurity.getDescriptor().getFile());
+        registry.registerFile(IdentityLink.getDescriptor().getFile());
         TypedEdge.Builder builder = TypedEdge.newBuilder();
         TextFormat.merge(resource("acl/confluence-document-security.textproto"), builder);
         edge = builder.build();
+        TypedEdge.Builder linkBuilder = TypedEdge.newBuilder();
+        TextFormat.merge(resource("acl/confluence-identity-links.textproto"), linkBuilder);
+        links = linkBuilder.build();
         entity = registry.findDescriptorByFullName("ai.pipestream.confluence.v1.ConfluenceEntity");
     }
 
@@ -140,6 +147,57 @@ class ConfluenceSecurityMappingTest {
         assertThat(security.getRequiredRuleSetsList()).isEmpty();
         assertThat(reads(security, "atlassian-account:acc-2", "atlassian-group:g-staff")).isTrue();
         assertThat(reads(security, "atlassian-account:acc-2")).isFalse();
+    }
+
+    /** Directory records as Sync emits them: two users (one hides its email) and their memberships. */
+    private static final List<String> DIRECTORY = List.of("""
+            entity_id: "acc-1"
+            user { account_id: "acc-1" email: "Ada@Example.com" display_name: "Ada" }
+            """, """
+            entity_id: "acc-2"
+            user { account_id: "acc-2" display_name: "Hidden" }
+            """, """
+            entity_id: "group:g-staff/member/acc-1"
+            group_member { group_id: "g-staff" user { account_id: "acc-1" } }
+            """, """
+            entity_id: "group:g-staff/member/acc-2"
+            group_member { group_id: "g-staff" user { account_id: "acc-2" } }
+            """, """
+            entity_id: "g-staff"
+            group { id: "g-staff" name: "staff" }
+            """);
+
+    @Test
+    void anEntraCallerJoinsByEmailToTheAtlassianAccountAndItsGroups() throws Exception {
+        List<IdentityLink> mapped = new java.util.ArrayList<>();
+        for (String record : DIRECTORY) {
+            Map<String, DynamicMessage> values = Map.of("entity", parse(record));
+            IdentityLink link = IdentityLink.parseFrom(EdgeMapping.map(
+                    registry.findDescriptorByFullName(links.getProduceType()), values, links.getRulesList(),
+                    links.getCelRulesList(), registry, "confluence-identity").toByteString());
+            if (link.hasFrom() && link.hasTo()) {
+                mapped.add(link);
+            }
+        }
+        assertThat(mapped).extracting(l -> l.getFrom().getIdentityType() + ":" + l.getFrom().getIdentity()
+                + " -> " + l.getTo().getIdentityType() + ":" + l.getTo().getIdentity()).containsExactly(
+                "user-principal-name:Ada@Example.com -> atlassian-account:acc-1",
+                "atlassian-account:acc-1 -> atlassian-group:g-staff",
+                "atlassian-account:acc-2 -> atlassian-group:g-staff");
+
+        CallerIdentityExpansion expansion = new CallerIdentityExpansion(mapped);
+        DocumentSecurity security = map(SPACE, CHILD);
+        RepositoryCaller ada = expansion.expand(new RepositoryCaller("ada", false, Set.of(ACCOUNT),
+                Set.of(Principal.newBuilder().setIdentityType("user-principal-name")
+                        .setIdentity("ada@example.com").build())));
+        assertThat(ada.identities()).extracting(p -> p.getIdentityType() + ":" + p.getIdentity())
+                .contains("atlassian-account:acc-1", "atlassian-group:g-staff");
+        assertThat(DocumentAccessPolicy.allows(ada, ACCOUNT, security, List.of(), Access.ACCESS_READ)).isTrue();
+        RepositoryCaller other = expansion.expand(new RepositoryCaller("other", false, Set.of(ACCOUNT),
+                Set.of(Principal.newBuilder().setIdentityType("user-principal-name")
+                        .setIdentity("someone@example.com").build())));
+        assertThat(DocumentAccessPolicy.allows(other, ACCOUNT, security, List.of(), Access.ACCESS_READ))
+                .as("no Atlassian account has this email").isFalse();
     }
 
     private static DocumentSecurity map(String space, String item) throws Exception {

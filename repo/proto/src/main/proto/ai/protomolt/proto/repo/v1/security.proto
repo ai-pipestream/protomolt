@@ -75,3 +75,13 @@ message Principal {
   // Audit/debug label.
   string display_name = 3;
 }
+
+// One identity a caller holding `from` also holds: an account linked to the
+// same person, or a group the identity is a member of. Expanding a caller's
+// identities follows links transitively.
+message IdentityLink {
+  // The identity the caller holds.
+  Principal from = 1;
+  // The identity that comes with it.
+  Principal to = 2;
+}
