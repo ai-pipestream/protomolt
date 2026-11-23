@@ -129,8 +129,10 @@ or `email`), Entra group (`entra-group`) or other claim (`sharepoint-claim`).
 Every complete ACL also lets `sharepoint-site-admin:<site id>` read, and the
 owners claim of a Microsoft 365 group maps to `entra-group-owner`.
 `sharepoint-identity-links.textproto` links the members of each site group to
-that group, and members SharePoint marks as site collection administrators to
-`sharepoint-site-admin:<site id>`. `entra-group-links.textproto` links the
+that group, and `sharepoint-site-admin-links.textproto` links the site
+collection administrators Sync lists to `sharepoint-site-admin:<site id>`.
+`entra-group-owner-links.textproto` links each user owner ListGroupOwners
+streams to `entra-group-owner:<group id>`. `entra-group-links.textproto` links the
 members of each group in a full DeltaGroups pass (users by `entra-user` object
 id, nested groups by `entra-group`) to the group; the Entra user mapping links
 each user principal name to its `entra-user` object id.

@@ -318,7 +318,7 @@ class ConfluenceSecurityMappingTest {
      * read every page of the recorded live Sync, restricted ones included. Without the Entra links
      * the same caller reads nothing. {@code acl/entra-users.binpb} is grpc-microsoft's
      * {@code MicrosoftMapper.toUser} over its recording {@code list-users/001-GET-users.json}
-     * (commit 6c1a826, live run 45070237557), as delimited {@code GraphUser} messages.
+     * (commit 494f76f, live run 45100103838), as delimited {@code GraphUser} messages.
      */
     @Test
     void theRealEntraUserReadsTheRealConfluencePagesThroughTheEmailJoin() throws Exception {
