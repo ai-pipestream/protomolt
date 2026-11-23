@@ -389,9 +389,11 @@ class ConfluenceSecurityMappingTest {
      */
     @Test
     void writesTheSearchFixtureFromTheRecordedLiveRecords() throws Exception {
-        List<DynamicMessage> records = recordedRecords();
-        DynamicMessage space = records.stream().filter(r -> field(r, "entity_id").toString().startsWith("space:"))
-                .findFirst().orElseThrow();
+        List<DynamicMessage> records = new java.util.ArrayList<>(recordedRecords());
+        records.addAll(records("acl/confluence-private-sync-records.binpb"));
+        Map<String, DynamicMessage> spaces = new LinkedHashMap<>();
+        records.stream().filter(r -> r.hasField(entity.findFieldByName("space_access")))
+                .forEach(r -> spaces.put(field(r, "entity_id").toString(), r));
         List<IdentityLink> mapped = new java.util.ArrayList<>();
         for (DynamicMessage record : records) {
             IdentityLink link = IdentityLink.parseFrom(EdgeMapping.map(
@@ -429,7 +431,9 @@ class ConfluenceSecurityMappingTest {
                 continue;
             }
             Map<String, DynamicMessage> values = new LinkedHashMap<>();
-            values.put("space", space);
+            Message chain = (Message) field(item, "access_chain");
+            values.put("space", spaces.get("space:" + chain.getField(
+                    chain.getDescriptorForType().findFieldByName("space_id")) + "/access"));
             values.put("item", item);
             DocumentSecurity security = DocumentSecurity.parseFrom(EdgeMapping.map(
                     registry.findDescriptorByFullName(edge.getProduceType()), values, edge.getRulesList(),
@@ -457,6 +461,10 @@ class ConfluenceSecurityMappingTest {
         }
         assertThat(restricted).as("items under a view-restricted owner").isPositive();
         assertThat(decisions.get("email:join-proof@example.invalid")).doesNotContainValue(false);
+        assertThat(callers.keySet().stream().filter(name -> name.startsWith("atlassian-account:account-"))
+                .filter(name -> !name.contains(" ")).map(decisions::get))
+                .as("a real user denied a page of the private space").anySatisfy(d ->
+                        assertThat(d).containsValue(true).containsValue(false));
         assertThat(decisions.get("atlassian-account:outsider licensed")).containsValue(true).containsValue(false);
         assertThat(decisions.get(member + " without access classes")).doesNotContainValue(true);
 
@@ -487,11 +495,14 @@ class ConfluenceSecurityMappingTest {
      * request and response pairs from the same run as the Sync records). protomolt's decision
      * on the same records, with each user's access classes from its operations, equals every answer.
      * Without the access-class links a user whose only space grant is ALL_LICENSED_USERS is denied
-     * what Confluence lets it read.
+     * what Confluence lets it read. The run's private space ({@code acl/confluence-private-sync-records.binpb})
+     * has a restricted page granted to a user who cannot view that space: Confluence denies it, and so
+     * does protomolt.
      */
     @Test
     void protomoltDecidesWhatConfluenceAnsweredLive() throws Exception {
-        List<DynamicMessage> records = recordedRecords();
+        List<DynamicMessage> records = new java.util.ArrayList<>(recordedRecords());
+        records.addAll(records("acl/confluence-private-sync-records.binpb"));
         List<IdentityLink> withClasses = new java.util.ArrayList<>(recordedLinks(records));
         List<IdentityLink> withoutClasses = List.copyOf(withClasses);
         for (DynamicMessage record : records) {
@@ -501,8 +512,10 @@ class ConfluenceSecurityMappingTest {
                     .toByteString()).getLinksList());
         }
         assertThat(withClasses).extracting(l -> l.getTo().getIdentity()).contains("ALL_LICENSED_USERS");
-        DynamicMessage space = records.stream().filter(r -> field(r, "entity_id").toString().startsWith("space:"))
-                .findFirst().orElseThrow();
+        Map<String, DynamicMessage> spaces = new LinkedHashMap<>();
+        records.stream().filter(r -> r.hasField(entity.findFieldByName("space_access")))
+                .forEach(r -> spaces.put(field(r, "entity_id").toString(), r));
+        assertThat(spaces).hasSize(2);
         Map<String, DynamicMessage> items = new LinkedHashMap<>();
         records.stream().filter(r -> r.hasField(entity.findFieldByName("access_chain")))
                 .forEach(r -> items.put(field(r, "entity_id").toString(), r));
@@ -513,6 +526,7 @@ class ConfluenceSecurityMappingTest {
                 "ai.pipestream.confluence.v1.CheckContentPermissionResponse");
         int compared = 0;
         int classOnly = 0;
+        int grantedButDenied = 0;
         try (InputStream in = ConfluenceSecurityMappingTest.class.getClassLoader()
                 .getResourceAsStream("acl/confluence-permission-checks.binpb")) {
             while (true) {
@@ -529,8 +543,20 @@ class ConfluenceSecurityMappingTest {
                 DynamicMessage item = items.get("page:" + content + "/access");
                 assertThat(item).as("the access chain of page %s", content).isNotNull();
                 Map<String, DynamicMessage> values = new LinkedHashMap<>();
-                values.put("space", space);
+                Message chain = (Message) field(item, "access_chain");
+                String spaceId = chain.getField(chain.getDescriptorForType().findFieldByName("space_id")).toString();
+                values.put("space", spaces.get("space:" + spaceId + "/access"));
                 values.put("item", item);
+                boolean onPage = ((List<?>) chain.getField(chain.getDescriptorForType().findFieldByName("owners")))
+                        .stream().map(Message.class::cast).anyMatch(owner -> ((List<?>) owner.getField(
+                                owner.getDescriptorForType().findFieldByName("permissions"))).stream()
+                                .map(Message.class::cast).anyMatch(permission -> {
+                                    Message principal = (Message) permission.getField(
+                                            permission.getDescriptorForType().findFieldByName("principal"));
+                                    return principal.getField(principal.getDescriptorForType()
+                                            .findFieldByName("principal_id")).toString().equals(account);
+                                }));
+                grantedButDenied += onPage && !confluence ? 1 : 0;
                 DocumentSecurity security = DocumentSecurity.parseFrom(EdgeMapping.map(
                         registry.findDescriptorByFullName(edge.getProduceType()), values, edge.getRulesList(),
                         edge.getCelRulesList(), registry, "confluence-acl").toByteString());
@@ -547,6 +573,8 @@ class ConfluenceSecurityMappingTest {
         }
         assertThat(compared).isGreaterThanOrEqualTo(10);
         assertThat(classOnly).as("answers that need the licensed-users class").isPositive();
+        assertThat(grantedButDenied).as("users on a page of a space they cannot view, denied by Confluence")
+                .isPositive();
     }
 
     private static List<IdentityLink> recordedLinks(List<DynamicMessage> records) throws Exception {
@@ -563,9 +591,13 @@ class ConfluenceSecurityMappingTest {
     }
 
     private static List<DynamicMessage> recordedRecords() throws IOException {
+        return records("acl/confluence-sync-records.binpb");
+    }
+
+    private static List<DynamicMessage> records(String resource) throws IOException {
         List<DynamicMessage> records = new java.util.ArrayList<>();
         try (InputStream in = ConfluenceSecurityMappingTest.class.getClassLoader()
-                .getResourceAsStream("acl/confluence-sync-records.binpb")) {
+                .getResourceAsStream(resource)) {
             DynamicMessage.Builder record = DynamicMessage.newBuilder(entity);
             while (record.mergeDelimitedFrom(in)) {
                 records.add(record.build());
