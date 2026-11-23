@@ -123,8 +123,14 @@ an item's `acl_owner_id` names into `permissions`: each role assignment whose
 permission levels include ViewListItems becomes a read rule on the SharePoint
 group (`sharepoint-group:<site id>/<group id>`), user (`user-principal-name`,
 or `email`), Entra group (`entra-group`) or other claim (`sharepoint-claim`).
+Every complete ACL also lets `sharepoint-site-admin:<site id>` read, and the
+owners claim of a Microsoft 365 group maps to `entra-group-owner`.
 `sharepoint-identity-links.textproto` links the members of each site group to
-that group.
+that group, and members SharePoint marks as site collection administrators to
+`sharepoint-site-admin:<site id>`. `entra-group-links.textproto` links the
+members of each group in a full DeltaGroups pass (users by `entra-user` object
+id, nested groups by `entra-group`) to the group; the Entra user mapping links
+each user principal name to its `entra-user` object id.
 
 ## Where mapping sits
 
