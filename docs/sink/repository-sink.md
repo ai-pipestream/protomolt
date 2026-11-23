@@ -44,6 +44,15 @@ or provenance-read failures propagate without inventing success. Publish retries
 retryable failures still require writer authority before changing the job; read-only
 callers can reconcile through `GetRepositorySinkJob`.
 
+Every read of a failed or cancelled job performs this outcome lookup, including
+jobs whose latest failure occurred before upload. This deliberately couples their
+read availability to `DocumentService`: an unavailable lookup fails the read even
+when a durable terminal receipt exists, and repeated polling repeats the lookup.
+The latest failure reason alone does not prove that an earlier attempt cannot
+still commit. Retries reuse the downstream operation ID, and a retry can fail
+while rendering after an earlier attempt's empty outcome lookup. Skipping checks
+based only on that rendering failure would hide the earlier attempt's late commit.
+
 ## Parquet Rendition Provider (`protomolt-emit-parquet`)
 
 `ai.protomolt.proto.emit.parquet.ParquetRendererProvider` qualifies `ParquetEmitter` behind `RendererProvider` so authorized protobuf processing outputs or repository-backed revisions can be saved as non-authoritative `.parquet` renditions (`application/vnd.apache.parquet`) without loading Hadoop runtime classes.
