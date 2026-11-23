@@ -602,7 +602,7 @@ const saveAsDestinationFailure = ref<RpcFailure | null>(null)
  * Viewing the current revision, that is the revision on screen. Viewing a historical one, the
  * entry is asked; if it cannot answer, Save-as does not open rather than guess.
  */
-async function prepareSaveAsDestination(signal: AbortSignal, isCurrent: () => boolean): Promise<boolean> {
+async function prepareSaveAsDestination(signal: AbortSignal): Promise<boolean> {
   saveAsDestinationFailure.value = null
   saveAsExpectedVersion.value = null
   const c = call.value
@@ -620,7 +620,7 @@ async function prepareSaveAsDestination(signal: AbortSignal, isCurrent: () => bo
       }),
       { signal },
     )
-    if (!isCurrent()) return false
+    if (signal.aborted) return false
     const current = answer.info?.currentVersion
     if (current === undefined || current <= 0n) {
       throw new Error('GetEntryManifest answered without the entry\'s current version.')
@@ -628,7 +628,7 @@ async function prepareSaveAsDestination(signal: AbortSignal, isCurrent: () => bo
     saveAsExpectedVersion.value = current
     return true
   } catch (error) {
-    if (isCurrent()) saveAsDestinationFailure.value = rpcFailure(error)
+    if (!signal.aborted) saveAsDestinationFailure.value = rpcFailure(error)
     return false
   }
 }
@@ -638,13 +638,10 @@ async function openSaveAs(
   label: string,
   occurrences: ResolvedOccurrenceOption[],
 ) {
+  // Each signal belongs to one selection: a newer selection, load() and unmount abort it, so a
+  // response a transport delivers despite the abort still cannot publish state.
   const signal = saveAsScope.next()
-  const key = routeDocumentKey()
-  const sourceManifest = manifest.value
-  // Each signal belongs to one selection. Even a transport ignoring abort cannot
-  // publish state for a superseded selection, reload, route or unmounted view.
-  const isCurrent = () => !signal.aborted && key === routeDocumentKey() && sourceManifest === manifest.value
-  if (!(await prepareSaveAsDestination(signal, isCurrent)) || !isCurrent()) return
+  if (!(await prepareSaveAsDestination(signal))) return
   saveAsDocumentSource.value = source
   saveAsOccurrenceOptions.value = occurrences
   saveAsSourceLabel.value = label

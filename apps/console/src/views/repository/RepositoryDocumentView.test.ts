@@ -616,13 +616,38 @@ describe('Save-as destination lookup races', () => {
     } finally { wrapper.unmount() }
   })
 
+  it('clears the last Save-as inputs and a shown lookup failure when the route moves to another document', async () => {
+    const { wrapper, router, pending, location } = await mountSaveAsLookup()
+    try {
+      await wrapper.get('[data-testid="save-as-part-1"]').trigger('click')
+      pending[0].resolve(currentEntryVersion(5n))
+      await settle()
+      const dialog = wrapper.getComponent(SaveAsRenditionDialog)
+      expect(dialog.props('documentSource')).toMatchObject({ address: { docId: 'doc-1' }, selector: BLOBS })
+      dialog.vm.$emit('close')
+      await settle()
+      await wrapper.get('[data-testid="save-as-part-0"]').trigger('click')
+      pending[1].reject(new ConnectError('current lookup failed', Code.Unavailable))
+      await settle()
+      expect(wrapper.text()).toContain('current lookup failed')
+      await router.push({ ...location, query: { ...location.query, doc: 'doc-2' } })
+      await settle()
+      expect(wrapper.text()).not.toContain('current lookup failed')
+      expect(dialog.props('open')).toBe(false)
+      expect(dialog.props('documentSource')).toBeNull()
+      expect(dialog.props('sourceLabel')).toBe('')
+      expect(dialog.props('occurrenceOptions')).toEqual([])
+      expect(dialog.props('defaultExpectedDestinationVersion')).toBeNull()
+    } finally { wrapper.unmount() }
+  })
+
   it('aborts the pending destination lookup when the view unmounts', async () => {
     const { wrapper, pending } = await mountSaveAsLookup()
     await wrapper.get('[data-testid="save-as-part-0"]').trigger('click')
     wrapper.unmount()
     expect(pending[0].signal?.aborted).toBe(true)
+    // Completing after unmount must not raise; Vitest fails the run on an unhandled rejection.
     pending[0].resolve(currentEntryVersion(9n))
     await settle()
   })
-
 })
