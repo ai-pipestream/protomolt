@@ -1081,6 +1081,51 @@ describe('Repository Save-as and format icons', () => {
     wrapper.unmount()
   })
 
+  it.each([
+    [Code.FailedPrecondition, 'Renderer capability is not supported'],
+    [Code.FailedPrecondition, 'Retained schema is missing'],
+    [Code.FailedPrecondition, 'Source media type does not match the renderer'],
+    [Code.AlreadyExists, 'operation_id is bound to a different publication intent'],
+  ])('shows rejection %s without a misleading reload action: %s', async (code, message) => {
+    const { wrapper } = await mountArchiveBackedDocumentAtRevision(1n, {
+      getEntryManifest: () => create(GetEntryManifestResponseSchema, { info: { currentVersion: 2n } }),
+      publish: () => { throw new ConnectError(message, code) },
+    })
+    try {
+      await wrapper.get('[data-testid="save-as-part-0"]').trigger('click')
+      await settle()
+      ;(document.body.querySelector('[data-testid="save-as-submit-btn"]') as HTMLButtonElement).click()
+      await settle()
+      const alert = document.body.querySelector('[data-testid="save-as-rpc-error"]')!
+      expect(alert.textContent).toContain(`Save-as failed (${Code[code]})`)
+      expect(alert.textContent).toContain(message)
+      expect(alert.textContent).not.toContain('Version conflict')
+      expect(document.body.querySelector('[data-testid="save-as-reload-source-btn"]')).toBeNull()
+      expect(document.body.querySelector('[data-testid="save-as-retry-same-btn"]')).toBeNull()
+    } finally { wrapper.unmount() }
+  })
+
+  it.each([false, true])('offers reload for a FailedPrecondition job only with conflict=%s', async (conflict) => {
+    const { wrapper } = await mountArchiveBackedDocumentAtRevision(1n, {
+      getEntryManifest: () => create(GetEntryManifestResponseSchema, { info: { currentVersion: 2n } }),
+      publish: (request) => create(PublishRepositorySinkResponseSchema, {
+        job: {
+          accountId: 'acct-a', operationId: request.operationId, state: RepositorySinkJobState.FAILED,
+          failure: { grpcCode: Code.FailedPrecondition, conflict, message: 'Structured server rejection' },
+        },
+      }),
+    })
+    try {
+      await wrapper.get('[data-testid="save-as-part-0"]').trigger('click')
+      await settle()
+      ;(document.body.querySelector('[data-testid="save-as-submit-btn"]') as HTMLButtonElement).click()
+      await settle()
+      expect(document.body.querySelector('[data-testid="save-as-job-panel"]')!.textContent)
+        .toContain('Structured server rejection')
+      expect(document.body.querySelector('[data-testid="save-as-conflict-reload-btn"]') !== null).toBe(conflict)
+    } finally { wrapper.unmount() }
+  })
+
   it('surfaces version conflicts (Code.Aborted) with an explicit Reload source action', async () => {
     let manifestCalls = 0
     const { wrapper } = await mountRepositoryView(

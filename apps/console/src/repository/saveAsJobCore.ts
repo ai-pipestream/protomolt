@@ -208,11 +208,10 @@ export function classifySinkRpcError(error: unknown): ClassifiedSinkError {
         canReconcile: true,
       }
     }
-    if (
-      error.code === Code.Aborted
-      || error.code === Code.FailedPrecondition
-      || error.code === Code.AlreadyExists
-    ) {
+    // Failed preconditions may be schema, media or capability rejections;
+    // ALREADY_EXISTS can mean a reused operation ID with different intent.
+    // Neither establishes a version conflict that reloading could resolve.
+    if (error.code === Code.Aborted) {
       return {
         kind: 'conflict',
         codeLabel: Code[error.code] ?? 'Conflict',
