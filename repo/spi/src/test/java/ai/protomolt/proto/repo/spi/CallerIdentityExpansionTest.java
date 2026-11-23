@@ -2,8 +2,10 @@ package ai.protomolt.proto.repo.spi;
 
 import ai.protomolt.proto.repo.v1.IdentityLink;
 import ai.protomolt.proto.repo.v1.Principal;
+import com.google.protobuf.UnknownFieldSet;
 import org.junit.jupiter.api.Test;
 
+import java.util.Collections;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
@@ -51,9 +53,32 @@ class CallerIdentityExpansionTest {
     }
 
     @Test
-    void rejectsABlankLink() {
+    void rejectsMalformedLinksAndCallerPrincipals() {
+        UnknownFieldSet unknown = UnknownFieldSet.newBuilder()
+                .addField(99, UnknownFieldSet.Field.newBuilder().addVarint(1L).build())
+                .build();
         assertThatThrownBy(() -> new CallerIdentityExpansion(List.of(
                 link(p("atlassian-account", ""), p("atlassian-group", "g-1")))))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> new CallerIdentityExpansion(List.of(
+                link(p("public", "someone"), p("atlassian-group", "g-1")))))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> new CallerIdentityExpansion(List.of(
+                IdentityLink.newBuilder()
+                        .setFrom(p("atlassian-account", "acc-1"))
+                        .setTo(p("atlassian-group", "g-1"))
+                        .setUnknownFields(unknown)
+                        .build())))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> new CallerIdentityExpansion(List.of(
+                link(p("atlassian-account", "acc-1").toBuilder().setUnknownFields(unknown).build(),
+                        p("atlassian-group", "g-1")))))
+                .isInstanceOf(IllegalArgumentException.class);
+
+        CallerIdentityExpansion empty = new CallerIdentityExpansion(List.of());
+        assertThatThrownBy(() -> empty.expand(Collections.singleton((Principal) null)))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> empty.expand(Set.of(p("", "acc-1"))))
                 .isInstanceOf(IllegalArgumentException.class);
     }
 }

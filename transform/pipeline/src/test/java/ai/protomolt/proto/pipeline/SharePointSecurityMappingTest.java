@@ -1,73 +1,51 @@
 package ai.protomolt.proto.pipeline;
 
 import ai.protomolt.proto.descriptors.DescriptorRegistry;
-import ai.protomolt.proto.descriptors.GoogleDescriptorLoader;
 import ai.protomolt.proto.grpc.workflow.v1.TypedEdge;
 import ai.protomolt.proto.repo.spi.CallerIdentityExpansion;
-import ai.protomolt.proto.repo.spi.DocumentAccessPolicy;
-import ai.protomolt.proto.repo.spi.DocumentSecurityTerms;
-import ai.protomolt.proto.repo.spi.RepositoryCaller;
 import ai.protomolt.proto.repo.v1.Access;
 import ai.protomolt.proto.repo.v1.DocumentSecurity;
 import ai.protomolt.proto.repo.v1.IdentityLink;
-import ai.protomolt.proto.repo.v1.IdentityLinks;
-import ai.protomolt.proto.repo.v1.Principal;
 import com.google.protobuf.Descriptors.Descriptor;
-import com.google.protobuf.Descriptors.FieldDescriptor;
 import com.google.protobuf.DynamicMessage;
-import com.google.protobuf.Message;
-import com.google.protobuf.TextFormat;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
-import java.io.IOException;
-import java.io.InputStream;
-import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.util.ArrayList;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
-import java.util.stream.Collectors;
 
+import static ai.protomolt.proto.pipeline.AclMappingTestSupport.caller;
+import static ai.protomolt.proto.pipeline.AclMappingTestSupport.loadEdge;
+import static ai.protomolt.proto.pipeline.AclMappingTestSupport.loadRegistry;
+import static ai.protomolt.proto.pipeline.AclMappingTestSupport.mapIdentityLinks;
+import static ai.protomolt.proto.pipeline.AclMappingTestSupport.mapSecurity;
+import static ai.protomolt.proto.pipeline.AclMappingTestSupport.parseText;
+import static ai.protomolt.proto.pipeline.AclMappingTestSupport.principal;
+import static ai.protomolt.proto.pipeline.AclMappingTestSupport.reads;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * The SharePoint ACL mapping configs applied as pipeline edges: the role
- * assignments and site groups grpc-microsoft Sync emits with
- * {@code include_security}, mapped into DocumentSecurity and identity links
- * and evaluated by the repository policy.
+ * Unit tests for SharePoint role-assignment, site-group, and Entra group-delta mapping configs.
  */
 class SharePointSecurityMappingTest {
 
-    private static final String ACCOUNT = "ACC";
-    private static final String SITE = "host,coll,web";
     private static DescriptorRegistry registry;
     private static TypedEdge edge;
     private static TypedEdge links;
-    private static TypedEdge entraLinks;
     private static TypedEdge groupLinks;
-    private static TypedEdge adminLinks;
-    private static TypedEdge ownerLinks;
-    private static Descriptor entity;
     private static Descriptor siteAcl;
+    private static Descriptor siteGroupMembers;
+    private static Descriptor groupChange;
 
     @BeforeAll
     static void load() throws Exception {
-        registry = DescriptorRegistry.create(false);
-        new GoogleDescriptorLoader("acl/microsoft-v1.binpb").loadDescriptors().forEach(registry::registerFile);
-        registry.registerFile(DocumentSecurity.getDescriptor().getFile());
-        registry.registerFile(IdentityLink.getDescriptor().getFile());
-        edge = edge("acl/sharepoint-document-security.textproto");
-        links = edge("acl/sharepoint-identity-links.textproto");
-        entraLinks = edge("acl/entra-identity-links.textproto");
-        groupLinks = edge("acl/entra-group-links.textproto");
-        adminLinks = edge("acl/sharepoint-site-admin-links.textproto");
-        ownerLinks = edge("acl/entra-group-owner-links.textproto");
-        entity = registry.findDescriptorByFullName("ai.pipestream.microsoft.v1.MicrosoftEntity");
+        registry = loadRegistry("acl/microsoft-v1.binpb");
+        edge = loadEdge("acl/sharepoint-document-security.textproto");
+        links = loadEdge("acl/sharepoint-identity-links.textproto");
+        groupLinks = loadEdge("acl/entra-group-links.textproto");
         siteAcl = registry.findDescriptorByFullName("ai.pipestream.microsoft.v1.SiteAcl");
+        siteGroupMembers = registry.findDescriptorByFullName("ai.pipestream.microsoft.v1.SiteGroupMembers");
+        groupChange = registry.findDescriptorByFullName("ai.pipestream.microsoft.v1.GroupChange");
     }
 
     /** Read, Edit, Limited Access and two levels on one assignment; users, a claim and a directory group. */
@@ -102,7 +80,7 @@ class SharePointSecurityMappingTest {
 
     @Test
     void assignmentsThatViewItemsBecomeReadRulesAndLimitedAccessGrantsNothing() throws Exception {
-        DocumentSecurity security = map(acl(ACL));
+        DocumentSecurity security = map(parseText(siteAcl, ACL));
 
         assertThat(security.getPermissionsList()).extracting(r -> r.getIdentityType() + ":" + r.getIdentity())
                 .containsExactly("sharepoint-group:host,coll,web/4", "sharepoint-group:host,coll,web/5",
@@ -122,7 +100,7 @@ class SharePointSecurityMappingTest {
     @Test
     void anIncompleteAclMapsToNoRuleAndDenies() throws Exception {
         for (String completeness : List.of("ACL_COMPLETENESS_UNAVAILABLE", "ACL_COMPLETENESS_UNSPECIFIED")) {
-            DocumentSecurity security = map(acl(ACL.replace("ACL_COMPLETENESS_COMPLETE", completeness)));
+            DocumentSecurity security = map(parseText(siteAcl, ACL.replace("ACL_COMPLETENESS_COMPLETE", completeness)));
             assertThat(security.getPermissionsList()).as(completeness).isEmpty();
             assertThat(reads(security, "sharepoint-group:host,coll,web/4")).isFalse();
         }
@@ -140,14 +118,14 @@ class SharePointSecurityMappingTest {
                 members { id: 31 principal_type: SITE_PRINCIPAL_TYPE_SECURITY_GROUP login_name: "c:0(.s|true" }
                 completeness: ACL_COMPLETENESS_COMPLETE
                 """;
-        assertThat(groupLinks(message("ai.pipestream.microsoft.v1.SiteGroupMembers", group)))
+        assertThat(mapIdentityLinks(registry, links, Map.of("group", parseText(siteGroupMembers, group)), "sp-links"))
                 .extracting(l -> l.getFrom().getIdentityType() + ":" + l.getFrom().getIdentity() + " -> "
                         + l.getTo().getIdentityType() + ":" + l.getTo().getIdentity())
                 .containsExactly("user-principal-name:ada@contoso.com -> sharepoint-group:host,coll,web/4",
                         "email:guest@example.org -> sharepoint-group:host,coll,web/4",
                         "entra-group:g-1 -> sharepoint-group:host,coll,web/4");
-        assertThat(groupLinks(message("ai.pipestream.microsoft.v1.SiteGroupMembers",
-                group.replace("ACL_COMPLETENESS_COMPLETE", "ACL_COMPLETENESS_UNAVAILABLE")))).isEmpty();
+        assertThat(mapIdentityLinks(registry, links, Map.of("group", parseText(siteGroupMembers,
+                group.replace("ACL_COMPLETENESS_COMPLETE", "ACL_COMPLETENESS_UNAVAILABLE"))), "sp-links")).isEmpty();
     }
 
     @Test
@@ -159,430 +137,24 @@ class SharePointSecurityMappingTest {
                 member_changes { id: "u-2" type: "user" removed: true }
                 member_changes { id: "d-1" type: "device" }
                 """;
-        assertThat(changeLinks(message("ai.pipestream.microsoft.v1.GroupChange", change)))
+        List<IdentityLink> mapped = mapIdentityLinks(
+                registry, groupLinks, Map.of("change", parseText(groupChange, change)), "entra-groups");
+        assertThat(mapped)
                 .extracting(l -> l.getFrom().getIdentityType() + ":" + l.getFrom().getIdentity() + " -> "
                         + l.getTo().getIdentityType() + ":" + l.getTo().getIdentity())
                 .containsExactly("entra-user:u-1 -> entra-group:g-parent", "entra-group:g-child -> entra-group:g-parent");
-        assertThat(changeLinks(message("ai.pipestream.microsoft.v1.GroupChange", change + "removed: true")))
+        assertThat(mapIdentityLinks(
+                registry, groupLinks, Map.of("change", parseText(groupChange, change + "removed: true")), "entra-groups"))
                 .isEmpty();
         CallerIdentityExpansion expansion = new CallerIdentityExpansion(List.of(
                 IdentityLink.newBuilder().setFrom(principal("entra-user:u-9")).setTo(principal("entra-group:g-child"))
                         .build(),
-                changeLinks(message("ai.pipestream.microsoft.v1.GroupChange", change)).get(1)));
+                mapped.get(1)));
         assertThat(expansion.expand(caller("entra-user:u-9")).identities()).as("nested membership")
                 .contains(principal("entra-group:g-parent"));
     }
 
-    /**
-     * The real Entra user's group memberships, from grpc-microsoft's {@code MicrosoftMapper.toGroupChange}
-     * over its live recording {@code delta-groups} (a full DeltaGroups pass with members, run 45100103838),
-     * link it through its object id to every group it is in. The test site grants none of those groups,
-     * so a grant to one of them is put on a copy of the site's role assignments.
-     */
-    @Test
-    void theRealEntraUserReadsThroughItsRealEntraGroups() throws Exception {
-        List<DynamicMessage> changes = new ArrayList<>();
-        Descriptor groupChange = registry.findDescriptorByFullName("ai.pipestream.microsoft.v1.GroupChange");
-        try (InputStream in = SharePointSecurityMappingTest.class.getClassLoader()
-                .getResourceAsStream("acl/entra-group-changes.binpb")) {
-            DynamicMessage.Builder change = DynamicMessage.newBuilder(groupChange);
-            while (change.mergeDelimitedFrom(in)) {
-                changes.add(change.build());
-                change = DynamicMessage.newBuilder(groupChange);
-            }
-        }
-        List<IdentityLink> all = new ArrayList<>(entraLinksOfRecordedUsers());
-        List<String> withMembers = new ArrayList<>();
-        List<String> empty = new ArrayList<>();
-        for (DynamicMessage change : changes) {
-            List<IdentityLink> mapped = changeLinks(change);
-            all.addAll(mapped);
-            Message group = (Message) field(change, "group");
-            String id = group.getField(group.getDescriptorForType().findFieldByName("id")).toString();
-            (mapped.isEmpty() ? empty : withMembers).add(id);
-        }
-        assertThat(withMembers).isNotEmpty();
-        assertThat(empty).as("a recorded group without members").isNotEmpty();
-
-        RepositoryCaller user = new CallerIdentityExpansion(all).expand(
-                caller("user-principal-name:" + entraUpns().getFirst()));
-        assertThat(user.identities()).containsAll(withMembers.stream().map(id -> principal("entra-group:" + id))
-                .toList());
-        DynamicMessage siteAclRecord = recordedSiteAcl();
-        for (String id : withMembers) {
-            DocumentSecurity security = map(grant(siteAclRecord, id, ""));
-            assertThat(allows(user, security)).as("granted to group %s", id).isTrue();
-            assertThat(allows(user, map(grant(siteAclRecord, id, "_o"))))
-                    .as("granted to the owners of group %s", id).isFalse();
-        }
-        assertThat(allows(user, map(grant(siteAclRecord, empty.getFirst(), ""))))
-                .as("granted to a group the user is not in").isFalse();
-    }
-
-    /** The recorded live site admins list names the tenant's one user; that link alone reads every item. */
-    @Test
-    void theRecordedSiteAdminReadsEveryItemThroughTheAdminLinkAlone() throws Exception {
-        Recorded recorded = recorded();
-        List<IdentityLink> admin = recorded.links().stream()
-                .filter(l -> l.getTo().getIdentityType().equals("sharepoint-site-admin")).toList();
-        assertThat(admin).singleElement().satisfies(l ->
-                assertThat(l.getFrom().getIdentity()).isEqualTo(entraUpns().getFirst()));
-        RepositoryCaller caller = new CallerIdentityExpansion(admin).expand(
-                caller("user-principal-name:" + entraUpns().getFirst()));
-        for (var item : recorded.items().entrySet()) {
-            assertThat(allows(caller, item.getValue())).as("the site admin on %s", item.getKey()).isTrue();
-        }
-    }
-
-    /**
-     * The real owner of a real Entra group, from grpc-microsoft's {@code MicrosoftMapper.toMember}
-     * over its live recording {@code list-group-owners} ({@code acl/entra-group-owners.binpb}: the
-     * group, then its owners), reads what the group's owners claim is granted; another group's
-     * owners claim does not let it in.
-     */
-    @Test
-    void theRealGroupOwnerReadsThroughTheOwnersClaim() throws Exception {
-        Descriptor graphGroup = registry.findDescriptorByFullName("ai.pipestream.microsoft.v1.GraphGroup");
-        Descriptor member = registry.findDescriptorByFullName("ai.pipestream.microsoft.v1.DirectoryMember");
-        List<IdentityLink> all = new ArrayList<>(entraLinksOfRecordedUsers());
-        String groupId;
-        try (InputStream in = SharePointSecurityMappingTest.class.getClassLoader()
-                .getResourceAsStream("acl/entra-group-owners.binpb")) {
-            DynamicMessage.Builder group = DynamicMessage.newBuilder(graphGroup);
-            assertThat(group.mergeDelimitedFrom(in)).isTrue();
-            DynamicMessage built = group.build();
-            groupId = field(built, "id").toString();
-            DynamicMessage.Builder owner = DynamicMessage.newBuilder(member);
-            while (owner.mergeDelimitedFrom(in)) {
-                Map<String, DynamicMessage> values = new LinkedHashMap<>();
-                values.put("group", built);
-                values.put("owner", owner.build());
-                all.addAll(IdentityLinks.parseFrom(EdgeMapping.map(
-                        registry.findDescriptorByFullName(ownerLinks.getProduceType()), values,
-                        ownerLinks.getRulesList(), ownerLinks.getCelRulesList(), registry, "entra-owners")
-                        .toByteString()).getLinksList());
-                owner = DynamicMessage.newBuilder(member);
-            }
-        }
-        assertThat(all).extracting(l -> l.getTo().getIdentityType()).contains("entra-group-owner");
-        RepositoryCaller user = new CallerIdentityExpansion(all).expand(
-                caller("user-principal-name:" + entraUpns().getFirst()));
-        DynamicMessage siteAclRecord = recordedSiteAcl();
-        assertThat(allows(user, map(grant(siteAclRecord, groupId, "_o")))).as("owners of %s", groupId).isTrue();
-        assertThat(allows(user, map(grant(siteAclRecord, groupId, "")))).as("members of %s, not owner links", groupId)
-                .isFalse();
-        assertThat(allows(user, map(grant(siteAclRecord, "00000000-0000-4000-8000-00000000ffff", "_o"))))
-                .as("owners of another group").isFalse();
-    }
-
-    /** The recorded site's own role assignments plus one Read grant to the directory group {@code id}. */
-    private static DynamicMessage grant(DynamicMessage acl, String id, String suffix) throws Exception {
-        DynamicMessage assignment = message("ai.pipestream.microsoft.v1.SiteRoleAssignment", """
-                member { id: 900 principal_type: SITE_PRINCIPAL_TYPE_SECURITY_GROUP
-                  login_name: "c:0o.c|federateddirectoryclaimprovider|%s%s" directory_object_id: "%s"
-                  directory_group_owners: %s }
-                roles { name: "Read" base_permissions_low: 138612833 }
-                """.formatted(id, suffix, id, !suffix.isEmpty()));
-        return acl.toBuilder().addRepeatedField(siteAcl.findFieldByName("assignments"), assignment).build();
-    }
-
-    private static DynamicMessage recordedSiteAcl() throws IOException {
-        try (InputStream in = SharePointSecurityMappingTest.class.getClassLoader()
-                .getResourceAsStream("acl/sharepoint-sync-records.binpb")) {
-            DynamicMessage.Builder record = DynamicMessage.newBuilder(entity);
-            while (record.mergeDelimitedFrom(in)) {
-                DynamicMessage built = record.build();
-                if (field(built, "entity_id").toString().startsWith("site_acl/site/")) {
-                    DynamicMessage acl = (DynamicMessage) field(built, "site_acl");
-                    return acl;
-                }
-                record = DynamicMessage.newBuilder(entity);
-            }
-        }
-        throw new IOException("no site ACL among the recorded records");
-    }
-
-    private static List<IdentityLink> changeLinks(DynamicMessage change) throws Exception {
-        return IdentityLinks.parseFrom(EdgeMapping.map(
-                registry.findDescriptorByFullName(groupLinks.getProduceType()), Map.of("change", change),
-                groupLinks.getRulesList(), groupLinks.getCelRulesList(), registry, "entra-groups").toByteString())
-                .getLinksList();
-    }
-
-    private static Principal principal(String identity) {
-        int colon = identity.indexOf(':');
-        return Principal.newBuilder().setIdentityType(identity.substring(0, colon))
-                .setIdentity(identity.substring(colon + 1)).build();
-    }
-
-    /**
-     * End to end on recorded live data: {@code acl/sharepoint-sync-records.binpb} is what
-     * grpc-microsoft Sync emitted with {@code include_security} in live run 45100103838
-     * (commit 494f76f, recording {@code sync-security}), as delimited {@code MicrosoftEntity}
-     * messages. Every drive, list and item maps through the role assignments its
-     * {@code acl_owner_id} names. The tenant's one Entra user ({@code acl/entra-users.binpb})
-     * signs in with its user principal name, is a member of the site's owners group, and reads
-     * all of it; a member of a group that holds only Limited Access reads none of it.
-     */
-    @Test
-    void theRealEntraUserReadsTheRealSharePointItemsThroughItsSiteGroup() throws Exception {
-        Recorded recorded = recorded();
-        assertThat(recorded.items()).hasSizeGreaterThanOrEqualTo(10);
-        assertThat(recorded.items().values().stream().map(DocumentSecurity::getPermissionsCount))
-                .allSatisfy(count -> assertThat(count).isPositive());
-        assertThat(recorded.items().keySet().stream().filter(id -> recorded.owners().get(id).contains("/list_item/")))
-                .as("items under their own role assignments").isNotEmpty();
-
-        String upn = entraUpns().getFirst();
-        Map<String, RepositoryCaller> callers = callers(recorded, upn);
-        for (var item : recorded.items().entrySet()) {
-            assertThat(allows(callers.get("user-principal-name:" + upn), item.getValue()))
-                    .as("the Entra user on %s", item.getKey()).isTrue();
-            assertThat(allows(callers.get("user-principal-name:" + upn + " without groups"), item.getValue()))
-                    .as("the Entra user without its group on %s", item.getKey()).isFalse();
-            assertThat(allows(callers.get(recorded.limitedGroup() + " member"), item.getValue()))
-                    .as("Limited Access only on %s", item.getKey()).isFalse();
-        }
-    }
-
-    /**
-     * Writes the OpenSearch fixture from the recorded live records, the same shape as the
-     * Confluence one. The terms must answer what the policy answers.
-     */
-    @Test
-    void writesTheSearchFixtureFromTheRecordedLiveRecords() throws Exception {
-        Recorded recorded = recorded();
-        Map<String, RepositoryCaller> callers = callers(recorded, entraUpns().getFirst());
-        StringBuilder items = new StringBuilder();
-        Map<String, Map<String, Boolean>> decisions = new LinkedHashMap<>();
-        callers.keySet().forEach(name -> decisions.put(name, new LinkedHashMap<>()));
-        for (var item : recorded.items().entrySet()) {
-            DocumentSecurityTerms terms = DocumentSecurityTerms.of(item.getValue(), List.of());
-            items.append("{\"_id\":").append(json(item.getKey()))
-                    .append(",\"acl_allow\":").append(json(terms.allow()))
-                    .append(",\"acl_deny\":").append(json(terms.deny()))
-                    .append(",\"acl_gates\":[],\"acl_complete\":true}\n");
-            for (var caller : callers.entrySet()) {
-                boolean allowed = allows(caller.getValue(), item.getValue());
-                assertThat(terms.reads(DocumentSecurityTerms.callerTerms(caller.getValue().identities())))
-                        .as("%s on %s", caller.getKey(), item.getKey()).isEqualTo(allowed);
-                decisions.get(caller.getKey()).put(item.getKey(), allowed);
-            }
-        }
-        assertThat(decisions.values()).anySatisfy(d -> assertThat(d).containsValue(true));
-        assertThat(decisions.values()).anySatisfy(d -> assertThat(d).containsValue(false));
-
-        StringBuilder callerJson = new StringBuilder("[");
-        int n = 0;
-        for (var caller : callers.entrySet()) {
-            callerJson.append(n++ == 0 ? "\n" : ",\n").append("{\"caller\":").append(json(caller.getKey()))
-                    .append(",\"terms\":").append(json(List.copyOf(
-                            DocumentSecurityTerms.callerTerms(caller.getValue().identities()))))
-                    .append(",\"reads\":{");
-            int m = 0;
-            for (var decision : decisions.get(caller.getKey()).entrySet()) {
-                callerJson.append(m++ == 0 ? "" : ",").append(json(decision.getKey())).append(':')
-                        .append(decision.getValue());
-            }
-            callerJson.append("}}");
-        }
-        callerJson.append("\n]\n");
-        Path out = Path.of("build", "acl-opensearch");
-        Files.createDirectories(out);
-        Files.writeString(out.resolve("sharepoint-items.ndjson"), items);
-        Files.writeString(out.resolve("sharepoint-callers.json"), callerJson);
-    }
-
-    /** Mapped recorded items by entity id, the owner each names, the group links, and a Limited Access group. */
-    private record Recorded(Map<String, DocumentSecurity> items, Map<String, String> owners,
-            List<IdentityLink> links, String limitedGroup) {
-    }
-
-    private static Recorded recorded() throws Exception {
-        List<DynamicMessage> records = new ArrayList<>();
-        try (InputStream in = SharePointSecurityMappingTest.class.getClassLoader()
-                .getResourceAsStream("acl/sharepoint-sync-records.binpb")) {
-            DynamicMessage.Builder record = DynamicMessage.newBuilder(entity);
-            while (record.mergeDelimitedFrom(in)) {
-                records.add(record.build());
-                record = DynamicMessage.newBuilder(entity);
-            }
-        }
-        Map<String, DynamicMessage> acls = new LinkedHashMap<>();
-        List<IdentityLink> links = new ArrayList<>();
-        Map<String, String> owners = new LinkedHashMap<>();
-        String limited = null;
-        for (DynamicMessage record : records) {
-            String id = field(record, "entity_id").toString();
-            FieldDescriptor arm = record.getOneofFieldDescriptor(entity.getOneofs().getFirst());
-            Message value = (Message) record.getField(arm);
-            switch (arm.getName()) {
-                case "site_acl" -> {
-                    acls.put(id, (DynamicMessage) value);
-                    for (Object a : (List<?>) value.getField(siteAcl.findFieldByName("assignments"))) {
-                        Message assignment = (Message) a;
-                        Message member = (Message) assignment.getField(
-                                assignment.getDescriptorForType().findFieldByName("member"));
-                        List<?> roles = (List<?>) assignment.getField(
-                                assignment.getDescriptorForType().findFieldByName("roles"));
-                        boolean limitedOnly = roles.stream().map(Message.class::cast).allMatch(r ->
-                                r.getField(r.getDescriptorForType().findFieldByName("name")).toString()
-                                        .contains("Limited Access"));
-                        if (limitedOnly && member.getField(member.getDescriptorForType()
-                                .findFieldByName("principal_type")).toString().endsWith("SHAREPOINT_GROUP")) {
-                            limited = "sharepoint-group:" + siteOf(value) + "/"
-                                    + member.getField(member.getDescriptorForType().findFieldByName("id"));
-                        }
-                    }
-                }
-                case "site_group" -> links.addAll(groupLinks((DynamicMessage) value));
-                case "site_admins" -> links.addAll(IdentityLinks.parseFrom(EdgeMapping.map(
-                        registry.findDescriptorByFullName(adminLinks.getProduceType()), Map.of("admins", (DynamicMessage) value),
-                        adminLinks.getRulesList(), adminLinks.getCelRulesList(), registry, "sharepoint-admins")
-                        .toByteString()).getLinksList());
-                default -> {
-                    FieldDescriptor owner = value.getDescriptorForType().findFieldByName("acl_owner_id");
-                    if (owner != null && !value.getField(owner).toString().isEmpty()) {
-                        owners.put(arm.getName() + ":" + id, value.getField(owner).toString());
-                    }
-                }
-            }
-        }
-        Map<String, DocumentSecurity> items = new LinkedHashMap<>();
-        for (var owner : owners.entrySet()) {
-            DynamicMessage acl = acls.get(owner.getValue());
-            assertThat(acl).as("role assignments named by %s", owner.getKey()).isNotNull();
-            items.put(owner.getKey(), map(acl));
-        }
-        assertThat(limited).as("a group that holds only Limited Access").isNotNull();
-        return new Recorded(items, owners, links, limited);
-    }
-
-    private static Map<String, RepositoryCaller> callers(Recorded recorded, String upn) throws Exception {
-        List<IdentityLink> all = new ArrayList<>(recorded.links());
-        all.addAll(entraLinksOfRecordedUsers());
-        CallerIdentityExpansion expansion = new CallerIdentityExpansion(all);
-        Map<String, RepositoryCaller> callers = new LinkedHashMap<>();
-        callers.put("user-principal-name:" + upn, expansion.expand(caller("user-principal-name:" + upn)));
-        callers.put("user-principal-name:" + upn + " without groups",
-                new CallerIdentityExpansion(entraLinksOfRecordedUsers())
-                        .expand(caller("user-principal-name:" + upn)));
-        callers.put("email:join-proof@example.invalid", expansion.expand(caller("email:join-proof@example.invalid")));
-        callers.put(recorded.limitedGroup() + " member", expansion.expand(caller(recorded.limitedGroup())));
-        return callers;
-    }
-
-    private static List<String> entraUpns() throws IOException {
-        List<String> upns = new ArrayList<>();
-        for (DynamicMessage user : entraUsers()) upns.add(field(user, "user_principal_name").toString());
-        assertThat(upns).isNotEmpty();
-        return upns;
-    }
-
-    private static List<IdentityLink> entraLinksOfRecordedUsers() throws Exception {
-        List<IdentityLink> out = new ArrayList<>();
-        for (DynamicMessage user : entraUsers()) {
-            out.addAll(IdentityLinks.parseFrom(EdgeMapping.map(
-                    registry.findDescriptorByFullName(entraLinks.getProduceType()), Map.of("user", user),
-                    entraLinks.getRulesList(), entraLinks.getCelRulesList(), registry, "entra-identity")
-                    .toByteString()).getLinksList());
-        }
-        return out;
-    }
-
-    private static List<DynamicMessage> entraUsers() throws IOException {
-        Descriptor graphUser = registry.findDescriptorByFullName("ai.pipestream.microsoft.v1.GraphUser");
-        List<DynamicMessage> users = new ArrayList<>();
-        try (InputStream in = SharePointSecurityMappingTest.class.getClassLoader()
-                .getResourceAsStream("acl/entra-users.binpb")) {
-            DynamicMessage.Builder user = DynamicMessage.newBuilder(graphUser);
-            while (user.mergeDelimitedFrom(in)) {
-                users.add(user.build());
-                user = DynamicMessage.newBuilder(graphUser);
-            }
-        }
-        return users;
-    }
-
-    private static String siteOf(Message acl) {
-        Message securable = (Message) acl.getField(siteAcl.findFieldByName("securable"));
-        FieldDescriptor arm = securable.getOneofFieldDescriptor(
-                securable.getDescriptorForType().getOneofs().getFirst());
-        Object value = securable.getField(arm);
-        if (value instanceof Message ref) {
-            return ref.getField(ref.getDescriptorForType().findFieldByName("site_id")).toString();
-        }
-        return value.toString();
-    }
-
-    private static List<IdentityLink> groupLinks(DynamicMessage group) throws Exception {
-        return IdentityLinks.parseFrom(EdgeMapping.map(registry.findDescriptorByFullName(links.getProduceType()),
-                Map.of("group", group), links.getRulesList(), links.getCelRulesList(), registry,
-                "sharepoint-identity").toByteString()).getLinksList();
-    }
-
     private static DocumentSecurity map(DynamicMessage acl) throws Exception {
-        return DocumentSecurity.parseFrom(EdgeMapping.map(registry.findDescriptorByFullName(edge.getProduceType()),
-                Map.of("acl", acl), edge.getRulesList(), edge.getCelRulesList(), registry, "sharepoint-acl")
-                .toByteString());
-    }
-
-    private static DynamicMessage acl(String text) throws TextFormat.ParseException {
-        return message("ai.pipestream.microsoft.v1.SiteAcl", text);
-    }
-
-    private static DynamicMessage message(String type, String text) throws TextFormat.ParseException {
-        DynamicMessage.Builder builder = DynamicMessage.newBuilder(registry.findDescriptorByFullName(type));
-        TextFormat.merge(text, builder);
-        return builder.build();
-    }
-
-    private static boolean allows(RepositoryCaller caller, DocumentSecurity security) {
-        return DocumentAccessPolicy.allows(caller, ACCOUNT, security, List.of(), Access.ACCESS_READ);
-    }
-
-    private static boolean reads(DocumentSecurity security, String... identities) {
-        return allows(caller(identities), security);
-    }
-
-    private static RepositoryCaller caller(String... identities) {
-        Set<Principal> principals = java.util.Arrays.stream(identities).map(identity -> {
-            int colon = identity.indexOf(':');
-            return Principal.newBuilder().setIdentityType(identity.substring(0, colon))
-                    .setIdentity(identity.substring(colon + 1)).build();
-        }).collect(Collectors.toSet());
-        return new RepositoryCaller("reader", false, Set.of(ACCOUNT), principals);
-    }
-
-    private static Object field(DynamicMessage message, String name) {
-        return message.getField(message.getDescriptorForType().findFieldByName(name));
-    }
-
-    private static String json(String value) {
-        StringBuilder out = new StringBuilder("\"");
-        for (char c : value.toCharArray()) {
-            switch (c) {
-                case '"' -> out.append("\\\"");
-                case '\\' -> out.append("\\\\");
-                default -> {
-                    if (c < 0x20) out.append(String.format("\\u%04x", (int) c));
-                    else out.append(c);
-                }
-            }
-        }
-        return out.append('"').toString();
-    }
-
-    private static String json(List<String> values) {
-        return values.stream().map(SharePointSecurityMappingTest::json).collect(Collectors.joining(",", "[", "]"));
-    }
-
-    private static TypedEdge edge(String name) throws IOException {
-        TypedEdge.Builder builder = TypedEdge.newBuilder();
-        try (InputStream in = SharePointSecurityMappingTest.class.getClassLoader().getResourceAsStream(name)) {
-            if (in == null) throw new IOException("missing resource " + name);
-            TextFormat.merge(new String(in.readAllBytes(), StandardCharsets.UTF_8), builder);
-        }
-        return builder.build();
+        return mapSecurity(registry, edge, Map.of("acl", acl), "sharepoint-acl");
     }
 }

@@ -31,7 +31,8 @@ but blank text value, an out-of-range or non-integer number, and a
 non-strict-flag boolean all fail fast naming the variable. The console
 sign-in variables (`PROTOMOLT_CONSOLE_*`) are read by `OidcConsoleSettings`
 when the HTTP port is on: all five or none, and a subset fails the boot
-naming the missing ones.
+naming the missing ones. `IdentityLinkFile.fromEnvironment` reads
+`PROTOMOLT_IDENTITY_LINKS` in `RepoServiceMain` and `RepoServiceModule`.
 
 | Variable | Default | Accepted |
 |---|---|---|
@@ -71,6 +72,7 @@ naming the missing ones.
 | `PROTOMOLT_CONSOLE_OIDC_CLIENT_SECRET` | required with the issuer | text |
 | `PROTOMOLT_CONSOLE_OIDC_REDIRECT_URI` | required with the issuer | the host's `/console/session/callback` as the provider reaches it, registered at the provider exactly |
 | `PROTOMOLT_CONSOLE_SESSION_TTL` | required with the issuer | ISO-8601 duration, one second to seven days (`PT8H`) |
+| `PROTOMOLT_IDENTITY_LINKS` | unset = no caller identity expansion | path to a regular file (up to 64 MiB and 500,000 entries) of length-delimited `IdentityLink` protobuf messages; trimmed, blank or unreadable/malformed files fail startup, and runtime changes reload when file metadata stabilizes |
 
 Valkey is the preferred Redis-compatible server, selected explicitly. S3 stays the
 default authoritative streaming store; the bounded Valkey/Redis adapter does not

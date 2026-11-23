@@ -64,7 +64,7 @@ class RepoCallerBindingsTest {
 
         var alice = AuthenticatedCaller.unbound(Caller.scoped("alice", Set.of()));
         assertThat(bindings.bind(alice).identities()).extracting(Principal::getIdentityType)
-                .containsExactly("user-principal-name", "atlassian-account");
+                .containsExactlyInAnyOrder("user-principal-name", "atlassian-account");
         assertThat(bindings.bind(alice).accountIds()).containsExactly("acct-1");
 
         links.set(List.of(link(upn, account), link(account, group)));

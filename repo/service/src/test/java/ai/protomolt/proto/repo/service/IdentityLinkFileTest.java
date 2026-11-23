@@ -8,6 +8,7 @@ import java.io.UncheckedIOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.attribute.FileTime;
+import java.time.Instant;
 import java.util.Map;
 import java.util.Set;
 import org.junit.jupiter.api.Test;
@@ -23,21 +24,52 @@ class IdentityLinkFileTest {
     private static final Principal GROUP = principal("atlassian-group", "g-hr");
 
     @Test
-    void readsDelimitedLinksAndRereadsAChangedFile(@TempDir Path dir) throws Exception {
+    void readsDelimitedLinksAndRereadsAChangedFileWithoutLeakingPath(@TempDir Path dir) throws Exception {
         Path file = dir.resolve("links.binpb");
         write(file, link(UPN, ACCOUNT));
-        var links = IdentityLinkFile.fromEnvironment(Map.of(IdentityLinkFile.ENV_IDENTITY_LINKS, file.toString()))
+        var links = IdentityLinkFile.fromEnvironment(
+                Map.of(IdentityLinkFile.ENV_IDENTITY_LINKS, "  " + file + "  "))
                 .orElseThrow();
         assertThat(links.get().expand(Set.of(UPN))).containsExactly(UPN, ACCOUNT);
         assertThat(links.get()).as("an unchanged file is not reread").isSameAs(links.get());
 
+        // Same byte length, sub-millisecond timestamp update triggers reload when supported by filesystem.
+        Principal altAccount = principal("atlassian-account", "acc-2");
+        write(file, link(UPN, altAccount));
+        Instant base = Files.getLastModifiedTime(file).toInstant();
+        Files.setLastModifiedTime(file, FileTime.from(base.plusSeconds(2)));
+        assertThat(links.get().expand(Set.of(UPN))).containsExactly(UPN, altAccount);
+
         write(file, link(UPN, ACCOUNT), link(ACCOUNT, GROUP));
-        Files.setLastModifiedTime(file, FileTime.fromMillis(Files.getLastModifiedTime(file).toMillis() + 5_000));
+        Files.setLastModifiedTime(file, FileTime.from(base.plusSeconds(5)));
         assertThat(links.get().expand(Set.of(UPN))).containsExactly(UPN, ACCOUNT, GROUP);
 
         Files.delete(file);
-        assertThatThrownBy(links::get).isInstanceOf(UncheckedIOException.class)
-                .hasMessageStartingWith("failed to read the identity links named by PROTOMOLT_IDENTITY_LINKS");
+        assertThatThrownBy(links::get)
+                .isInstanceOf(UncheckedIOException.class)
+                .hasMessage("failed to read the identity links named by PROTOMOLT_IDENTITY_LINKS")
+                .satisfies(err -> assertThat(err.getMessage()).doesNotContain(file.toString()));
+    }
+
+    @Test
+    void enforcesByteLimitLinkCountLimitAndRegularFileRequirement(@TempDir Path dir) throws Exception {
+        Path file = dir.resolve("bounded.binpb");
+        write(file, link(UPN, ACCOUNT), link(ACCOUNT, GROUP));
+
+        assertThatThrownBy(() -> new IdentityLinkFile(file, 4, 10))
+                .isInstanceOf(UncheckedIOException.class)
+                .hasMessage("failed to read the identity links named by PROTOMOLT_IDENTITY_LINKS");
+        assertThatThrownBy(() -> new IdentityLinkFile(file, 4096, 1))
+                .isInstanceOf(UncheckedIOException.class)
+                .hasMessage("failed to read the identity links named by PROTOMOLT_IDENTITY_LINKS");
+        assertThatThrownBy(() -> new IdentityLinkFile(dir, 4096, 10))
+                .isInstanceOf(UncheckedIOException.class)
+                .hasMessage("failed to read the identity links named by PROTOMOLT_IDENTITY_LINKS");
+
+        Files.write(file, new byte[]{0x05, 0x01});
+        assertThatThrownBy(() -> new IdentityLinkFile(file))
+                .isInstanceOf(UncheckedIOException.class)
+                .hasMessage("failed to read the identity links named by PROTOMOLT_IDENTITY_LINKS");
     }
 
     @Test
@@ -51,7 +83,9 @@ class IdentityLinkFileTest {
 
     private static void write(Path file, IdentityLink... links) throws IOException {
         var out = new ByteArrayOutputStream();
-        for (IdentityLink link : links) link.writeDelimitedTo(out);
+        for (IdentityLink link : links) {
+            link.writeDelimitedTo(out);
+        }
         Files.write(file, out.toByteArray());
     }
 

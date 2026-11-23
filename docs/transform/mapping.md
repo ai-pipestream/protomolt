@@ -110,9 +110,9 @@ view-restricted owner becomes one `required_rule_sets` entry. A second
 config (`confluence-identity-links.textproto`) turns Sync's users and group
 memberships into `IdentityLink`s from an `email` identity, and a third
 (`entra-identity-links.textproto`) produces `IdentityLinks` linking each
-Entra user principal name to every address of the user: its mail (or the
-user principal name when it has no mail), its other mails and its SMTP proxy
-addresses.
+enabled Entra user principal name to its verified directory addresses: its mail
+(or the user principal name when it has no mail) and its SMTP proxy addresses
+(excluding unverified `other_mails` contact entries).
 `confluence-access-class-links.textproto` links each Sync user record to the
 access classes its Confluence operations put it in (`use` on `application`
 to ALL_LICENSED_USERS, `administer` to ALL_PRODUCT_ADMINS).

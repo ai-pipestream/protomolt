@@ -5,15 +5,19 @@ import ai.protomolt.proto.repo.v1.AccessRule;
 import ai.protomolt.proto.repo.v1.AccessRuleSet;
 import ai.protomolt.proto.repo.v1.DocumentSecurity;
 import ai.protomolt.proto.repo.v1.Principal;
+import com.google.protobuf.UnknownFieldSet;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
-import java.util.LinkedHashSet;
+import java.util.Collections;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -22,6 +26,10 @@ class DocumentSecurityTermsTest {
 
     private static AccessRule rule(String type, String identity, Access access) {
         return AccessRule.newBuilder().setIdentityType(type).setIdentity(identity).setAccess(access).build();
+    }
+
+    private static Principal principal(String type, String identity) {
+        return Principal.newBuilder().setIdentityType(type).setIdentity(identity).build();
     }
 
     private static final DocumentSecurity SECURITY = DocumentSecurity.newBuilder()
@@ -56,8 +64,7 @@ class DocumentSecurityTermsTest {
             for (int i = 0; i < pool.size(); i++) {
                 if ((mask & 1 << i) != 0) {
                     String[] parts = pool.get(i).split(":", 2);
-                    identities.add(Principal.newBuilder().setIdentityType(parts[0])
-                            .setIdentity(parts[1].toUpperCase(java.util.Locale.ROOT)).build());
+                    identities.add(principal(parts[0], parts[1].toUpperCase(Locale.ROOT)));
                 }
             }
             var caller = new RepositoryCaller("reader", false, Set.of("acct"), identities);
@@ -65,6 +72,59 @@ class DocumentSecurityTermsTest {
                     .as("identities %s", identities)
                     .isEqualTo(DocumentAccessPolicy.allows(caller, "acct", SECURITY, List.of(), Access.ACCESS_READ));
         }
+    }
+
+    @Test
+    void colonsAndPercentsInIdentityTypesNeverCollideAcrossBoundaries() {
+        var security = DocumentSecurity.newBuilder()
+                .addPermissions(rule("a", "b:c", Access.ACCESS_READ))
+                .addPermissions(rule("a%3ab", "c", Access.ACCESS_DENY))
+                .addRequiredRuleSets(AccessRuleSet.newBuilder()
+                        .setSource("gate:1")
+                        .addRules(rule("urn:custom", "claim:read", Access.ACCESS_READ)))
+                .build();
+        var terms = DocumentSecurityTerms.of(security, List.of());
+
+        assertThat(terms.allow()).containsExactly("a:b:c");
+        assertThat(terms.deny()).containsExactly("a%253ab:c");
+        assertThat(terms.gates().getFirst().allow()).containsExactly("urn%3acustom:claim:read");
+
+        List<Principal> candidates = List.of(
+                principal("a", "b:c"),
+                principal("a:b", "c"),
+                principal("a%3ab", "c"),
+                principal("urn:custom", "claim:read"),
+                principal("urn", "custom:claim:read"));
+        for (int mask = 0; mask < 1 << candidates.size(); mask++) {
+            Set<Principal> identities = new LinkedHashSet<>();
+            for (int i = 0; i < candidates.size(); i++) {
+                if ((mask & 1 << i) != 0) {
+                    identities.add(candidates.get(i));
+                }
+            }
+            var caller = new RepositoryCaller("reader", false, Set.of("acct"), identities);
+            assertThat(terms.reads(DocumentSecurityTerms.callerTerms(identities)))
+                    .as("identities %s", identities)
+                    .isEqualTo(DocumentAccessPolicy.allows(caller, "acct", security, List.of(), Access.ACCESS_READ));
+        }
+    }
+
+    @Test
+    void callerTermsRejectsNullBlankOrUnknownFieldPrincipals() {
+        UnknownFieldSet unknown = UnknownFieldSet.newBuilder()
+                .addField(77, UnknownFieldSet.Field.newBuilder().addVarint(1L).build())
+                .build();
+        assertThatThrownBy(() -> DocumentSecurityTerms.callerTerms(null))
+                .isInstanceOf(NullPointerException.class);
+        assertThatThrownBy(() -> DocumentSecurityTerms.callerTerms(Collections.singleton((Principal) null)))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> DocumentSecurityTerms.callerTerms(Set.of(principal("", "acc-1"))))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> DocumentSecurityTerms.callerTerms(Set.of(principal("email", " "))))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> DocumentSecurityTerms.callerTerms(
+                Set.of(principal("email", "a@b.c").toBuilder().setUnknownFields(unknown).build())))
+                .isInstanceOf(IllegalArgumentException.class);
     }
 
     @Test
@@ -82,7 +142,7 @@ class DocumentSecurityTermsTest {
     }
 
     @Test
-    void writesTheExhaustiveSearchFixture() throws Exception {
+    void writesTheExhaustiveSearchFixture(@TempDir Path out) throws Exception {
         Map<String, DocumentSecurity> documents = new LinkedHashMap<>();
         documents.put("exhaustive:gated", SECURITY);
         documents.put("exhaustive:ungated", SECURITY.toBuilder().clearRequiredRuleSets().build());
@@ -117,7 +177,7 @@ class DocumentSecurityTermsTest {
             for (int i = 0; i < pool.size(); i++) {
                 if ((mask & 1 << i) != 0) {
                     String[] parts = pool.get(i).split(":", 2);
-                    identities.add(Principal.newBuilder().setIdentityType(parts[0]).setIdentity(parts[1]).build());
+                    identities.add(principal(parts[0], parts[1]));
                     names.add(pool.get(i));
                 }
             }
@@ -139,10 +199,12 @@ class DocumentSecurityTermsTest {
         }
         callers.append("\n]\n");
         assertThat(seen).containsExactlyInAnyOrder(true, false);
-        Path out = Path.of("build", "acl-opensearch");
-        Files.createDirectories(out);
-        Files.writeString(out.resolve("exhaustive-items.ndjson"), items);
-        Files.writeString(out.resolve("exhaustive-callers.json"), callers);
+        Path itemsFile = out.resolve("exhaustive-items.ndjson");
+        Path callersFile = out.resolve("exhaustive-callers.json");
+        Files.writeString(itemsFile, items);
+        Files.writeString(callersFile, callers);
+        assertThat(Files.readAllLines(itemsFile)).hasSize(documents.size());
+        assertThat(Files.readString(callersFile)).contains("\"mask-0\"");
     }
 
     private static String json(String value) {

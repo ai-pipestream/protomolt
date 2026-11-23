@@ -279,12 +279,16 @@ final class RawIngests {
         return value == null || value.isBlank() ? null : value;
     }
 
+    private static final String SERVICE_IDENTITY_TYPE = "service";
+
     /**
      * Adds read+write ACL rules for the configured pipeline step writers to a
      * created document's permissions and to each of its required rule sets, so
      * a credential-bound step save (the parse coordinator) passes the mandatory
-     * document write check under its writer grant (requirements §3, W1). A rule
-     * the caller already named is left alone.
+     * document write check under its writer grant (requirements §3, W1). An
+     * explicit {@code ACCESS_DENY} for a writer in permissions or any required
+     * rule set is respected and never overridden; missing read or write grants
+     * are added independently without duplicating existing grants.
      */
     private Document withStepWriters(Document document) {
         return withStepWriters(document, stepWriters);
@@ -300,14 +304,21 @@ final class RawIngests {
         var updated = security.toBuilder();
         boolean changed = false;
         for (String writer : stepWriters) {
-            if (!namesWriter(security.getPermissionsList(), writer)) {
-                updated.addAllPermissions(writerRules(writer));
+            if (isDeniedWriter(security, writer)) {
+                continue;
+            }
+            java.util.List<ai.protomolt.proto.repo.v1.AccessRule> missingPermissions =
+                    missingWriterRules(updated.getPermissionsList(), writer);
+            if (!missingPermissions.isEmpty()) {
+                updated.addAllPermissions(missingPermissions);
                 changed = true;
             }
-            for (int i = 0; i < security.getRequiredRuleSetsCount(); i++) {
-                if (!namesWriter(updated.getRequiredRuleSets(i).getRulesList(), writer)) {
+            for (int i = 0; i < updated.getRequiredRuleSetsCount(); i++) {
+                java.util.List<ai.protomolt.proto.repo.v1.AccessRule> missingSetRules =
+                        missingWriterRules(updated.getRequiredRuleSets(i).getRulesList(), writer);
+                if (!missingSetRules.isEmpty()) {
                     updated.setRequiredRuleSets(i, updated.getRequiredRuleSets(i).toBuilder()
-                            .addAllRules(writerRules(writer)));
+                            .addAllRules(missingSetRules));
                     changed = true;
                 }
             }
@@ -320,17 +331,47 @@ final class RawIngests {
                 .build();
     }
 
-    private static boolean namesWriter(java.util.List<ai.protomolt.proto.repo.v1.AccessRule> rules, String writer) {
-        return rules.stream().anyMatch(rule ->
-                rule.getIdentityType().equalsIgnoreCase("service") && rule.getIdentity().equalsIgnoreCase(writer));
+    private static boolean isDeniedWriter(ai.protomolt.proto.repo.v1.DocumentSecurity security, String writer) {
+        if (hasWriterAccess(security.getPermissionsList(), writer, ai.protomolt.proto.repo.v1.Access.ACCESS_DENY)) {
+            return true;
+        }
+        for (var set : security.getRequiredRuleSetsList()) {
+            if (hasWriterAccess(set.getRulesList(), writer, ai.protomolt.proto.repo.v1.Access.ACCESS_DENY)) {
+                return true;
+            }
+        }
+        return false;
     }
 
-    private static java.util.List<ai.protomolt.proto.repo.v1.AccessRule> writerRules(String writer) {
-        return java.util.List.of(
-                ai.protomolt.proto.repo.v1.AccessRule.newBuilder().setIdentityType("service").setIdentity(writer)
-                        .setAccess(ai.protomolt.proto.repo.v1.Access.ACCESS_READ).build(),
-                ai.protomolt.proto.repo.v1.AccessRule.newBuilder().setIdentityType("service").setIdentity(writer)
-                        .setAccess(ai.protomolt.proto.repo.v1.Access.ACCESS_WRITE).build());
+    private static boolean hasWriterAccess(
+            java.util.List<ai.protomolt.proto.repo.v1.AccessRule> rules,
+            String writer,
+            ai.protomolt.proto.repo.v1.Access access) {
+        return rules.stream().anyMatch(rule ->
+                rule.getIdentityType().equalsIgnoreCase(SERVICE_IDENTITY_TYPE)
+                        && rule.getIdentity().equalsIgnoreCase(writer)
+                        && rule.getAccess() == access);
+    }
+
+    private static java.util.List<ai.protomolt.proto.repo.v1.AccessRule> missingWriterRules(
+            java.util.List<ai.protomolt.proto.repo.v1.AccessRule> existing, String writer) {
+        var missing = new java.util.ArrayList<ai.protomolt.proto.repo.v1.AccessRule>(2);
+        if (!hasWriterAccess(existing, writer, ai.protomolt.proto.repo.v1.Access.ACCESS_READ)) {
+            missing.add(writerRule(writer, ai.protomolt.proto.repo.v1.Access.ACCESS_READ));
+        }
+        if (!hasWriterAccess(existing, writer, ai.protomolt.proto.repo.v1.Access.ACCESS_WRITE)) {
+            missing.add(writerRule(writer, ai.protomolt.proto.repo.v1.Access.ACCESS_WRITE));
+        }
+        return missing;
+    }
+
+    private static ai.protomolt.proto.repo.v1.AccessRule writerRule(
+            String writer, ai.protomolt.proto.repo.v1.Access access) {
+        return ai.protomolt.proto.repo.v1.AccessRule.newBuilder()
+                .setIdentityType(SERVICE_IDENTITY_TYPE)
+                .setIdentity(writer)
+                .setAccess(access)
+                .build();
     }
 
     static byte[] sha256(byte[] data) {

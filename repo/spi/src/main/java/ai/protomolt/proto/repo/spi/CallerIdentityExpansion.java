@@ -4,6 +4,7 @@ import ai.protomolt.proto.repo.v1.IdentityLink;
 import ai.protomolt.proto.repo.v1.Principal;
 
 import java.util.ArrayDeque;
+import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Deque;
 import java.util.HashMap;
@@ -22,20 +23,27 @@ import java.util.Set;
  */
 public final class CallerIdentityExpansion {
 
+    private static final String KEY_SEPARATOR = "\u0000";
+    private static final String PUBLIC_IDENTITY = "public";
+
     private final Map<String, List<Principal>> next;
 
     /**
      * Creates an expansion over {@code links}.
      *
-     * @param links the identity links; blank identities are rejected
+     * @param links the identity links; null, blank, malformed, or unknown-field principals are rejected
      */
     public CallerIdentityExpansion(Collection<IdentityLink> links) {
         Objects.requireNonNull(links, "links");
         Map<String, List<Principal>> byFrom = new HashMap<>();
         for (IdentityLink link : links) {
-            requireValid(link.getFrom());
-            requireValid(link.getTo());
-            byFrom.computeIfAbsent(key(link.getFrom()), k -> new java.util.ArrayList<>()).add(link.getTo());
+            Objects.requireNonNull(link, "link");
+            if (!link.getUnknownFields().asMap().isEmpty()) {
+                throw new IllegalArgumentException("Identity link contains unknown fields");
+            }
+            requireValidLinkPrincipal(link.getFrom());
+            requireValidLinkPrincipal(link.getTo());
+            byFrom.computeIfAbsent(key(link.getFrom()), k -> new ArrayList<>()).add(link.getTo());
         }
         this.next = byFrom;
     }
@@ -48,12 +56,16 @@ public final class CallerIdentityExpansion {
      */
     public Set<Principal> expand(Set<Principal> identities) {
         Objects.requireNonNull(identities, "identities");
+        for (Principal identity : identities) {
+            requireValidCallerPrincipal(identity);
+        }
         Map<String, Principal> seen = new LinkedHashMap<>();
         Deque<Principal> pending = new ArrayDeque<>(identities);
         while (!pending.isEmpty()) {
             Principal identity = pending.removeFirst();
-            if (seen.putIfAbsent(key(identity), identity) == null) {
-                pending.addAll(next.getOrDefault(key(identity), List.of()));
+            String identityKey = key(identity);
+            if (seen.putIfAbsent(identityKey, identity) == null) {
+                pending.addAll(next.getOrDefault(identityKey, List.of()));
             }
         }
         return new LinkedHashSet<>(seen.values());
@@ -75,12 +87,21 @@ public final class CallerIdentityExpansion {
     }
 
     private static String key(Principal identity) {
-        return identity.getIdentityType().toLowerCase(Locale.ROOT) + "\u0000"
+        return identity.getIdentityType().toLowerCase(Locale.ROOT) + KEY_SEPARATOR
                 + identity.getIdentity().toLowerCase(Locale.ROOT);
     }
 
-    private static void requireValid(Principal identity) {
-        if (identity.getIdentity().isBlank() || identity.getIdentityType().isBlank()) {
+    private static void requireValidLinkPrincipal(Principal identity) {
+        requireValidCallerPrincipal(identity);
+        if (identity.getIdentityType().equalsIgnoreCase(PUBLIC_IDENTITY)
+                && !identity.getIdentity().equalsIgnoreCase(PUBLIC_IDENTITY)) {
+            throw new IllegalArgumentException("Public identity link must use identity 'public'");
+        }
+    }
+
+    private static void requireValidCallerPrincipal(Principal identity) {
+        if (identity == null || identity.getIdentity().isBlank() || identity.getIdentityType().isBlank()
+                || !identity.getUnknownFields().asMap().isEmpty()) {
             throw new IllegalArgumentException("Identity link needs an identity and an identity type");
         }
     }

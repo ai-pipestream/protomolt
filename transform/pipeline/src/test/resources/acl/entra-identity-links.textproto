@@ -1,17 +1,18 @@
 # proto-file: ai/protomolt/proto/grpc/workflow/v1/grpc_workflow.proto
 # proto-message: ai.protomolt.proto.grpc.workflow.v1.TypedEdge
 #
-# Maps one Entra user grpc-microsoft reads (ai.pipestream.microsoft.v1.GraphUser,
-# source `user`) into identity links for caller expansion: the user principal
-# name links to each of the user's email addresses, its mail (or the user
-# principal name when it has no mail), its other mails and the SMTP addresses
-# among its proxy addresses, and to its Entra object id (`entra-user`), which
-# group memberships link from. A source that links its accounts from `email`
-# joins on any of them.
+# Maps one enabled Entra user grpc-microsoft reads
+# (ai.pipestream.microsoft.v1.GraphUser, source `user`) into identity links for
+# caller expansion: the user principal name links to each verified tenant email
+# address — its mail (or the user principal name when it has no mail) and the
+# SMTP addresses among its proxy addresses — plus its Entra object id
+# (`entra-user`), which group memberships link from. Unverified contact
+# addresses in `other_mails` and disabled accounts (`account_enabled == false`)
+# never emit authorization links.
 sources: "user"
 produce_type: "ai.protomolt.proto.repo.v1.IdentityLinks"
 cel_rules {
-  filter: "user.user_principal_name != ''"
-  selector: "[user.mail != '' ? user.mail : user.user_principal_name].map(a, ai.protomolt.proto.repo.v1.IdentityLink{from: ai.protomolt.proto.repo.v1.Principal{identity_type: 'user-principal-name', identity: user.user_principal_name}, to: ai.protomolt.proto.repo.v1.Principal{identity_type: 'email', identity: a}}) + user.other_mails.filter(a, a != '').map(a, ai.protomolt.proto.repo.v1.IdentityLink{from: ai.protomolt.proto.repo.v1.Principal{identity_type: 'user-principal-name', identity: user.user_principal_name}, to: ai.protomolt.proto.repo.v1.Principal{identity_type: 'email', identity: a}}) + user.proxy_addresses.filter(p, p.lowerAscii().startsWith('smtp:') && p.size() > 5).map(p, ai.protomolt.proto.repo.v1.IdentityLink{from: ai.protomolt.proto.repo.v1.Principal{identity_type: 'user-principal-name', identity: user.user_principal_name}, to: ai.protomolt.proto.repo.v1.Principal{identity_type: 'email', identity: p.substring(5)}}) + [user.id].filter(i, i != '').map(i, ai.protomolt.proto.repo.v1.IdentityLink{from: ai.protomolt.proto.repo.v1.Principal{identity_type: 'user-principal-name', identity: user.user_principal_name}, to: ai.protomolt.proto.repo.v1.Principal{identity_type: 'entra-user', identity: i}})"
+  filter: "user.user_principal_name != '' && (!has(user.account_enabled) || user.account_enabled)"
+  selector: "[user.mail != '' ? user.mail : user.user_principal_name].map(a, ai.protomolt.proto.repo.v1.IdentityLink{from: ai.protomolt.proto.repo.v1.Principal{identity_type: 'user-principal-name', identity: user.user_principal_name}, to: ai.protomolt.proto.repo.v1.Principal{identity_type: 'email', identity: a}}) + user.proxy_addresses.filter(p, p.lowerAscii().startsWith('smtp:') && p.size() > 5).map(p, ai.protomolt.proto.repo.v1.IdentityLink{from: ai.protomolt.proto.repo.v1.Principal{identity_type: 'user-principal-name', identity: user.user_principal_name}, to: ai.protomolt.proto.repo.v1.Principal{identity_type: 'email', identity: p.substring(5)}}) + [user.id].filter(i, i != '').map(i, ai.protomolt.proto.repo.v1.IdentityLink{from: ai.protomolt.proto.repo.v1.Principal{identity_type: 'user-principal-name', identity: user.user_principal_name}, to: ai.protomolt.proto.repo.v1.Principal{identity_type: 'entra-user', identity: i}})"
   target: "links"
 }
