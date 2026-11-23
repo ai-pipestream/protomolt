@@ -160,6 +160,14 @@ final class ExternalLedgerStore {
             if (next.equals(base) && existing.isPresent()) {
                 return next;
             }
+            if (base.hasPurgeWithSourceStartedAt()) {
+                // Nothing was outstanding when the purge was decided, and the ledger is about to
+                // go. A change recorded now would be purged with it, unseen.
+                throw Status.FAILED_PRECONDITION
+                        .withDescription("External publication ledger is being purged with its source; "
+                                + "nothing more is recorded on it")
+                        .asRuntimeException();
+            }
             ValidationResult valid = VALIDATOR.validate(next);
             if (!valid.valid()) {
                 throw Status.INTERNAL
@@ -199,15 +207,14 @@ final class ExternalLedgerStore {
                         .setOwner(saveOwner)
                         .build());
                 return next;
-            } catch (StatusRuntimeException conflict) {
-                Status.Code code = conflict.getStatus().getCode();
-                if (code == Status.Code.FAILED_PRECONDITION
-                        || code == Status.Code.ABORTED
-                        || code == Status.Code.ALREADY_EXISTS) {
-                    lastConflict = conflict;
+            } catch (StatusRuntimeException refused) {
+                // Only a stale expected revision is a lost race worth retrying; the repository
+                // reports it as ABORTED. Any other refusal is the answer and is passed on as is.
+                if (refused.getStatus().getCode() == Status.Code.ABORTED) {
+                    lastConflict = refused;
                     continue;
                 }
-                throw conflict;
+                throw refused;
             }
         }
         throw Status.ABORTED
@@ -225,7 +232,8 @@ final class ExternalLedgerStore {
      *       they may hold a grant the source has since revoked.</li>
      *   <li>Rules from the source's live revision are written exactly, even with no explicit
      *       grant: that is a revocation, not an absence of rules.</li>
-     *   <li>With no live rules to give, the ledger keeps its own.</li>
+     *   <li>With no live rules to give, the ledger keeps its own. A ledger that does not exist
+     *       yet has none, so callers that may create one pass live rules.</li>
      * </ul>
      */
     static DocumentSecurity securityToSave(LedgerAccess access, Optional<LoadedLedger> existing) {
@@ -476,14 +484,13 @@ final class ExternalLedgerStore {
     }
 
     /**
-     * The operation after its provider refused attempt {@code attemptNumber}. A refused first
-     * attempt fails the operation. A refused retry does not: see below. An operation already
+     * The operation after attempt {@code attemptNumber} was refused, by the provider or here
+     * before it was sent. A refused first attempt fails the operation. A refused retry does not: see below. An operation already
      * settled is returned unchanged.
      */
-    static ExternalPublicationOperationRecord refusedByProvider(
+    static ExternalPublicationOperationRecord withRefusedAttempt(
             ExternalPublicationOperationRecord op,
             int attemptNumber,
-            Timestamp fallbackStartedAt,
             Timestamp finishedAt,
             String diagnosticCode,
             String diagnosticMessage) {

@@ -396,6 +396,14 @@ class ExternalPublicationContractTest {
                 purgePreparation("purge-1").toBuilder().setRulesFromSourceRevision(0L)).build(), false);
         checkBothDialects(ledger.toBuilder().setPurgePreparation(
                 purgePreparation("purge-1").toBuilder().clearPreparedAt()).build(), false);
+
+        // Only a purged ledger with nothing current may be marked as being purged with its source.
+        checkBothDialects(purged.toBuilder().setPurgeWithSourceStartedAt(TIME).build(), true);
+        checkBothDialects(ledger.toBuilder().setPurgeWithSourceStartedAt(TIME).build(), false);
+        checkBothDialects(purged.toBuilder().setPurgeWithSourceStartedAt(TIME)
+                .setCurrentLink(confirmedLink().toBuilder().setProjectionLifecycle(
+                        ExternalProjectionLifecycle.EXTERNAL_PROJECTION_LIFECYCLE_DELETION_PENDING))
+                .build(), false);
     }
 
     private static ExternalPurgePreparation purgePreparation(String purgeId) {

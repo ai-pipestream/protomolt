@@ -255,13 +255,8 @@ message ExternalSystemBinding {
       enum: {defined_only: true, not_in: [0]}
     }
   ];
-  // Field 13 held a config-lane version that could only be known before the canonical
-  // revision was saved. The config-lane mirror is now written after the save, one
-  // immutable document per binding revision, so the binding does not record it.
-  reserved 13;
-  reserved "config_lane_version";
   // Non-secret operator labels; forbidden from holding credentials or bearer tokens.
-  map<string, string> labels = 14 [
+  map<string, string> labels = 13 [
     (ai.protomolt.proto.validate.v1.field).map = {
       max_pairs: 64
       keys: {string: {min_len: 1, max_len: 128, pattern: "^[A-Za-z0-9][A-Za-z0-9._-]*$"}}
@@ -274,20 +269,20 @@ message ExternalSystemBinding {
     }
   ];
   // Creation timestamp of this binding revision.
-  google.protobuf.Timestamp created_at = 15 [
+  google.protobuf.Timestamp created_at = 14 [
     (ai.protomolt.proto.validate.v1.field).required = true,
     (buf.validate.field).required = true
   ];
   // Required when lifecycle is RETIRED; forbidden when ACTIVE.
-  optional string retired_reason = 16 [
+  optional string retired_reason = 15 [
     (ai.protomolt.proto.validate.v1.field).string = {min_len: 1, max_len: 512, pattern: ".*\\S.*"},
     (buf.validate.field).string = {min_len: 1, max_len: 512, pattern: ".*\\S.*"}
   ];
   // Timestamp when this binding revision entered RETIRED; forbidden when ACTIVE.
-  optional google.protobuf.Timestamp retired_at = 17;
+  optional google.protobuf.Timestamp retired_at = 16;
   // Proof every publish receipt through this binding must carry. A receipt
   // without it never confirms a publication or activates a link.
-  ExternalIdentityProof required_identity_proof = 18 [
+  ExternalIdentityProof required_identity_proof = 17 [
     (ai.protomolt.proto.validate.v1.field) = {
       required: true
       enum: {defined_only: true, not_in: [0]}
@@ -1299,6 +1294,16 @@ message ExternalPublicationLedger {
     message: "source_purged requires a purge_preparation naming last_purge_id"
     expression: "!this.source_purged || (has(this.purge_preparation) && this.purge_preparation.purge_id == this.last_purge_id)"
   };
+  option (ai.protomolt.proto.validate.v1.message).cel = {
+    id: "ledger-purge-with-source-started"
+    message: "purge_with_source_started_at requires source_purged and no current_link"
+    expression: "!has(this.purge_with_source_started_at) || (this.source_purged && !has(this.current_link))"
+  };
+  option (buf.validate.message).cel = {
+    id: "ledger-purge-with-source-started"
+    message: "purge_with_source_started_at requires source_purged and no current_link"
+    expression: "!has(this.purge_with_source_started_at) || (this.source_purged && !has(this.current_link))"
+  };
 
   // Owning repository account ID.
   string account_id = 1 [
@@ -1381,6 +1386,10 @@ message ExternalPublicationLedger {
   // The purge this ledger was prepared for, set while the source still existed. A purge is
   // handled only for the purge ID prepared here.
   optional ExternalPurgePreparation purge_preparation = 12;
+  // Set when the ledger itself is about to be purged under PURGE_WITH_SOURCE, by the ledger
+  // update that found nothing outstanding. A ledger carrying it takes no further save, so no
+  // operation can be registered on a ledger that is being removed.
+  optional google.protobuf.Timestamp purge_with_source_started_at = 13;
 }
 
 // Records that a source purge was prepared while the source document still existed: its

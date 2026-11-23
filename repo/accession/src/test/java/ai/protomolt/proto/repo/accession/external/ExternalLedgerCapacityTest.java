@@ -111,8 +111,8 @@ class ExternalLedgerCapacityTest {
                         .setPendingPhase(ExternalPendingPhase.EXTERNAL_PENDING_PHASE_DISPATCHING))
                 .build();
 
-        ExternalPublicationOperationRecord afterRefusal = ExternalLedgerStore.refusedByProvider(
-                lostThenRetried, 2, t0, t0, "ENDPOINT_PERMISSION_DENIED", "token revoked");
+        ExternalPublicationOperationRecord afterRefusal = ExternalLedgerStore.withRefusedAttempt(
+                lostThenRetried, 2, t0, "ENDPOINT_PERMISSION_DENIED", "token revoked");
         // Attempt 1 may have committed at the provider: the operation is still unknown, and
         // reconciliation must still be able to ask.
         assertThat(afterRefusal.getOutcome())
@@ -130,8 +130,8 @@ class ExternalLedgerCapacityTest {
         ExternalPublicationOperationRecord firstAttempt = lostThenRetried.toBuilder()
                 .clearAttempts().addAttempts(lostThenRetried.getAttempts(1).toBuilder()
                         .setAttemptNumber(1)).build();
-        assertThat(ExternalLedgerStore.refusedByProvider(
-                        firstAttempt, 1, t0, t0, "ENDPOINT_PERMISSION_DENIED", "token revoked")
+        assertThat(ExternalLedgerStore.withRefusedAttempt(
+                        firstAttempt, 1, t0, "ENDPOINT_PERMISSION_DENIED", "token revoked")
                 .getOutcome())
                 .isEqualTo(ExternalPublicationOutcome.EXTERNAL_PUBLICATION_OUTCOME_FAILED);
     }

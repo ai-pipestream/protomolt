@@ -339,15 +339,17 @@ final class ExternalReceiptSettlement {
         boolean sourceDeleted = current.getSourcePurged()
                 || (current.hasTombstonedAtSourceRevision()
                         && intent.getSourceRevision() <= current.getTombstonedAtSourceRevision());
-        boolean superseded = current.getHighestFencedSourceRevision() > intent.getSourceRevision()
-                || (current.hasCurrentLink()
-                        && current.getCurrentLink().getSourceRevision() > intent.getSourceRevision())
-                // The same source revision, published since under a newer binding revision:
-                // the older binding's projection arrives late and does not take its place.
-                || (current.hasCurrentLink()
-                        && current.getCurrentLink().getSourceRevision() == intent.getSourceRevision()
-                        && current.getCurrentLink().getBindingRevision()
-                                > intent.getBindingRevision());
+        // Only a confirmed newer projection supersedes this one. A newer publication that is
+        // merely registered raises the fence but may still fail, and then this projection is
+        // the one the provider serves.
+        boolean superseded = current.hasCurrentLink()
+                && (current.getCurrentLink().getSourceRevision() > intent.getSourceRevision()
+                        // The same source revision, published since under a newer binding
+                        // revision: the older binding's projection arrives late and does not
+                        // take its place.
+                        || (current.getCurrentLink().getSourceRevision() == intent.getSourceRevision()
+                                && current.getCurrentLink().getBindingRevision()
+                                        > intent.getBindingRevision()));
 
         ExternalPublicationLedger withOp = replaceOperation(current, confirmedOp);
         ExternalPublicationLedger.Builder ledgerBuilder = withOp.toBuilder();
@@ -367,13 +369,10 @@ final class ExternalReceiptSettlement {
             return ledgerBuilder.build();
         }
         if (superseded) {
-            String retiringOpId = current.hasCurrentLink()
-                    ? current.getCurrentLink().getConfirmedByOperationId()
-                    : op.getOperationId();
             ledgerBuilder.addHistoricalLinks(linkBuilder
                     .setProjectionLifecycle(
                             ExternalProjectionLifecycle.EXTERNAL_PROJECTION_LIFECYCLE_SUPERSEDED)
-                    .setRetiredByOperationId(retiringOpId)
+                    .setRetiredByOperationId(current.getCurrentLink().getConfirmedByOperationId())
                     .build());
             return ledgerBuilder.build();
         }
@@ -531,7 +530,6 @@ final class ExternalReceiptSettlement {
         return true;
     }
 
-    /** One external object: an ID within the dataset and namespace of a binding revision. */
     /**
      * One object in the external system: its ID at one place there. Two binding revisions that
      * point at the same provider, dataset, namespace and endpoint name the same object, as
@@ -547,18 +545,46 @@ final class ExternalReceiptSettlement {
                 target.getEndpointSummary(), link.getExternalObjectId());
     }
 
+    /**
+     * Purges the ledger with its source when the source is purged, every operation on it was
+     * recorded under {@code PURGE_WITH_SOURCE}, and nothing is outstanding.
+     *
+     * <p>The decision is made again inside a ledger update against the ledger as it is then,
+     * and that update marks the ledger {@code purge_with_source_started_at}. A ledger so marked
+     * takes no further save, so an operation registered after the check either lands before
+     * the mark (and the check sees it) or is refused. {@code PurgeDocument} runs only once the
+     * mark is saved; a call that finds the mark already there repeats it.
+     *
+     * @return true when the ledger document was purged
+     */
     boolean maybePurgeLedgerIfEligible(
             NodeAddress ledgerAddr,
             ExternalPublicationLedger ledger,
             ExternalPublicationOperationRecord settledOp) {
         if (!ledger.getSourcePurged()
-                || settledOp.getOutcome() != ExternalPublicationOutcome.EXTERNAL_PUBLICATION_OUTCOME_DELETED
-                || settledOp.getBindingSnapshot().getRetentionPolicy()
-                        != ExternalRetentionPolicy.EXTERNAL_RETENTION_POLICY_PURGE_WITH_SOURCE
-                || !nothingOutstanding(ledger)) {
+                || settledOp.getOutcome() != ExternalPublicationOutcome.EXTERNAL_PUBLICATION_OUTCOME_DELETED) {
             return false;
         }
-        String purgeKey = "ext-ledger-purge:" + ledger.getBindingId() + ":" + ledger.getLastPurgeId();
+        ExternalPublicationLedger marked = ledger;
+        if (!ledger.hasPurgeWithSourceStartedAt()) {
+            if (!eligibleForPurgeWithSource(ledger)) {
+                return false;
+            }
+            Timestamp startedAt = timestamp(clock.instant());
+            marked = ledgers.updateLedgerWithCas(
+                    ledgerAddr,
+                    ledger.getSourceAddress(),
+                    ledger.getBindingId(),
+                    LedgerAccess.keep(),
+                    "ext-ledger-purge-mark:" + ledger.getLastPurgeId() + ":" + UUID.randomUUID(),
+                    current -> current.hasPurgeWithSourceStartedAt() || !eligibleForPurgeWithSource(current)
+                            ? current
+                            : current.toBuilder().setPurgeWithSourceStartedAt(startedAt).build());
+            if (!marked.hasPurgeWithSourceStartedAt()) {
+                return false;
+            }
+        }
+        String purgeKey = "ext-ledger-purge:" + marked.getBindingId() + ":" + marked.getLastPurgeId();
         if (purgeKey.length() > 200) {
             purgeKey = "ext-ledger-purge:" + sha256Hex(
                     purgeKey.getBytes(java.nio.charset.StandardCharsets.UTF_8));
@@ -569,5 +595,24 @@ final class ExternalReceiptSettlement {
                 .setReason("PURGE_WITH_SOURCE retention policy after external deletion settled")
                 .build());
         return true;
+    }
+
+    /**
+     * Whether the ledger may be purged with its source: the source is purged, nothing is
+     * outstanding, and every operation on the ledger was recorded under a binding revision
+     * with {@code PURGE_WITH_SOURCE}. One operation recorded under {@code RETAIN_HISTORY}
+     * keeps the ledger, whichever deletion settles last.
+     */
+    static boolean eligibleForPurgeWithSource(ExternalPublicationLedger ledger) {
+        if (!ledger.getSourcePurged() || ledger.getOperationsCount() == 0) {
+            return false;
+        }
+        for (ExternalPublicationOperationRecord operation : ledger.getOperationsList()) {
+            if (operation.getBindingSnapshot().getRetentionPolicy()
+                    != ExternalRetentionPolicy.EXTERNAL_RETENTION_POLICY_PURGE_WITH_SOURCE) {
+                return false;
+            }
+        }
+        return nothingOutstanding(ledger);
     }
 }

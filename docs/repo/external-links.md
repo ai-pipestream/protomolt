@@ -61,7 +61,7 @@ persist **no** secrets, bearer tokens, URL userinfo, credential query
 parameters, or private key material:
 
 1. Live credentials resolve exclusively at call time via
-   `ProfileCredentialResolver` (`#781`) against the referenced `ServiceProfile`.
+   `ProfileCredentialResolver` against the referenced `ServiceProfile`.
 2. `ExternalPublicationCoordinates` rejects userinfo (`@`), non-HTTP(S) schemes,
    and secret-bearing query parameter names or values (including percent-encoded
    variants such as `%74%6F%6B%65%6E`, `access_token`, `api_key`, `sig`,
@@ -120,7 +120,9 @@ When an endpoint changes or a binding is rotated or retired:
 - Rotating updates the live `ServiceProfile` reference or endpoint summary under
   `binding_revision = N + 1`. Existing `ExternalLink` projections retain their
   immutable `ExternalBindingSnapshot` from revision `N`, so historical links
-  remain interpretable after rotation.
+  remain interpretable after rotation. A rotation keeps the provider and the
+  `retention_policy`; changing either is refused with `FAILED_PRECONDITION`, so
+  every ledger under a binding is kept or purged by one policy.
 - Retiring transitions `lifecycle` to `RETIRED` at `binding_revision = N + 1`.
   New publications against a retired binding fail immediately with
   `FAILED_PRECONDITION`, while historical links, snapshots, and pending
@@ -291,14 +293,19 @@ Ordering invariants:
    - `RETAIN_HISTORY`: retains the ledger with `current_link` cleared and
      non-secret historical receipts preserved for audit.
    - `PURGE_WITH_SOURCE`: invokes `DocumentService.PurgeDocument` on the ledger
-     document once external deletion settles.
+     document once external deletion settles, nothing is outstanding, and every
+     operation on the ledger was recorded under `PURGE_WITH_SOURCE`. That decision
+     is made again inside a ledger update, which sets
+     `purge_with_source_started_at`; a ledger carrying it refuses every further
+     save with `FAILED_PRECONDITION`, so an operation registered concurrently is
+     either seen by the check or refused, never purged unseen.
 6. **Repository and account authorization**: An `ExternalLink` grants neither
    repository access nor external provider access. Every read (`getLedgerView`,
    `getActiveLinks`) and mutation (`publish`, `deleteForTombstone`,
    `preparePurge`, `handlePurge`, `reconcileOperation`) checks caller account membership
    and `DocumentAccessPolicy` permissions against the current source document
-   (falling back to the ledger's retained `DocumentSecurity` ACL when the source
-   is tombstoned or purged). A ledger save writes the live source's rules
+   (the last live revision's rules when the source is tombstoned, the ledger's
+   retained `DocumentSecurity` ACL once it is purged). A ledger save writes the live source's rules
    exactly, even when they hold no explicit grant (that is a revocation), keeps
    the ledger's own rules only when no live rules exist, and keeps the rules a
    purge preparation copied once one is recorded. Cross-account and unauthorized callers receive

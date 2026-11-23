@@ -256,7 +256,8 @@ public final class ExternalBindingStore {
      * Creates revision 1 of a binding or rotates an existing {@code ACTIVE} binding to
      * {@code current_revision + 1}, preserving every prior revision immutably in
      * {@code external-bindings:<accountId>} and mirroring the validated envelope to
-     * {@link ConfigDocumentStore} when configured.
+     * {@link ConfigDocumentStore} when configured. A rotation keeps the provider and the
+     * retention policy of the revision it follows.
      *
      * @param spec binding specification
      * @return the persisted {@link ExternalSystemBinding} revision
@@ -299,6 +300,18 @@ public final class ExternalBindingStore {
                                 "Binding '" + spec.bindingId()
                                         + "' cannot change provider from '" + current.getProvider()
                                         + "' to '" + spec.provider() + "'")
+                        .asRuntimeException();
+            }
+            if (current.getRetentionPolicy() != spec.retentionPolicy()) {
+                // Every ledger under this binding was recorded under the policy it has now. A
+                // later revision with another policy would leave a ledger's fate at purge to
+                // whichever deletion settled last.
+                throw Status.FAILED_PRECONDITION
+                        .withDescription(
+                                "Binding '" + spec.bindingId()
+                                        + "' cannot change retention policy from "
+                                        + current.getRetentionPolicy() + " to "
+                                        + spec.retentionPolicy() + "; create a new binding_id")
                         .asRuntimeException();
             }
             nextRevision = current.getBindingRevision() + 1L;

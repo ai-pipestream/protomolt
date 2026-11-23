@@ -6,7 +6,7 @@ import static ai.protomolt.proto.repo.accession.external.ExternalLedgerStore.fin
 import static ai.protomolt.proto.repo.accession.external.ExternalLedgerStore.isSourceRevisionFenced;
 import static ai.protomolt.proto.repo.accession.external.ExternalLedgerStore.isTerminalOutcome;
 import static ai.protomolt.proto.repo.accession.external.ExternalLedgerStore.optionalCurrentLink;
-import static ai.protomolt.proto.repo.accession.external.ExternalLedgerStore.refusedByProvider;
+import static ai.protomolt.proto.repo.accession.external.ExternalLedgerStore.withRefusedAttempt;
 import static ai.protomolt.proto.repo.accession.external.ExternalLedgerStore.replaceAttempt;
 import static ai.protomolt.proto.repo.accession.external.ExternalLedgerStore.replaceOperation;
 import static ai.protomolt.proto.repo.accession.external.ExternalLedgerStore.sanitizeMessage;
@@ -191,6 +191,39 @@ final class ExternalPublishAttempts {
                 false);
     }
 
+    /**
+     * Fails a registered publication whose first attempt was never sent. The attempt is
+     * recorded as failed with {@code code}; nothing reached the provider, so nothing is owed.
+     *
+     * @throws io.grpc.StatusRuntimeException FAILED_PRECONDITION when the ledger no longer
+     *         records the operation
+     */
+    ExternalPublicationCoordinator.OperationResult failBeforeDispatch(
+            NodeAddress ledgerAddr,
+            LedgerAccess retainedSecurity,
+            String operationId,
+            ExternalPublicationIntent intent,
+            String code,
+            String message) {
+        Timestamp now = timestamp(clock.instant());
+        ExternalPublicationLedger updated = ledgers.updateLedgerWithCas(
+                ledgerAddr,
+                intent.getSourceAddress(),
+                intent.getBindingId(),
+                retainedSecurity,
+                "ext-not-sent:" + operationId + ":" + UUID.randomUUID(),
+                current -> findOperation(current, operationId)
+                        .map(op -> replaceOperation(current, withRefusedAttempt(op, 1, now, code, message)))
+                        .orElse(current));
+        ExternalPublicationOperationRecord op = findOperation(updated, operationId)
+                .orElseThrow(() -> Status.FAILED_PRECONDITION
+                        .withDescription("Operation '" + operationId + "' is no longer recorded: "
+                                + "the source and its ledger were removed before it was sent")
+                        .asRuntimeException());
+        return new ExternalPublicationCoordinator.OperationResult(
+                op, optionalCurrentLink(updated), false, false);
+    }
+
     ExternalPublicationCoordinator.OperationResult executeAndSettlePublishAttempt(
             NodeAddress ledgerAddr,
             LedgerAccess retainedSecurity,
@@ -217,9 +250,9 @@ final class ExternalPublishAttempts {
                     intent.getBindingId(),
                     retainedSecurity,
                     "ext-refused:" + operationId + ":" + attemptNumber + ":" + UUID.randomUUID(),
-                    current -> replaceOperation(current, refusedByProvider(
+                    current -> replaceOperation(current, withRefusedAttempt(
                             findOperation(current, operationId).orElseThrow(),
-                            attemptNumber, callStart, finishedAt,
+                            attemptNumber, finishedAt,
                             refused.diagnosticCode(), refused.diagnosticMessage())));
             return new ExternalPublicationCoordinator.OperationResult(
                     findOperation(updated, operationId).orElseThrow(),

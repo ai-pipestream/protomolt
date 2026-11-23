@@ -232,10 +232,12 @@ final class ExternalSourceAccess {
         }
         long latestRev = revisions.getRevisions(0).getRevision();
         if (revisions.getRevisions(0).getTombstone()) {
-            // A tombstone carries no rules of its own; the right to publish is still judged by
-            // the source's last live revision, so a reader is refused here too.
-            requireWrite(latestLiveOwnership(sourceAddress).ownership());
-            return LedgerAccess.keep();
+            // A tombstone carries no rules of its own. The source's last live revision decides
+            // who may publish, and its rules are the ones a ledger written now takes: a ledger
+            // first written here with no rules would be readable by nobody.
+            OwnershipContext lastLive = latestLiveOwnership(sourceAddress).ownership();
+            requireWrite(lastLive);
+            return LedgerAccess.liveSource(lastLive.getSecurity());
         }
         GetDocumentResponse latestCore = documents.getDocument(
                 GetDocumentRequest.newBuilder()
@@ -426,10 +428,12 @@ final class ExternalSourceAccess {
             if (revs.getRevisionsCount() > 0) {
                 // Deleted, not yet purged. The ledger may still carry rules from an older
                 // publication; the caller is judged by the source's last live revision, which
-                // may have revoked them.
-                requireAccess(latestLiveOwnership(sourceAddress).ownership(), Access.ACCESS_READ,
+                // may have revoked them, and a ledger saved now takes those rules.
+                OwnershipContext lastLive = latestLiveOwnership(sourceAddress).ownership();
+                requireAccess(lastLive, Access.ACCESS_READ,
                         "Reading this publication requires READ access to the source document's "
                                 + "last live revision");
+                return LedgerAccess.liveSource(lastLive.getSecurity());
             }
             return LedgerAccess.keep();
         } catch (StatusRuntimeException e) {

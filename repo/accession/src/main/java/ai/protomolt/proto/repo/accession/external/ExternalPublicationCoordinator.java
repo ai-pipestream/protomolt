@@ -160,7 +160,7 @@ public final class ExternalPublicationCoordinator {
      * @param sourceRevision exact positive source revision
      * @param partDigests SHA-256 verified present part digests
      * @param retainedSchemaSha256s SHA-256 verified retained descriptor-set digests
-     * @param documentSecurity current ACL security policy on the source document
+     * @param documentSecurity access rules recorded on {@code sourceRevision} itself
      */
     public record VerifiedSourceSnapshot(
             NodeAddress sourceAddress,
@@ -339,7 +339,7 @@ public final class ExternalPublicationCoordinator {
      *
      * @param sourceAddress canonical source document address
      * @param sourceRevision exact positive source revision
-     * @return verified part digests, retained schema digests, and current ACL policy
+     * @return verified part digests, retained schema digests, and the revision's access rules
      */
     public VerifiedSourceSnapshot inspectSourceRevision(
             NodeAddress sourceAddress, long sourceRevision) {
@@ -594,30 +594,25 @@ public final class ExternalPublicationCoordinator {
             // first's; this call reports the operation as it stands.
             return new OperationResult(savedPreOp, optionalCurrentLink(afterPreSave), true, false);
         }
+        // The source was read before the operation was registered, and reading it can take a
+        // while. If it was deleted or purged since, nothing is sent: the operation was only
+        // registered, so it fails here without any provider call.
+        String removedCode = null;
         try {
-            // The source was read before the operation was registered. If it was purged in
-            // between, its ledger (and the purge fence in it) may be gone too, so the source
-            // itself is asked again before anything is sent.
             sources.verifyCallerSourceAccessForMutation(request.sourceAddress());
+            if (sources.isCurrentlyTombstoned(request.sourceAddress())) {
+                removedCode = "FENCED_BY_NEWER_STATE";
+            }
         } catch (StatusRuntimeException gone) {
             if (gone.getStatus().getCode() != Status.Code.NOT_FOUND) {
                 throw gone;
             }
-            Timestamp now = timestamp(clock.instant());
-            ExternalPublicationLedger failed = ledgers.updateLedgerWithCas(
-                    ledgerAddr,
-                    request.sourceAddress(),
-                    request.bindingId(),
-                    securityForSave,
-                    "ext-source-gone:" + operationId + ":" + UUID.randomUUID(),
-                    current -> ExternalLedgerStore.replaceOperation(current,
-                            ExternalLedgerStore.refusedByProvider(
-                                    findOperation(current, operationId).orElseThrow(),
-                                    1, now, now, "SOURCE_REMOVED_BEFORE_DISPATCH",
-                                    "The source document was removed before the publication was sent")));
-            return new OperationResult(
-                    findOperation(failed, operationId).orElseThrow(),
-                    optionalCurrentLink(failed), false, false);
+            removedCode = "SOURCE_REMOVED_BEFORE_DISPATCH";
+        }
+        if (removedCode != null) {
+            return attempts.failBeforeDispatch(
+                    ledgerAddr, securityForSave, operationId, intent, removedCode,
+                    "The source document was deleted or purged before the publication was sent");
         }
 
         return attempts.executeAndSettlePublishAttempt(

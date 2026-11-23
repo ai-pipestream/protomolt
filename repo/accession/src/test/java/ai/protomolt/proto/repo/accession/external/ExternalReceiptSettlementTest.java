@@ -249,6 +249,33 @@ class ExternalReceiptSettlementTest {
         assertThat(after.getHistoricalLinksList()).singleElement().satisfies(old ->
                 assertThat(old.getProjectionLifecycle()).isEqualTo(
                         ExternalProjectionLifecycle.EXTERNAL_PROJECTION_LIFECYCLE_SUPERSEDED));
+        assertThat(after.getHistoricalLinks(0).getRetiredByOperationId())
+                .isEqualTo("op-publish-object-a");
+    }
+
+    @Test
+    void aLateConfirmationIsTheLiveLinkWhenTheNewerPublicationWasRefused() {
+        // r1 was sent and its reply lost. r2 was registered (raising the fence to 2) and the
+        // provider refused it. Reconciliation now confirms r1, which is what the provider serves.
+        ExternalPublicationOperationRecord r1 = operation("op-r1",
+                ExternalPublicationAction.EXTERNAL_PUBLICATION_ACTION_PUBLISH, "object-a", 1L, 1L);
+        ExternalPublicationOperationRecord r2 = operation("op-r2",
+                ExternalPublicationAction.EXTERNAL_PUBLICATION_ACTION_PUBLISH, "object-a", 1L, 2L)
+                .toBuilder()
+                .setOutcome(ExternalPublicationOutcome.EXTERNAL_PUBLICATION_OUTCOME_FAILED)
+                .build();
+        ExternalPublicationLedger ledger = ExternalPublicationLedger.newBuilder()
+                .setHighestFencedSourceRevision(2L)
+                .addOperations(r1)
+                .addOperations(r2)
+                .build();
+
+        ExternalPublicationLedger after = published(ledger, r1);
+        assertThat(after.hasCurrentLink()).isTrue();
+        assertThat(after.getCurrentLink().getSourceRevision()).isEqualTo(1L);
+        assertThat(after.getCurrentLink().getProjectionLifecycle())
+                .isEqualTo(ExternalProjectionLifecycle.EXTERNAL_PROJECTION_LIFECYCLE_ACTIVE);
+        assertThat(after.getHistoricalLinksList()).isEmpty();
     }
 
     @Test

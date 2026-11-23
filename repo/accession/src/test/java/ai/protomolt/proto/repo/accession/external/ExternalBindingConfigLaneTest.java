@@ -76,7 +76,8 @@ class ExternalBindingConfigLaneTest {
                     org.assertj.core.api.Assertions.assertThat(refused.getStatus().getCode())
                             .isEqualTo(Status.Code.INVALID_ARGUMENT);
                     org.assertj.core.api.Assertions.assertThat(refused.getStatus().getDescription())
-                            .contains("field number(s) [18]");
+                            .contains("field number(s) ["
+                                    + ExternalSystemBinding.REQUIRED_IDENTITY_PROOF_FIELD_NUMBER + "]");
                 });
     }
 

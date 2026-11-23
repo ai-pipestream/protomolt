@@ -244,7 +244,7 @@ class ExternalProviderVerifierTest {
         SignedWorkRecord signedForA = trustedSigner.sign(ExternalProviderVerifier.buildBoundWorkRecord(
                 defaultIssuance("search-key-1"), unsignedA, binding, intentShaA));
 
-        // 1. Codex reproduction: reuse valid signed_work_record_bytes from A on a new unsigned
+        // 1. Reuse valid signed_work_record_bytes from A on a new unsigned
         // evidence envelope for a different externalObjectId with a freshly recomputed intentShaB.
         ExternalPublicationIntent intentDifferentObject = intentA.toBuilder()
                 .setExternalObjectId("search-doc-999")

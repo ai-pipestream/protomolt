@@ -902,6 +902,49 @@ class ExternalPublicationIT {
                     .isEqualTo(ExternalPublicationOutcome.EXTERNAL_PUBLICATION_OUTCOME_FAILED);
             assertThat(refused.operation().getFailureCode()).isEqualTo("FENCED_BY_NEWER_STATE");
             assertThat(refused.currentLink()).isEmpty();
+
+            // The refusal created the ledger. It carries the last live revision's rules, so the
+            // writer who asked can still read it and a reader of that revision can too.
+            ExternalPublicationCoordinator.ExternalLedgerView view =
+                    h.coordinator.getLedgerView(doc, "rust-search").orElseThrow();
+            assertThat(view.operations()).singleElement().satisfies(op ->
+                    assertThat(op.getOperationId()).isEqualTo("pub-after-tombstone"));
+        }
+    }
+
+    @Test
+    void aBindingRevisionCannotChangeTheRetentionPolicyItsLedgersWereWrittenUnder(
+            @TempDir Path tempDir) throws Exception {
+        SimulatedManagedSearchProvider provider = new SimulatedManagedSearchProvider();
+        try (Harness h = Harness.boot(tempDir, provider)) {
+            h.saveActiveBinding(
+                    "tenant-alpha",
+                    "rust-search",
+                    "search-profile-v1",
+                    "ingest",
+                    "corpus-main",
+                    "ns-alpha",
+                    ExternalRetentionPolicy.EXTERNAL_RETENTION_POLICY_RETAIN_HISTORY,
+                    "op-bind-keep");
+
+            assertThatThrownBy(() -> h.saveActiveBinding(
+                    "tenant-alpha",
+                    "rust-search",
+                    "search-profile-v1",
+                    "ingest",
+                    "corpus-main",
+                    "ns-alpha",
+                    ExternalRetentionPolicy.EXTERNAL_RETENTION_POLICY_PURGE_WITH_SOURCE,
+                    "op-bind-purge"))
+                    .isInstanceOfSatisfying(StatusRuntimeException.class, refused -> {
+                        assertThat(refused.getStatus().getCode())
+                                .isEqualTo(Status.Code.FAILED_PRECONDITION);
+                        assertThat(refused.getStatus().getDescription())
+                                .contains("cannot change retention policy");
+                    });
+            assertThat(h.bindingStore.mirrorRevision("tenant-alpha", "rust-search", 1L)
+                    .getRetentionPolicy())
+                    .isEqualTo(ExternalRetentionPolicy.EXTERNAL_RETENTION_POLICY_RETAIN_HISTORY);
         }
     }
 

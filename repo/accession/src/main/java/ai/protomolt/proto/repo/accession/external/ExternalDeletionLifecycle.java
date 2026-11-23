@@ -5,7 +5,7 @@ import static ai.protomolt.proto.repo.accession.external.ExternalLedgerStore.att
 import static ai.protomolt.proto.repo.accession.external.ExternalLedgerStore.findOperation;
 import static ai.protomolt.proto.repo.accession.external.ExternalLedgerStore.isTerminalOutcome;
 import static ai.protomolt.proto.repo.accession.external.ExternalLedgerStore.optionalCurrentLink;
-import static ai.protomolt.proto.repo.accession.external.ExternalLedgerStore.refusedByProvider;
+import static ai.protomolt.proto.repo.accession.external.ExternalLedgerStore.withRefusedAttempt;
 import static ai.protomolt.proto.repo.accession.external.ExternalLedgerStore.replaceAttempt;
 import static ai.protomolt.proto.repo.accession.external.ExternalLedgerStore.replaceOperation;
 import static ai.protomolt.proto.repo.accession.external.ExternalLedgerStore.sanitizeMessage;
@@ -454,7 +454,7 @@ final class ExternalDeletionLifecycle {
         claimLinksForDeletion(next, current, operationId, bindingSnapshot,
                 intent.getExternalObjectId(),
                 tombstoneRevision.orElse(ALL_REVISIONS));
-                ExternalPublicationAttempt initialAttempt = ExternalPublicationAttempt.newBuilder()
+        ExternalPublicationAttempt initialAttempt = ExternalPublicationAttempt.newBuilder()
                 .setAttemptNumber(1)
                 .setTrigger(ExternalAttemptTrigger.EXTERNAL_ATTEMPT_TRIGGER_INITIAL)
                 .setOutcome(
@@ -570,9 +570,9 @@ final class ExternalDeletionLifecycle {
                     bindingId,
                     retainedSecurity,
                     "ext-del-refused:" + operationId + ":" + attemptNumber + ":" + UUID.randomUUID(),
-                    current -> replaceOperation(current, refusedByProvider(
+                    current -> replaceOperation(current, withRefusedAttempt(
                             findOperation(current, operationId).orElseThrow(),
-                            attemptNumber, startedAt, finishedAt,
+                            attemptNumber, finishedAt,
                             refused.diagnosticCode(), refused.diagnosticMessage())));
             return new ExternalPublicationCoordinator.OperationResult(
                     findOperation(updated, operationId).orElseThrow(),
@@ -787,11 +787,6 @@ final class ExternalDeletionLifecycle {
     }
 
     /**
-     * Refuses a tombstone deletion whose object has been published again, under the same ID
-     * in the same external target, for a source revision after the tombstone. The provider knows the
-     * object by ID alone, so deleting it now would delete the republished one.
-     */
-    /**
      * Whether two binding revisions address the same place in the external system. A binding
      * can be revised without moving (new labels, rotated credentials), so the revision number
      * does not say. An object ID means the same object exactly when provider, dataset,
@@ -804,6 +799,11 @@ final class ExternalDeletionLifecycle {
                 && left.getEndpointSummary().equals(right.getEndpointSummary());
     }
 
+    /**
+     * Refuses a tombstone deletion whose object has been published again, under the same ID in
+     * the same external target, for a source revision after the tombstone. The provider knows
+     * the object by ID alone, so deleting it then would delete the republished one.
+     */
     private static void requireNotRepublished(
             ExternalPublicationLedger ledger, ResolvedDeleteTarget target,
             long coveredUpToSourceRevision) {

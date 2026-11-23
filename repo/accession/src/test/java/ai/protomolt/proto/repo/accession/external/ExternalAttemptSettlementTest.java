@@ -21,7 +21,6 @@ class ExternalAttemptSettlementTest {
 
     private static final Timestamp T1 = Timestamp.newBuilder().setSeconds(1_770_000_001L).build();
     private static final Timestamp T2 = Timestamp.newBuilder().setSeconds(1_770_000_002L).build();
-    private static final Timestamp T3 = Timestamp.newBuilder().setSeconds(1_770_000_003L).build();
     private static final Timestamp T9 = Timestamp.newBuilder().setSeconds(1_770_000_009L).build();
 
     private static ExternalPublicationAttempt attempt(int number, ExternalAttemptTrigger trigger,
@@ -52,8 +51,8 @@ class ExternalAttemptSettlementTest {
                         ExternalPublicationOutcome.EXTERNAL_PUBLICATION_OUTCOME_PENDING, T1),
                 attempt(2, ExternalAttemptTrigger.EXTERNAL_ATTEMPT_TRIGGER_RECONCILIATION,
                         ExternalPublicationOutcome.EXTERNAL_PUBLICATION_OUTCOME_PENDING, T2));
-        ExternalPublicationOperationRecord refused = ExternalLedgerStore.refusedByProvider(
-                op, 1, T3, T9, "PERMISSION_DENIED", "refused");
+        ExternalPublicationOperationRecord refused = ExternalLedgerStore.withRefusedAttempt(
+                op, 1, T9, "PERMISSION_DENIED", "refused");
         ExternalPublicationAttempt first = refused.getAttemptsList().stream()
                 .filter(a -> a.getAttemptNumber() == 1).findFirst().orElseThrow();
         assertThat(first.getTrigger()).isEqualTo(ExternalAttemptTrigger.EXTERNAL_ATTEMPT_TRIGGER_INITIAL);
@@ -71,18 +70,18 @@ class ExternalAttemptSettlementTest {
                 ExternalPublicationOutcome.EXTERNAL_PUBLICATION_OUTCOME_PENDING, T2);
 
         // The retry is refused first: the initial send is still out, so the operation stays open.
-        ExternalPublicationOperationRecord retryRefused = ExternalLedgerStore.refusedByProvider(
-                publish(initial, retry), 2, T3, T9, "PERMISSION_DENIED", "refused");
+        ExternalPublicationOperationRecord retryRefused = ExternalLedgerStore.withRefusedAttempt(
+                publish(initial, retry), 2, T9, "PERMISSION_DENIED", "refused");
         assertThat(retryRefused.getOutcome()).isEqualTo(ExternalPublicationOutcome.EXTERNAL_PUBLICATION_OUTCOME_PENDING);
         // Then the initial send is refused: nothing is out any more.
-        assertThat(ExternalLedgerStore.refusedByProvider(retryRefused, 1, T3, T9, "PERMISSION_DENIED", "refused")
+        assertThat(ExternalLedgerStore.withRefusedAttempt(retryRefused, 1, T9, "PERMISSION_DENIED", "refused")
                 .getOutcome()).isEqualTo(ExternalPublicationOutcome.EXTERNAL_PUBLICATION_OUTCOME_FAILED);
 
         // The other order ends the same way.
-        ExternalPublicationOperationRecord initialRefused = ExternalLedgerStore.refusedByProvider(
-                publish(initial, retry), 1, T3, T9, "PERMISSION_DENIED", "refused");
+        ExternalPublicationOperationRecord initialRefused = ExternalLedgerStore.withRefusedAttempt(
+                publish(initial, retry), 1, T9, "PERMISSION_DENIED", "refused");
         assertThat(initialRefused.getOutcome()).isEqualTo(ExternalPublicationOutcome.EXTERNAL_PUBLICATION_OUTCOME_PENDING);
-        assertThat(ExternalLedgerStore.refusedByProvider(initialRefused, 2, T3, T9, "PERMISSION_DENIED", "refused")
+        assertThat(ExternalLedgerStore.withRefusedAttempt(initialRefused, 2, T9, "PERMISSION_DENIED", "refused")
                 .getOutcome()).isEqualTo(ExternalPublicationOutcome.EXTERNAL_PUBLICATION_OUTCOME_FAILED);
     }
 
