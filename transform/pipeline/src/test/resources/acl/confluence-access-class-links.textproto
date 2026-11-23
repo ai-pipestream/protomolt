@@ -1,0 +1,15 @@
+# proto-file: ai/protomolt/proto/grpc/workflow/v1/grpc_workflow.proto
+# proto-message: ai.protomolt.proto.grpc.workflow.v1.TypedEdge
+#
+# Maps one user record grpc-confluence Sync emits (ai.pipestream.confluence.v1.ConfluenceEntity,
+# source `entity`) into identity links to the access classes the user is in:
+# `use` on `application` (a user who may use Confluence) links the account to
+# ALL_LICENSED_USERS, and `administer` on `application` to ALL_PRODUCT_ADMINS.
+# Other records map to no link.
+sources: "entity"
+produce_type: "ai.protomolt.proto.repo.v1.IdentityLinks"
+cel_rules {
+  filter: "has(entity.user) && entity.user.account_id != ''"
+  selector: "entity.user.operations.filter(o, o.target_type == 'application' && (o.operation == 'use' || o.operation == 'administer')).map(o, ai.protomolt.proto.repo.v1.IdentityLink{from: ai.protomolt.proto.repo.v1.Principal{identity_type: 'atlassian-account', identity: entity.user.account_id}, to: ai.protomolt.proto.repo.v1.Principal{identity_type: 'atlassian-access-class', identity: o.operation == 'use' ? 'ALL_LICENSED_USERS' : 'ALL_PRODUCT_ADMINS'}})"
+  target: "links"
+}

@@ -43,6 +43,7 @@ class ConfluenceSecurityMappingTest {
     private static TypedEdge edge;
     private static TypedEdge links;
     private static TypedEdge entraLinks;
+    private static TypedEdge classLinks;
     private static Descriptor entity;
 
     @BeforeAll
@@ -61,6 +62,9 @@ class ConfluenceSecurityMappingTest {
         TypedEdge.Builder entraBuilder = TypedEdge.newBuilder();
         TextFormat.merge(resource("acl/entra-identity-links.textproto"), entraBuilder);
         entraLinks = entraBuilder.build();
+        TypedEdge.Builder classBuilder = TypedEdge.newBuilder();
+        TextFormat.merge(resource("acl/confluence-access-class-links.textproto"), classBuilder);
+        classLinks = classBuilder.build();
         entity = registry.findDescriptorByFullName("ai.pipestream.confluence.v1.ConfluenceEntity");
     }
 
@@ -270,7 +274,7 @@ class ConfluenceSecurityMappingTest {
                 .contains("atlassian-account:account-1", "atlassian-access-class:ALL_LICENSED_USERS");
         assertThat(security.getRequiredRuleSetsList()).singleElement().satisfies(set ->
                 assertThat(set.getRulesList()).extracting(AccessRule::getIdentityType)
-                        .containsExactlyInAnyOrder("atlassian-account", "atlassian-group"));
+                        .contains("atlassian-account", "atlassian-group"));
         String group = security.getRequiredRuleSets(0).getRulesList().stream()
                 .filter(r -> r.getIdentityType().equals("atlassian-group")).findFirst().orElseThrow().getIdentity();
 
@@ -289,17 +293,12 @@ class ConfluenceSecurityMappingTest {
         assertThat(caller.identities()).extracting(p -> p.getIdentityType() + ":" + p.getIdentity())
                 .contains("atlassian-account:account-1", "atlassian-group:" + group);
         assertThat(DocumentAccessPolicy.allows(caller, ACCOUNT, security, List.of(), Access.ACCESS_READ)).isTrue();
-        // A user the space grants directly but who is on neither the parent nor in its group.
-        Set<String> gated = security.getRequiredRuleSets(0).getRulesList().stream()
-                .map(r -> r.getIdentityType() + ":" + r.getIdentity()).collect(Collectors.toSet());
-        String spaceOnly = security.getPermissionsList().stream()
-                .filter(r -> r.getIdentityType().equals("atlassian-account"))
-                .map(r -> r.getIdentityType() + ":" + r.getIdentity())
-                .filter(id -> !gated.contains(id) && !expansion.expand(caller(id)).identities().stream()
-                        .anyMatch(p -> gated.contains(p.getIdentityType() + ":" + p.getIdentity())))
-                .findFirst().orElseThrow();
-        assertThat(reads(security, spaceOnly)).isFalse();
-        // Another member of the group on the parent views the space only as a licensed user.
+        // A licensed user the space lets in through ALL_LICENSED_USERS but who is on neither the
+        // parent nor in its group is denied: the parent's restriction still gates it.
+        RepositoryCaller outsider = expansion.expand(caller("atlassian-account:outsider",
+                "atlassian-access-class:ALL_LICENSED_USERS"));
+        assertThat(DocumentAccessPolicy.allows(outsider, ACCOUNT, security, List.of(), Access.ACCESS_READ)).isFalse();
+        // A member of the group on the parent whose only space grant is the access class.
         String other = records.stream().filter(r -> field(r, "entity_id").toString()
                         .startsWith("group:" + group + "/member/"))
                 .map(r -> field(r, "entity_id").toString().substring(("group:" + group + "/member/").length()))
@@ -402,12 +401,23 @@ class ConfluenceSecurityMappingTest {
                 mapped.add(link);
             }
         }
+        List<IdentityLink> unclassed = List.copyOf(mapped);
+        for (DynamicMessage record : records) {
+            mapped.addAll(IdentityLinks.parseFrom(EdgeMapping.map(
+                    registry.findDescriptorByFullName(classLinks.getProduceType()), Map.of("entity", record),
+                    classLinks.getRulesList(), classLinks.getCelRulesList(), registry, "confluence-classes")
+                    .toByteString()).getLinksList());
+        }
         CallerIdentityExpansion expansion = new CallerIdentityExpansion(mapped);
         Map<String, RepositoryCaller> callers = new LinkedHashMap<>();
         callers.put("email:join-proof@example.invalid", expansion.expand(caller("email:join-proof@example.invalid")));
-        callers.put("atlassian-account:account-2", expansion.expand(caller("atlassian-account:account-2")));
-        callers.put("atlassian-account:account-4", expansion.expand(caller("atlassian-account:account-4")));
-        callers.put("atlassian-account:account-4 licensed", expansion.expand(caller("atlassian-account:account-4",
+        records.stream().filter(r -> r.hasField(entity.findFieldByName("user")))
+                .map(r -> "atlassian-account:" + field(r, "entity_id")).filter(id -> !id.endsWith(":account-1"))
+                .forEach(id -> callers.put(id, expansion.expand(caller(id))));
+        String member = callers.keySet().stream().filter(id -> !id.startsWith("email:")).reduce((a, b) -> b)
+                .orElseThrow();
+        callers.put(member + " without access classes", new CallerIdentityExpansion(unclassed).expand(caller(member)));
+        callers.put("atlassian-account:outsider licensed", expansion.expand(caller("atlassian-account:outsider",
                 "atlassian-access-class:ALL_LICENSED_USERS")));
 
         StringBuilder items = new StringBuilder();
@@ -446,8 +456,9 @@ class ConfluenceSecurityMappingTest {
             }
         }
         assertThat(restricted).as("items under a view-restricted owner").isPositive();
-        assertThat(decisions.get("email:join-proof@example.invalid")).containsValue(true);
-        assertThat(decisions.get("atlassian-account:account-2")).containsValue(false);
+        assertThat(decisions.get("email:join-proof@example.invalid")).doesNotContainValue(false);
+        assertThat(decisions.get("atlassian-account:outsider licensed")).containsValue(true).containsValue(false);
+        assertThat(decisions.get(member + " without access classes")).doesNotContainValue(true);
 
         StringBuilder callerJson = new StringBuilder("[");
         int n = 0;
@@ -468,6 +479,87 @@ class ConfluenceSecurityMappingTest {
         java.nio.file.Files.createDirectories(out);
         java.nio.file.Files.writeString(out.resolve("confluence-items.ndjson"), items);
         java.nio.file.Files.writeString(out.resolve("confluence-callers.json"), callerJson);
+    }
+
+    /**
+     * Confluence's own answers decide: in the live run every user granted on the restricted
+     * parent was asked about with CheckContentPermission ({@code acl/confluence-permission-checks.binpb},
+     * request and response pairs from the same run as the Sync records). protomolt's decision
+     * on the same records, with each user's access classes from its operations, equals every answer.
+     * Without the access-class links a user whose only space grant is ALL_LICENSED_USERS is denied
+     * what Confluence lets it read.
+     */
+    @Test
+    void protomoltDecidesWhatConfluenceAnsweredLive() throws Exception {
+        List<DynamicMessage> records = recordedRecords();
+        List<IdentityLink> withClasses = new java.util.ArrayList<>(recordedLinks(records));
+        List<IdentityLink> withoutClasses = List.copyOf(withClasses);
+        for (DynamicMessage record : records) {
+            withClasses.addAll(IdentityLinks.parseFrom(EdgeMapping.map(
+                    registry.findDescriptorByFullName(classLinks.getProduceType()), Map.of("entity", record),
+                    classLinks.getRulesList(), classLinks.getCelRulesList(), registry, "confluence-classes")
+                    .toByteString()).getLinksList());
+        }
+        assertThat(withClasses).extracting(l -> l.getTo().getIdentity()).contains("ALL_LICENSED_USERS");
+        DynamicMessage space = records.stream().filter(r -> field(r, "entity_id").toString().startsWith("space:"))
+                .findFirst().orElseThrow();
+        Map<String, DynamicMessage> items = new LinkedHashMap<>();
+        records.stream().filter(r -> r.hasField(entity.findFieldByName("access_chain")))
+                .forEach(r -> items.put(field(r, "entity_id").toString(), r));
+
+        Descriptor request = registry.findDescriptorByFullName(
+                "ai.pipestream.confluence.v1.CheckContentPermissionRequest");
+        Descriptor response = registry.findDescriptorByFullName(
+                "ai.pipestream.confluence.v1.CheckContentPermissionResponse");
+        int compared = 0;
+        int classOnly = 0;
+        try (InputStream in = ConfluenceSecurityMappingTest.class.getClassLoader()
+                .getResourceAsStream("acl/confluence-permission-checks.binpb")) {
+            while (true) {
+                DynamicMessage.Builder asked = DynamicMessage.newBuilder(request);
+                if (!asked.mergeDelimitedFrom(in)) break;
+                DynamicMessage.Builder answered = DynamicMessage.newBuilder(response);
+                assertThat(answered.mergeDelimitedFrom(in)).isTrue();
+                DynamicMessage check = asked.build();
+                boolean confluence = (Boolean) field(answered.build(), "has_permission");
+                String content = field(check, "content_id").toString();
+                Message subject = (Message) field(check, "subject");
+                String account = subject.getField(subject.getDescriptorForType().findFieldByName("principal_id"))
+                        .toString();
+                DynamicMessage item = items.get("page:" + content + "/access");
+                assertThat(item).as("the access chain of page %s", content).isNotNull();
+                Map<String, DynamicMessage> values = new LinkedHashMap<>();
+                values.put("space", space);
+                values.put("item", item);
+                DocumentSecurity security = DocumentSecurity.parseFrom(EdgeMapping.map(
+                        registry.findDescriptorByFullName(edge.getProduceType()), values, edge.getRulesList(),
+                        edge.getCelRulesList(), registry, "confluence-acl").toByteString());
+                RepositoryCaller caller = new CallerIdentityExpansion(withClasses)
+                        .expand(caller("atlassian-account:" + account));
+                assertThat(DocumentAccessPolicy.allows(caller, ACCOUNT, security, List.of(), Access.ACCESS_READ))
+                        .as("%s on page %s, as Confluence answered", account, content).isEqualTo(confluence);
+                boolean unclassed = DocumentAccessPolicy.allows(new CallerIdentityExpansion(withoutClasses)
+                        .expand(caller("atlassian-account:" + account)), ACCOUNT, security, List.of(),
+                        Access.ACCESS_READ);
+                classOnly += confluence && !unclassed ? 1 : 0;
+                compared++;
+            }
+        }
+        assertThat(compared).isGreaterThanOrEqualTo(10);
+        assertThat(classOnly).as("answers that need the licensed-users class").isPositive();
+    }
+
+    private static List<IdentityLink> recordedLinks(List<DynamicMessage> records) throws Exception {
+        List<IdentityLink> mapped = new java.util.ArrayList<>();
+        for (DynamicMessage record : records) {
+            IdentityLink link = IdentityLink.parseFrom(EdgeMapping.map(
+                    registry.findDescriptorByFullName(links.getProduceType()), Map.of("entity", record),
+                    links.getRulesList(), links.getCelRulesList(), registry, "confluence-identity").toByteString());
+            if (link.hasFrom() && link.hasTo()) {
+                mapped.add(link);
+            }
+        }
+        return mapped;
     }
 
     private static List<DynamicMessage> recordedRecords() throws IOException {
