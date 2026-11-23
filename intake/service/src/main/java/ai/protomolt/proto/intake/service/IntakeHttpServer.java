@@ -1,6 +1,7 @@
 package ai.protomolt.proto.intake.service;
 
 import ai.protomolt.proto.descriptors.ApiStability;
+import ai.protomolt.proto.descriptors.HttpRouteContract;
 import ai.protomolt.proto.descriptors.StabilityTier;
 import ai.protomolt.proto.intake.service.identity.ApiKeyIdentityResolver;
 import ai.protomolt.proto.intake.service.identity.IntakeScope;
@@ -26,9 +27,7 @@ import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
-import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -95,60 +94,7 @@ public final class IntakeHttpServer implements AutoCloseable {
 
     private static final String RESPONSE_JSON_MEDIA_TYPE = "application/json";
 
-    /**
-     * Declarative HTTP route contract served by {@link IntakeHttpServer}, shared between
-     * live context registration/dispatch and release-baseline compatibility snapshots.
-     *
-     * @param routeId                 canonical route identifier
-     * @param pathTemplate            URI path template
-     * @param httpMethods             allowed uppercase HTTP methods
-     * @param pathParameters          ordered path parameter names
-     * @param requiredQueryParameters required query parameter names
-     * @param requestMediaType        expected request media type
-     * @param responseMediaType       default response media type
-     * @param requestType             logical request payload contract name
-     * @param responseType            logical response payload contract name
-     * @param successStatusCodes      documented HTTP status codes for the endpoint
-     * @param authRequired            whether authentication is required
-     * @param stability               declared stability tier
-     */
-    @ApiStability(StabilityTier.STABLE)
-    public record RouteContract(
-            String routeId,
-            String pathTemplate,
-            List<String> httpMethods,
-            List<String> pathParameters,
-            List<String> requiredQueryParameters,
-            String requestMediaType,
-            String responseMediaType,
-            String requestType,
-            String responseType,
-            List<Integer> successStatusCodes,
-            boolean authRequired,
-            StabilityTier stability) {
-
-        public RouteContract {
-            Objects.requireNonNull(routeId, "routeId");
-            Objects.requireNonNull(pathTemplate, "pathTemplate");
-            httpMethods = List.copyOf(Objects.requireNonNull(httpMethods, "httpMethods"));
-            pathParameters = List.copyOf(Objects.requireNonNull(pathParameters, "pathParameters"));
-            requiredQueryParameters = List.copyOf(
-                    Objects.requireNonNull(requiredQueryParameters, "requiredQueryParameters"));
-            requestMediaType = Objects.requireNonNull(requestMediaType, "requestMediaType");
-            responseMediaType = Objects.requireNonNull(responseMediaType, "responseMediaType");
-            requestType = Objects.requireNonNull(requestType, "requestType");
-            responseType = Objects.requireNonNull(responseType, "responseType");
-            successStatusCodes = List.copyOf(
-                    Objects.requireNonNull(successStatusCodes, "successStatusCodes"));
-            Objects.requireNonNull(stability, "stability");
-        }
-
-        boolean allowsMethod(String method) {
-            return method != null && httpMethods.contains(method.toUpperCase(Locale.ROOT));
-        }
-    }
-
-    private static final RouteContract INTAKE_UPLOAD_ROUTE = new RouteContract(
+    private static final HttpRouteContract INTAKE_UPLOAD_ROUTE = new HttpRouteContract(
             ROUTE_INTAKE_UPLOAD,
             UPLOAD_PATH,
             List.of("POST"),
@@ -162,15 +108,15 @@ public final class IntakeHttpServer implements AutoCloseable {
             true,
             StabilityTier.STABLE);
 
-    private static final List<RouteContract> ROUTE_CONTRACTS = List.of(INTAKE_UPLOAD_ROUTE);
+    private static final List<HttpRouteContract> ROUTE_CONTRACTS = List.of(INTAKE_UPLOAD_ROUTE);
 
     /**
-     * Returns the immutable list of HTTP {@link RouteContract}s served by
+     * Returns the immutable list of HTTP {@link HttpRouteContract}s served by
      * {@link IntakeHttpServer}.
      *
      * @return immutable ordered route contracts
      */
-    public static List<RouteContract> routeContracts() {
+    public static List<HttpRouteContract> routeContracts() {
         return ROUTE_CONTRACTS;
     }
 

@@ -2,6 +2,7 @@ package ai.protomolt.proto.registry.service;
 
 import ai.protomolt.proto.actions.ActionCatalog;
 import ai.protomolt.proto.actions.ActionContext;
+import ai.protomolt.proto.descriptors.HttpRouteContract;
 import ai.protomolt.proto.descriptors.StabilityTier;
 import ai.protomolt.proto.registry.InMemorySchemaRegistryStore;
 import org.junit.jupiter.api.Test;
@@ -18,15 +19,15 @@ class SchemaRegistryServerRouteContractTest {
 
     @Test
     void routeContractsReflectDefaultAndCustomServerConfiguration() {
-        List<SchemaRegistryServer.RouteContract> withoutActions =
+        List<HttpRouteContract> withoutActions =
                 SchemaRegistryServer.routeContracts(SchemaRegistryServerConfig.defaults(), false);
-        List<SchemaRegistryServer.RouteContract> withActions =
+        List<HttpRouteContract> withActions =
                 SchemaRegistryServer.routeContracts(SchemaRegistryServerConfig.defaults(), true);
 
         assertThat(withoutActions).hasSize(14);
         assertThat(withActions).hasSize(16);
         assertThat(withActions)
-                .extracting(SchemaRegistryServer.RouteContract::pathTemplate)
+                .extracting(HttpRouteContract::pathTemplate)
                 .containsExactly(
                         "/health",
                         "/subjects",
@@ -54,15 +55,15 @@ class SchemaRegistryServerRouteContractTest {
                 "/v2-native",
                 SchemaRegistryServerConfig.DEFAULT_MAX_REQUEST_BYTES,
                 "secret-token");
-        List<SchemaRegistryServer.RouteContract> customContracts =
+        List<HttpRouteContract> customContracts =
                 SchemaRegistryServer.routeContracts(custom, true);
         assertThat(customContracts.get(0).pathTemplate()).isEqualTo("/readyz");
         assertThat(customContracts.get(0).authRequired()).isFalse();
         assertThat(customContracts)
                 .filteredOn(r -> !r.routeId().equals(SchemaRegistryServer.ROUTE_HEALTH))
-                .allMatch(SchemaRegistryServer.RouteContract::authRequired);
+                .allMatch(HttpRouteContract::authRequired);
         assertThat(customContracts)
-                .extracting(SchemaRegistryServer.RouteContract::pathTemplate)
+                .extracting(HttpRouteContract::pathTemplate)
                 .contains("/v2-native/subjects/{subject}/descriptor-set", "/v2-native/actions/{name}");
     }
 

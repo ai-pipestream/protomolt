@@ -6,6 +6,7 @@ import ai.protomolt.proto.actions.ScopeBudgets;
 import ai.protomolt.proto.actions.Scopes;
 import ai.protomolt.proto.authz.CallerResolver;
 import ai.protomolt.proto.descriptors.ApiStability;
+import ai.protomolt.proto.descriptors.HttpRouteContract;
 import ai.protomolt.proto.descriptors.StabilityTier;
 import ai.protomolt.proto.registry.ConfigSupport;
 import ai.protomolt.proto.registry.InvalidConfigException;
@@ -132,112 +133,22 @@ public final class SchemaRegistryServer implements AutoCloseable {
     private static final String TEXT_CONTENT_TYPE = "text/plain; charset=utf-8";
 
     /**
-     * Declarative HTTP route contract served by {@link SchemaRegistryServer}, shared between
-     * live request dispatch and release-baseline compatibility snapshots.
-     *
-     * @param routeId                 canonical route identifier
-     * @param pathTemplate            URI path template
-     * @param httpMethods             allowed uppercase HTTP methods
-     * @param pathParameters          ordered path parameter names
-     * @param requiredQueryParameters required query parameter names
-     * @param requestMediaType        expected request media type (or empty when bodyless)
-     * @param responseMediaType       produced response media type
-     * @param requestType             logical request payload contract name
-     * @param responseType            logical response payload contract name
-     * @param successStatusCodes      documented HTTP status codes for the endpoint
-     * @param authRequired            whether authentication is required on this server configuration
-     * @param stability               declared stability tier
-     */
-    @ApiStability(StabilityTier.STABLE)
-    public record RouteContract(
-            String routeId,
-            String pathTemplate,
-            List<String> httpMethods,
-            List<String> pathParameters,
-            List<String> requiredQueryParameters,
-            String requestMediaType,
-            String responseMediaType,
-            String requestType,
-            String responseType,
-            List<Integer> successStatusCodes,
-            boolean authRequired,
-            StabilityTier stability) {
-
-        public RouteContract {
-            Objects.requireNonNull(routeId, "routeId");
-            Objects.requireNonNull(pathTemplate, "pathTemplate");
-            httpMethods = List.copyOf(Objects.requireNonNull(httpMethods, "httpMethods"));
-            pathParameters = List.copyOf(Objects.requireNonNull(pathParameters, "pathParameters"));
-            requiredQueryParameters = List.copyOf(
-                    Objects.requireNonNull(requiredQueryParameters, "requiredQueryParameters"));
-            requestMediaType = Objects.requireNonNull(requestMediaType, "requestMediaType");
-            responseMediaType = Objects.requireNonNull(responseMediaType, "responseMediaType");
-            requestType = Objects.requireNonNull(requestType, "requestType");
-            responseType = Objects.requireNonNull(responseType, "responseType");
-            successStatusCodes = List.copyOf(
-                    Objects.requireNonNull(successStatusCodes, "successStatusCodes"));
-            Objects.requireNonNull(stability, "stability");
-        }
-
-        boolean matchesSegments(List<String> requestSegments) {
-            List<String> templateSegments = templateSegments(pathTemplate);
-            if (templateSegments.size() != requestSegments.size()) {
-                return false;
-            }
-            for (int i = 0; i < templateSegments.size(); i++) {
-                String segment = templateSegments.get(i);
-                if (isTemplateParameter(segment)) {
-                    continue;
-                }
-                if (!segment.equals(requestSegments.get(i))) {
-                    return false;
-                }
-            }
-            return true;
-        }
-
-        boolean allowsMethod(String method) {
-            return httpMethods.contains(method);
-        }
-
-        String allowHeader() {
-            return String.join(", ", httpMethods);
-        }
-
-        private static List<String> templateSegments(String template) {
-            List<String> segments = new ArrayList<>();
-            for (String segment : splitOn(template, '/')) {
-                if (!segment.isEmpty()) {
-                    segments.add(segment);
-                }
-            }
-            return segments;
-        }
-
-        private static boolean isTemplateParameter(String segment) {
-            return segment.length() > 2
-                    && segment.charAt(0) == '{'
-                    && segment.charAt(segment.length() - 1) == '}';
-        }
-    }
-
-    /**
-     * Returns the immutable list of {@link RouteContract}s served by a
+     * Returns the immutable list of {@link HttpRouteContract}s served by a
      * {@link SchemaRegistryServer} with the given configuration and action-mount setting.
      *
      * @param config              server configuration supplying {@code healthPath}, {@code nativePathPrefix}, and {@code apiToken}
      * @param includeActionRoutes whether an {@link ActionCatalog} is mounted under {@code {nativePathPrefix}/actions}
      * @return immutable ordered route contracts
      */
-    public static List<RouteContract> routeContracts(
+    public static List<HttpRouteContract> routeContracts(
             SchemaRegistryServerConfig config,
             boolean includeActionRoutes) {
         Objects.requireNonNull(config, "config");
         boolean authRequired = config.apiToken() != null;
         String nativePrefix = config.nativePathPrefix();
 
-        List<RouteContract> routes = new ArrayList<>(16);
-        routes.add(new RouteContract(
+        List<HttpRouteContract> routes = new ArrayList<>(16);
+        routes.add(new HttpRouteContract(
                 ROUTE_HEALTH,
                 config.healthPath(),
                 List.of("GET"),
@@ -250,7 +161,7 @@ public final class SchemaRegistryServer implements AutoCloseable {
                 List.of(200),
                 false,
                 StabilityTier.STABLE));
-        routes.add(new RouteContract(
+        routes.add(new HttpRouteContract(
                 ROUTE_SUBJECTS_LIST,
                 "/subjects",
                 List.of("GET"),
@@ -263,7 +174,7 @@ public final class SchemaRegistryServer implements AutoCloseable {
                 List.of(200),
                 authRequired,
                 StabilityTier.STABLE));
-        routes.add(new RouteContract(
+        routes.add(new HttpRouteContract(
                 ROUTE_SUBJECT_LOOKUP,
                 "/subjects/{subject}",
                 List.of("POST"),
@@ -276,7 +187,7 @@ public final class SchemaRegistryServer implements AutoCloseable {
                 List.of(200, 404, 422),
                 authRequired,
                 StabilityTier.STABLE));
-        routes.add(new RouteContract(
+        routes.add(new HttpRouteContract(
                 ROUTE_SUBJECT_VERSIONS,
                 "/subjects/{subject}/versions",
                 List.of("GET", "POST"),
@@ -289,7 +200,7 @@ public final class SchemaRegistryServer implements AutoCloseable {
                 List.of(200, 404, 409, 422),
                 authRequired,
                 StabilityTier.STABLE));
-        routes.add(new RouteContract(
+        routes.add(new HttpRouteContract(
                 ROUTE_SUBJECT_VERSION_GET,
                 "/subjects/{subject}/versions/{version}",
                 List.of("GET"),
@@ -302,7 +213,7 @@ public final class SchemaRegistryServer implements AutoCloseable {
                 List.of(200, 404, 422),
                 authRequired,
                 StabilityTier.STABLE));
-        routes.add(new RouteContract(
+        routes.add(new HttpRouteContract(
                 ROUTE_SCHEMAS_BY_ID,
                 "/schemas/ids/{id}",
                 List.of("GET"),
@@ -315,7 +226,7 @@ public final class SchemaRegistryServer implements AutoCloseable {
                 List.of(200, 404),
                 authRequired,
                 StabilityTier.STABLE));
-        routes.add(new RouteContract(
+        routes.add(new HttpRouteContract(
                 ROUTE_CONFIG_GLOBAL,
                 "/config",
                 List.of("GET", "PUT"),
@@ -328,7 +239,7 @@ public final class SchemaRegistryServer implements AutoCloseable {
                 List.of(200, 422),
                 authRequired,
                 StabilityTier.STABLE));
-        routes.add(new RouteContract(
+        routes.add(new HttpRouteContract(
                 ROUTE_CONFIG_SUBJECT,
                 "/config/{subject}",
                 List.of("GET", "PUT"),
@@ -341,7 +252,7 @@ public final class SchemaRegistryServer implements AutoCloseable {
                 List.of(200, 404, 422),
                 authRequired,
                 StabilityTier.STABLE));
-        routes.add(new RouteContract(
+        routes.add(new HttpRouteContract(
                 ROUTE_NATIVE_DESCRIPTOR_SET,
                 nativePrefix + "/subjects/{subject}/descriptor-set",
                 List.of("GET"),
@@ -354,7 +265,7 @@ public final class SchemaRegistryServer implements AutoCloseable {
                 List.of(200, 404),
                 authRequired,
                 StabilityTier.STABLE));
-        routes.add(new RouteContract(
+        routes.add(new HttpRouteContract(
                 ROUTE_NATIVE_PARQUET_SCHEMA,
                 nativePrefix + "/subjects/{subject}/parquet-schema",
                 List.of("GET"),
@@ -367,7 +278,7 @@ public final class SchemaRegistryServer implements AutoCloseable {
                 List.of(200, 400, 404, 422),
                 authRequired,
                 StabilityTier.STABLE));
-        routes.add(new RouteContract(
+        routes.add(new HttpRouteContract(
                 ROUTE_NATIVE_CONFIGS_LIST,
                 nativePrefix + "/configs",
                 List.of("GET"),
@@ -380,7 +291,7 @@ public final class SchemaRegistryServer implements AutoCloseable {
                 List.of(200, 404),
                 authRequired,
                 StabilityTier.STABLE));
-        routes.add(new RouteContract(
+        routes.add(new HttpRouteContract(
                 ROUTE_NATIVE_CONFIGS_ITEM,
                 nativePrefix + "/configs/{name}",
                 List.of("GET", "PUT"),
@@ -393,7 +304,7 @@ public final class SchemaRegistryServer implements AutoCloseable {
                 List.of(200, 404, 422),
                 authRequired,
                 StabilityTier.STABLE));
-        routes.add(new RouteContract(
+        routes.add(new HttpRouteContract(
                 ROUTE_NATIVE_WORKFLOWS_LIST,
                 nativePrefix + "/workflows",
                 List.of("GET"),
@@ -406,7 +317,7 @@ public final class SchemaRegistryServer implements AutoCloseable {
                 List.of(200, 404),
                 authRequired,
                 StabilityTier.STABLE));
-        routes.add(new RouteContract(
+        routes.add(new HttpRouteContract(
                 ROUTE_NATIVE_WORKFLOWS_ITEM,
                 nativePrefix + "/workflows/{name}",
                 List.of("GET", "PUT"),
@@ -420,7 +331,7 @@ public final class SchemaRegistryServer implements AutoCloseable {
                 authRequired,
                 StabilityTier.STABLE));
         if (includeActionRoutes) {
-            routes.add(new RouteContract(
+            routes.add(new HttpRouteContract(
                     ROUTE_NATIVE_ACTIONS_LIST,
                     nativePrefix + "/actions",
                     List.of("GET"),
@@ -433,7 +344,7 @@ public final class SchemaRegistryServer implements AutoCloseable {
                     List.of(200),
                     authRequired,
                     StabilityTier.STABLE));
-            routes.add(new RouteContract(
+            routes.add(new HttpRouteContract(
                     ROUTE_NATIVE_ACTIONS_EXECUTE,
                     nativePrefix + "/actions/{name}",
                     List.of("POST"),
@@ -454,8 +365,8 @@ public final class SchemaRegistryServer implements AutoCloseable {
     private final SchemaRegistryStore store;
     private final ActionCatalog actions;
     private final CallerResolver resolver;
-    private final RouteContract healthRoute;
-    private final List<RouteContract> dispatchRoutes;
+    private final HttpRouteContract healthRoute;
+    private final List<HttpRouteContract> dispatchRoutes;
     private final ObjectMapper json = new ObjectMapper();
     private final ScopeBudgets budgets;
     private final ProtoSourceCompiler compiler = new ProtoSourceCompiler();
@@ -515,7 +426,7 @@ public final class SchemaRegistryServer implements AutoCloseable {
         this.config = Objects.requireNonNull(config, "config");
         this.store = Objects.requireNonNull(store, "store");
         this.actions = actions;
-        List<RouteContract> allRoutes = routeContracts(config, actions != null);
+        List<HttpRouteContract> allRoutes = routeContracts(config, actions != null);
         this.healthRoute = allRoutes.get(0);
         this.dispatchRoutes = allRoutes.subList(1, allRoutes.size());
         // The route table and the mounted catalog are one enforcement boundary: they
@@ -530,12 +441,12 @@ public final class SchemaRegistryServer implements AutoCloseable {
     }
 
     /**
-     * Returns the immutable list of {@link RouteContract}s served by this server instance.
+     * Returns the immutable list of {@link HttpRouteContract}s served by this server instance.
      *
      * @return immutable ordered route contracts
      */
-    public List<RouteContract> routeContracts() {
-        List<RouteContract> all = new ArrayList<>(1 + dispatchRoutes.size());
+    public List<HttpRouteContract> routeContracts() {
+        List<HttpRouteContract> all = new ArrayList<>(1 + dispatchRoutes.size());
         all.add(healthRoute);
         all.addAll(dispatchRoutes);
         return List.copyOf(all);
@@ -695,7 +606,7 @@ public final class SchemaRegistryServer implements AutoCloseable {
             }
         }
 
-        RouteContract matched = findMatchingRoute(segments);
+        HttpRouteContract matched = findMatchingRoute(segments);
         if (matched == null) {
             writeError(exchange, 404, 404, "HTTP 404 Not Found");
             return;
@@ -755,8 +666,8 @@ public final class SchemaRegistryServer implements AutoCloseable {
         }
     }
 
-    private RouteContract findMatchingRoute(List<String> segments) {
-        for (RouteContract candidate : dispatchRoutes) {
+    private HttpRouteContract findMatchingRoute(List<String> segments) {
+        for (HttpRouteContract candidate : dispatchRoutes) {
             if (candidate.matchesSegments(segments)) {
                 return candidate;
             }

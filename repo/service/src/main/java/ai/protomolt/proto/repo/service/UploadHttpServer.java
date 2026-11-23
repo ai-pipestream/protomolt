@@ -7,6 +7,7 @@ import ai.protomolt.proto.authz.AuthenticatedCaller;
 import ai.protomolt.proto.authz.RequestCallerResolver;
 import ai.protomolt.proto.authz.RequestHeaders;
 import ai.protomolt.proto.descriptors.ApiStability;
+import ai.protomolt.proto.descriptors.HttpRouteContract;
 import ai.protomolt.proto.descriptors.StabilityTier;
 import ai.protomolt.proto.http.connect.ConnectGateway;
 import ai.protomolt.proto.repo.archive.DocumentArchive;
@@ -41,7 +42,6 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
@@ -83,60 +83,7 @@ public final class UploadHttpServer implements AutoCloseable {
      */
     public static final String CONNECT_PATH = "/connect";
 
-    /**
-     * Declarative HTTP route contract served by {@link UploadHttpServer}, shared between
-     * live context registration/dispatch and release-baseline compatibility snapshots.
-     *
-     * @param routeId                 canonical route identifier
-     * @param pathTemplate            URI path template
-     * @param httpMethods             allowed uppercase HTTP methods
-     * @param pathParameters          ordered path parameter names
-     * @param requiredQueryParameters required query parameter names
-     * @param requestMediaType        expected request media type
-     * @param responseMediaType       default response media type
-     * @param requestType             logical request payload contract name
-     * @param responseType            logical response payload contract name
-     * @param successStatusCodes      documented HTTP status codes for the endpoint
-     * @param authRequired            whether authentication is required
-     * @param stability               declared stability tier
-     */
-    @ApiStability(StabilityTier.STABLE)
-    public record RouteContract(
-            String routeId,
-            String pathTemplate,
-            List<String> httpMethods,
-            List<String> pathParameters,
-            List<String> requiredQueryParameters,
-            String requestMediaType,
-            String responseMediaType,
-            String requestType,
-            String responseType,
-            List<Integer> successStatusCodes,
-            boolean authRequired,
-            StabilityTier stability) {
-
-        public RouteContract {
-            Objects.requireNonNull(routeId, "routeId");
-            Objects.requireNonNull(pathTemplate, "pathTemplate");
-            httpMethods = List.copyOf(Objects.requireNonNull(httpMethods, "httpMethods"));
-            pathParameters = List.copyOf(Objects.requireNonNull(pathParameters, "pathParameters"));
-            requiredQueryParameters = List.copyOf(
-                    Objects.requireNonNull(requiredQueryParameters, "requiredQueryParameters"));
-            requestMediaType = Objects.requireNonNull(requestMediaType, "requestMediaType");
-            responseMediaType = Objects.requireNonNull(responseMediaType, "responseMediaType");
-            requestType = Objects.requireNonNull(requestType, "requestType");
-            responseType = Objects.requireNonNull(responseType, "responseType");
-            successStatusCodes = List.copyOf(
-                    Objects.requireNonNull(successStatusCodes, "successStatusCodes"));
-            Objects.requireNonNull(stability, "stability");
-        }
-
-        boolean allowsMethod(String method) {
-            return method != null && httpMethods.contains(method.toUpperCase(Locale.ROOT));
-        }
-    }
-
-    private static final RouteContract DOCUMENTS_UPLOAD_ROUTE = new RouteContract(
+    private static final HttpRouteContract DOCUMENTS_UPLOAD_ROUTE = new HttpRouteContract(
             ROUTE_DOCUMENTS_UPLOAD,
             UPLOAD_PATH,
             List.of("POST"),
@@ -150,7 +97,7 @@ public final class UploadHttpServer implements AutoCloseable {
             true,
             StabilityTier.STABLE);
 
-    private static final RouteContract ARCHIVE_UPLOAD_ROUTE = new RouteContract(
+    private static final HttpRouteContract ARCHIVE_UPLOAD_ROUTE = new HttpRouteContract(
             ROUTE_ARCHIVE_UPLOAD,
             ARCHIVE_UPLOAD_PATH,
             List.of("POST"),
@@ -164,16 +111,16 @@ public final class UploadHttpServer implements AutoCloseable {
             true,
             StabilityTier.STABLE);
 
-    private static final List<RouteContract> ROUTE_CONTRACTS =
+    private static final List<HttpRouteContract> ROUTE_CONTRACTS =
             List.of(DOCUMENTS_UPLOAD_ROUTE, ARCHIVE_UPLOAD_ROUTE);
 
     /**
-     * Returns the immutable list of binary upload {@link RouteContract}s served by
+     * Returns the immutable list of binary upload {@link HttpRouteContract}s served by
      * {@link UploadHttpServer}.
      *
      * @return immutable ordered route contracts
      */
-    public static List<RouteContract> routeContracts() {
+    public static List<HttpRouteContract> routeContracts() {
         return ROUTE_CONTRACTS;
     }
 

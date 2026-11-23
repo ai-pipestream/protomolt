@@ -19,6 +19,7 @@ import ai.protomolt.proto.delegation.DelegationActions;
 import ai.protomolt.proto.delegation.DelegationBridge;
 import ai.protomolt.proto.delegation.InProcessDelegationCoordinator;
 import ai.protomolt.proto.delegation.storage.v1.EncryptedRepositoryState;
+import ai.protomolt.proto.descriptors.HttpRouteContract;
 import ai.protomolt.proto.descriptors.StabilityTier;
 import ai.protomolt.proto.grpc.profile.v1.ServiceProfile;
 import ai.protomolt.proto.grpc.service.ProtoMoltCatalog;
@@ -651,56 +652,33 @@ public final class CompatibilityBaselineGenerator {
                     tier));
         }
 
-        for (SchemaRegistryServer.RouteContract route :
-                SchemaRegistryServer.routeContracts(SchemaRegistryServerConfig.defaults(), true)) {
-            entries.add(new RestRouteEntry(
-                    route.routeId(),
-                    route.pathTemplate(),
-                    route.httpMethods(),
-                    route.pathParameters(),
-                    route.requiredQueryParameters(),
-                    route.requestMediaType(),
-                    route.responseMediaType(),
-                    route.requestType(),
-                    route.responseType(),
-                    route.successStatusCodes(),
-                    route.authRequired(),
-                    route.stability()));
-        }
-
-        for (UploadHttpServer.RouteContract route : UploadHttpServer.routeContracts()) {
-            entries.add(new RestRouteEntry(
-                    route.routeId(),
-                    route.pathTemplate(),
-                    route.httpMethods(),
-                    route.pathParameters(),
-                    route.requiredQueryParameters(),
-                    route.requestMediaType(),
-                    route.responseMediaType(),
-                    route.requestType(),
-                    route.responseType(),
-                    route.successStatusCodes(),
-                    route.authRequired(),
-                    route.stability()));
-        }
-
-        for (IntakeHttpServer.RouteContract route : IntakeHttpServer.routeContracts()) {
-            entries.add(new RestRouteEntry(
-                    route.routeId(),
-                    route.pathTemplate(),
-                    route.httpMethods(),
-                    route.pathParameters(),
-                    route.requiredQueryParameters(),
-                    route.requestMediaType(),
-                    route.responseMediaType(),
-                    route.requestType(),
-                    route.responseType(),
-                    route.successStatusCodes(),
-                    route.authRequired(),
-                    route.stability()));
-        }
+        addHttpRoutes(entries,
+                SchemaRegistryServer.routeContracts(SchemaRegistryServerConfig.defaults(), true));
+        addHttpRoutes(entries, UploadHttpServer.routeContracts());
+        addHttpRoutes(entries, IntakeHttpServer.routeContracts());
 
         return new RestRouteSnapshot(entries);
+    }
+
+    /**
+     * Records each declared {@link HttpRouteContract} as a REST route entry, field for field.
+     */
+    private static void addHttpRoutes(List<RestRouteEntry> entries, List<HttpRouteContract> routes) {
+        for (HttpRouteContract route : routes) {
+            entries.add(new RestRouteEntry(
+                    route.routeId(),
+                    route.pathTemplate(),
+                    route.httpMethods(),
+                    route.pathParameters(),
+                    route.requiredQueryParameters(),
+                    route.requestMediaType(),
+                    route.responseMediaType(),
+                    route.requestType(),
+                    route.responseType(),
+                    route.successStatusCodes(),
+                    route.authRequired(),
+                    route.stability()));
+        }
     }
 
     private static ActionEnvelopeSnapshot captureActionEnvelopes(ActionCatalog fullCatalog) {

@@ -67,7 +67,7 @@ class CompatibilityBaselineSystemTest {
                 "ai.protomolt.proto.emit.parquet.ParquetEmitter",
                 "ai.protomolt.proto.emit.renderer.GrpcRendererProvider",
                 "ai.protomolt.proto.registry.service.SchemaRegistryServer",
-                "ai.protomolt.proto.registry.service.SchemaRegistryServer$RouteContract",
+                "ai.protomolt.proto.descriptors.HttpRouteContract",
                 "ai.protomolt.proto.repo.v2.DocumentServiceGrpc");
         assertThat(javaClassNames)
                 .noneMatch(name -> name.contains(".samples.")

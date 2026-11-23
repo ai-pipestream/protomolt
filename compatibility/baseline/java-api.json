@@ -33601,6 +33601,243 @@
       ]
     },
     {
+      "className" : "ai.protomolt.proto.descriptors.HttpRouteContract",
+      "kind" : "RECORD",
+      "visibility" : "PUBLIC",
+      "finalType" : false,
+      "abstractType" : false,
+      "superclass" : "",
+      "interfaces" : [ ],
+      "stability" : "STABLE",
+      "constructors" : [
+        {
+          "parameterTypes" : [
+            "java.lang.String",
+            "java.lang.String",
+            "java.util.List",
+            "java.util.List",
+            "java.util.List",
+            "java.lang.String",
+            "java.lang.String",
+            "java.lang.String",
+            "java.lang.String",
+            "java.util.List",
+            "boolean",
+            "ai.protomolt.proto.descriptors.StabilityTier"
+          ],
+          "visibility" : "PUBLIC",
+          "stability" : "STABLE"
+        }
+      ],
+      "methods" : [
+        {
+          "name" : "allowHeader",
+          "parameterTypes" : [ ],
+          "returnType" : "java.lang.String",
+          "visibility" : "PUBLIC",
+          "staticMethod" : false,
+          "finalMethod" : false,
+          "abstractMethod" : false,
+          "defaultMethod" : false,
+          "stability" : "STABLE"
+        },
+        {
+          "name" : "allowsMethod",
+          "parameterTypes" : [
+            "java.lang.String"
+          ],
+          "returnType" : "boolean",
+          "visibility" : "PUBLIC",
+          "staticMethod" : false,
+          "finalMethod" : false,
+          "abstractMethod" : false,
+          "defaultMethod" : false,
+          "stability" : "STABLE"
+        },
+        {
+          "name" : "authRequired",
+          "parameterTypes" : [ ],
+          "returnType" : "boolean",
+          "visibility" : "PUBLIC",
+          "staticMethod" : false,
+          "finalMethod" : false,
+          "abstractMethod" : false,
+          "defaultMethod" : false,
+          "stability" : "STABLE"
+        },
+        {
+          "name" : "equals",
+          "parameterTypes" : [
+            "java.lang.Object"
+          ],
+          "returnType" : "boolean",
+          "visibility" : "PUBLIC",
+          "staticMethod" : false,
+          "finalMethod" : true,
+          "abstractMethod" : false,
+          "defaultMethod" : false,
+          "stability" : "STABLE"
+        },
+        {
+          "name" : "hashCode",
+          "parameterTypes" : [ ],
+          "returnType" : "int",
+          "visibility" : "PUBLIC",
+          "staticMethod" : false,
+          "finalMethod" : true,
+          "abstractMethod" : false,
+          "defaultMethod" : false,
+          "stability" : "STABLE"
+        },
+        {
+          "name" : "httpMethods",
+          "parameterTypes" : [ ],
+          "returnType" : "java.util.List",
+          "visibility" : "PUBLIC",
+          "staticMethod" : false,
+          "finalMethod" : false,
+          "abstractMethod" : false,
+          "defaultMethod" : false,
+          "stability" : "STABLE"
+        },
+        {
+          "name" : "matchesSegments",
+          "parameterTypes" : [
+            "java.util.List"
+          ],
+          "returnType" : "boolean",
+          "visibility" : "PUBLIC",
+          "staticMethod" : false,
+          "finalMethod" : false,
+          "abstractMethod" : false,
+          "defaultMethod" : false,
+          "stability" : "STABLE"
+        },
+        {
+          "name" : "pathParameters",
+          "parameterTypes" : [ ],
+          "returnType" : "java.util.List",
+          "visibility" : "PUBLIC",
+          "staticMethod" : false,
+          "finalMethod" : false,
+          "abstractMethod" : false,
+          "defaultMethod" : false,
+          "stability" : "STABLE"
+        },
+        {
+          "name" : "pathTemplate",
+          "parameterTypes" : [ ],
+          "returnType" : "java.lang.String",
+          "visibility" : "PUBLIC",
+          "staticMethod" : false,
+          "finalMethod" : false,
+          "abstractMethod" : false,
+          "defaultMethod" : false,
+          "stability" : "STABLE"
+        },
+        {
+          "name" : "requestMediaType",
+          "parameterTypes" : [ ],
+          "returnType" : "java.lang.String",
+          "visibility" : "PUBLIC",
+          "staticMethod" : false,
+          "finalMethod" : false,
+          "abstractMethod" : false,
+          "defaultMethod" : false,
+          "stability" : "STABLE"
+        },
+        {
+          "name" : "requestType",
+          "parameterTypes" : [ ],
+          "returnType" : "java.lang.String",
+          "visibility" : "PUBLIC",
+          "staticMethod" : false,
+          "finalMethod" : false,
+          "abstractMethod" : false,
+          "defaultMethod" : false,
+          "stability" : "STABLE"
+        },
+        {
+          "name" : "requiredQueryParameters",
+          "parameterTypes" : [ ],
+          "returnType" : "java.util.List",
+          "visibility" : "PUBLIC",
+          "staticMethod" : false,
+          "finalMethod" : false,
+          "abstractMethod" : false,
+          "defaultMethod" : false,
+          "stability" : "STABLE"
+        },
+        {
+          "name" : "responseMediaType",
+          "parameterTypes" : [ ],
+          "returnType" : "java.lang.String",
+          "visibility" : "PUBLIC",
+          "staticMethod" : false,
+          "finalMethod" : false,
+          "abstractMethod" : false,
+          "defaultMethod" : false,
+          "stability" : "STABLE"
+        },
+        {
+          "name" : "responseType",
+          "parameterTypes" : [ ],
+          "returnType" : "java.lang.String",
+          "visibility" : "PUBLIC",
+          "staticMethod" : false,
+          "finalMethod" : false,
+          "abstractMethod" : false,
+          "defaultMethod" : false,
+          "stability" : "STABLE"
+        },
+        {
+          "name" : "routeId",
+          "parameterTypes" : [ ],
+          "returnType" : "java.lang.String",
+          "visibility" : "PUBLIC",
+          "staticMethod" : false,
+          "finalMethod" : false,
+          "abstractMethod" : false,
+          "defaultMethod" : false,
+          "stability" : "STABLE"
+        },
+        {
+          "name" : "stability",
+          "parameterTypes" : [ ],
+          "returnType" : "ai.protomolt.proto.descriptors.StabilityTier",
+          "visibility" : "PUBLIC",
+          "staticMethod" : false,
+          "finalMethod" : false,
+          "abstractMethod" : false,
+          "defaultMethod" : false,
+          "stability" : "STABLE"
+        },
+        {
+          "name" : "successStatusCodes",
+          "parameterTypes" : [ ],
+          "returnType" : "java.util.List",
+          "visibility" : "PUBLIC",
+          "staticMethod" : false,
+          "finalMethod" : false,
+          "abstractMethod" : false,
+          "defaultMethod" : false,
+          "stability" : "STABLE"
+        },
+        {
+          "name" : "toString",
+          "parameterTypes" : [ ],
+          "returnType" : "java.lang.String",
+          "visibility" : "PUBLIC",
+          "staticMethod" : false,
+          "finalMethod" : true,
+          "abstractMethod" : false,
+          "defaultMethod" : false,
+          "stability" : "STABLE"
+        }
+      ],
+      "fields" : [ ]
+    },
+    {
       "className" : "ai.protomolt.proto.descriptors.MessageFingerprints",
       "kind" : "CLASS",
       "visibility" : "PUBLIC",
@@ -48036,206 +48273,6 @@
           "stability" : "STABLE"
         }
       ]
-    },
-    {
-      "className" : "ai.protomolt.proto.intake.service.IntakeHttpServer$RouteContract",
-      "kind" : "RECORD",
-      "visibility" : "PUBLIC",
-      "finalType" : false,
-      "abstractType" : false,
-      "superclass" : "",
-      "interfaces" : [ ],
-      "stability" : "STABLE",
-      "constructors" : [
-        {
-          "parameterTypes" : [
-            "java.lang.String",
-            "java.lang.String",
-            "java.util.List",
-            "java.util.List",
-            "java.util.List",
-            "java.lang.String",
-            "java.lang.String",
-            "java.lang.String",
-            "java.lang.String",
-            "java.util.List",
-            "boolean",
-            "ai.protomolt.proto.descriptors.StabilityTier"
-          ],
-          "visibility" : "PUBLIC",
-          "stability" : "STABLE"
-        }
-      ],
-      "methods" : [
-        {
-          "name" : "authRequired",
-          "parameterTypes" : [ ],
-          "returnType" : "boolean",
-          "visibility" : "PUBLIC",
-          "staticMethod" : false,
-          "finalMethod" : false,
-          "abstractMethod" : false,
-          "defaultMethod" : false,
-          "stability" : "STABLE"
-        },
-        {
-          "name" : "equals",
-          "parameterTypes" : [
-            "java.lang.Object"
-          ],
-          "returnType" : "boolean",
-          "visibility" : "PUBLIC",
-          "staticMethod" : false,
-          "finalMethod" : true,
-          "abstractMethod" : false,
-          "defaultMethod" : false,
-          "stability" : "STABLE"
-        },
-        {
-          "name" : "hashCode",
-          "parameterTypes" : [ ],
-          "returnType" : "int",
-          "visibility" : "PUBLIC",
-          "staticMethod" : false,
-          "finalMethod" : true,
-          "abstractMethod" : false,
-          "defaultMethod" : false,
-          "stability" : "STABLE"
-        },
-        {
-          "name" : "httpMethods",
-          "parameterTypes" : [ ],
-          "returnType" : "java.util.List",
-          "visibility" : "PUBLIC",
-          "staticMethod" : false,
-          "finalMethod" : false,
-          "abstractMethod" : false,
-          "defaultMethod" : false,
-          "stability" : "STABLE"
-        },
-        {
-          "name" : "pathParameters",
-          "parameterTypes" : [ ],
-          "returnType" : "java.util.List",
-          "visibility" : "PUBLIC",
-          "staticMethod" : false,
-          "finalMethod" : false,
-          "abstractMethod" : false,
-          "defaultMethod" : false,
-          "stability" : "STABLE"
-        },
-        {
-          "name" : "pathTemplate",
-          "parameterTypes" : [ ],
-          "returnType" : "java.lang.String",
-          "visibility" : "PUBLIC",
-          "staticMethod" : false,
-          "finalMethod" : false,
-          "abstractMethod" : false,
-          "defaultMethod" : false,
-          "stability" : "STABLE"
-        },
-        {
-          "name" : "requestMediaType",
-          "parameterTypes" : [ ],
-          "returnType" : "java.lang.String",
-          "visibility" : "PUBLIC",
-          "staticMethod" : false,
-          "finalMethod" : false,
-          "abstractMethod" : false,
-          "defaultMethod" : false,
-          "stability" : "STABLE"
-        },
-        {
-          "name" : "requestType",
-          "parameterTypes" : [ ],
-          "returnType" : "java.lang.String",
-          "visibility" : "PUBLIC",
-          "staticMethod" : false,
-          "finalMethod" : false,
-          "abstractMethod" : false,
-          "defaultMethod" : false,
-          "stability" : "STABLE"
-        },
-        {
-          "name" : "requiredQueryParameters",
-          "parameterTypes" : [ ],
-          "returnType" : "java.util.List",
-          "visibility" : "PUBLIC",
-          "staticMethod" : false,
-          "finalMethod" : false,
-          "abstractMethod" : false,
-          "defaultMethod" : false,
-          "stability" : "STABLE"
-        },
-        {
-          "name" : "responseMediaType",
-          "parameterTypes" : [ ],
-          "returnType" : "java.lang.String",
-          "visibility" : "PUBLIC",
-          "staticMethod" : false,
-          "finalMethod" : false,
-          "abstractMethod" : false,
-          "defaultMethod" : false,
-          "stability" : "STABLE"
-        },
-        {
-          "name" : "responseType",
-          "parameterTypes" : [ ],
-          "returnType" : "java.lang.String",
-          "visibility" : "PUBLIC",
-          "staticMethod" : false,
-          "finalMethod" : false,
-          "abstractMethod" : false,
-          "defaultMethod" : false,
-          "stability" : "STABLE"
-        },
-        {
-          "name" : "routeId",
-          "parameterTypes" : [ ],
-          "returnType" : "java.lang.String",
-          "visibility" : "PUBLIC",
-          "staticMethod" : false,
-          "finalMethod" : false,
-          "abstractMethod" : false,
-          "defaultMethod" : false,
-          "stability" : "STABLE"
-        },
-        {
-          "name" : "stability",
-          "parameterTypes" : [ ],
-          "returnType" : "ai.protomolt.proto.descriptors.StabilityTier",
-          "visibility" : "PUBLIC",
-          "staticMethod" : false,
-          "finalMethod" : false,
-          "abstractMethod" : false,
-          "defaultMethod" : false,
-          "stability" : "STABLE"
-        },
-        {
-          "name" : "successStatusCodes",
-          "parameterTypes" : [ ],
-          "returnType" : "java.util.List",
-          "visibility" : "PUBLIC",
-          "staticMethod" : false,
-          "finalMethod" : false,
-          "abstractMethod" : false,
-          "defaultMethod" : false,
-          "stability" : "STABLE"
-        },
-        {
-          "name" : "toString",
-          "parameterTypes" : [ ],
-          "returnType" : "java.lang.String",
-          "visibility" : "PUBLIC",
-          "staticMethod" : false,
-          "finalMethod" : true,
-          "abstractMethod" : false,
-          "defaultMethod" : false,
-          "stability" : "STABLE"
-        }
-      ],
-      "fields" : [ ]
     },
     {
       "className" : "ai.protomolt.proto.intake.service.IntakeModule",
@@ -75241,206 +75278,6 @@
       ]
     },
     {
-      "className" : "ai.protomolt.proto.registry.service.SchemaRegistryServer$RouteContract",
-      "kind" : "RECORD",
-      "visibility" : "PUBLIC",
-      "finalType" : false,
-      "abstractType" : false,
-      "superclass" : "",
-      "interfaces" : [ ],
-      "stability" : "STABLE",
-      "constructors" : [
-        {
-          "parameterTypes" : [
-            "java.lang.String",
-            "java.lang.String",
-            "java.util.List",
-            "java.util.List",
-            "java.util.List",
-            "java.lang.String",
-            "java.lang.String",
-            "java.lang.String",
-            "java.lang.String",
-            "java.util.List",
-            "boolean",
-            "ai.protomolt.proto.descriptors.StabilityTier"
-          ],
-          "visibility" : "PUBLIC",
-          "stability" : "STABLE"
-        }
-      ],
-      "methods" : [
-        {
-          "name" : "authRequired",
-          "parameterTypes" : [ ],
-          "returnType" : "boolean",
-          "visibility" : "PUBLIC",
-          "staticMethod" : false,
-          "finalMethod" : false,
-          "abstractMethod" : false,
-          "defaultMethod" : false,
-          "stability" : "STABLE"
-        },
-        {
-          "name" : "equals",
-          "parameterTypes" : [
-            "java.lang.Object"
-          ],
-          "returnType" : "boolean",
-          "visibility" : "PUBLIC",
-          "staticMethod" : false,
-          "finalMethod" : true,
-          "abstractMethod" : false,
-          "defaultMethod" : false,
-          "stability" : "STABLE"
-        },
-        {
-          "name" : "hashCode",
-          "parameterTypes" : [ ],
-          "returnType" : "int",
-          "visibility" : "PUBLIC",
-          "staticMethod" : false,
-          "finalMethod" : true,
-          "abstractMethod" : false,
-          "defaultMethod" : false,
-          "stability" : "STABLE"
-        },
-        {
-          "name" : "httpMethods",
-          "parameterTypes" : [ ],
-          "returnType" : "java.util.List",
-          "visibility" : "PUBLIC",
-          "staticMethod" : false,
-          "finalMethod" : false,
-          "abstractMethod" : false,
-          "defaultMethod" : false,
-          "stability" : "STABLE"
-        },
-        {
-          "name" : "pathParameters",
-          "parameterTypes" : [ ],
-          "returnType" : "java.util.List",
-          "visibility" : "PUBLIC",
-          "staticMethod" : false,
-          "finalMethod" : false,
-          "abstractMethod" : false,
-          "defaultMethod" : false,
-          "stability" : "STABLE"
-        },
-        {
-          "name" : "pathTemplate",
-          "parameterTypes" : [ ],
-          "returnType" : "java.lang.String",
-          "visibility" : "PUBLIC",
-          "staticMethod" : false,
-          "finalMethod" : false,
-          "abstractMethod" : false,
-          "defaultMethod" : false,
-          "stability" : "STABLE"
-        },
-        {
-          "name" : "requestMediaType",
-          "parameterTypes" : [ ],
-          "returnType" : "java.lang.String",
-          "visibility" : "PUBLIC",
-          "staticMethod" : false,
-          "finalMethod" : false,
-          "abstractMethod" : false,
-          "defaultMethod" : false,
-          "stability" : "STABLE"
-        },
-        {
-          "name" : "requestType",
-          "parameterTypes" : [ ],
-          "returnType" : "java.lang.String",
-          "visibility" : "PUBLIC",
-          "staticMethod" : false,
-          "finalMethod" : false,
-          "abstractMethod" : false,
-          "defaultMethod" : false,
-          "stability" : "STABLE"
-        },
-        {
-          "name" : "requiredQueryParameters",
-          "parameterTypes" : [ ],
-          "returnType" : "java.util.List",
-          "visibility" : "PUBLIC",
-          "staticMethod" : false,
-          "finalMethod" : false,
-          "abstractMethod" : false,
-          "defaultMethod" : false,
-          "stability" : "STABLE"
-        },
-        {
-          "name" : "responseMediaType",
-          "parameterTypes" : [ ],
-          "returnType" : "java.lang.String",
-          "visibility" : "PUBLIC",
-          "staticMethod" : false,
-          "finalMethod" : false,
-          "abstractMethod" : false,
-          "defaultMethod" : false,
-          "stability" : "STABLE"
-        },
-        {
-          "name" : "responseType",
-          "parameterTypes" : [ ],
-          "returnType" : "java.lang.String",
-          "visibility" : "PUBLIC",
-          "staticMethod" : false,
-          "finalMethod" : false,
-          "abstractMethod" : false,
-          "defaultMethod" : false,
-          "stability" : "STABLE"
-        },
-        {
-          "name" : "routeId",
-          "parameterTypes" : [ ],
-          "returnType" : "java.lang.String",
-          "visibility" : "PUBLIC",
-          "staticMethod" : false,
-          "finalMethod" : false,
-          "abstractMethod" : false,
-          "defaultMethod" : false,
-          "stability" : "STABLE"
-        },
-        {
-          "name" : "stability",
-          "parameterTypes" : [ ],
-          "returnType" : "ai.protomolt.proto.descriptors.StabilityTier",
-          "visibility" : "PUBLIC",
-          "staticMethod" : false,
-          "finalMethod" : false,
-          "abstractMethod" : false,
-          "defaultMethod" : false,
-          "stability" : "STABLE"
-        },
-        {
-          "name" : "successStatusCodes",
-          "parameterTypes" : [ ],
-          "returnType" : "java.util.List",
-          "visibility" : "PUBLIC",
-          "staticMethod" : false,
-          "finalMethod" : false,
-          "abstractMethod" : false,
-          "defaultMethod" : false,
-          "stability" : "STABLE"
-        },
-        {
-          "name" : "toString",
-          "parameterTypes" : [ ],
-          "returnType" : "java.lang.String",
-          "visibility" : "PUBLIC",
-          "staticMethod" : false,
-          "finalMethod" : true,
-          "abstractMethod" : false,
-          "defaultMethod" : false,
-          "stability" : "STABLE"
-        }
-      ],
-      "fields" : [ ]
-    },
-    {
       "className" : "ai.protomolt.proto.registry.service.SchemaRegistryServerConfig",
       "kind" : "RECORD",
       "visibility" : "PUBLIC",
@@ -101372,206 +101209,6 @@
           "stability" : "STABLE"
         }
       ]
-    },
-    {
-      "className" : "ai.protomolt.proto.repo.service.UploadHttpServer$RouteContract",
-      "kind" : "RECORD",
-      "visibility" : "PUBLIC",
-      "finalType" : false,
-      "abstractType" : false,
-      "superclass" : "",
-      "interfaces" : [ ],
-      "stability" : "STABLE",
-      "constructors" : [
-        {
-          "parameterTypes" : [
-            "java.lang.String",
-            "java.lang.String",
-            "java.util.List",
-            "java.util.List",
-            "java.util.List",
-            "java.lang.String",
-            "java.lang.String",
-            "java.lang.String",
-            "java.lang.String",
-            "java.util.List",
-            "boolean",
-            "ai.protomolt.proto.descriptors.StabilityTier"
-          ],
-          "visibility" : "PUBLIC",
-          "stability" : "STABLE"
-        }
-      ],
-      "methods" : [
-        {
-          "name" : "authRequired",
-          "parameterTypes" : [ ],
-          "returnType" : "boolean",
-          "visibility" : "PUBLIC",
-          "staticMethod" : false,
-          "finalMethod" : false,
-          "abstractMethod" : false,
-          "defaultMethod" : false,
-          "stability" : "STABLE"
-        },
-        {
-          "name" : "equals",
-          "parameterTypes" : [
-            "java.lang.Object"
-          ],
-          "returnType" : "boolean",
-          "visibility" : "PUBLIC",
-          "staticMethod" : false,
-          "finalMethod" : true,
-          "abstractMethod" : false,
-          "defaultMethod" : false,
-          "stability" : "STABLE"
-        },
-        {
-          "name" : "hashCode",
-          "parameterTypes" : [ ],
-          "returnType" : "int",
-          "visibility" : "PUBLIC",
-          "staticMethod" : false,
-          "finalMethod" : true,
-          "abstractMethod" : false,
-          "defaultMethod" : false,
-          "stability" : "STABLE"
-        },
-        {
-          "name" : "httpMethods",
-          "parameterTypes" : [ ],
-          "returnType" : "java.util.List",
-          "visibility" : "PUBLIC",
-          "staticMethod" : false,
-          "finalMethod" : false,
-          "abstractMethod" : false,
-          "defaultMethod" : false,
-          "stability" : "STABLE"
-        },
-        {
-          "name" : "pathParameters",
-          "parameterTypes" : [ ],
-          "returnType" : "java.util.List",
-          "visibility" : "PUBLIC",
-          "staticMethod" : false,
-          "finalMethod" : false,
-          "abstractMethod" : false,
-          "defaultMethod" : false,
-          "stability" : "STABLE"
-        },
-        {
-          "name" : "pathTemplate",
-          "parameterTypes" : [ ],
-          "returnType" : "java.lang.String",
-          "visibility" : "PUBLIC",
-          "staticMethod" : false,
-          "finalMethod" : false,
-          "abstractMethod" : false,
-          "defaultMethod" : false,
-          "stability" : "STABLE"
-        },
-        {
-          "name" : "requestMediaType",
-          "parameterTypes" : [ ],
-          "returnType" : "java.lang.String",
-          "visibility" : "PUBLIC",
-          "staticMethod" : false,
-          "finalMethod" : false,
-          "abstractMethod" : false,
-          "defaultMethod" : false,
-          "stability" : "STABLE"
-        },
-        {
-          "name" : "requestType",
-          "parameterTypes" : [ ],
-          "returnType" : "java.lang.String",
-          "visibility" : "PUBLIC",
-          "staticMethod" : false,
-          "finalMethod" : false,
-          "abstractMethod" : false,
-          "defaultMethod" : false,
-          "stability" : "STABLE"
-        },
-        {
-          "name" : "requiredQueryParameters",
-          "parameterTypes" : [ ],
-          "returnType" : "java.util.List",
-          "visibility" : "PUBLIC",
-          "staticMethod" : false,
-          "finalMethod" : false,
-          "abstractMethod" : false,
-          "defaultMethod" : false,
-          "stability" : "STABLE"
-        },
-        {
-          "name" : "responseMediaType",
-          "parameterTypes" : [ ],
-          "returnType" : "java.lang.String",
-          "visibility" : "PUBLIC",
-          "staticMethod" : false,
-          "finalMethod" : false,
-          "abstractMethod" : false,
-          "defaultMethod" : false,
-          "stability" : "STABLE"
-        },
-        {
-          "name" : "responseType",
-          "parameterTypes" : [ ],
-          "returnType" : "java.lang.String",
-          "visibility" : "PUBLIC",
-          "staticMethod" : false,
-          "finalMethod" : false,
-          "abstractMethod" : false,
-          "defaultMethod" : false,
-          "stability" : "STABLE"
-        },
-        {
-          "name" : "routeId",
-          "parameterTypes" : [ ],
-          "returnType" : "java.lang.String",
-          "visibility" : "PUBLIC",
-          "staticMethod" : false,
-          "finalMethod" : false,
-          "abstractMethod" : false,
-          "defaultMethod" : false,
-          "stability" : "STABLE"
-        },
-        {
-          "name" : "stability",
-          "parameterTypes" : [ ],
-          "returnType" : "ai.protomolt.proto.descriptors.StabilityTier",
-          "visibility" : "PUBLIC",
-          "staticMethod" : false,
-          "finalMethod" : false,
-          "abstractMethod" : false,
-          "defaultMethod" : false,
-          "stability" : "STABLE"
-        },
-        {
-          "name" : "successStatusCodes",
-          "parameterTypes" : [ ],
-          "returnType" : "java.util.List",
-          "visibility" : "PUBLIC",
-          "staticMethod" : false,
-          "finalMethod" : false,
-          "abstractMethod" : false,
-          "defaultMethod" : false,
-          "stability" : "STABLE"
-        },
-        {
-          "name" : "toString",
-          "parameterTypes" : [ ],
-          "returnType" : "java.lang.String",
-          "visibility" : "PUBLIC",
-          "staticMethod" : false,
-          "finalMethod" : true,
-          "abstractMethod" : false,
-          "defaultMethod" : false,
-          "stability" : "STABLE"
-        }
-      ],
-      "fields" : [ ]
     },
     {
       "className" : "ai.protomolt.proto.repo.spi.ArchiveMutationRepository",
