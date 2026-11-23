@@ -555,6 +555,22 @@ function currentEntryVersion(version: bigint) {
 }
 
 describe('Save-as destination lookup races', () => {
+  it.each(['archive:acct-a', 'graph-a'])('does not reopen Save-as after a synchronous reload in %s', async (graph) => {
+    const { wrapper, router, location, pending } = await mountSaveAsLookup()
+    try {
+      await router.push({ ...location, query: { ...location.query, graph, revision: undefined } })
+      await settle()
+      const dialog = wrapper.getComponent(SaveAsRenditionDialog)
+      // Dispatch both events in one turn, before the destination preparation resumes.
+      wrapper.get('[data-testid="save-as-part-0"]').element.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      dialog.vm.$emit('reloadSource')
+      await settle()
+      expect(pending).toHaveLength(0)
+      expect(dialog.props('open')).toBe(false)
+      expect(dialog.props('documentSource')).toBeNull()
+    } finally { wrapper.unmount() }
+  })
+
   it('keeps the newer part and version when the first lookup finishes last', async () => {
     const { wrapper, pending } = await mountSaveAsLookup()
     try {

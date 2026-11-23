@@ -641,7 +641,7 @@ async function openSaveAs(
   // Each signal belongs to one selection: a newer selection, load() and unmount abort it, so a
   // response a transport delivers despite the abort still cannot publish state.
   const signal = saveAsScope.next()
-  if (!(await prepareSaveAsDestination(signal))) return
+  if (!(await prepareSaveAsDestination(signal)) || signal.aborted) return
   saveAsDocumentSource.value = source
   saveAsOccurrenceOptions.value = occurrences
   saveAsSourceLabel.value = label
