@@ -9,12 +9,14 @@ import ai.protomolt.proto.validate.RuleCompilationException;
 import ai.protomolt.proto.validate.RuleEvaluationException;
 import ai.protomolt.proto.validate.ValidationResult;
 import com.google.protobuf.Descriptors.Descriptor;
+import com.google.protobuf.Descriptors.EnumDescriptor;
 import com.google.protobuf.Descriptors.EnumValueDescriptor;
 import com.google.protobuf.Descriptors.FieldDescriptor;
 import com.google.protobuf.Message;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Deque;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 
@@ -34,30 +36,78 @@ final class ParquetInputChecks {
 
     static void verifyFieldsCompatible(Descriptor expected, Descriptor actual)
             throws RenderFailure {
-        for (FieldDescriptor expectedField : expected.getFields()) {
-            FieldDescriptor actualField = actual.findFieldByNumber(expectedField.getNumber());
-            if (actualField == null
-                    || !actualField.getName().equals(expectedField.getName())
-                    || actualField.getType() != expectedField.getType()
-                    || actualField.isRepeated() != expectedField.isRepeated()
-                    || actualField.isMapField() != expectedField.isMapField()) {
-                throw new RenderFailure(
-                        RenderFailure.Kind.UNSUPPORTED,
-                        "Source descriptor '" + actual.getFullName()
-                                + "' is structurally incompatible on field '"
-                                + expectedField.getName() + "' (#" + expectedField.getNumber()
-                                + ")");
+        record DescriptorPair(Descriptor expected, Descriptor actual) {}
+        Deque<DescriptorPair> pending = new ArrayDeque<>();
+        Set<DescriptorPair> checked = new HashSet<>();
+        pending.push(new DescriptorPair(expected, actual));
+        int fieldsSeen = 0;
+        while (!pending.isEmpty()) {
+            DescriptorPair pair = pending.pop();
+            if (pair.expected() == pair.actual() || !checked.add(pair)) {
+                continue;
             }
-            if (expectedField.getJavaType() == FieldDescriptor.JavaType.MESSAGE
-                    && !actualField.getMessageType().getFullName()
+            for (FieldDescriptor expectedField : pair.expected().getFields()) {
+                if (++fieldsSeen > MAX_SCHEMA_FIELDS) {
+                    throw new RenderFailure(
+                            RenderFailure.Kind.LIMIT,
+                            "Source compatibility check exceeds maximum schema fields ("
+                                    + MAX_SCHEMA_FIELDS + ")");
+                }
+                FieldDescriptor actualField =
+                        pair.actual().findFieldByNumber(expectedField.getNumber());
+                if (actualField == null
+                        || !actualField.getName().equals(expectedField.getName())
+                        || actualField.getType() != expectedField.getType()
+                        || actualField.isRepeated() != expectedField.isRepeated()
+                        || actualField.isMapField() != expectedField.isMapField()) {
+                    throw new RenderFailure(
+                            RenderFailure.Kind.UNSUPPORTED,
+                            "Source descriptor '" + pair.actual().getFullName()
+                                    + "' is structurally incompatible on field '"
+                                    + expectedField.getName() + "' (#" + expectedField.getNumber()
+                                    + ")");
+                }
+                if (expectedField.getJavaType() == FieldDescriptor.JavaType.MESSAGE) {
+                    if (!actualField.getMessageType().getFullName()
                             .equals(expectedField.getMessageType().getFullName())) {
-                throw new RenderFailure(
-                        RenderFailure.Kind.UNSUPPORTED,
-                        "Source descriptor '" + actual.getFullName()
-                                + "' differs in message type for field '"
-                                + expectedField.getName() + "'");
+                        throw new RenderFailure(
+                                RenderFailure.Kind.UNSUPPORTED,
+                                "Source descriptor '" + pair.actual().getFullName()
+                                        + "' differs in message type for field '"
+                                        + expectedField.getName() + "'");
+                    }
+                    // Descriptor pairs, not names, identify already checked cycles and shared types.
+                    pending.push(new DescriptorPair(
+                            expectedField.getMessageType(), actualField.getMessageType()));
+                } else if (expectedField.getJavaType() == FieldDescriptor.JavaType.ENUM
+                        && !sameEnumMapping(expectedField.getEnumType(), actualField.getEnumType())) {
+                    throw new RenderFailure(
+                            RenderFailure.Kind.UNSUPPORTED,
+                            "Source descriptor '" + pair.actual().getFullName()
+                                    + "' differs in enum type or value mapping for field '"
+                                    + expectedField.getName() + "'");
+                }
             }
         }
+    }
+
+    private static boolean sameEnumMapping(EnumDescriptor expected, EnumDescriptor actual) {
+        if (!expected.getFullName().equals(actual.getFullName())
+                || expected.getValues().size() != actual.getValues().size()) {
+            return false;
+        }
+        for (EnumValueDescriptor value : expected.getValues()) {
+            EnumValueDescriptor supplied = actual.findValueByName(value.getName());
+            if (supplied == null || supplied.getNumber() != value.getNumber()) {
+                return false;
+            }
+            // Numeric projection must preserve the canonical name when aliases share a number.
+            if (!expected.findValueByNumber(value.getNumber()).getName()
+                    .equals(actual.findValueByNumber(value.getNumber()).getName())) {
+                return false;
+            }
+        }
+        return true;
     }
 
     static void validateRowSchemaAndColumns(
