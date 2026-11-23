@@ -374,7 +374,19 @@ export function createSaveAsJobStore(): SaveAsJobStore {
         buildGetRepositorySinkJobRequest(entry.accountId, operationId),
         { signal, timeoutMs: LOOKUP_TIMEOUT_MS },
       )
-      if (response.job !== undefined) {
+      if (response.job === undefined) {
+        callsFor(operationId).failedPolls += 1
+        failLookup(
+          entry,
+          {
+            kind: 'unsettled',
+            codeLabel: 'EmptyJobResponse',
+            message: 'Server returned no job for the status request; refresh status to inspect recorded state.',
+            canReconcile: true,
+          },
+          sequence,
+        )
+      } else {
         apply(entry, describeSinkJob(response.job), 'refresh', sequence)
       }
     } catch (error) {
@@ -406,7 +418,18 @@ export function createSaveAsJobStore(): SaveAsJobStore {
         buildCancelRepositorySinkJobRequest(entry.accountId, operationId, reason),
         { signal, timeoutMs: LOOKUP_TIMEOUT_MS },
       )
-      if (response.job !== undefined) {
+      if (response.job === undefined) {
+        failLookup(
+          entry,
+          {
+            kind: 'unsettled',
+            codeLabel: 'EmptyJobResponse',
+            message: 'Server returned no job for the cancel request; refresh status to inspect recorded state.',
+            canReconcile: true,
+          },
+          sequence,
+        )
+      } else {
         apply(entry, describeSinkJob(response.job), 'cancel', sequence)
       }
     } catch (error) {

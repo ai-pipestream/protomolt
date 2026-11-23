@@ -127,6 +127,69 @@ describe('Save-as job store', () => {
     jobs.dispose()
   })
 
+  it.each(['refresh', 'cancel'] as const)(
+    'reports a missing job from %s and recovers through polling',
+    async (action) => {
+      vi.useFakeTimers()
+      let gets = 0
+      const client = routerClients((r) =>
+        r.service(RepositorySinkService, {
+          publishRepositorySink(req) {
+            return create(PublishRepositorySinkResponseSchema, {
+              job: job(req.operationId, RepositorySinkJobState.RUNNING),
+            })
+          },
+          getRepositorySinkJob(req) {
+            gets += 1
+            if (action === 'refresh' && gets === 1) return create(GetRepositorySinkJobResponseSchema)
+            return create(GetRepositorySinkJobResponseSchema, {
+              job: job(req.operationId, RepositorySinkJobState.SUCCEEDED),
+            })
+          },
+          cancelRepositorySinkJob() {
+            return create(CancelRepositorySinkJobResponseSchema)
+          },
+        }),
+      ).repositorySink
+      const jobs = createSaveAsJobStore()
+      try {
+        await jobs.publish(client, request('op-empty'), true)
+        const entry = jobs.find('op-empty')!
+        const previousSummary = entry.summary
+        if (action === 'refresh') {
+          // Let the scheduled poll run so its replacement timer uses failure backoff.
+          await vi.advanceTimersByTimeAsync(500)
+        } else {
+          await jobs.cancel('op-empty', 'stop')
+        }
+        expect(entry.error).toMatchObject({
+          kind: 'unsettled',
+          codeLabel: 'EmptyJobResponse',
+          canReconcile: true,
+        })
+        expect(entry.error?.message).toContain('no job')
+        expect(entry.summary).toBe(previousSummary)
+        expect(entry.updatedBy).toBe('publish')
+        expect(entry.reconciling).toBe(false)
+        expect(entry.cancelling).toBe(false)
+        expect(entry.request.operationId).toBe('op-empty')
+
+        const delay = action === 'refresh' ? 1000 : 500
+        await vi.advanceTimersByTimeAsync(delay - 1)
+        expect(gets).toBe(action === 'refresh' ? 1 : 0)
+        await vi.advanceTimersByTimeAsync(1)
+        expect(gets).toBe(action === 'refresh' ? 2 : 1)
+        expect(entry.summary?.phase).toBe('succeeded')
+        expect(entry.updatedBy).toBe('refresh')
+        expect(entry.error).toBeNull()
+        await vi.advanceTimersByTimeAsync(30_000)
+        expect(gets).toBe(action === 'refresh' ? 2 : 1)
+      } finally {
+        jobs.dispose()
+      }
+    },
+  )
+
   it('keeps polling an active job after a status call fails', async () => {
     vi.useFakeTimers()
     let gets = 0
