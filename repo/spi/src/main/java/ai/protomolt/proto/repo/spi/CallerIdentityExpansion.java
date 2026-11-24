@@ -11,7 +11,6 @@ import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
@@ -23,10 +22,9 @@ import java.util.Set;
  */
 public final class CallerIdentityExpansion {
 
-    private static final String KEY_SEPARATOR = "\u0000";
     private static final String PUBLIC_IDENTITY = "public";
 
-    private final Map<String, List<Principal>> next;
+    private final Map<AclIdentityKey, List<Principal>> next;
 
     /**
      * Creates an expansion over {@code links}.
@@ -35,7 +33,7 @@ public final class CallerIdentityExpansion {
      */
     public CallerIdentityExpansion(Collection<IdentityLink> links) {
         Objects.requireNonNull(links, "links");
-        Map<String, List<Principal>> byFrom = new HashMap<>();
+        Map<AclIdentityKey, List<Principal>> byFrom = new HashMap<>();
         for (IdentityLink link : links) {
             Objects.requireNonNull(link, "link");
             if (!link.getUnknownFields().asMap().isEmpty()) {
@@ -59,11 +57,11 @@ public final class CallerIdentityExpansion {
         for (Principal identity : identities) {
             requireValidCallerPrincipal(identity);
         }
-        Map<String, Principal> seen = new LinkedHashMap<>();
+        Map<AclIdentityKey, Principal> seen = new LinkedHashMap<>();
         Deque<Principal> pending = new ArrayDeque<>(identities);
         while (!pending.isEmpty()) {
             Principal identity = pending.removeFirst();
-            String identityKey = key(identity);
+            AclIdentityKey identityKey = key(identity);
             if (seen.putIfAbsent(identityKey, identity) == null) {
                 pending.addAll(next.getOrDefault(identityKey, List.of()));
             }
@@ -86,9 +84,8 @@ public final class CallerIdentityExpansion {
                 expand(caller.identities()), caller.credentialBinding());
     }
 
-    private static String key(Principal identity) {
-        return identity.getIdentityType().toLowerCase(Locale.ROOT) + KEY_SEPARATOR
-                + identity.getIdentity().toLowerCase(Locale.ROOT);
+    private static AclIdentityKey key(Principal identity) {
+        return new AclIdentityKey(identity.getIdentityType(), identity.getIdentity());
     }
 
     private static void requireValidLinkPrincipal(Principal identity) {

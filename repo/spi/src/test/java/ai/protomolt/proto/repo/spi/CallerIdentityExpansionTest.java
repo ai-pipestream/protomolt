@@ -24,6 +24,24 @@ class CallerIdentityExpansionTest {
     }
 
     @Test
+    void linkEndpointsKeepTypeAndIdentitySeparate() {
+        Principal source = p("user\u0000realm", "alice");
+        Principal other = p("user", "realm\u0000alice");
+        Principal group = p("group", "staff");
+        var expansion = new CallerIdentityExpansion(List.of(link(source, group)));
+
+        assertThat(expansion.expand(Set.of(source))).contains(group);
+        assertThat(expansion.expand(Set.of(other))).containsExactly(other);
+    }
+
+    @Test
+    void expandsLinksUsingThePolicyUnicodeComparison() {
+        Principal group = p("group", "staff");
+        var expansion = new CallerIdentityExpansion(List.of(link(p("Key", "İbrahim"), group)));
+        assertThat(expansion.expand(Set.of(p("key", "ibrahim")))).contains(group);
+    }
+
+    @Test
     void followsLinksTransitivelyAndCaseInsensitively() {
         CallerIdentityExpansion expansion = new CallerIdentityExpansion(List.of(
                 link(p("user-principal-name", "Ada@Example.com"), p("atlassian-account", "acc-1")),

@@ -43,6 +43,21 @@ class DocumentSecurityTermsTest {
             .build();
 
     @Test
+    void unicodeGrantsAndDenialsMatchRepositoryPolicy() {
+        var identities = Set.of(principal("key", "ibrahim"));
+        var caller = new RepositoryCaller("reader", false, Set.of("acct"), identities);
+        var terms = DocumentSecurityTerms.callerTerms(identities);
+        var granted = DocumentSecurity.newBuilder()
+                .addPermissions(rule("Key", "İbrahim", Access.ACCESS_READ)).build();
+        var denied = granted.toBuilder().addPermissions(rule("Key", "İbrahim", Access.ACCESS_DENY)).build();
+
+        assertThat(DocumentAccessPolicy.allows(caller, "acct", granted, List.of(), Access.ACCESS_READ)).isTrue();
+        assertThat(DocumentSecurityTerms.of(granted, List.of()).reads(terms)).isTrue();
+        assertThat(DocumentAccessPolicy.allows(caller, "acct", denied, List.of(), Access.ACCESS_READ)).isFalse();
+        assertThat(DocumentSecurityTerms.of(denied, List.of()).reads(terms)).isFalse();
+    }
+
+    @Test
     void readRulesAllowDenyRulesFromAnywhereDenyAndEachSetIsAGate() {
         var terms = DocumentSecurityTerms.of(SECURITY, List.of());
 

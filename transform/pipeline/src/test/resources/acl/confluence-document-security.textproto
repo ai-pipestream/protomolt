@@ -11,6 +11,7 @@
 # `atlassian-access-class` rule, which a caller matches only if its identities
 # carry that class. Anything incomplete, missing its access arm, or mismatched
 # on `space_id` maps to no rule, which denies.
+# A view-restricted owner without an ID contributes an empty (deny-all) gate.
 sources: "space"
 sources: "item"
 produce_type: "ai.protomolt.proto.repo.v1.DocumentSecurity"
@@ -21,6 +22,6 @@ cel_rules {
 }
 cel_rules {
   filter: "space.security_completeness == ai.pipestream.sync.v1.AclCompleteness.ACL_COMPLETENESS_COMPLETE && item.security_completeness == ai.pipestream.sync.v1.AclCompleteness.ACL_COMPLETENESS_COMPLETE && has(space.space_access) && has(item.access_chain) && space.space_access.space_id != '' && space.space_access.space_id == item.access_chain.space_id"
-  selector: "item.access_chain.owners.filter(o, o.content.id != '' && o.restriction_state.state == ai.pipestream.confluence.v1.ContentRestrictionState.CONTENT_RESTRICTION_STATE_VIEW_RESTRICTED).map(o, ai.protomolt.proto.repo.v1.AccessRuleSet{source: 'confluence-owner:' + o.content.id, rules: o.permissions.filter(p, p.principal.principal_id != '' && (p.operation == ai.pipestream.confluence.v1.ContentPermissionOperation.CONTENT_PERMISSION_OPERATION_READ || p.operation == ai.pipestream.confluence.v1.ContentPermissionOperation.CONTENT_PERMISSION_OPERATION_UPDATE) && (p.principal.principal_type == ai.pipestream.confluence.v1.ContentPermissionPrincipalType.CONTENT_PERMISSION_PRINCIPAL_TYPE_USER || p.principal.principal_type == ai.pipestream.confluence.v1.ContentPermissionPrincipalType.CONTENT_PERMISSION_PRINCIPAL_TYPE_GROUP)).map(p, ai.protomolt.proto.repo.v1.AccessRule{identity: p.principal.principal_id, identity_type: p.principal.principal_type == ai.pipestream.confluence.v1.ContentPermissionPrincipalType.CONTENT_PERMISSION_PRINCIPAL_TYPE_USER ? 'atlassian-account' : 'atlassian-group', access: ai.protomolt.proto.repo.v1.Access.ACCESS_READ})})"
+  selector: "item.access_chain.owners.filter(o, o.restriction_state.state == ai.pipestream.confluence.v1.ContentRestrictionState.CONTENT_RESTRICTION_STATE_VIEW_RESTRICTED).map(o, ai.protomolt.proto.repo.v1.AccessRuleSet{source: 'confluence-owner:' + o.content.id, rules: o.content.id.trim() == '' ? [] : o.permissions.filter(p, p.principal.principal_id != '' && (p.operation == ai.pipestream.confluence.v1.ContentPermissionOperation.CONTENT_PERMISSION_OPERATION_READ || p.operation == ai.pipestream.confluence.v1.ContentPermissionOperation.CONTENT_PERMISSION_OPERATION_UPDATE) && (p.principal.principal_type == ai.pipestream.confluence.v1.ContentPermissionPrincipalType.CONTENT_PERMISSION_PRINCIPAL_TYPE_USER || p.principal.principal_type == ai.pipestream.confluence.v1.ContentPermissionPrincipalType.CONTENT_PERMISSION_PRINCIPAL_TYPE_GROUP)).map(p, ai.protomolt.proto.repo.v1.AccessRule{identity: p.principal.principal_id, identity_type: p.principal.principal_type == ai.pipestream.confluence.v1.ContentPermissionPrincipalType.CONTENT_PERMISSION_PRINCIPAL_TYPE_USER ? 'atlassian-account' : 'atlassian-group', access: ai.protomolt.proto.repo.v1.Access.ACCESS_READ})})"
   target: "required_rule_sets"
 }

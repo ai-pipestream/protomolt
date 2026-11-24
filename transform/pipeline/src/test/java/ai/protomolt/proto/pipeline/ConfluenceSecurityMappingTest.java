@@ -110,6 +110,16 @@ class ConfluenceSecurityMappingTest {
             """);
 
     @Test
+    void unidentifiedViewRestrictedOwnerKeepsAClosedGate() throws Exception {
+        for (String replacement : List.of("", "id: \"  \"")) {
+            DocumentSecurity security = map(SPACE, CHILD.replace("id: \"200\"", replacement));
+            assertThat(security.getRequiredRuleSetsList()).singleElement()
+                    .satisfies(set -> assertThat(set.getRulesList()).isEmpty());
+            assertThat(reads(security, "atlassian-account:acc-1", "atlassian-group:g-staff")).isFalse();
+        }
+    }
+
+    @Test
     void spaceGrantsBecomePermissionsAndEachViewRestrictedOwnerOneRequiredSet() throws Exception {
         DocumentSecurity security = map(SPACE, CHILD);
 

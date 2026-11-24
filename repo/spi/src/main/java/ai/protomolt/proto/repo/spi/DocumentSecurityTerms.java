@@ -8,7 +8,6 @@ import ai.protomolt.proto.repo.v1.Principal;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
-import java.util.Locale;
 import java.util.Objects;
 import java.util.Set;
 
@@ -16,7 +15,7 @@ import java.util.Set;
  * A document's read access as search terms, and a caller's identities as the terms they match.
  * A caller may read a document when its terms hit {@link #allow()}, miss {@link #deny()}, and
  * hit the {@code allow} of every gate, the same answer {@link DocumentAccessPolicy} gives for
- * READ. Terms are {@code encoded_identity_type:identity} in {@link Locale#ROOT} lower case, where
+ * READ. Terms are {@code encoded_identity_type:identity} using the case folding of {@link String#equalsIgnoreCase(String)}, where
  * {@code %} and {@code :} inside {@code identity_type} are percent-encoded ({@code %25},
  * {@code %3a}) so the first {@code :} unambiguously separates type from identity.
  *
@@ -120,8 +119,8 @@ public record DocumentSecurityTerms(List<String> allow, List<String> deny, List<
     }
 
     private static String term(String type, String identity) {
-        return encodeIdentityType(type.toLowerCase(Locale.ROOT)) + TERM_SEPARATOR
-                + identity.toLowerCase(Locale.ROOT);
+        AclIdentityKey key = new AclIdentityKey(type, identity);
+        return encodeIdentityType(key.type()) + TERM_SEPARATOR + key.identity();
     }
 
     private static String encodeIdentityType(String lowerType) {
