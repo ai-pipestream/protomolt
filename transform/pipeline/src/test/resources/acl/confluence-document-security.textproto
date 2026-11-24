@@ -11,7 +11,10 @@
 # `atlassian-access-class` rule, which a caller matches only if its identities
 # carry that class. Anything incomplete, missing its access arm, or mismatched
 # on `space_id` maps to no rule, which denies.
-# A view-restricted owner without an ID contributes an empty (deny-all) gate.
+# A view-restricted owner without an ID, or whose grants are all to principal
+# types other than user and group, contributes an empty (deny-all) gate.
+# Space grants to anonymous users are not mapped, so public spaces are not
+# readable through search. Only ACCESS_READ rules are produced.
 sources: "space"
 sources: "item"
 produce_type: "ai.protomolt.proto.repo.v1.DocumentSecurity"

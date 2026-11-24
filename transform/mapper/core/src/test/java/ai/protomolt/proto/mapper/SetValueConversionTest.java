@@ -28,6 +28,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class SetValueConversionTest {
 
     private static Descriptor item;
+    private static Descriptor tag;
     private static EnumDescriptor status;
 
     private final ProtoFieldMapperImpl mapper = new ProtoFieldMapperImpl(new DescriptorRegistry());
@@ -47,10 +48,15 @@ class SetValueConversionTest {
                           Status status = 5;
                           bytes blob = 6;
                           repeated int64 big_counts = 7;
+                          repeated Tag tags = 8;
+                          repeated Status statuses = 9;
+                          repeated bytes blobs = 10;
                         }
+                        message Tag { string key = 1; }
                         """, "conv").build());
         var file = compiled.descriptorFor("conv/item.proto").orElseThrow();
         item = file.findMessageTypeByName("Item");
+        tag = file.findMessageTypeByName("Tag");
         status = file.findEnumTypeByName("Status");
     }
 
@@ -66,6 +72,44 @@ class SetValueConversionTest {
         assertEquals(List.of(1L, 2L), mapper.getValue(builder.build(), "big_counts"));
         assertThrows(MappingException.class, () -> mapper.setValue(builder, "big_counts",
                 java.util.Arrays.asList(1L, null)));
+        assertEquals(List.of(1L, 2L), mapper.getValue(builder.build(), "big_counts"));
+    }
+
+    @Test
+    void aFailedListAssignmentLeavesTheFieldUnchanged() throws Exception {
+        var builder = item();
+        mapper.setValue(builder, "big_counts", List.of(1L, 2L));
+        assertThrows(Exception.class, () -> mapper.setValue(builder, "big_counts",
+                List.of(3L, "not a number")));
+        assertEquals(List.of(1L, 2L), mapper.getValue(builder.build(), "big_counts"));
+    }
+
+    @Test
+    void aListOfMessagesReplacesARepeatedMessageField() throws Exception {
+        var builder = item();
+        DynamicMessage a = DynamicMessage.newBuilder(tag).setField(tag.findFieldByName("key"), "a").build();
+        DynamicMessage b = DynamicMessage.newBuilder(tag).setField(tag.findFieldByName("key"), "b").build();
+        mapper.appendValue(builder, "tags", b);
+        mapper.setValue(builder, "tags", List.of(a, b));
+        assertEquals(List.of(a, b), mapper.getValue(builder.build(), "tags"));
+    }
+
+    @Test
+    void listsOfEnumsAndBytesReplaceTheirRepeatedFields() throws Exception {
+        var builder = item();
+        mapper.setValue(builder, "statuses", List.of(status.findValueByName("STATUS_ACTIVE"), 2));
+        assertEquals(List.of(status.findValueByName("STATUS_ACTIVE"), status.findValueByName("STATUS_DISABLED")),
+                mapper.getValue(builder.build(), "statuses"));
+        mapper.setValue(builder, "blobs", List.of(ByteString.copyFromUtf8("x")));
+        assertEquals(List.of(ByteString.copyFromUtf8("x")), mapper.getValue(builder.build(), "blobs"));
+    }
+
+    @Test
+    void anEmptyListClearsARepeatedField() throws Exception {
+        var builder = item();
+        mapper.setValue(builder, "big_counts", List.of(1L));
+        mapper.setValue(builder, "big_counts", List.of());
+        assertEquals(List.of(), mapper.getValue(builder.build(), "big_counts"));
     }
 
     @Test

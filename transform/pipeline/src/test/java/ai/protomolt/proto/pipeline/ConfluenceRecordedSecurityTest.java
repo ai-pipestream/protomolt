@@ -24,6 +24,7 @@ import java.util.Map;
 import static ai.protomolt.proto.pipeline.AclMappingTestSupport.allows;
 import static ai.protomolt.proto.pipeline.AclMappingTestSupport.caller;
 import static ai.protomolt.proto.pipeline.AclMappingTestSupport.field;
+import static ai.protomolt.proto.pipeline.AclMappingTestSupport.isComplete;
 import static ai.protomolt.proto.pipeline.AclMappingTestSupport.loadEdge;
 import static ai.protomolt.proto.pipeline.AclMappingTestSupport.loadRegistry;
 import static ai.protomolt.proto.pipeline.AclMappingTestSupport.mapIdentityLinks;
@@ -177,6 +178,7 @@ class ConfluenceRecordedSecurityTest {
                 "atlassian-access-class:ALL_LICENSED_USERS")));
 
         Map<String, DocumentSecurity> documents = new LinkedHashMap<>();
+        Map<String, Boolean> complete = new LinkedHashMap<>();
         int restricted = 0;
         for (DynamicMessage item : records) {
             if (!item.hasField(entity.findFieldByName("access_chain"))) {
@@ -189,9 +191,12 @@ class ConfluenceRecordedSecurityTest {
             DocumentSecurity security = mapSecurity(registry, edge, values, "confluence-acl");
             restricted += security.getRequiredRuleSetsCount() > 0 ? 1 : 0;
             documents.put(field(item, "entity_id").toString(), security);
+            complete.put(field(item, "entity_id").toString(), values.get("space") != null
+                    && isComplete(values.get("space"), "security_completeness")
+                    && isComplete(item, "security_completeness"));
         }
         Map<String, Map<String, Boolean>> decisions = writeAndVerifySearchFixture(
-                documents, callers, out.resolve("confluence-items.ndjson"), out.resolve("confluence-callers.json"));
+                documents, complete, callers, out.resolve("confluence-items.ndjson"), out.resolve("confluence-callers.json"));
         assertThat(restricted).as("items under a view-restricted owner").isPositive();
         assertThat(decisions.get("email:join-proof@example.invalid")).doesNotContainValue(false);
         assertThat(callers.keySet().stream().filter(name -> name.startsWith("atlassian-account:account-"))

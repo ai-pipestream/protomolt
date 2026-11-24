@@ -7,6 +7,9 @@
 # links that address (identity type email) to the Atlassian account, and
 # a group membership links the account to the group. Other records, and users
 # whose email is hidden, map to an empty link.
+# The email join trusts the address: two accounts showing the same email are
+# both linked from it, and nothing detects that collision. A deployment that
+# cannot trust its directory addresses must not use this join.
 sources: "entity"
 produce_type: "ai.protomolt.proto.repo.v1.IdentityLink"
 cel_rules {

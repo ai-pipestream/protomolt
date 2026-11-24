@@ -72,7 +72,7 @@ naming the missing ones. `IdentityLinkFile.fromEnvironment` reads
 | `PROTOMOLT_CONSOLE_OIDC_CLIENT_SECRET` | required with the issuer | text |
 | `PROTOMOLT_CONSOLE_OIDC_REDIRECT_URI` | required with the issuer | the host's `/console/session/callback` as the provider reaches it, registered at the provider exactly |
 | `PROTOMOLT_CONSOLE_SESSION_TTL` | required with the issuer | ISO-8601 duration, one second to seven days (`PT8H`) |
-| `PROTOMOLT_IDENTITY_LINKS` | unset = no caller identity expansion | path to a regular file (up to 64 MiB and 500,000 entries) of length-delimited `IdentityLink` protobuf messages; trimmed, blank or unreadable/malformed files fail startup, and runtime changes reload when file metadata stabilizes |
+| `PROTOMOLT_IDENTITY_LINKS` | unset = no caller identity expansion | path to a regular file (up to 64 MiB and 500,000 entries) of length-delimited `IdentityLink` protobuf messages; trimmed, blank or unreadable/malformed files fail startup, and runtime changes reload when file metadata stabilizes; a file that later becomes unreadable or malformed fails every caller-bound request (logged once) until fixed, and one caller's expansion past 10,000 identities fails that request |
 
 Valkey is the preferred Redis-compatible server, selected explicitly. S3 stays the
 default authoritative streaming store; the bounded Valkey/Redis adapter does not

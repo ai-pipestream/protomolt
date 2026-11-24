@@ -147,6 +147,7 @@ final class AclMappingTestSupport {
 
     static Map<String, Map<String, Boolean>> writeAndVerifySearchFixture(
             Map<String, DocumentSecurity> documents,
+            Map<String, Boolean> complete,
             Map<String, RepositoryCaller> callers,
             Path itemsFile,
             Path callersFile) throws IOException {
@@ -165,7 +166,9 @@ final class AclMappingTestSupport {
                         .append("{\"source\":").append(json(gate.source()))
                         .append(",\"allow\":").append(json(gate.allow())).append('}');
             }
-            items.append("],\"acl_complete\":true}\n");
+            Boolean itemComplete = complete.get(doc.getKey());
+            assertThat(itemComplete).as("completeness of %s", doc.getKey()).isNotNull();
+            items.append("],\"acl_complete\":").append(itemComplete).append("}\n");
             for (var callerEntry : callers.entrySet()) {
                 boolean allowed = allows(callerEntry.getValue(), doc.getValue());
                 assertThat(terms.reads(DocumentSecurityTerms.callerTerms(callerEntry.getValue().identities())))
@@ -194,6 +197,10 @@ final class AclMappingTestSupport {
         Files.writeString(callersFile, callerJson);
         assertThat(Files.readAllLines(itemsFile)).hasSize(documents.size());
         return decisions;
+    }
+
+    static boolean isComplete(Message message, String field) {
+        return field(message, field).toString().equals("ACL_COMPLETENESS_COMPLETE");
     }
 
     static String json(String value) {

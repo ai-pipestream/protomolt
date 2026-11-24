@@ -99,4 +99,20 @@ class CallerIdentityExpansionTest {
         assertThatThrownBy(() -> empty.expand(Set.of(p("", "acc-1"))))
                 .isInstanceOf(IllegalArgumentException.class);
     }
+
+    @Test
+    void refusesAnExpansionPastTheIdentityLimit() {
+        var links = List.of(
+                link(p("user-principal-name", "ada@example.com"), p("atlassian-account", "acc-1")),
+                link(p("atlassian-account", "acc-1"), p("atlassian-group", "g-1")),
+                link(p("atlassian-group", "g-1"), p("atlassian-group", "g-2")));
+        Set<Principal> ada = Set.of(p("user-principal-name", "ada@example.com"));
+
+        assertThat(new CallerIdentityExpansion(links, 4).expand(ada)).hasSize(4);
+        assertThatThrownBy(() -> new CallerIdentityExpansion(links, 3).expand(ada))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("exceeds 3 identities");
+        assertThatThrownBy(() -> new CallerIdentityExpansion(links, 0))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
 }

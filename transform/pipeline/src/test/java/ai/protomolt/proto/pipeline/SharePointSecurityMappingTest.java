@@ -48,7 +48,7 @@ class SharePointSecurityMappingTest {
         groupChange = registry.findDescriptorByFullName("ai.pipestream.microsoft.v1.GroupChange");
     }
 
-    /** Read, Edit, Limited Access and two levels on one assignment; users, a claim and a directory group. */
+    /** Read, Edit, Limited Access, view-without-open and two levels on one assignment; users, a claim and a directory group. */
     private static final String ACL = """
             securable { list_item { site_id: "host,coll,web" list_id: "L" item_id: "7" } }
             assignments { member { id: 4 principal_type: SITE_PRINCIPAL_TYPE_SHAREPOINT_GROUP login_name: "Visitors" }
@@ -58,6 +58,8 @@ class SharePointSecurityMappingTest {
               roles { name: "Edit" base_permissions_low: 1011030767 } }
             assignments { member { id: 11 principal_type: SITE_PRINCIPAL_TYPE_SHAREPOINT_GROUP login_name: "Limited" }
               roles { name: "Limited Access" base_permissions_low: 134287360 } }
+            assignments { member { id: 12 principal_type: SITE_PRINCIPAL_TYPE_SHAREPOINT_GROUP login_name: "Listers" }
+              roles { name: "View list items only" base_permissions_low: 1 } }
             assignments { member { id: 20 principal_type: SITE_PRINCIPAL_TYPE_USER
                 login_name: "i:0#.f|membership|ada@contoso.com" user_principal_name: "ada@contoso.com" email: "ada@example.com" }
               roles { name: "Read" base_permissions_low: 138612833 } }
@@ -91,6 +93,8 @@ class SharePointSecurityMappingTest {
                 assertThat(r.getAccess()).isEqualTo(Access.ACCESS_READ));
         assertThat(security.getRequiredRuleSetsList()).isEmpty();
         assertThat(reads(security, "sharepoint-group:host,coll,web/11")).as("Limited Access only").isFalse();
+        assertThat(reads(security, "sharepoint-group:host,coll,web/12")).as("lists items, cannot open them").isFalse();
+        assertThat(reads(security, "public:public")).as("the Everyone-except-external claim grants no one").isFalse();
         assertThat(reads(security, "user-principal-name:ADA@contoso.com")).isTrue();
         assertThat(reads(security, "entra-group:g-2")).as("members of a group whose owners are granted").isFalse();
         assertThat(reads(security, "sharepoint-site-admin:host,coll,web")).isTrue();

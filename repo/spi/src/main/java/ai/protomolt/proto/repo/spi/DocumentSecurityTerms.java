@@ -14,8 +14,10 @@ import java.util.Set;
 /**
  * A document's read access as search terms, and a caller's identities as the terms they match.
  * A caller may read a document when its terms hit {@link #allow()}, miss {@link #deny()}, and
- * hit the {@code allow} of every gate, the same answer {@link DocumentAccessPolicy} gives for
- * READ. Terms are {@code encoded_identity_type:identity} using the case folding of {@link String#equalsIgnoreCase(String)}, where
+ * hit the {@code allow} of every gate. For a caller without process authority in the document's
+ * owning account, that is the answer {@link DocumentAccessPolicy} gives for READ. The terms carry
+ * no account: a search index must also filter on the owning account. A document without
+ * security is readable only with process authority and has no terms. Terms are {@code encoded_identity_type:identity} using the case folding of {@link String#equalsIgnoreCase(String)}, where
  * {@code %} and {@code :} inside {@code identity_type} are percent-encoded ({@code %25},
  * {@code %3a}) so the first {@code :} unambiguously separates type from identity.
  *

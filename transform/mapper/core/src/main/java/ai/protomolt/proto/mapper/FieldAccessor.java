@@ -9,6 +9,7 @@ import com.google.protobuf.Message;
 import com.google.protobuf.MessageOrBuilder;
 import com.google.protobuf.Struct;
 
+import java.util.ArrayList;
 import java.util.List;
 
 /**
@@ -147,15 +148,16 @@ final class FieldAccessor {
 
             if (fd.isRepeated() && !fd.isMapField() && value instanceof List<?> items) {
                 // A list assigned to a repeated field replaces its elements, each converted
-                // like an appended element.
-                containerBuilder.clearField(fd);
+                // like an appended element. Every element converts before the field changes.
+                List<Object> converted = new ArrayList<>(items.size());
                 for (Object item : items) {
                     if (item == null) {
                         throw new MappingException("Cannot assign a null element to field '"
                                 + fd.getName() + "'", rule);
                     }
-                    containerBuilder.addRepeatedField(fd, convertForField(item, fd, fieldName, rule));
+                    converted.add(convertForField(item, fd, fieldName, rule));
                 }
+                containerBuilder.setField(fd, converted);
             } else {
                 containerBuilder.setField(fd, convertForField(value, fd, fieldName, rule));
             }

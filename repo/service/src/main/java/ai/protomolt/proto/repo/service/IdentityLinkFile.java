@@ -16,13 +16,17 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.function.Supplier;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Identity links read from a regular file of length-delimited {@link IdentityLink} messages,
  * reread under a single-flight lock when the file's canonical identity, size, or modification
  * timestamp changes. Every read enforces byte and link-count bounds and verifies that the file
  * stamp is stable before and after reading; an unreadable, oversized, malformed, or concurrently
- * mutating file fails closed without exposing host filesystem paths.
+ * mutating file fails closed without exposing host filesystem paths. Each load logs its link
+ * count (and warns when the file holds none); a failed read logs once until the failure changes.
+ * Mappings that produce {@code IdentityLinks} must be flattened to one {@link IdentityLink} per entry.
  */
 final class IdentityLinkFile implements Supplier<CallerIdentityExpansion> {
 
@@ -37,6 +41,8 @@ final class IdentityLinkFile implements Supplier<CallerIdentityExpansion> {
 
     static final int MAX_STABLE_READ_ATTEMPTS = 3;
 
+    private static final Logger LOG = LoggerFactory.getLogger(IdentityLinkFile.class);
+
     private record FileStamp(Path realPath, Object fileKey, FileTime lastModifiedTime, long size) {
     }
 
@@ -48,6 +54,7 @@ final class IdentityLinkFile implements Supplier<CallerIdentityExpansion> {
     private final int maxLinks;
     private final Object reloadLock = new Object();
     private volatile Loaded loaded;
+    private volatile String lastFailure;
 
     IdentityLinkFile(Path file) {
         this(file, DEFAULT_MAX_BYTES, DEFAULT_MAX_LINKS);
@@ -97,9 +104,16 @@ final class IdentityLinkFile implements Supplier<CallerIdentityExpansion> {
                 }
                 Loaded reloaded = readStable();
                 loaded = reloaded;
+                lastFailure = null;
                 return reloaded.expansion();
             }
         } catch (IOException | IllegalArgumentException e) {
+            String failure = e.getClass().getSimpleName() + ": " + e.getMessage();
+            if (!failure.equals(lastFailure)) {
+                lastFailure = failure;
+                LOG.error("Identity links named by {} are unusable; every bound call fails until fixed: {}",
+                        ENV_IDENTITY_LINKS, failure);
+            }
             throw new UncheckedIOException(
                     "failed to read the identity links named by " + ENV_IDENTITY_LINKS,
                     e instanceof IOException io ? io : new IOException("Invalid identity link entry", e));
@@ -112,8 +126,14 @@ final class IdentityLinkFile implements Supplier<CallerIdentityExpansion> {
             byte[] bytes = readBounded(before.realPath());
             FileStamp after = stamp();
             if (before.equals(after) && bytes.length == before.size()) {
-                CallerIdentityExpansion expansion = parseLinks(bytes);
-                return new Loaded(after, expansion);
+                List<IdentityLink> links = parseLinks(bytes);
+                if (links.isEmpty()) {
+                    LOG.warn("Identity links named by {} hold no links; callers keep only their own identities",
+                            ENV_IDENTITY_LINKS);
+                } else {
+                    LOG.info("Loaded {} identity links named by {}", links.size(), ENV_IDENTITY_LINKS);
+                }
+                return new Loaded(after, new CallerIdentityExpansion(links));
             }
         }
         throw new IOException("Identity link file changed concurrently during read");
@@ -141,7 +161,7 @@ final class IdentityLinkFile implements Supplier<CallerIdentityExpansion> {
         }
     }
 
-    private CallerIdentityExpansion parseLinks(byte[] bytes) throws IOException {
+    private List<IdentityLink> parseLinks(byte[] bytes) throws IOException {
         List<IdentityLink> links = new ArrayList<>();
         try (ByteArrayInputStream in = new ByteArrayInputStream(bytes)) {
             IdentityLink link;
@@ -152,6 +172,6 @@ final class IdentityLinkFile implements Supplier<CallerIdentityExpansion> {
                 links.add(link);
             }
         }
-        return new CallerIdentityExpansion(links);
+        return links;
     }
 }

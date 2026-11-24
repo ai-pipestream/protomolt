@@ -6,6 +6,7 @@ import ai.protomolt.proto.repo.spi.CallerIdentityExpansion;
 import ai.protomolt.proto.repo.spi.RepositoryCaller;
 import ai.protomolt.proto.repo.v1.DocumentSecurity;
 import ai.protomolt.proto.repo.v1.IdentityLink;
+import ai.protomolt.proto.repo.v1.Principal;
 import com.google.protobuf.Descriptors.Descriptor;
 import com.google.protobuf.Descriptors.FieldDescriptor;
 import com.google.protobuf.DynamicMessage;
@@ -25,6 +26,7 @@ import java.util.Map;
 import static ai.protomolt.proto.pipeline.AclMappingTestSupport.allows;
 import static ai.protomolt.proto.pipeline.AclMappingTestSupport.caller;
 import static ai.protomolt.proto.pipeline.AclMappingTestSupport.field;
+import static ai.protomolt.proto.pipeline.AclMappingTestSupport.isComplete;
 import static ai.protomolt.proto.pipeline.AclMappingTestSupport.loadEdge;
 import static ai.protomolt.proto.pipeline.AclMappingTestSupport.loadRegistry;
 import static ai.protomolt.proto.pipeline.AclMappingTestSupport.mapIdentityLinks;
@@ -84,12 +86,23 @@ class SharePointRecordedSecurityTest {
         assertThat(withMembers).isNotEmpty();
         assertThat(empty).as("a recorded group without members").isNotEmpty();
 
+        String userId = entraUserIds().getFirst();
+        List<String> direct = all.stream()
+                .filter(l -> l.getFrom().getIdentityType().equals("entra-user")
+                        && l.getFrom().getIdentity().equals(userId)
+                        && l.getTo().getIdentityType().equals("entra-group"))
+                .map(l -> l.getTo().getIdentity()).toList();
+        assertThat(direct).as("groups the recorded user is a direct member of").isNotEmpty();
+
         RepositoryCaller user = new CallerIdentityExpansion(all).expand(
                 caller("user-principal-name:" + entraUpns().getFirst()));
-        assertThat(user.identities()).containsAll(withMembers.stream().map(id -> principal("entra-group:" + id))
-                .toList());
+        List<String> reached = user.identities().stream()
+                .filter(p -> p.getIdentityType().equals("entra-group")).map(Principal::getIdentity).toList();
+        assertThat(reached).containsAll(direct);
+        assertThat(reached).as("only groups that have members").isSubsetOf(withMembers);
+        assertThat(reached).doesNotContainAnyElementsOf(empty);
         DynamicMessage siteAclRecord = recordedSiteAcl();
-        for (String id : withMembers) {
+        for (String id : direct) {
             assertThat(allows(user, map(grant(siteAclRecord, id, "")))).as("granted to group %s", id).isTrue();
             assertThat(allows(user, map(grant(siteAclRecord, id, "_o"))))
                     .as("granted to the owners of group %s", id).isFalse();
@@ -148,8 +161,9 @@ class SharePointRecordedSecurityTest {
     void theRealEntraUserReadsTheRealSharePointItemsThroughItsSiteGroup() throws Exception {
         Recorded recorded = recorded();
         assertThat(recorded.items()).hasSizeGreaterThanOrEqualTo(10);
-        assertThat(recorded.items().values().stream().map(DocumentSecurity::getPermissionsCount))
-                .allSatisfy(count -> assertThat(count).isPositive());
+        assertThat(recorded.items().values()).as("rules beside the site admin rule").allSatisfy(security ->
+                assertThat(security.getPermissionsList()).anySatisfy(rule ->
+                        assertThat(rule.getIdentityType()).isNotEqualTo("sharepoint-site-admin")));
         assertThat(recorded.items().keySet().stream().filter(id -> recorded.owners().get(id).contains("/list_item/")))
                 .as("items under their own role assignments").isNotEmpty();
 
@@ -158,6 +172,8 @@ class SharePointRecordedSecurityTest {
         for (var item : recorded.items().entrySet()) {
             assertThat(allows(callers.get("user-principal-name:" + upn), item.getValue()))
                     .as("the Entra user on %s", item.getKey()).isTrue();
+            assertThat(allows(callers.get("user-principal-name:" + upn + " without the site admin link"),
+                    item.getValue())).as("the Entra user through its site group alone on %s", item.getKey()).isTrue();
             assertThat(allows(callers.get("user-principal-name:" + upn + " without groups"), item.getValue()))
                     .as("the Entra user without its group on %s", item.getKey()).isFalse();
             assertThat(allows(callers.get(recorded.limitedGroup() + " member"), item.getValue()))
@@ -171,6 +187,7 @@ class SharePointRecordedSecurityTest {
         Map<String, RepositoryCaller> callers = callers(recorded, entraUpns().getFirst());
         Map<String, Map<String, Boolean>> decisions = writeAndVerifySearchFixture(
                 recorded.items(),
+                recorded.complete(),
                 callers,
                 out.resolve("sharepoint-items.ndjson"),
                 out.resolve("sharepoint-callers.json"));
@@ -181,6 +198,7 @@ class SharePointRecordedSecurityTest {
     private record Recorded(
             Map<String, DocumentSecurity> items,
             Map<String, String> owners,
+            Map<String, Boolean> complete,
             List<IdentityLink> links,
             String limitedGroup) {
     }
@@ -216,13 +234,15 @@ class SharePointRecordedSecurityTest {
             }
         }
         Map<String, DocumentSecurity> items = new LinkedHashMap<>();
+        Map<String, Boolean> complete = new LinkedHashMap<>();
         for (var owner : owners.entrySet()) {
             DynamicMessage acl = acls.get(owner.getValue());
             assertThat(acl).as("role assignments named by %s", owner.getKey()).isNotNull();
             items.put(owner.getKey(), map(acl));
+            complete.put(owner.getKey(), isComplete(acl, "completeness"));
         }
         assertThat(limited).as("a group that holds only Limited Access").isNotNull();
-        return new Recorded(items, owners, mappedLinks, limited);
+        return new Recorded(items, owners, complete, mappedLinks, limited);
     }
 
     private static String findLimitedOnlySharePointGroup(Message siteAclValue) {
@@ -245,6 +265,10 @@ class SharePointRecordedSecurityTest {
         CallerIdentityExpansion expansion = new CallerIdentityExpansion(all);
         Map<String, RepositoryCaller> callers = new LinkedHashMap<>();
         callers.put("user-principal-name:" + upn, expansion.expand(caller("user-principal-name:" + upn)));
+        callers.put("user-principal-name:" + upn + " without the site admin link",
+                new CallerIdentityExpansion(all.stream()
+                        .filter(l -> !l.getTo().getIdentityType().equals("sharepoint-site-admin")).toList())
+                        .expand(caller("user-principal-name:" + upn)));
         callers.put("user-principal-name:" + upn + " without groups",
                 new CallerIdentityExpansion(entraLinksOfRecordedUsers()).expand(caller("user-principal-name:" + upn)));
         callers.put("email:join-proof@example.invalid", expansion.expand(caller("email:join-proof@example.invalid")));
@@ -278,6 +302,15 @@ class SharePointRecordedSecurityTest {
         }
         assertThat(upns).isNotEmpty();
         return upns;
+    }
+
+    private static List<String> entraUserIds() throws IOException {
+        List<String> ids = new ArrayList<>();
+        for (DynamicMessage user : readDelimited(graphUser, "acl/entra-users.binpb")) {
+            ids.add(field(user, "id").toString());
+        }
+        assertThat(ids).isNotEmpty();
+        return ids;
     }
 
     private static List<IdentityLink> entraLinksOfRecordedUsers() throws Exception {
