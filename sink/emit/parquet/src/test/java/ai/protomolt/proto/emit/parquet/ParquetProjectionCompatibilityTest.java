@@ -104,6 +104,113 @@ class ParquetProjectionCompatibilityTest {
         }
     }
 
+    static Stream<Arguments> mixedValues() {
+        return Stream.of("enum", "nested", "element").flatMap(injection ->
+                Stream.of(false, true).filter(repeated -> !injection.equals("element") || repeated)
+                        .flatMap(repeated -> Stream.of("state", "nested.state")
+                                .filter(path -> !injection.equals("nested") || path.equals("nested.state"))
+                                .map(path -> Arguments.of(injection, repeated, path))));
+    }
+
+    static Stream<Arguments> incompatibleMixedValues() {
+        return Stream.of("different_type", "renamed_value", "renumbered_value", "alias_order")
+                .flatMap(change -> mixedValues().map(args -> Arguments.of(
+                        change, args.get()[0], args.get()[1], args.get()[2])));
+    }
+
+    @ParameterizedTest
+    @MethodSource("incompatibleMixedValues")
+    void refusesIncompatibleRuntimeValuesBeforeWriting(
+            String change, String injection, boolean repeated, String path) throws Exception {
+        FileDescriptor declared = schema("expected", "state", path);
+        FileDescriptor supplied = schema(change, "state", path);
+        Message mixed = mixedInput(declared, supplied, injection, repeated, path);
+        assertThat(mixed.getDescriptorForType())
+                .isSameAs(declared.findMessageTypeByName(repeated ? "Batch" : "Source"));
+        assertRefusedBeforeWriting(provider(declared, repeated), mixed);
+    }
+
+    @ParameterizedTest
+    @MethodSource("mixedValues")
+    void compatibleRuntimeValuesPreserveEnumNames(
+            String injection, boolean repeated, String path, @TempDir Path dir) throws Exception {
+        FileDescriptor declared = schema("expected", "state", path);
+        FileDescriptor supplied = schema("expected", "state", path);
+        Message mixed = mixedInput(declared, supplied, injection, repeated, path);
+        ParquetRendererProvider provider = provider(declared, repeated);
+        provider.check(mixed, OPTIONS);
+        ByteArrayOutputStream output = new ByteArrayOutputStream();
+        provider.render(mixed, OPTIONS, output, () -> false);
+        Path file = dir.resolve("mixed.parquet");
+        Files.write(file, output.toByteArray());
+        try (ParquetReader<Group> reader = new GroupBuilder(new LocalInputFile(file)).build()) {
+            assertThat(reader.read().getString("state", 0)).isEqualTo("READY");
+            assertThat(reader.read()).isNull();
+        }
+    }
+
+    @Test
+    void refusesRuntimeChildWithRenamedField() throws Exception {
+        FileDescriptor declared = schema("expected", "state", "nested.state");
+        FileDescriptor supplied = schema("expected", "other_state", "nested.state");
+        assertRefusedBeforeWriting(provider(declared, false),
+                mixedInput(declared, supplied, "nested", false, "nested.state"));
+    }
+
+    @Test
+    void refusesRuntimeChildWithDifferentMessageName() throws Exception {
+        FileDescriptor declared = schema("expected", "state", "nested.state");
+        Descriptor row = declared.findMessageTypeByName("Row");
+        Message otherType = DynamicMessage.newBuilder(row)
+                .setField(row.findFieldByName("state"),
+                        declared.getEnumTypes().getFirst().findValueByNumber(1)).build();
+        Descriptor source = declared.findMessageTypeByName("Source");
+        Message mixed = input(declared, false).toBuilder()
+                .setField(source.findFieldByName("nested"), otherType).build();
+        assertRefusedBeforeWriting(provider(declared, false), mixed);
+    }
+
+    private static void assertRefusedBeforeWriting(ParquetRendererProvider provider, Message input) {
+        assertThatThrownBy(() -> provider.check(input, OPTIONS))
+                .isInstanceOfSatisfying(RenderFailure.class, failure ->
+                        assertThat(failure.kind()).isEqualTo(RenderFailure.Kind.UNSUPPORTED));
+        ByteArrayOutputStream output = new ByteArrayOutputStream();
+        assertThatThrownBy(() -> provider.render(input, OPTIONS, output, () -> false))
+                .isInstanceOfSatisfying(RenderFailure.class, failure ->
+                        assertThat(failure.kind()).isEqualTo(RenderFailure.Kind.UNSUPPORTED));
+        assertThat(output.size()).isZero();
+    }
+
+    private static Message mixedInput(FileDescriptor declared, FileDescriptor supplied,
+            String injection, boolean repeated, String path) {
+        Message foreign = input(supplied, false);
+        Descriptor source = declared.findMessageTypeByName("Source");
+        Message row;
+        if (injection.equals("element")) {
+            row = foreign;
+        } else {
+            var builder = input(declared, false).toBuilder();
+            if (injection.equals("nested")) {
+                builder.setField(source.findFieldByName("nested"),
+                        foreign.getField(foreign.getDescriptorForType().findFieldByName("nested")));
+            } else {
+                var value = supplied.getEnumTypes().getFirst().findValueByNumber(1);
+                if (path.equals("state")) {
+                    builder.setField(source.findFieldByName("state"), value);
+                } else {
+                    Descriptor nested = declared.findMessageTypeByName("Nested");
+                    builder.setField(source.findFieldByName("nested"), DynamicMessage.newBuilder(nested)
+                            .setField(nested.findFieldByName("state"), value).build());
+                }
+            }
+            row = builder.build();
+        }
+        if (!repeated) return row;
+        Descriptor batch = declared.findMessageTypeByName("Batch");
+        return DynamicMessage.newBuilder(batch)
+                .addRepeatedField(batch.findFieldByName("items"), row).build();
+    }
+
     private static ParquetRendererProvider provider(FileDescriptor file, boolean repeated) {
         DescriptorRegistry registry = DescriptorRegistry.create();
         registry.registerFile(file);

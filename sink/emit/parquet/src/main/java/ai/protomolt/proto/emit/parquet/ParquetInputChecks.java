@@ -271,9 +271,12 @@ final class ParquetInputChecks {
     static void requireRecognizedEnumsInSelectedColumns(
             Message root, Set<String> selectedTopColumns, Cancellation cancellation)
             throws RenderFailure {
-        record EnumFrame(Message message, String pathPrefix, boolean rootLevel, int depth) {}
+        record EnumFrame(Message message, Descriptor expected, String pathPrefix,
+                         boolean rootLevel, int depth) {}
+        record DescriptorPair(Descriptor expected, Descriptor actual) {}
+        Set<DescriptorPair> checkedTypes = new HashSet<>();
         Deque<EnumFrame> stack = new ArrayDeque<>();
-        stack.push(new EnumFrame(root, "", true, 0));
+        stack.push(new EnumFrame(root, root.getDescriptorForType(), "", true, 0));
         while (!stack.isEmpty()) {
             cancellation.check();
             EnumFrame frame = stack.pop();
@@ -283,6 +286,18 @@ final class ParquetInputChecks {
                         "Message exceeds maximum nesting depth (" + MAX_MESSAGE_WALK_DEPTH + ")");
             }
             Message msg = frame.message();
+            Descriptor actual = msg.getDescriptorForType();
+            if (frame.expected() != actual
+                    && checkedTypes.add(new DescriptorPair(frame.expected(), actual))) {
+                if (!frame.expected().getFullName().equals(actual.getFullName())) {
+                    throw new RenderFailure(
+                            RenderFailure.Kind.UNSUPPORTED,
+                            "Message value at '" + frame.pathPrefix() + "' has type '"
+                                    + actual.getFullName() + "', expected '"
+                                    + frame.expected().getFullName() + "'");
+                }
+                verifyFieldsCompatible(frame.expected(), actual);
+            }
             for (var entry : msg.getAllFields().entrySet()) {
                 FieldDescriptor field = entry.getKey();
                 if (frame.rootLevel()
@@ -306,21 +321,20 @@ final class ParquetInputChecks {
                         checkEnumValue(field, (EnumValueDescriptor) entry.getValue(), path);
                     }
                 } else if (field.getJavaType() == FieldDescriptor.JavaType.MESSAGE) {
-                    if (ANY_FULL_NAME.equals(field.getMessageType().getFullName())) {
-                        continue;
-                    }
                     if (field.isRepeated()) {
                         List<?> items = (List<?>) entry.getValue();
                         for (int i = items.size() - 1; i >= 0; i--) {
                             stack.push(new EnumFrame(
                                     (Message) items.get(i),
+                                    field.getMessageType(),
                                     path + "[" + i + "]",
                                     false,
                                     frame.depth() + 1));
                         }
                     } else {
                         stack.push(new EnumFrame(
-                                (Message) entry.getValue(), path, false, frame.depth() + 1));
+                                (Message) entry.getValue(), field.getMessageType(),
+                                path, false, frame.depth() + 1));
                     }
                 }
             }
@@ -329,6 +343,13 @@ final class ParquetInputChecks {
 
     static void checkEnumValue(
             FieldDescriptor field, EnumValueDescriptor value, String path) throws RenderFailure {
+        if (field.getEnumType() != value.getType()
+                && !sameEnumMapping(field.getEnumType(), value.getType())) {
+            throw new RenderFailure(
+                    RenderFailure.Kind.UNSUPPORTED,
+                    "Enum value at '" + path + "' has an incompatible type or value mapping for '"
+                            + field.getEnumType().getFullName() + "'");
+        }
         if (value.getIndex() < 0
                 || field.getEnumType().findValueByNumber(value.getNumber()) == null) {
             throw new RenderFailure(

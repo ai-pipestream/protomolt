@@ -39,12 +39,15 @@ The provider never guesses or flattens arbitrary nested repeated fields; every c
 1. **Single-document profile (`ai.protomolt.emit.parquet.single`, `source_profile = "protobuf.single_message"`)**: discovered via `ServiceLoader` and mounted by default in `RepoServices.defaultSaveAsRenderers()`. Renders one authorized protobuf message (an archive protobuf rendition, document main payload, named part, or unpacked `google.protobuf.Any` occurrence) into a 1-row Parquet artifact.
 2. **Declared projection profiles (`ParquetRendererProvider.projected(...)` and `ParquetRendererProvider.projectedRepeated(...)`)**: bind a custom `provider_id` and `source_profile` to an explicit `sourceDescriptor` and compiled `MessageProjection`. Single-row projection maps one message to one target row; repeated-row projection extracts elements strictly from an explicitly declared repeated message `FieldDescriptor` on `sourceDescriptor` and projects every element into the target row schema, failing closed if any element fails projection or validation.
 
-Projected profiles compare the declared source fields against the supplied descriptor,
-including nested message fields. Enum full names, symbol-to-number mappings, and the
-canonical symbol for each number must agree, including aliases. An incompatible
-source is refused before projection or output. The compatibility walk checks each
-pair of descriptors once and refuses more than 4096 distinct field comparisons.
-Independently linked copies of a compatible schema remain supported.
+Single-row projected profiles compare the declared source fields against the supplied
+descriptor, including nested message fields. Repeated-row profiles check the selected
+container field and its element schema, not unrelated container siblings. Both also
+check the actual enum and child-message values encountered by the input value walk
+before projection, since an in-memory message can contain independently linked values.
+Enum full names, symbol-to-number mappings, and the canonical symbol for each number
+must agree, including aliases. Incompatible types are refused before output. Each
+schema compatibility walk checks a descriptor pair once and refuses more than 4096
+distinct field comparisons. Independently linked compatible schemas remain supported.
 
 ### Typed Options (`ParquetRendererOptions`)
 
