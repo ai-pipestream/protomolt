@@ -326,6 +326,31 @@ describe('saveAsCore', () => {
     expect(defaultRenditionSlotName('parsed', 'p')).toBe('parsed-derived')
   })
 
+  it.each([
+    [Code.FailedPrecondition, 'Renderer capability is not supported'],
+    [Code.FailedPrecondition, 'Retained schema is missing'],
+    [Code.FailedPrecondition, 'Source media type does not match the renderer'],
+    [Code.AlreadyExists, 'operation_id is bound to a different publication intent'],
+  ])('reports code %s as a rejection: %s', (code, message) => {
+    expect(classifySinkRpcError(new ConnectError(message, code))).toEqual({
+      kind: 'rejected', codeLabel: Code[code], message, canReconcile: false,
+    })
+  })
+
+  it.each([
+    [Code.FailedPrecondition, false, false],
+    [Code.FailedPrecondition, true, true],
+    [Code.Aborted, false, true],
+  ])('recognizes job conflicts from code %s and explicit flag %s', (grpcCode, conflict, expected) => {
+    const summary = describeSinkJob(create(RepositorySinkJobSchema, {
+      operationId: 'op-rejected', state: RepositorySinkJobState.FAILED,
+      failure: { grpcCode, conflict, message: 'Server rejection', retryable: false },
+    }))
+    expect(summary.isConflict).toBe(expected)
+    expect(summary.failureMessage).toBe('Server rejection')
+    expect(summary.canRetrySameOperation).toBe(false)
+  })
+
   it('models sink job lifecycle states and classifies lost responses vs version conflicts', () => {
     const running = describeSinkJob(
       create(RepositorySinkJobSchema, {
