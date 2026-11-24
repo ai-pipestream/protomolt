@@ -128,6 +128,32 @@ public final class InMemoryRepositorySinkJobStore implements RepositorySinkJobSt
     }
 
     @Override
+    public boolean reconcileTerminalCommit(StoredJob expected, RepositorySinkJob committed) {
+        Objects.requireNonNull(expected, "expected");
+        Objects.requireNonNull(committed, "committed");
+        if (committed.getState() != RepositorySinkJobState.REPOSITORY_SINK_JOB_STATE_SUCCEEDED) {
+            throw new IllegalArgumentException("Reconciliation requires a committed success");
+        }
+        boolean[] applied = {false};
+        String ownerId = expected.lease().ownerId();
+        long leaseEpoch = expected.lease().leaseEpoch();
+        jobs.computeIfPresent(new Key(expected.job().getAccountId(), expected.job().getOperationId()),
+                (key, current) -> {
+                    RepositorySinkJobState state = current.job().getState();
+                    if (!current.lease().matches(ownerId, leaseEpoch)
+                            || state != expected.job().getState()
+                            || (state != RepositorySinkJobState.REPOSITORY_SINK_JOB_STATE_FAILED
+                                    && state != RepositorySinkJobState.REPOSITORY_SINK_JOB_STATE_CANCELLED)) {
+                        return current;
+                    }
+                    applied[0] = true;
+                    return current.withTransition(
+                            committed, committed.getProvenance(), current.lease().leaseExpiresAt());
+                });
+        return applied[0];
+    }
+
+    @Override
     public Optional<StoredJob> requestCancel(String accountId, String operationId, String reason) {
         Objects.requireNonNull(accountId, "accountId");
         Objects.requireNonNull(operationId, "operationId");

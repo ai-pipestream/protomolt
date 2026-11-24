@@ -132,6 +132,24 @@ final class RepositorySinkSettlement {
             boolean settleUncommittedAsFailed) {
         RepositorySinkJobState state = stored.job().getState();
         if (isTerminalState(state)) {
+            if (state == RepositorySinkJobState.REPOSITORY_SINK_JOB_STATE_SUCCEEDED) {
+                return stored;
+            }
+            // Cancellation and an empty lookup cannot fence a repository commit already
+            // in progress. Its eventual recorded success takes precedence over this snapshot.
+            GetOperationOutcomeResponse outcome = caller.callForRead(
+                    jobKey.accountId(),
+                    () -> archive.documents().getOperationOutcome(
+                            GetOperationOutcomeRequest.newBuilder()
+                                    .setAccountId(jobKey.accountId())
+                                    .setOperationId(RepositorySinkKeys.downstreamUploadOperationId(
+                                            jobKey.accountId(), jobKey.operationId()))
+                                    .build()));
+            if (outcome.hasCommitted() && !outcome.getCommitted().hasRejection()) {
+                caller.callForRead(jobKey.accountId(),
+                        () -> settleFromRecordedOutcome(stored, outcome.getCommitted()));
+                return leases.find(jobKey.accountId(), jobKey.operationId()).orElse(stored);
+            }
             return stored;
         }
         if ((state == RepositorySinkJobState.REPOSITORY_SINK_JOB_STATE_QUEUED
@@ -250,7 +268,10 @@ final class RepositorySinkSettlement {
                 recorded.hasAccession() ? recorded.getAccession() : recorded.getUnchanged();
         long committedVersion = accession.getRevision();
         Timestamp committedAt = accession.getCommittedAt();
-        RenditionProvenance baseProvenance = stored.pendingProvenance();
+        // A terminal snapshot may belong to a later failed render or have discarded its
+        // pending metadata on cancellation. Recover provenance from the committed revision.
+        RenditionProvenance baseProvenance = isTerminalState(stored.job().getState())
+                ? null : stored.pendingProvenance();
         if (baseProvenance == null) {
             baseProvenance = readProvenanceFromCommittedEntry(
                             stored.job().getDestinationAddress(),
@@ -286,7 +307,10 @@ final class RepositorySinkSettlement {
         DocumentArchive.requireValidView(settledJob);
         RepositorySinkJobStore.StoredJob updated =
                 stored.withTransition(settledJob, settledProvenance, clock.instant());
-        if (!leases.transitionOwned(updated, stored.lease().leaseEpoch())) {
+        boolean applied = isTerminalState(stored.job().getState())
+                ? leases.reconcileTerminalCommit(stored, settledJob)
+                : leases.transitionOwned(updated, stored.lease().leaseEpoch());
+        if (!applied) {
             return leases.find(stored.job().getAccountId(), stored.job().getOperationId())
                     .map(RepositorySinkJobStore.StoredJob::job)
                     .orElse(settledJob);

@@ -238,6 +238,30 @@ class RepositorySinkTest {
     }
 
     @Test
+    void terminalJobLookupPropagatesOutcomeUnavailabilityWithoutChangingTheReceipt() {
+        ArchiveBindings bindings = (acct, name) -> Optional.of(new ArchiveBinding(
+                acct, name, "ds-archive", "", VersioningPolicy.VERSIONING_POLICY_RETAINED));
+        DocumentArchive archive = new DocumentArchive(dummyChannel, bindings, FIXED_CLOCK);
+        var store = new InMemoryRepositorySinkJobStore();
+        var failed = new RepositorySinkJobStore.StoredJob(RepositorySinkJob.newBuilder()
+                .setAccountId("acct-1").setOperationId("unavailable-outcome")
+                .setState(RepositorySinkJobState.REPOSITORY_SINK_JOB_STATE_FAILED).build(),
+                samplePublishRequest("acct-1"), null);
+        store.insertOrGet(failed);
+        try (RepositorySink sink = new RepositorySink(
+                "reader", archive, new RenditionUploads(archive, dummyChannel),
+                new RenditionReads(archive), RepositorySinkRenderers::none, store,
+                RepositorySinkAuthorizer.PASS_THROUGH, () -> RepositorySink.LeaseConfig.DEFAULT,
+                FIXED_CLOCK)) {
+            assertThatThrownBy(() -> sink.getJob(GetRepositorySinkJobRequest.newBuilder()
+                            .setAccountId("acct-1").setOperationId("unavailable-outcome").build()))
+                    .isInstanceOfSatisfying(StatusRuntimeException.class, failure ->
+                            assertThat(failure.getStatus().getCode()).isEqualTo(Status.Code.UNAVAILABLE));
+            assertThat(store.find("acct-1", "unavailable-outcome").orElseThrow()).isEqualTo(failed);
+        }
+    }
+
+    @Test
     void publishRefusesAccountMismatchAndReservedMetadataBeforeTouchingDownstreamChannel() {
         ArchiveBindings bindings = (acct, name) -> Optional.of(new ArchiveBinding(
                 acct, name, "ds-archive", "", VersioningPolicy.VERSIONING_POLICY_RETAINED));

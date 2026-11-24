@@ -112,6 +112,12 @@ final class RepositorySinkExecution {
                 return finishSyncPublish(awaited);
             }
 
+            // Preserve the retry admission gate before changing a failed publication's
+            // receipt, even when reconciliation discovers a late committed outcome.
+            if (cursor.job().getState() == RepositorySinkJobState.REPOSITORY_SINK_JOB_STATE_FAILED
+                    && cursor.job().getFailure().getRetryable()) {
+                requireRetryWriteAccess(cursor, accountId, caller);
+            }
             RepositorySinkJobStore.StoredJob reconciled =
                     settlement.reconcileIfNeeded(cursor, jobKey, caller, false);
             RepositorySinkJob reconciledJob = reconciled.job();
@@ -193,6 +199,16 @@ final class RepositorySinkExecution {
     /** What a retry runs with: the destination it may write and the source it froze. */
     private record RetryInputs(ArchiveBinding destinationBinding, ResolvedSource source) {}
 
+    private ArchiveBinding requireRetryWriteAccess(
+            RepositorySinkJobStore.StoredJob stored,
+            String accountId,
+            RepositorySinkAuthorizer.CapturedCaller caller) {
+        SinkDestination dest = stored.request().getDestination();
+        ArchiveBinding binding = caller.callForRead(accountId, () -> archive.binding(dest.getAddress()));
+        authorizer.checkWriteAccess(dest.getAddress(), binding.datasourceId(), dest.getWrittenBy());
+        return binding;
+    }
+
     /**
      * Checks that the caller may write the stored destination and resolves the stored source at
      * its frozen revision. Changes nothing, so it runs before a retry claims the job.
@@ -201,11 +217,7 @@ final class RepositorySinkExecution {
             RepositorySinkJobStore.StoredJob stored,
             String accountId,
             RepositorySinkAuthorizer.CapturedCaller caller) {
-        SinkDestination dest = stored.request().getDestination();
-        ArchiveBinding destBinding =
-                caller.callForRead(accountId, () -> archive.binding(dest.getAddress()));
-        authorizer.checkWriteAccess(
-                dest.getAddress(), destBinding.datasourceId(), dest.getWrittenBy());
+        ArchiveBinding destBinding = requireRetryWriteAccess(stored, accountId, caller);
         ResolvedSource source = caller.callForRead(
                 accountId,
                 () -> sources.resolveSource(

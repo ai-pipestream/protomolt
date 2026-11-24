@@ -493,12 +493,12 @@ public final class RepositorySink implements AutoCloseable {
                 destination.getAddress(),
                 destinationBinding.datasourceId(),
                 destination.getWrittenBy());
-        if (isTerminalState(stored.job().getState())) {
-            return validCancelResponse(stored.job());
-        }
-
         RepositorySinkLeaseCoordinator.JobKey key =
                 new RepositorySinkLeaseCoordinator.JobKey(accountId, operationId);
+        if (isTerminalState(stored.job().getState())) {
+            return validCancelResponse(settlement.reconcileIfNeeded(stored, key, caller, false).job());
+        }
+
         String reason = request.getReason().isBlank()
                 ? "Cancelled by CancelRepositorySinkJob"
                 : request.getReason().trim();
