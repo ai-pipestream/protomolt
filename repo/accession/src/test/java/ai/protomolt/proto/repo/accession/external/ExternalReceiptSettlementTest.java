@@ -77,7 +77,7 @@ class ExternalReceiptSettlementTest {
         long bound = deleteOp.getIntent().getSourceRevision();
         java.util.function.Predicate<ExternalLink> covers = link ->
                 link.getExternalObjectId().equals(deleteOp.getIntent().getExternalObjectId())
-                        && ExternalDeletionLifecycle.sameExternalTarget(
+                        && ExternalDeleteTargets.sameExternalTarget(
                                 link.getBindingSnapshot(), deleteOp.getBindingSnapshot())
                         && (bound == 0L || link.getSourceRevision() <= bound);
         if (ledger.hasCurrentLink() && covers.test(ledger.getCurrentLink())) {
@@ -116,7 +116,7 @@ class ExternalReceiptSettlementTest {
             ExternalPublicationOperationRecord publishOp) {
         return ExternalReceiptSettlement.settleConfirmedPublication(
                 ledger, publishOp, 1, ExternalAttemptTrigger.EXTERNAL_ATTEMPT_TRIGGER_INITIAL,
-                T0, T1, true, publishOp.getIntent(), publishOp.getBindingSnapshot(),
+                T0, T1, true,
                 evidence(ExternalProviderSettlement.EXTERNAL_PROVIDER_SETTLEMENT_PUBLISHED,
                         publishOp.getIntent().getExternalObjectId()));
     }
@@ -680,5 +680,65 @@ class ExternalReceiptSettlementTest {
                 .build();
         ExternalPublicationLedger after = deleted(ledger, deleteUnderV2);
         assertThat(after.hasCurrentLink()).isFalse();
+    }
+
+    @Test
+    void displacingADeletionPendingLinkToAnotherObjectKeepsItPendingDeletion() {
+        ExternalPublicationOperationRecord deleteAtR2 = operation("op-del-r2",
+                ExternalPublicationAction.EXTERNAL_PUBLICATION_ACTION_DELETE, "object-a", 1L, 2L)
+                .toBuilder()
+                .setOutcome(ExternalPublicationOutcome.EXTERNAL_PUBLICATION_OUTCOME_DELETION_PENDING)
+                .build();
+        ExternalPublicationOperationRecord publishBAtR3 = operation("op-pub-r3-b",
+                ExternalPublicationAction.EXTERNAL_PUBLICATION_ACTION_PUBLISH, "object-b", 1L, 3L);
+        ExternalPublicationLedger beforeR3 = ExternalPublicationLedger.newBuilder()
+                .setTombstonedAtSourceRevision(2L)
+                .setHighestFencedSourceRevision(2L)
+                .setCurrentLink(link("object-a", 1L, 1L,
+                        ExternalProjectionLifecycle.EXTERNAL_PROJECTION_LIFECYCLE_DELETION_PENDING)
+                        .toBuilder()
+                        .addDeletionClaimedByOperationIds("op-del-r2"))
+                .addOperations(deleteAtR2)
+                .addOperations(publishBAtR3)
+                .build();
+
+        ExternalPublicationLedger afterR3B = published(beforeR3, publishBAtR3);
+        assertThat(afterR3B.getCurrentLink().getExternalObjectId()).isEqualTo("object-b");
+        assertThat(afterR3B.getCurrentLink().getProjectionLifecycle())
+                .isEqualTo(ExternalProjectionLifecycle.EXTERNAL_PROJECTION_LIFECYCLE_ACTIVE);
+        assertThat(afterR3B.getHistoricalLinksList()).singleElement().satisfies(displaced -> {
+            assertThat(displaced.getExternalObjectId()).isEqualTo("object-a");
+            assertThat(displaced.getProjectionLifecycle()).isEqualTo(
+                    ExternalProjectionLifecycle.EXTERNAL_PROJECTION_LIFECYCLE_DELETION_PENDING);
+            assertThat(displaced.getRetiredByOperationId()).isEqualTo("op-pub-r3-b");
+            assertThat(displaced.getDeletionClaimedByOperationIdsList())
+                    .containsExactly("op-del-r2");
+        });
+
+        // Republishing the same object at the same target while the earlier deletion is still in
+        // flight also preserves DELETION_PENDING until that deletion reconciles.
+        ExternalPublicationOperationRecord publishAAtR3 = operation("op-pub-r3-a",
+                ExternalPublicationAction.EXTERNAL_PUBLICATION_ACTION_PUBLISH, "object-a", 1L, 3L);
+        ExternalPublicationLedger afterInFlightSameObj = published(
+                beforeR3.toBuilder().addOperations(publishAAtR3).build(), publishAAtR3);
+        assertThat(afterInFlightSameObj.getHistoricalLinks(0).getProjectionLifecycle())
+                .isEqualTo(ExternalProjectionLifecycle.EXTERNAL_PROJECTION_LIFECYCLE_DELETION_PENDING);
+
+        // Once the earlier deletion failed, republishing the same object at the same target
+        // replaces it in place and marks the earlier projection SUPERSEDED.
+        ExternalPublicationLedger failedDeleteLedger = ExternalLedgerStore.replaceOperation(
+                beforeR3,
+                deleteAtR2.toBuilder()
+                        .setOutcome(ExternalPublicationOutcome.EXTERNAL_PUBLICATION_OUTCOME_FAILED)
+                        .build())
+                .toBuilder()
+                .addOperations(publishAAtR3)
+                .build();
+        ExternalPublicationLedger afterFailedDeleteSameObj =
+                published(failedDeleteLedger, publishAAtR3);
+        assertThat(afterFailedDeleteSameObj.getHistoricalLinks(0).getProjectionLifecycle())
+                .isEqualTo(ExternalProjectionLifecycle.EXTERNAL_PROJECTION_LIFECYCLE_SUPERSEDED);
+        assertThat(afterFailedDeleteSameObj.getHistoricalLinks(0).getRetiredByOperationId())
+                .isEqualTo("op-pub-r3-a");
     }
 }

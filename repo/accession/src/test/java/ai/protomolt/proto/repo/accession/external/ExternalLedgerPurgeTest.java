@@ -143,7 +143,7 @@ class ExternalLedgerPurgeTest {
                 purgedLedger(ExternalRetentionPolicy.EXTERNAL_RETENTION_POLICY_PURGE_WITH_SOURCE);
         repository.store(settled);
 
-        boolean purged = settlement.maybePurgeLedgerIfEligible(LEDGER, settled, settled.getOperations(0));
+        boolean purged = settlement.maybePurgeLedgerIfEligible(LEDGER, settled);
 
         assertThat(purged).isTrue();
         assertThat(repository.savedBeforePurge.hasPurgeWithSourceStartedAt()).isTrue();
@@ -158,7 +158,7 @@ class ExternalLedgerPurgeTest {
                 purgedLedger(ExternalRetentionPolicy.EXTERNAL_RETENTION_POLICY_PURGE_WITH_SOURCE);
         repository.store(withPendingDeletion().apply(settled));
 
-        boolean purged = settlement.maybePurgeLedgerIfEligible(LEDGER, settled, settled.getOperations(0));
+        boolean purged = settlement.maybePurgeLedgerIfEligible(LEDGER, settled);
 
         assertThat(purged).isFalse();
         assertThat(repository.purgeCalls).isZero();
@@ -177,7 +177,7 @@ class ExternalLedgerPurgeTest {
         ExternalPublicationLedger mixed = retained.toBuilder().addOperations(laterUnderPurge).build();
         repository.store(mixed);
 
-        assertThat(settlement.maybePurgeLedgerIfEligible(LEDGER, mixed, laterUnderPurge)).isFalse();
+        assertThat(settlement.maybePurgeLedgerIfEligible(LEDGER, mixed)).isFalse();
         assertThat(repository.purgeCalls).isZero();
     }
 
@@ -188,9 +188,112 @@ class ExternalLedgerPurgeTest {
                         .toBuilder().setPurgeWithSourceStartedAt(T0).build();
         repository.store(marked);
 
-        assertThat(settlement.maybePurgeLedgerIfEligible(LEDGER, marked, marked.getOperations(0))).isTrue();
+        assertThat(settlement.maybePurgeLedgerIfEligible(LEDGER, marked)).isTrue();
         assertThat(repository.saveCalls).isZero();
         assertThat(repository.purgeCalls).isEqualTo(1);
+    }
+
+    @Test
+    void purgesLedgerWhenPendingPublicationSettlesRejectedAfterPurgeDeletionSettled() {
+        ExternalSystemBinding purgeBinding =
+                binding(ExternalRetentionPolicy.EXTERNAL_RETENTION_POLICY_PURGE_WITH_SOURCE);
+        ExternalPublicationIntent pubIntent = ExternalPublicationIntent.newBuilder()
+                .setEncodingVersion(1).setAccountId("tenant-alpha").setSourceAddress(SOURCE)
+                .setSourceRevision(1L).setBindingId("search").setBindingRevision(1L)
+                .setAction(ExternalPublicationAction.EXTERNAL_PUBLICATION_ACTION_PUBLISH)
+                .setExternalObjectId("object-a")
+                .build();
+        String pubSha = ExternalOperationKeys.intentSha256(pubIntent);
+        ExternalPublicationOperationRecord pendingPub = ExternalPublicationOperationRecord.newBuilder()
+                .setOperationId("op-pub-1").setIntentSha256(pubSha).setIntent(pubIntent)
+                .setBindingSnapshot(purgeBinding)
+                .addDispatchCredentialBindingSha256S(SHA)
+                .setOutcome(ExternalPublicationOutcome.EXTERNAL_PUBLICATION_OUTCOME_PENDING)
+                .setPendingPhase(ExternalPendingPhase.EXTERNAL_PENDING_PHASE_UNRESOLVED_LOST_REPLY)
+                .addAttempts(ExternalPublicationAttempt.newBuilder()
+                        .setAttemptNumber(1)
+                        .setTrigger(ExternalAttemptTrigger.EXTERNAL_ATTEMPT_TRIGGER_INITIAL)
+                        .setOutcome(ExternalPublicationOutcome.EXTERNAL_PUBLICATION_OUTCOME_PENDING)
+                        .setPendingPhase(ExternalPendingPhase.EXTERNAL_PENDING_PHASE_UNRESOLVED_LOST_REPLY)
+                        .setStartedAt(T0))
+                .setCreatedAt(T0).setUpdatedAt(T0)
+                .build();
+        ExternalPublicationLedger withPendingPub =
+                purgedLedger(ExternalRetentionPolicy.EXTERNAL_RETENTION_POLICY_PURGE_WITH_SOURCE)
+                        .toBuilder()
+                        .addOperations(pendingPub)
+                        .build();
+        repository.store(withPendingPub);
+        assertThat(settlement.maybePurgeLedgerIfEligible(LEDGER, withPendingPub)).isFalse();
+
+        ExternalProviderEvidence rejected = ExternalProviderEvidence.newBuilder()
+                .setProvider("protomolt-search").setContractVersion("managed-search/v1")
+                .setVerifiedServiceProfileId("profile").setVerifiedServiceEndpointId("ingest")
+                .setCredentialBindingSha256(SHA).setExternalObjectId("object-a")
+                .setRequestIntentSha256(pubSha).setReceiptSha256(SHA)
+                .setProviderReceiptId("receipt-rejected")
+                .setSettlement(ExternalProviderSettlement.EXTERNAL_PROVIDER_SETTLEMENT_REJECTED)
+                .setDiagnosticCode("NOT_FOUND_AT_PROVIDER")
+                .setVerifiedAt(T0)
+                .build();
+        var endpoint = ai.protomolt.proto.grpc.profile.v1.ServiceEndpoint.newBuilder()
+                .setName("ingest").setHost("search.internal.example.org").setPort(8443)
+                .setTransport(ai.protomolt.proto.grpc.profile.v1.Transport.TRANSPORT_TLS)
+                .build();
+        var profile = ai.protomolt.proto.grpc.profile.v1.ServiceProfile.newBuilder()
+                .setName("profile").addEndpoints(endpoint).build();
+        var auth = new ExternalProviderGateway.OutboundAuthContext(
+                purgeBinding, profile, endpoint, new io.grpc.Metadata(), SHA);
+
+        ExternalPublicationCoordinator.OperationResult reconciled = settlement.applyProviderReceipt(
+                LEDGER, SOURCE, "search", LedgerAccess.keep(), "op-pub-1", 2,
+                ExternalAttemptTrigger.EXTERNAL_ATTEMPT_TRIGGER_RECONCILIATION, T0,
+                pubSha, auth, rejected);
+        assertThat(reconciled.operation().getOutcome())
+                .isEqualTo(ExternalPublicationOutcome.EXTERNAL_PUBLICATION_OUTCOME_FAILED);
+        assertThat(reconciled.ledgerPurged()).isTrue();
+        assertThat(repository.purgeCalls).isEqualTo(1);
+    }
+
+    @Test
+    void nonAdminWriterMarksPurgeStartedWithoutThrowingAndAdminReplayFinishesPurge() {
+        ExternalPublicationLedger settled =
+                purgedLedger(ExternalRetentionPolicy.EXTERNAL_RETENTION_POLICY_PURGE_WITH_SOURCE);
+        repository.store(settled);
+        repository.purgeRefusals.add(
+                Status.PERMISSION_DENIED.withDescription("Purge requires administrator status"));
+
+        boolean writerPurged = settlement.maybePurgeLedgerIfEligible(LEDGER, settled);
+        assertThat(writerPurged).isFalse();
+        assertThat(repository.purgeCalls).isEqualTo(1);
+        assertThat(repository.current().hasPurgeWithSourceStartedAt()).isTrue();
+
+        boolean adminPurged = settlement.maybePurgeLedgerIfEligible(LEDGER, repository.current());
+        assertThat(adminPurged).isTrue();
+        assertThat(repository.purgeCalls).isEqualTo(2);
+    }
+
+    @Test
+    void failBeforeDispatchOnRemovedLedgerThrowsFailedPreconditionWithoutSavingEmptyLedger() {
+        Clock clock = Clock.fixed(Instant.ofEpochSecond(1_770_000_100L), ZoneOffset.UTC);
+        ExternalPublishAttempts attempts =
+                new ExternalPublishAttempts(ledgers, settlement, null, null, clock);
+        ExternalPublicationIntent pubIntent = ExternalPublicationIntent.newBuilder()
+                .setEncodingVersion(1).setAccountId("tenant-alpha").setSourceAddress(SOURCE)
+                .setSourceRevision(1L).setBindingId("search").setBindingRevision(1L)
+                .setAction(ExternalPublicationAction.EXTERNAL_PUBLICATION_ACTION_PUBLISH)
+                .setExternalObjectId("object-a")
+                .build();
+
+        assertThatThrownBy(() -> attempts.failBeforeDispatch(
+                LEDGER, LedgerAccess.keep(), "op-missing", pubIntent,
+                "SOURCE_REMOVED_BEFORE_DISPATCH", "Source removed"))
+                .isInstanceOfSatisfying(StatusRuntimeException.class, refused -> {
+                    assertThat(refused.getStatus().getCode())
+                            .isEqualTo(Status.Code.FAILED_PRECONDITION);
+                    assertThat(refused.getStatus().getDescription()).contains("no longer recorded");
+                });
+        assertThat(repository.saveCalls).isZero();
     }
 
     @Test
@@ -285,6 +388,7 @@ class ExternalLedgerPurgeTest {
         private Document document;
         private long revision;
         final Deque<Status> refusals = new ArrayDeque<>();
+        final Deque<Status> purgeRefusals = new ArrayDeque<>();
         int saveCalls;
         int purgeCalls;
         ExternalPublicationLedger savedBeforePurge;
@@ -337,6 +441,10 @@ class ExternalLedgerPurgeTest {
         @Override
         public void purgeDocument(PurgeDocumentRequest request, StreamObserver<PurgeDocumentResponse> response) {
             purgeCalls++;
+            if (!purgeRefusals.isEmpty()) {
+                response.onError(purgeRefusals.pop().asRuntimeException());
+                return;
+            }
             document = null;
             response.onNext(PurgeDocumentResponse.newBuilder().setPurgeId(request.getPurgeId()).build());
             response.onCompleted();

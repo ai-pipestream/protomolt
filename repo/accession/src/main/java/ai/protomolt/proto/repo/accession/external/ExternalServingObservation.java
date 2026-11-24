@@ -10,9 +10,7 @@ import ai.protomolt.proto.repo.external.v1.ExternalProviderSettlement;
 import ai.protomolt.proto.repo.external.v1.ManagedSearchIdentity;
 import ai.protomolt.proto.repo.external.v1.ExternalPublicationLedger;
 import ai.protomolt.proto.repo.external.v1.ExternalPublicationOperationRecord;
-import ai.protomolt.proto.repo.v1.Document;
 import ai.protomolt.proto.repo.v1.NodeAddress;
-import com.google.protobuf.Message;
 import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
 import java.util.UUID;
@@ -80,7 +78,16 @@ final class ExternalServingObservation {
                 (ExternalProviderGateway.ProviderStatusResult.Receipt) statusResult;
         // Every receipt is verified, including one that carries no serving identity: a
         // receipt that does not verify is not a successful refresh of anything.
-        verifier.verifyRecordedEvidence(receipt.evidence(), op, outboundAuth);
+        try {
+            verifier.verifyRecordedEvidence(receipt.evidence(), op, outboundAuth);
+        } catch (ExternalProviderVerifier.ProviderVerificationException invalid) {
+            throw Status.FAILED_PRECONDITION
+                    .withDescription("Serving observation failed receipt verification ("
+                            + invalid.diagnosticCode() + "): "
+                            + sanitizeMessage(invalid.getMessage()))
+                    .withCause(invalid)
+                    .asRuntimeException();
+        }
 
         ExternalPublicationLedger updated = ledgers.updateLedgerWithCas(
                 ledgerAddr,

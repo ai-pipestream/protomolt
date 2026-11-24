@@ -267,11 +267,24 @@ final class ExternalSourceAccess {
      * document the coordinator reads next.
      */
     private void requireAccess(OwnershipContext ownership, Access access, String deniedDescription) {
+        requireSecurityAccess(ownership.getAccountId(), ownership.getSecurity(), access,
+                deniedDescription);
+    }
+
+    void requireLedgerWrite(
+            String accountId, DocumentSecurity security, String deniedDescription) {
+        requireSecurityAccess(accountId, security, Access.ACCESS_WRITE, deniedDescription);
+    }
+
+    private void requireSecurityAccess(
+            String accountId,
+            DocumentSecurity security,
+            Access access,
+            String deniedDescription) {
         RepositoryCaller current = Objects.requireNonNull(caller.current(), "caller.current()");
         boolean allowed;
         try {
-            allowed = DocumentAccessPolicy.allows(current, ownership.getAccountId(),
-                    ownership.getSecurity(), null, access);
+            allowed = DocumentAccessPolicy.allows(current, accountId, security, null, access);
         } catch (RepositoryException unresolved) {
             throw Status.FAILED_PRECONDITION
                     .withDescription("The source's access rules cannot be evaluated here: "
@@ -299,7 +312,18 @@ final class ExternalSourceAccess {
      *         live revision is within reach of the latest
      */
     SourceAccessRules accessRulesBeforePurge(NodeAddress sourceAddress) {
-        LiveRevision live = latestLiveOwnership(sourceAddress);
+        LiveRevision live;
+        try {
+            live = latestLiveOwnership(sourceAddress);
+        } catch (StatusRuntimeException e) {
+            if (e.getStatus().getCode() == Status.Code.NOT_FOUND) {
+                throw Status.FAILED_PRECONDITION
+                        .withDescription("Source document is already purged; a purge is prepared "
+                                + "before PurgeDocument removes it")
+                        .asRuntimeException();
+            }
+            throw e;
+        }
         requireWrite(live.ownership());
         return new SourceAccessRules(live.sourceRevision(), live.ownership().getSecurity());
     }
@@ -311,25 +335,15 @@ final class ExternalSourceAccess {
      * The ownership of the source's latest live revision: the latest revision, or the one before
      * it when the latest is a tombstone. Read as the caller.
      *
-     * @throws StatusRuntimeException FAILED_PRECONDITION once the source is purged, or when no
-     *         live revision is within reach of the latest
+     * @throws StatusRuntimeException NOT_FOUND when the source is purged, or FAILED_PRECONDITION
+     *         when no live revision is within reach of the latest
      */
     private LiveRevision latestLiveOwnership(NodeAddress sourceAddress) {
-        ListRevisionsResponse revisions;
-        try {
-            revisions = documents.listRevisions(ListRevisionsRequest.newBuilder()
-                    .setAddress(sourceAddress)
-                    .setPageSize(2)
-                    .build());
-        } catch (StatusRuntimeException e) {
-            if (e.getStatus().getCode() == Status.Code.NOT_FOUND) {
-                throw Status.FAILED_PRECONDITION
-                        .withDescription("Source document is already purged; a purge is prepared "
-                                + "before PurgeDocument removes it")
-                        .asRuntimeException();
-            }
-            throw e;
-        }
+        ListRevisionsResponse revisions = documents.listRevisions(
+                ListRevisionsRequest.newBuilder()
+                        .setAddress(sourceAddress)
+                        .setPageSize(2)
+                        .build());
         for (var summary : revisions.getRevisionsList()) {
             if (summary.getTombstone()) {
                 continue;
@@ -444,6 +458,28 @@ final class ExternalSourceAccess {
                     sourceAddress.getAccountId(), bindingId, sourceAddress);
             Optional<ExternalLedgerStore.LoadedLedger> retained = ledgers.loadOptionalLedger(ledgerAddr, sourceAddress);
             if (retained.isPresent() && retained.get().ledger().getSourcePurged()) {
+                return LedgerAccess.keep();
+            }
+            throw e;
+        }
+    }
+
+    /**
+     * Requires WRITE access before a reconciliation or serving-visibility refresh queries the
+     * outbound provider or mutates the ledger. Evaluates the latest live source revision when the
+     * source exists (or the last live revision before a tombstone), and the ledger's retained
+     * {@link DocumentSecurity} once the source has been purged.
+     */
+    LedgerAccess requireWriteForReconcile(
+            NodeAddress sourceAddress, ExternalLedgerStore.LoadedLedger loaded) {
+        try {
+            return verifyCallerSourceAccessForMutation(sourceAddress);
+        } catch (StatusRuntimeException e) {
+            if (e.getStatus().getCode() == Status.Code.NOT_FOUND
+                    && loaded.ledger().getSourcePurged()) {
+                requireLedgerWrite(sourceAddress.getAccountId(), loaded.security(),
+                        "Reconciling an external operation requires WRITE access to the source "
+                                + "document's retained rules");
                 return LedgerAccess.keep();
             }
             throw e;

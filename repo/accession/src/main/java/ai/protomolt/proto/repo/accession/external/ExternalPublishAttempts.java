@@ -21,14 +21,11 @@ import ai.protomolt.proto.repo.external.v1.ExternalPublicationLedger;
 import ai.protomolt.proto.repo.external.v1.ExternalPublicationOperationRecord;
 import ai.protomolt.proto.repo.external.v1.ExternalPublicationOutcome;
 import ai.protomolt.proto.repo.external.v1.ExternalSystemBinding;
-import ai.protomolt.proto.repo.v1.Document;
 import ai.protomolt.proto.repo.v1.NodeAddress;
-import com.google.protobuf.Message;
 import com.google.protobuf.Timestamp;
 import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
 import java.time.Clock;
-import java.util.Set;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -311,9 +308,7 @@ final class ExternalPublishAttempts {
                 attemptNumber,
                 null,
                 callStart,
-                intent,
                 intentSha256,
-                bindingSnapshot,
                 outboundAuth,
                 evidence);
     }

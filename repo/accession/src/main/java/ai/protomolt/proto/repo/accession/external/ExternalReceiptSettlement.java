@@ -26,25 +26,31 @@ import ai.protomolt.proto.repo.external.v1.ExternalPublicationOperationRecord;
 import ai.protomolt.proto.repo.external.v1.ExternalPublicationOutcome;
 import ai.protomolt.proto.repo.external.v1.ExternalRetentionPolicy;
 import ai.protomolt.proto.repo.external.v1.ExternalSystemBinding;
-import ai.protomolt.proto.repo.v1.Document;
 import ai.protomolt.proto.repo.v1.NodeAddress;
 import ai.protomolt.proto.repo.v2.DocumentServiceGrpc;
 import ai.protomolt.proto.repo.v2.PurgeDocumentRequest;
-import com.google.protobuf.Message;
 import com.google.protobuf.Timestamp;
+import io.grpc.Status;
+import io.grpc.StatusRuntimeException;
+import java.nio.charset.StandardCharsets;
 import java.time.Clock;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Optional;
-import java.util.Set;
 import java.util.UUID;
 
 /**
  * Verifies a provider receipt and settles it onto the ledger: accepted-only, published,
  * rejected, deletion-accepted and deleted outcomes, link activation and retirement, and the
- * {@code PURGE_WITH_SOURCE} ledger purge once a purge deletion settles.
+ * {@code PURGE_WITH_SOURCE} ledger purge once nothing remains outstanding.
  */
 final class ExternalReceiptSettlement {
+
+    private static final String DEFAULT_REJECTION_CODE = "PROVIDER_REJECTED";
+    private static final String REJECTION_MESSAGE = "Provider rejected external operation";
+    private static final String PURGE_REASON =
+            "PURGE_WITH_SOURCE retention policy after external deletion settled";
+    private static final int MAX_PURGE_ID_LEN = 200;
 
     private final DocumentServiceGrpc.DocumentServiceBlockingStub documents;
     private final ExternalLedgerStore ledgers;
@@ -68,79 +74,105 @@ final class ExternalReceiptSettlement {
             int attemptNumber,
             ExternalAttemptTrigger explicitTrigger,
             Timestamp fallbackStartedAt,
-            ExternalPublicationIntent intent,
-            String intentSha256,
-            ExternalSystemBinding bindingSnapshot,
+            String expectedIntentSha256,
             ExternalProviderGateway.OutboundAuthContext outboundAuth,
             ExternalProviderEvidence evidence) {
         Timestamp finishedAt = timestamp(clock.instant());
+        ExternalPublicationOperationRecord recorded = requireRecordedOperation(
+                ledgerAddr, sourceAddress, operationId, expectedIntentSha256);
         try {
-            ExternalPublicationOperationRecord recorded = findOperation(
-                    ledgers.loadOptionalLedger(ledgerAddr, sourceAddress).orElseThrow().ledger(),
-                    operationId).orElseThrow();
             verifier.verifyRecordedEvidence(evidence, recorded, outboundAuth);
         } catch (ExternalProviderVerifier.ProviderVerificationException invalidEvidence) {
-            ExternalPublicationLedger failedLedger = ledgers.updateLedgerWithCas(
+            return recordVerificationFailure(
                     ledgerAddr,
                     sourceAddress,
                     bindingId,
                     retainedSecurity,
-                    "ext-verify-fail:" + operationId + ":" + attemptNumber + ":" + UUID.randomUUID(),
-                    current -> {
-                        ExternalPublicationOperationRecord op =
-                                findOperation(current, operationId).orElseThrow();
-                        if (isTerminalOutcome(op.getOutcome())) {
-                            return current;
-                        }
-                        ExternalAttemptTrigger trigger = explicitTrigger != null
-                                ? explicitTrigger
-                                : attemptTrigger(op, attemptNumber);
-                        Timestamp startedAt = explicitTrigger != null
-                                ? fallbackStartedAt
-                                : attemptStartedAt(op, attemptNumber);
-                        ExternalPublicationAttempt failedAttempt = ExternalPublicationAttempt.newBuilder()
-                                .setAttemptNumber(attemptNumber)
-                                .setTrigger(trigger)
-                                .setOutcome(ExternalPublicationOutcome.EXTERNAL_PUBLICATION_OUTCOME_FAILED)
-                                .setStartedAt(startedAt)
-                                .setFinishedAt(finishedAt)
-                                .setDiagnosticCode(invalidEvidence.diagnosticCode())
-                                .setDiagnosticMessage(sanitizeMessage(invalidEvidence.getMessage()))
-                                .build();
-                        ExternalPublicationOperationRecord.Builder opBuilder =
-                                explicitTrigger != null
-                                        ? op.toBuilder().addAttempts(failedAttempt)
-                                        : replaceAttempt(op, failedAttempt);
-                        ExternalPublicationOperationRecord updatedOp = opBuilder
-                                .setOutcome(ExternalPublicationOutcome.EXTERNAL_PUBLICATION_OUTCOME_FAILED)
-                                .setPendingPhase(ExternalPendingPhase.EXTERNAL_PENDING_PHASE_UNSPECIFIED)
-                                // The operation fails hard, but the provider answered: it may
-                                // have committed before sending evidence that does not verify.
-                                .setProviderMayHoldObject(op.getIntent().getAction()
-                                        == ExternalPublicationAction.EXTERNAL_PUBLICATION_ACTION_PUBLISH)
-                                .setFailureCode(invalidEvidence.diagnosticCode())
-                                .setFailureMessage(sanitizeMessage(invalidEvidence.getMessage()))
-                                .setUpdatedAt(finishedAt)
-                                .build();
-                        return replaceOperation(current, updatedOp);
-                    });
-            return new ExternalPublicationCoordinator.OperationResult(
-                    findOperation(failedLedger, operationId).orElseThrow(),
-                    optionalCurrentLink(failedLedger),
-                    false,
-                    false);
+                    operationId,
+                    attemptNumber,
+                    explicitTrigger,
+                    fallbackStartedAt,
+                    finishedAt,
+                    invalidEvidence);
         }
 
-        ExternalProviderSettlement settlement = evidence.getSettlement();
         ExternalPublicationLedger settledLedger = ledgers.updateLedgerWithCas(
                 ledgerAddr,
                 sourceAddress,
                 bindingId,
                 retainedSecurity,
                 "ext-settle:" + operationId + ":" + attemptNumber + ":" + UUID.randomUUID(),
+                current -> settleVerifiedEvidence(
+                        current,
+                        operationId,
+                        attemptNumber,
+                        explicitTrigger,
+                        fallbackStartedAt,
+                        finishedAt,
+                        evidence));
+
+        ExternalPublicationOperationRecord finalOp =
+                requireOperationInLedger(settledLedger, operationId);
+        boolean purged = maybePurgeLedgerIfEligible(ledgerAddr, settledLedger);
+        return new ExternalPublicationCoordinator.OperationResult(
+                finalOp,
+                purged ? Optional.empty() : optionalCurrentLink(settledLedger),
+                false,
+                purged);
+    }
+
+    private ExternalPublicationOperationRecord requireRecordedOperation(
+            NodeAddress ledgerAddr,
+            NodeAddress sourceAddress,
+            String operationId,
+            String expectedIntentSha256) {
+        ExternalPublicationLedger ledger = ledgers.loadOptionalLedger(ledgerAddr, sourceAddress)
+                .map(ExternalLedgerStore.LoadedLedger::ledger)
+                .orElseThrow(() -> missingRecordedOperation(operationId));
+        ExternalPublicationOperationRecord recorded =
+                requireOperationInLedger(ledger, operationId);
+        if (!recorded.getIntentSha256().equals(expectedIntentSha256)) {
+            throw Status.DATA_LOSS
+                    .withDescription("Recorded operation '" + operationId
+                            + "' intent digest diverged from in-flight operation")
+                    .asRuntimeException();
+        }
+        return recorded;
+    }
+
+    private static ExternalPublicationOperationRecord requireOperationInLedger(
+            ExternalPublicationLedger ledger, String operationId) {
+        return findOperation(ledger, operationId)
+                .orElseThrow(() -> missingRecordedOperation(operationId));
+    }
+
+    private static StatusRuntimeException missingRecordedOperation(String operationId) {
+        return Status.FAILED_PRECONDITION
+                .withDescription("Operation '" + operationId
+                        + "' is no longer recorded on the external publication ledger")
+                .asRuntimeException();
+    }
+
+    private ExternalPublicationCoordinator.OperationResult recordVerificationFailure(
+            NodeAddress ledgerAddr,
+            NodeAddress sourceAddress,
+            String bindingId,
+            LedgerAccess retainedSecurity,
+            String operationId,
+            int attemptNumber,
+            ExternalAttemptTrigger explicitTrigger,
+            Timestamp fallbackStartedAt,
+            Timestamp finishedAt,
+            ExternalProviderVerifier.ProviderVerificationException invalidEvidence) {
+        ExternalPublicationLedger failedLedger = ledgers.updateLedgerWithCas(
+                ledgerAddr,
+                sourceAddress,
+                bindingId,
+                retainedSecurity,
+                "ext-verify-fail:" + operationId + ":" + attemptNumber + ":" + UUID.randomUUID(),
                 current -> {
                     ExternalPublicationOperationRecord op =
-                            findOperation(current, operationId).orElseThrow();
+                            requireOperationInLedger(current, operationId);
                     if (isTerminalOutcome(op.getOutcome())) {
                         return current;
                     }
@@ -150,140 +182,189 @@ final class ExternalReceiptSettlement {
                     Timestamp startedAt = explicitTrigger != null
                             ? fallbackStartedAt
                             : attemptStartedAt(op, attemptNumber);
-
-                    boolean settles = settlement
-                                    == ExternalProviderSettlement.EXTERNAL_PROVIDER_SETTLEMENT_PUBLISHED
-                            || settlement
-                                    == ExternalProviderSettlement.EXTERNAL_PROVIDER_SETTLEMENT_REJECTED
-                            || settlement
-                                    == ExternalProviderSettlement.EXTERNAL_PROVIDER_SETTLEMENT_DELETED;
-                    if (explicitTrigger != null && !settles
-                            && !ExternalLedgerStore.hasRoomForUnsettledAttempt(op)) {
-                        // A receipt that settles nothing is not written into the last attempt
-                        // slot: that slot is for the receipt that ends the operation.
-                        return current;
-                    }
-
-                    return switch (settlement) {
-                        case EXTERNAL_PROVIDER_SETTLEMENT_ACCEPTED_ONLY -> {
-                            ExternalPublicationAttempt attempt = ExternalPublicationAttempt.newBuilder()
-                                    .setAttemptNumber(attemptNumber)
-                                    .setTrigger(trigger)
-                                    .setOutcome(ExternalPublicationOutcome.EXTERNAL_PUBLICATION_OUTCOME_PENDING)
-                                    .setPendingPhase(
-                                            ExternalPendingPhase
-                                                    .EXTERNAL_PENDING_PHASE_ACCEPTED_AWAITING_PUBLICATION)
-                                    .setStartedAt(startedAt)
-                                    .setFinishedAt(finishedAt)
-                                    .setEvidence(evidence)
-                                    .build();
-                            ExternalPublicationOperationRecord.Builder opBuilder =
-                                    explicitTrigger != null
-                                            ? op.toBuilder().addAttempts(attempt)
-                                            : replaceAttempt(op, attempt);
-                            ExternalPublicationOperationRecord updatedOp = opBuilder
-                                    .setOutcome(ExternalPublicationOutcome.EXTERNAL_PUBLICATION_OUTCOME_PENDING)
-                                    .setPendingPhase(
-                                            ExternalPendingPhase
-                                                    .EXTERNAL_PENDING_PHASE_ACCEPTED_AWAITING_PUBLICATION)
-                                    .setUpdatedAt(finishedAt)
-                                    .build();
-                            yield replaceOperation(current, updatedOp);
-                        }
-                        case EXTERNAL_PROVIDER_SETTLEMENT_PUBLISHED -> settleConfirmedPublication(
-                                current,
-                                op,
-                                attemptNumber,
-                                trigger,
-                                startedAt,
-                                finishedAt,
-                                explicitTrigger != null,
-                                intent,
-                                bindingSnapshot,
-                                evidence);
-                        case EXTERNAL_PROVIDER_SETTLEMENT_REJECTED -> {
-                            String code = evidence.hasDiagnosticCode()
-                                    ? evidence.getDiagnosticCode()
-                                    : "PROVIDER_REJECTED";
-                            ExternalPublicationAttempt attempt = ExternalPublicationAttempt.newBuilder()
-                                    .setAttemptNumber(attemptNumber)
-                                    .setTrigger(trigger)
-                                    .setOutcome(ExternalPublicationOutcome.EXTERNAL_PUBLICATION_OUTCOME_FAILED)
-                                    .setStartedAt(startedAt)
-                                    .setFinishedAt(finishedAt)
-                                    .setDiagnosticCode(code)
-                                    .setDiagnosticMessage("Provider rejected external operation")
-                                    .setEvidence(evidence)
-                                    .build();
-                            ExternalPublicationOperationRecord.Builder opBuilder =
-                                    explicitTrigger != null
-                                            ? op.toBuilder().addAttempts(attempt)
-                                            : replaceAttempt(op, attempt);
-                            ExternalPublicationOperationRecord updatedOp = opBuilder
-                                    .setOutcome(ExternalPublicationOutcome.EXTERNAL_PUBLICATION_OUTCOME_FAILED)
-                                    .setPendingPhase(ExternalPendingPhase.EXTERNAL_PENDING_PHASE_UNSPECIFIED)
-                                    // A rejection of a send settles that send. An earlier send
-                                    // whose outcome was never learned may still have committed.
-                                    // A status query's answer is about the operation as a whole.
-                                    .setProviderMayHoldObject(op.getIntent().getAction()
-                                                    == ExternalPublicationAction.EXTERNAL_PUBLICATION_ACTION_PUBLISH
-                                            && trigger != ExternalAttemptTrigger.EXTERNAL_ATTEMPT_TRIGGER_RECONCILIATION
-                                            && ExternalLedgerStore.anotherSendIsUnresolved(op, attemptNumber))
-                                    .setFailureCode(code)
-                                    .setFailureMessage("Provider rejected external operation")
-                                    .setUpdatedAt(finishedAt)
-                                    .build();
-                            yield replaceOperation(current, updatedOp);
-                        }
-                        case EXTERNAL_PROVIDER_SETTLEMENT_DELETION_ACCEPTED -> {
-                            ExternalPublicationAttempt attempt = ExternalPublicationAttempt.newBuilder()
-                                    .setAttemptNumber(attemptNumber)
-                                    .setTrigger(trigger)
-                                    .setOutcome(
-                                            ExternalPublicationOutcome
-                                                    .EXTERNAL_PUBLICATION_OUTCOME_DELETION_PENDING)
-                                    .setPendingPhase(
-                                            ExternalPendingPhase.EXTERNAL_PENDING_PHASE_DELETION_IN_FLIGHT)
-                                    .setStartedAt(startedAt)
-                                    .setFinishedAt(finishedAt)
-                                    .setEvidence(evidence)
-                                    .build();
-                            ExternalPublicationOperationRecord.Builder opBuilder =
-                                    explicitTrigger != null
-                                            ? op.toBuilder().addAttempts(attempt)
-                                            : replaceAttempt(op, attempt);
-                            ExternalPublicationOperationRecord updatedOp = opBuilder
-                                    .setOutcome(
-                                            ExternalPublicationOutcome
-                                                    .EXTERNAL_PUBLICATION_OUTCOME_DELETION_PENDING)
-                                    .setPendingPhase(
-                                            ExternalPendingPhase.EXTERNAL_PENDING_PHASE_DELETION_IN_FLIGHT)
-                                    .setUpdatedAt(finishedAt)
-                                    .build();
-                            yield replaceOperation(current, updatedOp);
-                        }
-                        case EXTERNAL_PROVIDER_SETTLEMENT_DELETED -> settleConfirmedDeletion(
-                                current,
-                                op,
-                                attemptNumber,
-                                trigger,
-                                startedAt,
-                                finishedAt,
-                                explicitTrigger != null,
-                                evidence);
-                        case EXTERNAL_PROVIDER_SETTLEMENT_UNSPECIFIED, UNRECOGNIZED ->
-                                throw new IllegalStateException("Unexpected settlement: " + settlement);
-                    };
+                    ExternalPublicationAttempt failedAttempt = ExternalPublicationAttempt.newBuilder()
+                            .setAttemptNumber(attemptNumber)
+                            .setTrigger(trigger)
+                            .setOutcome(ExternalPublicationOutcome.EXTERNAL_PUBLICATION_OUTCOME_FAILED)
+                            .setStartedAt(startedAt)
+                            .setFinishedAt(finishedAt)
+                            .setDiagnosticCode(invalidEvidence.diagnosticCode())
+                            .setDiagnosticMessage(sanitizeMessage(invalidEvidence.getMessage()))
+                            .build();
+                    ExternalPublicationOperationRecord.Builder opBuilder =
+                            explicitTrigger != null
+                                    ? op.toBuilder().addAttempts(failedAttempt)
+                                    : replaceAttempt(op, failedAttempt);
+                    ExternalPublicationOperationRecord updatedOp = opBuilder
+                            .setOutcome(ExternalPublicationOutcome.EXTERNAL_PUBLICATION_OUTCOME_FAILED)
+                            .setPendingPhase(ExternalPendingPhase.EXTERNAL_PENDING_PHASE_UNSPECIFIED)
+                            // The operation fails hard, but the provider answered: it may
+                            // have committed before sending evidence that does not verify.
+                            .setProviderMayHoldObject(op.getIntent().getAction()
+                                    == ExternalPublicationAction.EXTERNAL_PUBLICATION_ACTION_PUBLISH)
+                            .setFailureCode(invalidEvidence.diagnosticCode())
+                            .setFailureMessage(sanitizeMessage(invalidEvidence.getMessage()))
+                            .setUpdatedAt(finishedAt)
+                            .build();
+                    return replaceOperation(current, updatedOp);
                 });
-
-        ExternalPublicationOperationRecord finalOp =
-                findOperation(settledLedger, operationId).orElseThrow();
-        boolean purged = maybePurgeLedgerIfEligible(ledgerAddr, settledLedger, finalOp);
         return new ExternalPublicationCoordinator.OperationResult(
-                finalOp,
-                purged ? Optional.empty() : optionalCurrentLink(settledLedger),
+                requireOperationInLedger(failedLedger, operationId),
+                optionalCurrentLink(failedLedger),
                 false,
-                purged);
+                false);
+    }
+
+    private static ExternalPublicationLedger settleVerifiedEvidence(
+            ExternalPublicationLedger current,
+            String operationId,
+            int attemptNumber,
+            ExternalAttemptTrigger explicitTrigger,
+            Timestamp fallbackStartedAt,
+            Timestamp finishedAt,
+            ExternalProviderEvidence evidence) {
+        ExternalPublicationOperationRecord op = requireOperationInLedger(current, operationId);
+        if (isTerminalOutcome(op.getOutcome())) {
+            return current;
+        }
+        ExternalAttemptTrigger trigger = explicitTrigger != null
+                ? explicitTrigger
+                : attemptTrigger(op, attemptNumber);
+        Timestamp startedAt = explicitTrigger != null
+                ? fallbackStartedAt
+                : attemptStartedAt(op, attemptNumber);
+        ExternalProviderSettlement settlement = evidence.getSettlement();
+        boolean settles = settlement == ExternalProviderSettlement.EXTERNAL_PROVIDER_SETTLEMENT_PUBLISHED
+                || settlement == ExternalProviderSettlement.EXTERNAL_PROVIDER_SETTLEMENT_REJECTED
+                || settlement == ExternalProviderSettlement.EXTERNAL_PROVIDER_SETTLEMENT_DELETED;
+        if (explicitTrigger != null && !settles
+                && !ExternalLedgerStore.hasRoomForUnsettledAttempt(op)) {
+            // A receipt that settles nothing is not written into the last attempt slot:
+            // that slot is reserved for the receipt that ends the operation.
+            return current;
+        }
+        boolean appendNewAttempt = explicitTrigger != null;
+        return switch (settlement) {
+            case EXTERNAL_PROVIDER_SETTLEMENT_ACCEPTED_ONLY -> settleAcceptedOnly(
+                    current, op, attemptNumber, trigger, startedAt, finishedAt,
+                    appendNewAttempt, evidence);
+            case EXTERNAL_PROVIDER_SETTLEMENT_PUBLISHED -> settleConfirmedPublication(
+                    current, op, attemptNumber, trigger, startedAt, finishedAt,
+                    appendNewAttempt, evidence);
+            case EXTERNAL_PROVIDER_SETTLEMENT_REJECTED -> settleRejected(
+                    current, op, attemptNumber, trigger, startedAt, finishedAt,
+                    appendNewAttempt, evidence);
+            case EXTERNAL_PROVIDER_SETTLEMENT_DELETION_ACCEPTED -> settleDeletionAccepted(
+                    current, op, attemptNumber, trigger, startedAt, finishedAt,
+                    appendNewAttempt, evidence);
+            case EXTERNAL_PROVIDER_SETTLEMENT_DELETED -> settleConfirmedDeletion(
+                    current, op, attemptNumber, trigger, startedAt, finishedAt,
+                    appendNewAttempt, evidence);
+            case EXTERNAL_PROVIDER_SETTLEMENT_UNSPECIFIED, UNRECOGNIZED ->
+                    throw new IllegalStateException("Unexpected settlement: " + settlement);
+        };
+    }
+
+    private static ExternalPublicationLedger settleAcceptedOnly(
+            ExternalPublicationLedger current,
+            ExternalPublicationOperationRecord op,
+            int attemptNumber,
+            ExternalAttemptTrigger trigger,
+            Timestamp startedAt,
+            Timestamp finishedAt,
+            boolean appendNewAttempt,
+            ExternalProviderEvidence evidence) {
+        ExternalPublicationAttempt attempt = ExternalPublicationAttempt.newBuilder()
+                .setAttemptNumber(attemptNumber)
+                .setTrigger(trigger)
+                .setOutcome(ExternalPublicationOutcome.EXTERNAL_PUBLICATION_OUTCOME_PENDING)
+                .setPendingPhase(
+                        ExternalPendingPhase.EXTERNAL_PENDING_PHASE_ACCEPTED_AWAITING_PUBLICATION)
+                .setStartedAt(startedAt)
+                .setFinishedAt(finishedAt)
+                .setEvidence(evidence)
+                .build();
+        ExternalPublicationOperationRecord.Builder opBuilder = appendNewAttempt
+                ? op.toBuilder().addAttempts(attempt)
+                : replaceAttempt(op, attempt);
+        ExternalPublicationOperationRecord updatedOp = opBuilder
+                .setOutcome(ExternalPublicationOutcome.EXTERNAL_PUBLICATION_OUTCOME_PENDING)
+                .setPendingPhase(
+                        ExternalPendingPhase.EXTERNAL_PENDING_PHASE_ACCEPTED_AWAITING_PUBLICATION)
+                .setUpdatedAt(finishedAt)
+                .build();
+        return replaceOperation(current, updatedOp);
+    }
+
+    private static ExternalPublicationLedger settleRejected(
+            ExternalPublicationLedger current,
+            ExternalPublicationOperationRecord op,
+            int attemptNumber,
+            ExternalAttemptTrigger trigger,
+            Timestamp startedAt,
+            Timestamp finishedAt,
+            boolean appendNewAttempt,
+            ExternalProviderEvidence evidence) {
+        String code = evidence.hasDiagnosticCode()
+                ? evidence.getDiagnosticCode()
+                : DEFAULT_REJECTION_CODE;
+        ExternalPublicationAttempt attempt = ExternalPublicationAttempt.newBuilder()
+                .setAttemptNumber(attemptNumber)
+                .setTrigger(trigger)
+                .setOutcome(ExternalPublicationOutcome.EXTERNAL_PUBLICATION_OUTCOME_FAILED)
+                .setStartedAt(startedAt)
+                .setFinishedAt(finishedAt)
+                .setDiagnosticCode(code)
+                .setDiagnosticMessage(REJECTION_MESSAGE)
+                .setEvidence(evidence)
+                .build();
+        ExternalPublicationOperationRecord.Builder opBuilder = appendNewAttempt
+                ? op.toBuilder().addAttempts(attempt)
+                : replaceAttempt(op, attempt);
+        ExternalPublicationOperationRecord updatedOp = opBuilder
+                .setOutcome(ExternalPublicationOutcome.EXTERNAL_PUBLICATION_OUTCOME_FAILED)
+                .setPendingPhase(ExternalPendingPhase.EXTERNAL_PENDING_PHASE_UNSPECIFIED)
+                // A rejection of a send settles that send. An earlier send whose outcome was
+                // never learned may still have committed; a status query answers for the
+                // operation as a whole.
+                .setProviderMayHoldObject(op.getIntent().getAction()
+                                == ExternalPublicationAction.EXTERNAL_PUBLICATION_ACTION_PUBLISH
+                        && trigger != ExternalAttemptTrigger.EXTERNAL_ATTEMPT_TRIGGER_RECONCILIATION
+                        && ExternalLedgerStore.anotherSendIsUnresolved(op, attemptNumber))
+                .setFailureCode(code)
+                .setFailureMessage(REJECTION_MESSAGE)
+                .setUpdatedAt(finishedAt)
+                .build();
+        return replaceOperation(current, updatedOp);
+    }
+
+    private static ExternalPublicationLedger settleDeletionAccepted(
+            ExternalPublicationLedger current,
+            ExternalPublicationOperationRecord op,
+            int attemptNumber,
+            ExternalAttemptTrigger trigger,
+            Timestamp startedAt,
+            Timestamp finishedAt,
+            boolean appendNewAttempt,
+            ExternalProviderEvidence evidence) {
+        ExternalPublicationAttempt attempt = ExternalPublicationAttempt.newBuilder()
+                .setAttemptNumber(attemptNumber)
+                .setTrigger(trigger)
+                .setOutcome(ExternalPublicationOutcome.EXTERNAL_PUBLICATION_OUTCOME_DELETION_PENDING)
+                .setPendingPhase(ExternalPendingPhase.EXTERNAL_PENDING_PHASE_DELETION_IN_FLIGHT)
+                .setStartedAt(startedAt)
+                .setFinishedAt(finishedAt)
+                .setEvidence(evidence)
+                .build();
+        ExternalPublicationOperationRecord.Builder opBuilder = appendNewAttempt
+                ? op.toBuilder().addAttempts(attempt)
+                : replaceAttempt(op, attempt);
+        ExternalPublicationOperationRecord updatedOp = opBuilder
+                .setOutcome(ExternalPublicationOutcome.EXTERNAL_PUBLICATION_OUTCOME_DELETION_PENDING)
+                .setPendingPhase(ExternalPendingPhase.EXTERNAL_PENDING_PHASE_DELETION_IN_FLIGHT)
+                .setUpdatedAt(finishedAt)
+                .build();
+        return replaceOperation(current, updatedOp);
     }
 
     static ExternalPublicationLedger settleConfirmedPublication(
@@ -294,9 +375,9 @@ final class ExternalReceiptSettlement {
             Timestamp startedAt,
             Timestamp finishedAt,
             boolean appendNewAttempt,
-            ExternalPublicationIntent intent,
-            ExternalSystemBinding bindingSnapshot,
             ExternalProviderEvidence evidence) {
+        ExternalPublicationIntent intent = op.getIntent();
+        ExternalSystemBinding bindingSnapshot = op.getBindingSnapshot();
         ExternalPublicationAttempt confirmedAttempt = ExternalPublicationAttempt.newBuilder()
                 .setAttemptNumber(attemptNumber)
                 .setTrigger(trigger)
@@ -380,9 +461,14 @@ final class ExternalReceiptSettlement {
         }
 
         if (current.hasCurrentLink()) {
-            ExternalLink displaced = current.getCurrentLink().toBuilder()
-                    .setProjectionLifecycle(
-                            ExternalProjectionLifecycle.EXTERNAL_PROJECTION_LIFECYCLE_SUPERSEDED)
+            ExternalLink existingCurrent = current.getCurrentLink();
+            ExternalProjectionLifecycle displacedLifecycle =
+                    remainsPendingDeletionWhenDisplaced(
+                            current, existingCurrent, bindingSnapshot, intent.getExternalObjectId())
+                            ? ExternalProjectionLifecycle.EXTERNAL_PROJECTION_LIFECYCLE_DELETION_PENDING
+                            : ExternalProjectionLifecycle.EXTERNAL_PROJECTION_LIFECYCLE_SUPERSEDED;
+            ExternalLink displaced = existingCurrent.toBuilder()
+                    .setProjectionLifecycle(displacedLifecycle)
                     .setRetiredByOperationId(op.getOperationId())
                     .build();
             ledgerBuilder.addHistoricalLinks(displaced);
@@ -394,6 +480,31 @@ final class ExternalReceiptSettlement {
         ledgerBuilder.setHighestFencedSourceRevision(
                 Math.max(current.getHighestFencedSourceRevision(), intent.getSourceRevision()));
         return ledgerBuilder.build();
+    }
+
+    private static boolean remainsPendingDeletionWhenDisplaced(
+            ExternalPublicationLedger ledger,
+            ExternalLink displacedCandidate,
+            ExternalSystemBinding newBinding,
+            String newExternalObjectId) {
+        if (displacedCandidate.getProjectionLifecycle()
+                != ExternalProjectionLifecycle.EXTERNAL_PROJECTION_LIFECYCLE_DELETION_PENDING) {
+            return false;
+        }
+        boolean replacedInPlace = displacedCandidate.getExternalObjectId().equals(newExternalObjectId)
+                && ExternalDeleteTargets.sameExternalTarget(
+                        displacedCandidate.getBindingSnapshot(), newBinding);
+        if (!replacedInPlace) {
+            return true;
+        }
+        for (String deleteOpId : displacedCandidate.getDeletionClaimedByOperationIdsList()) {
+            if (findOperation(ledger, deleteOpId)
+                    .filter(claiming -> !isTerminalOutcome(claiming.getOutcome()))
+                    .isPresent()) {
+                return true;
+            }
+        }
+        return false;
     }
 
     static ExternalPublicationLedger settleConfirmedDeletion(
@@ -471,7 +582,7 @@ final class ExternalReceiptSettlement {
                 && recordedBeforeDeletionWasSent
                 && link.getExternalObjectId().equals(deletion.getExternalObjectId())
                 // The same place in the external system, whatever the binding revision number.
-                && ExternalDeletionLifecycle.sameExternalTarget(
+                && ExternalDeleteTargets.sameExternalTarget(
                         link.getBindingSnapshot(), deletedOp.getBindingSnapshot());
     }
 
@@ -535,7 +646,7 @@ final class ExternalReceiptSettlement {
     /**
      * One object in the external system: its ID at one place there. Two binding revisions that
      * point at the same provider, dataset, namespace and endpoint name the same object, as
-     * {@link ExternalDeletionLifecycle#sameExternalTarget} has it.
+     * {@link ExternalDeleteTargets#sameExternalTarget} has it.
      */
     private record ObjectKey(String provider, String dataset, String namespace,
             ExternalEndpointSummary endpoint, String externalObjectId) {
@@ -551,20 +662,18 @@ final class ExternalReceiptSettlement {
      * Purges the ledger with its source when the source is purged, every operation on it was
      * recorded under {@code PURGE_WITH_SOURCE}, and nothing is outstanding.
      *
-     * <p>The decision is made again inside a ledger update against the ledger as it is then,
-     * and that update marks the ledger {@code purge_with_source_started_at}. A ledger so marked
-     * takes no further save, so an operation registered after the check either lands before
-     * the mark (and the check sees it) or is refused. {@code PurgeDocument} runs only once the
-     * mark is saved; a call that finds the mark already there repeats it.
+     * <p>The decision is made again inside a ledger update against the ledger as it stands then,
+     * and that update marks {@code purge_with_source_started_at}. A ledger so marked takes no
+     * further save, so an operation registered after the check either lands before the mark (and
+     * the check sees it) or is refused. {@code PurgeDocument} runs only once the mark is saved; a
+     * non-admin writer who settles the last external operation leaves the mark in place so a
+     * purge-administrator replay completes the repository purge.
      *
-     * @return true when the ledger document was purged
+     * @return true when the ledger document is purged
      */
     boolean maybePurgeLedgerIfEligible(
-            NodeAddress ledgerAddr,
-            ExternalPublicationLedger ledger,
-            ExternalPublicationOperationRecord settledOp) {
-        if (!ledger.getSourcePurged()
-                || settledOp.getOutcome() != ExternalPublicationOutcome.EXTERNAL_PUBLICATION_OUTCOME_DELETED) {
+            NodeAddress ledgerAddr, ExternalPublicationLedger ledger) {
+        if (!ledger.getSourcePurged()) {
             return false;
         }
         ExternalPublicationLedger marked = ledger;
@@ -573,30 +682,50 @@ final class ExternalReceiptSettlement {
                 return false;
             }
             Timestamp startedAt = timestamp(clock.instant());
-            marked = ledgers.updateLedgerWithCas(
-                    ledgerAddr,
-                    ledger.getSourceAddress(),
-                    ledger.getBindingId(),
-                    LedgerAccess.keep(),
-                    "ext-ledger-purge-mark:" + ledger.getLastPurgeId() + ":" + UUID.randomUUID(),
-                    current -> current.hasPurgeWithSourceStartedAt() || !eligibleForPurgeWithSource(current)
-                            ? current
-                            : current.toBuilder().setPurgeWithSourceStartedAt(startedAt).build());
+            try {
+                marked = ledgers.updateLedgerWithCas(
+                        ledgerAddr,
+                        ledger.getSourceAddress(),
+                        ledger.getBindingId(),
+                        LedgerAccess.keep(),
+                        "ext-ledger-purge-mark:" + ledger.getLastPurgeId() + ":" + UUID.randomUUID(),
+                        current -> current.hasPurgeWithSourceStartedAt() || !eligibleForPurgeWithSource(current)
+                                ? current
+                                : current.toBuilder().setPurgeWithSourceStartedAt(startedAt).build());
+            } catch (StatusRuntimeException markRefused) {
+                if (markRefused.getStatus().getCode() == Status.Code.PERMISSION_DENIED) {
+                    return false;
+                }
+                throw markRefused;
+            }
+            if (!marked.getSourcePurged()) {
+                return true;
+            }
             if (!marked.hasPurgeWithSourceStartedAt()) {
                 return false;
             }
         }
         String purgeKey = "ext-ledger-purge:" + marked.getBindingId() + ":" + marked.getLastPurgeId();
-        if (purgeKey.length() > 200) {
-            purgeKey = "ext-ledger-purge:" + sha256Hex(
-                    purgeKey.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        if (purgeKey.length() > MAX_PURGE_ID_LEN) {
+            purgeKey = "ext-ledger-purge:" + sha256Hex(purgeKey.getBytes(StandardCharsets.UTF_8));
         }
-        documents.purgeDocument(PurgeDocumentRequest.newBuilder()
-                .setPurgeId(purgeKey)
-                .setAddress(ledgerAddr)
-                .setReason("PURGE_WITH_SOURCE retention policy after external deletion settled")
-                .build());
-        return true;
+        try {
+            documents.purgeDocument(PurgeDocumentRequest.newBuilder()
+                    .setPurgeId(purgeKey)
+                    .setAddress(ledgerAddr)
+                    .setReason(PURGE_REASON)
+                    .build());
+            return true;
+        } catch (StatusRuntimeException purgeFailure) {
+            Status.Code code = purgeFailure.getStatus().getCode();
+            if (code == Status.Code.NOT_FOUND) {
+                return true;
+            }
+            if (code == Status.Code.PERMISSION_DENIED) {
+                return false;
+            }
+            throw purgeFailure;
+        }
     }
 
     /**

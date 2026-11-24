@@ -36,11 +36,11 @@ class ExternalDeleteTargetTest {
                 .setExternalObjectId(objectId).setProjectionLifecycle(lifecycle).build();
     }
 
-    private static Optional<ExternalDeletionLifecycle.ResolvedDeleteTarget> recorded(
+    private static Optional<ExternalDeleteTargets.ResolvedDeleteTarget> recorded(
             ExternalPublicationLedger ledger, long bindingRevision, String objectId) {
-        return ExternalDeletionLifecycle.recordedTarget(
+        return ExternalDeleteTargets.recordedTarget(
                 Optional.of(ledger), bindingRevision, objectId,
-                ExternalDeletionLifecycle.ALL_REVISIONS);
+                ExternalDeleteTargets.ALL_REVISIONS);
     }
 
     @Test
@@ -51,7 +51,7 @@ class ExternalDeleteTargetTest {
                         ExternalProjectionLifecycle.EXTERNAL_PROJECTION_LIFECYCLE_DELETED))
                 .build();
 
-        ExternalDeletionLifecycle.ResolvedDeleteTarget target =
+        ExternalDeleteTargets.ResolvedDeleteTarget target =
                 recorded(ledger, 0L, "").orElseThrow();
         assertThat(target.externalObjectId()).isEqualTo("object-a");
         assertThat(target.binding().getBindingRevision()).isEqualTo(1L);
@@ -75,7 +75,7 @@ class ExternalDeleteTargetTest {
                 .addHistoricalLinks(link("object-gone", 2L, "dataset-two",
                         ExternalProjectionLifecycle.EXTERNAL_PROJECTION_LIFECYCLE_DELETED))
                 .build();
-        ExternalDeletionLifecycle.ResolvedDeleteTarget owed =
+        ExternalDeleteTargets.ResolvedDeleteTarget owed =
                 recorded(historyOnly, 0L, "").orElseThrow();
         assertThat(owed.externalObjectId()).isEqualTo("object-owed");
         assertThat(owed.binding().getDataset()).isEqualTo("dataset-one");
@@ -90,7 +90,7 @@ class ExternalDeleteTargetTest {
                         ExternalProjectionLifecycle.EXTERNAL_PROJECTION_LIFECYCLE_SUPERSEDED))
                 .build();
 
-        ExternalDeletionLifecycle.ResolvedDeleteTarget old =
+        ExternalDeleteTargets.ResolvedDeleteTarget old =
                 recorded(ledger, 0L, "object-old").orElseThrow();
         assertThat(old.binding().getDataset()).isEqualTo("dataset-one");
 
@@ -126,7 +126,7 @@ class ExternalDeleteTargetTest {
         ExternalPublicationLedger ledger = ExternalPublicationLedger.newBuilder()
                 .addOperations(pendingPublish).addOperations(failedPublish).build();
 
-        ExternalDeletionLifecycle.ResolvedDeleteTarget target =
+        ExternalDeleteTargets.ResolvedDeleteTarget target =
                 recorded(ledger, 0L, "").orElseThrow();
         assertThat(target.externalObjectId()).isEqualTo("object-pending");
         assertThat(target.binding().getDataset()).isEqualTo("dataset-two");
@@ -176,7 +176,7 @@ class ExternalDeleteTargetTest {
         ExternalPublicationLedger ledger = ExternalPublicationLedger.newBuilder()
                 .addOperations(pendingUnderV1).build();
 
-        ExternalDeletionLifecycle.ResolvedDeleteTarget target =
+        ExternalDeleteTargets.ResolvedDeleteTarget target =
                 recorded(ledger, 0L, "object-x").orElseThrow();
         assertThat(target.binding().getBindingRevision()).isEqualTo(1L);
         assertThat(target.binding().getDataset()).isEqualTo("dataset-one");
@@ -211,20 +211,20 @@ class ExternalDeleteTargetTest {
         ExternalPublicationLedger ledger = ExternalPublicationLedger.newBuilder()
                 .setCurrentLink(objectB).addHistoricalLinks(objectA).build();
 
-        ExternalDeletionLifecycle.ResolvedDeleteTarget atTombstone =
-                ExternalDeletionLifecycle.recordedTarget(Optional.of(ledger), 0L, "", 2L)
+        ExternalDeleteTargets.ResolvedDeleteTarget atTombstone =
+                ExternalDeleteTargets.recordedTarget(Optional.of(ledger), 0L, "", 2L)
                         .orElseThrow();
         assertThat(atTombstone.externalObjectId()).isEqualTo("object-a");
         // Naming B does not help: the tombstone does not cover it, and since the ledger
         // knows B it is refused outright instead of being treated as an unrecorded object.
-        assertThatThrownBy(() -> ExternalDeletionLifecycle.recordedTarget(
+        assertThatThrownBy(() -> ExternalDeleteTargets.recordedTarget(
                 Optional.of(ledger), 0L, "object-b", 2L))
                 .isInstanceOfSatisfying(StatusRuntimeException.class, e -> {
                     assertThat(e.getStatus().getCode()).isEqualTo(Status.Code.FAILED_PRECONDITION);
                     assertThat(e.getStatus().getDescription()).contains("does not cover");
                 });
         // An object the ledger has never seen is still simply unrecorded.
-        assertThat(ExternalDeletionLifecycle.recordedTarget(
+        assertThat(ExternalDeleteTargets.recordedTarget(
                 Optional.of(ledger), 0L, "object-never", 2L)).isEmpty();
         // A purge covers every revision, newest first.
         assertThat(recorded(ledger, 0L, "").orElseThrow().externalObjectId())
@@ -251,31 +251,31 @@ class ExternalDeleteTargetTest {
                 .addOperations(deletedB)
                 .build();
 
-        ExternalDeletionLifecycle.ResolvedDeleteTarget replay =
-                ExternalDeletionLifecycle.replayedTarget(Optional.of(ledger), "op-d", "", 0L)
+        ExternalDeleteTargets.ResolvedDeleteTarget replay =
+                ExternalDeleteTargets.replayedTarget(Optional.of(ledger), "op-d", "", 0L)
                         .orElseThrow();
         assertThat(replay.externalObjectId()).isEqualTo("object-b");
         assertThat(replay.binding().getDataset()).isEqualTo("dataset-two");
 
         // Naming the recorded object again still replays what was recorded, so a settled
         // deletion is answered from the ledger rather than resolved anew.
-        assertThat(ExternalDeletionLifecycle.replayedTarget(
+        assertThat(ExternalDeleteTargets.replayedTarget(
                 Optional.of(ledger), "op-d", "object-b", 0L).orElseThrow().binding().getDataset())
                 .isEqualTo("dataset-two");
         // Naming another object under the same operation ID is a different request.
-        assertThatThrownBy(() -> ExternalDeletionLifecycle.replayedTarget(
+        assertThatThrownBy(() -> ExternalDeleteTargets.replayedTarget(
                         Optional.of(ledger), "op-d", "object-a", 0L))
                 .isInstanceOfSatisfying(io.grpc.StatusRuntimeException.class, ex ->
                         assertThat(ex.getStatus().getCode()).isEqualTo(io.grpc.Status.Code.ALREADY_EXISTS));
         // Naming only the binding revision still replays, when it is the recorded one.
-        assertThat(ExternalDeletionLifecycle.replayedTarget(
+        assertThat(ExternalDeleteTargets.replayedTarget(
                 Optional.of(ledger), "op-d", "", 2L).orElseThrow().externalObjectId())
                 .isEqualTo("object-b");
-        assertThatThrownBy(() -> ExternalDeletionLifecycle.replayedTarget(
+        assertThatThrownBy(() -> ExternalDeleteTargets.replayedTarget(
                 Optional.of(ledger), "op-d", "", 1L))
                 .isInstanceOfSatisfying(StatusRuntimeException.class, e ->
                         assertThat(e.getStatus().getCode()).isEqualTo(Status.Code.ALREADY_EXISTS));
-        assertThat(ExternalDeletionLifecycle.replayedTarget(
+        assertThat(ExternalDeleteTargets.replayedTarget(
                 Optional.of(ledger), "op-unknown", "", 0L)).isEmpty();
     }
 
@@ -293,7 +293,7 @@ class ExternalDeleteTargetTest {
                 .setCurrentLink(newA).addHistoricalLinks(oldA).build();
 
         for (String named : new String[] {"", "object-a"}) {
-            assertThatThrownBy(() -> ExternalDeletionLifecycle.recordedTarget(
+            assertThatThrownBy(() -> ExternalDeleteTargets.recordedTarget(
                     Optional.of(ledger), 0L, named, 2L))
                     .isInstanceOfSatisfying(StatusRuntimeException.class, e -> {
                         assertThat(e.getStatus().getCode())
@@ -338,7 +338,7 @@ class ExternalDeleteTargetTest {
                 .toBuilder().setSourceRevision(3L).build();
         ExternalPublicationLedger sameTarget = ExternalPublicationLedger.newBuilder()
                 .setCurrentLink(newA).addHistoricalLinks(oldA).build();
-        assertThatThrownBy(() -> ExternalDeletionLifecycle.recordedTarget(
+        assertThatThrownBy(() -> ExternalDeleteTargets.recordedTarget(
                 Optional.of(sameTarget), 0L, "", 2L))
                 .isInstanceOfSatisfying(StatusRuntimeException.class, e ->
                         assertThat(e.getStatus().getDescription()).contains("republished"));
@@ -349,7 +349,7 @@ class ExternalDeleteTargetTest {
                         ExternalProjectionLifecycle.EXTERNAL_PROJECTION_LIFECYCLE_ACTIVE)
                         .toBuilder().setSourceRevision(3L).build())
                 .addHistoricalLinks(oldA).build();
-        assertThat(ExternalDeletionLifecycle.recordedTarget(Optional.of(moved), 0L, "", 2L)
+        assertThat(ExternalDeleteTargets.recordedTarget(Optional.of(moved), 0L, "", 2L)
                 .orElseThrow().binding().getDataset()).isEqualTo("dataset-one");
     }
 }

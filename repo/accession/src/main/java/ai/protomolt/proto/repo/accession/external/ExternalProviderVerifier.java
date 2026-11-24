@@ -23,6 +23,7 @@ import ai.protomolt.proto.validate.source.ProtomoltRuleSource;
 import com.google.protobuf.ByteString;
 import com.google.protobuf.Message;
 import com.google.protobuf.Timestamp;
+import io.grpc.Status;
 import java.io.ByteArrayOutputStream;
 import java.io.DataOutputStream;
 import java.io.IOException;
@@ -301,16 +302,22 @@ public final class ExternalProviderVerifier {
                 List.of(expectedAuth.credentialBindingSha256()));
     }
 
-    /** Verifies durable evidence against identities saved before dispatch, using live auth only for transport. */
+    /**
+     * Verifies durable evidence against the non-secret credential fingerprints saved before
+     * dispatch, using live auth only for transport profile and endpoint verification.
+     */
     void verifyRecordedEvidence(ExternalProviderEvidence evidence,
             ExternalPublicationOperationRecord operation,
             ExternalProviderGateway.OutboundAuthContext liveAuth) {
-        // Old ledgers did not retain dispatch identity. Preserve their original strict check;
-        // never accept an arbitrary fingerprint taken from the receipt itself.
-        var fingerprints = operation.getDispatchCredentialBindingSha256SList();
+        List<String> fingerprints = operation.getDispatchCredentialBindingSha256SList();
+        if (fingerprints.isEmpty()) {
+            throw Status.DATA_LOSS
+                    .withDescription("Recorded external operation '" + operation.getOperationId()
+                            + "' is missing dispatch_credential_binding_sha256s")
+                    .asRuntimeException();
+        }
         verifyEvidence(evidence, operation.getBindingSnapshot(), liveAuth,
-                operation.getIntent(), operation.getIntentSha256(), fingerprints.isEmpty()
-                        ? List.of(liveAuth.credentialBindingSha256()) : fingerprints);
+                operation.getIntent(), operation.getIntentSha256(), fingerprints);
     }
 
     private void verifyEvidence(ExternalProviderEvidence evidence,

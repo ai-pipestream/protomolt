@@ -165,12 +165,13 @@ For `MANAGED_SEARCH` bindings, source acceptance (`accepted_version` +
 observation and never substitutes for publication proof.
 
 Refreshing serving visibility (`reconcileOperation(..., includeServingObservation = true)`
-on a confirmed operation) never reports a failed refresh as a replay. An unreachable
-status endpoint (`UNAVAILABLE`, `DEADLINE_EXCEEDED`) or an `Unavailable` provider
-answer fails the call with `UNAVAILABLE`; any other provider status, such as
-`PERMISSION_DENIED`, is returned with its own code; a provider with no record of the
-confirmed operation fails it with `FAILED_PRECONDITION`. In each case the ledger keeps
-the last observed visibility.
+on a confirmed operation) requires `WRITE` access before querying the provider and
+never reports a failed refresh as a replay. An unreachable status endpoint
+(`UNAVAILABLE`, `DEADLINE_EXCEEDED`) or an `Unavailable` provider answer fails the
+call with `UNAVAILABLE`; any other provider status, such as `PERMISSION_DENIED`, is
+returned with its own code; a provider with no record of the confirmed operation or a
+receipt that fails verification fails the call with `FAILED_PRECONDITION`. In each
+case the ledger keeps the last observed visibility.
 
 ## Operation identity, attempt lifecycle, and provider verification
 
@@ -226,10 +227,9 @@ Before every mutating provider call, the operation retains its non-secret
 `dispatch_credential_binding_sha256s`. Retries add the credential-reference fingerprint
 they actually use. Reconciliation and serving refresh authenticate with live credentials,
 but verify durable receipts against those retained dispatch fingerprints. Rotating a
-credential reference therefore does not invalidate an earlier signed receipt, and a
-fingerprint never recorded for a dispatch is refused. Ledgers written before this field
-existed retain the original strict live-reference check; missing historical identity is
-not inferred from provider evidence.
+credential reference therefore does not invalidate an earlier signed receipt, a
+fingerprint never recorded for a dispatch is refused, and a recorded operation missing
+`dispatch_credential_binding_sha256s` fails closed with `DATA_LOSS`.
 
 Publication admission reserves room for cleanup within the existing ledger bounds:
 the current projection and pending publications retain space for their eventual historical
@@ -310,19 +310,29 @@ Ordering invariants:
    - `RETAIN_HISTORY`: retains the ledger with `current_link` cleared and
      non-secret historical receipts preserved for audit.
    - `PURGE_WITH_SOURCE`: invokes `DocumentService.PurgeDocument` on the ledger
-     document once external deletion settles, nothing is outstanding, and every
-     operation on the ledger was recorded under `PURGE_WITH_SOURCE`. That decision
-     is made again inside a ledger update, which sets
-     `purge_with_source_started_at`; a ledger carrying it refuses every further
-     save with `FAILED_PRECONDITION`, so an operation registered concurrently is
-     either seen by the check or refused, never purged unseen.
+     document once `source_purged` is set, nothing is outstanding (whichever
+     pending publication or deletion settles last), and every operation on the
+     ledger was recorded under `PURGE_WITH_SOURCE`. That decision is made again
+     inside a ledger update, which sets `purge_with_source_started_at`; a ledger
+     carrying it refuses every further save with `FAILED_PRECONDITION`, so an
+     operation registered concurrently is either seen by the check or refused,
+     never purged unseen. If the caller settling the last external operation holds
+     `WRITE` on the source's retained rules without repository purge-administrator
+     authority, external settlement succeeds with `ledgerPurged == false` and
+     leaves `purge_with_source_started_at` set; a purge administrator (or any
+     retry after a transient `PurgeDocument` outage) completes the repository
+     purge by replaying `handlePurge` or `reconcileOperation`.
 6. **Repository and account authorization**: An `ExternalLink` grants neither
    repository access nor external provider access. Every read (`getLedgerView`,
-   `getActiveLinks`) and mutation (`publish`, `deleteForTombstone`,
-   `preparePurge`, `handlePurge`, `reconcileOperation`) checks caller account membership
-   and `DocumentAccessPolicy` permissions against the current source document
-   (the last live revision's rules when the source is tombstoned, the ledger's
-   retained `DocumentSecurity` ACL once it is purged). A ledger save writes the live source's rules
+   `listActiveExternalLinks`, and pure terminal replay in `reconcileOperation`)
+   and mutation (`publish`, `deleteForTombstone`, `preparePurge`, `handlePurge`,
+   and pending or serving-observation `reconcileOperation`) checks caller account
+   membership and `DocumentAccessPolicy` permissions against the current source
+   document (the last live revision's rules when the source is tombstoned, the
+   ledger's retained `DocumentSecurity` ACL once it is purged). Every mutating
+   operation—including reconciling a non-terminal operation or refreshing serving
+   visibility—verifies `WRITE` access before resolving outbound provider
+   credentials or calling the provider. A ledger save writes the live source's rules
    exactly, even when they hold no explicit grant (that is a revocation), keeps
    the ledger's own rules only when no live rules exist, and keeps the rules a
    purge preparation copied once one is recorded. Cross-account and unauthorized callers receive

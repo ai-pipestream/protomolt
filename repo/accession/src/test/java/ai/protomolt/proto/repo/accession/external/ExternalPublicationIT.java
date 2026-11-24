@@ -408,6 +408,13 @@ class ExternalPublicationIT {
             assertGrpcCode(
                     () -> h.coordinator.reconcileOperation(sourceAddr, "rust-search", "pub-doc-1-r1", true),
                     Status.Code.UNAVAILABLE);
+            provider.nextStatusBehavior = query -> new ExternalProviderGateway.ProviderStatusResult.Receipt(
+                    provider.recordedByOperation.get("pub-doc-1-r1").toBuilder()
+                            .setExternalObjectId("tampered-object-id")
+                            .build());
+            assertGrpcCode(
+                    () -> h.coordinator.reconcileOperation(sourceAddr, "rust-search", "pub-doc-1-r1", true),
+                    Status.Code.FAILED_PRECONDITION);
             assertThat(h.coordinator.getLedgerView(sourceAddr, "rust-search").orElseThrow()
                     .currentLink().orElseThrow().getManagedSearch().getServingVisibility())
                     .isEqualTo(ExternalServingVisibility.EXTERNAL_SERVING_VISIBILITY_CURRENT_ROWS);
@@ -635,7 +642,30 @@ class ExternalPublicationIT {
                             "pub-ro-alice", sourceAddr, 1L, "rust-search", 1L, "ext-ro", null, null))
                     .operation().getOutcome())
                     .isEqualTo(ExternalPublicationOutcome.EXTERNAL_PUBLICATION_OUTCOME_CONFIRMED);
+            // A reader may replay a settled operation, but cannot refresh serving observation or
+            // reconcile a pending operation against outbound provider credentials.
+            provider.nextExecuteBehavior = ctx ->
+                    new ExternalProviderGateway.ProviderCallResult.Unresolved(
+                            "DEADLINE_EXCEEDED", "lost reply");
+            assertThat(h.coordinator.publish(new ExternalPublicationCoordinator.PublishRequest(
+                            "pub-ro-pending", sourceAddr, 1L, "rust-search", 1L, "ext-ro-pending",
+                            null, null))
+                    .operation().getOutcome())
+                    .isEqualTo(ExternalPublicationOutcome.EXTERNAL_PUBLICATION_OUTCOME_PENDING);
+            int statusCallsBeforeBob = provider.statusCalls.get();
             h.useCaller(h.alphaBob);
+            assertThat(h.coordinator.reconcileOperation(
+                            sourceAddr, "rust-search", "pub-ro-alice", false).replayed())
+                    .isTrue();
+            assertGrpcCode(() -> h.coordinator.reconcileOperation(
+                            sourceAddr, "rust-search", "pub-ro-alice", true),
+                    Status.Code.PERMISSION_DENIED);
+            assertGrpcCode(() -> h.coordinator.reconcileOperation(
+                            sourceAddr, "rust-search", "pub-ro-pending", false),
+                    Status.Code.PERMISSION_DENIED);
+            assertThat(provider.statusCalls.get())
+                    .as("reader refused before any outbound status query")
+                    .isEqualTo(statusCallsBeforeBob);
             assertGrpcCode(() -> h.coordinator.preparePurge(
                             new ExternalPublicationCoordinator.PreparePurgeRequest(
                                     sourceAddr, "purge-ro-bob", "rust-search")),
@@ -661,6 +691,48 @@ class ExternalPublicationIT {
             assertThat(provider.executeCalls.get()).isEqualTo(callsBefore);
             assertThat(h.coordinator.getLedgerView(deletedAddr, "rust-search"))
                     .as("no ledger, so no fenced operation, for Bob's refused call").isEmpty();
+
+            // A non-admin writer settles PURGE_WITH_SOURCE external deletion without failing on
+            // PurgeDocument; a purge administrator replay completes the repository ledger purge.
+            h.saveActiveBinding(
+                    "tenant-alpha",
+                    "purge-search",
+                    "search-profile-v1",
+                    "ingest",
+                    "corpus-purge",
+                    "ns-alpha",
+                    ExternalRetentionPolicy.EXTERNAL_RETENTION_POLICY_PURGE_WITH_SOURCE,
+                    "op-bind-purge-writer");
+            NodeAddress purgeDoc = sourceAddress("tenant-alpha", "doc-writer-purge-handoff");
+            h.saveSourceDocument("save-wph-1", purgeDoc, 0L, "Writer publishes, admin purges",
+                    "alice", "bob");
+            h.useCaller(h.alphaBob);
+            assertThat(h.coordinator.publish(new ExternalPublicationCoordinator.PublishRequest(
+                            "pub-wph-1", purgeDoc, 1L, "purge-search", 1L, "ext-wph", null, null))
+                    .operation().getOutcome())
+                    .isEqualTo(ExternalPublicationOutcome.EXTERNAL_PUBLICATION_OUTCOME_CONFIRMED);
+            h.coordinator.preparePurge(new ExternalPublicationCoordinator.PreparePurgeRequest(
+                    purgeDoc, "purge-wph-001", "purge-search"));
+            h.useCaller(h.alphaAlice);
+            h.stub.purgeDocument(PurgeDocumentRequest.newBuilder()
+                    .setPurgeId("purge-wph-001")
+                    .setAddress(purgeDoc)
+                    .setReason("Purge source before non-admin writer settles external deletion")
+                    .build());
+            h.useCaller(h.alphaBob);
+            ExternalPublicationCoordinator.OperationResult bobPurge = h.coordinator.handlePurge(
+                    new ExternalPublicationCoordinator.PurgeRequest(
+                            null, purgeDoc, "purge-wph-001", "purge-search", null));
+            assertThat(bobPurge.operation().getOutcome())
+                    .isEqualTo(ExternalPublicationOutcome.EXTERNAL_PUBLICATION_OUTCOME_DELETED);
+            assertThat(bobPurge.ledgerPurged()).isFalse();
+            h.useCaller(h.alphaAlice);
+            ExternalPublicationCoordinator.OperationResult aliceFinish = h.coordinator.handlePurge(
+                    new ExternalPublicationCoordinator.PurgeRequest(
+                            null, purgeDoc, "purge-wph-001", "purge-search", null));
+            assertThat(aliceFinish.replayed()).isTrue();
+            assertThat(aliceFinish.ledgerPurged()).isTrue();
+            assertThat(h.coordinator.getLedgerView(purgeDoc, "purge-search")).isEmpty();
         }
     }
 
@@ -711,6 +783,124 @@ class ExternalPublicationIT {
                     Status.Code.PERMISSION_DENIED);
             h.useCaller(h.alphaAlice);
             assertThat(h.coordinator.getLedgerView(sourceAddr, "rust-search")).isPresent();
+        }
+    }
+
+    @Test
+    void preDispatchSourceRecheckFailsCleanlyWithoutSendingToProvider(
+            @TempDir Path tempDir) throws Exception {
+        SimulatedManagedSearchProvider provider = new SimulatedManagedSearchProvider();
+        try (Harness h = Harness.boot(tempDir, provider)) {
+            h.saveActiveBinding(
+                    "tenant-alpha",
+                    "rust-search",
+                    "search-profile-v1",
+                    "ingest",
+                    "corpus-main",
+                    "ns-alpha",
+                    ExternalRetentionPolicy.EXTERNAL_RETENTION_POLICY_PURGE_WITH_SOURCE,
+                    "op-bind-recheck");
+
+            AtomicReference<Runnable> afterPreRegister = new AtomicReference<>();
+            io.grpc.Channel intercepted = io.grpc.ClientInterceptors.intercept(
+                    h.channel,
+                    new io.grpc.ClientInterceptor() {
+                        @Override
+                        public <ReqT, RespT> io.grpc.ClientCall<ReqT, RespT> interceptCall(
+                                io.grpc.MethodDescriptor<ReqT, RespT> method,
+                                io.grpc.CallOptions callOptions,
+                                io.grpc.Channel next) {
+                            return new io.grpc.ForwardingClientCall.SimpleForwardingClientCall<>(
+                                    next.newCall(method, callOptions)) {
+                                private boolean isPreRegisterSave;
+
+                                @Override
+                                public void sendMessage(ReqT message) {
+                                    if (message instanceof SaveDocumentRequest saveReq
+                                            && saveReq.getOperationId().startsWith("ext-pre:")) {
+                                        isPreRegisterSave = true;
+                                    }
+                                    super.sendMessage(message);
+                                }
+
+                                @Override
+                                public void start(Listener<RespT> responseListener, Metadata headers) {
+                                    super.start(
+                                            new io.grpc.ForwardingClientCallListener
+                                                    .SimpleForwardingClientCallListener<>(
+                                                    responseListener) {
+                                                @Override
+                                                public void onClose(Status status, Metadata trailers) {
+                                                    super.onClose(status, trailers);
+                                                    if (isPreRegisterSave && status.isOk()) {
+                                                        Runnable hook = afterPreRegister.getAndSet(null);
+                                                        if (hook != null) {
+                                                            hook.run();
+                                                        }
+                                                    }
+                                                }
+                                            },
+                                            headers);
+                                }
+                            };
+                        }
+                    });
+            ExternalPublicationCoordinator interceptedCoordinator =
+                    new ExternalPublicationCoordinator(
+                            intercepted,
+                            h.bindingStore,
+                            provider,
+                            new ExternalProviderVerifier(provider.trustSnapshot, true),
+                            "default",
+                            () -> h.activeCaller.get().repoCaller(),
+                            Clock.fixed(Instant.parse("2026-04-14T12:00:00Z"), ZoneOffset.UTC));
+
+            // 1. Source tombstoned while reading/registering -> FAILED (FENCED_BY_NEWER_STATE), zero provider calls.
+            NodeAddress tombstonedMidFlight = sourceAddress("tenant-alpha", "doc-tombstoned-pre-send");
+            h.saveSourceDocument("save-tps-1", tombstonedMidFlight, 0L, "Tombstoned mid-flight", "alice");
+            afterPreRegister.set(() -> h.stub.deleteDocument(DeleteDocumentRequest.newBuilder()
+                    .setOperationId("del-tps-2")
+                    .setAddress(tombstonedMidFlight)
+                    .setExpected(ExpectedRevision.newBuilder().setRevision(1L))
+                    .build()));
+            int execBefore = provider.executeCalls.get();
+            ExternalPublicationCoordinator.OperationResult fencedMidFlight =
+                    interceptedCoordinator.publish(new ExternalPublicationCoordinator.PublishRequest(
+                            "pub-tps-1", tombstonedMidFlight, 1L, "rust-search", 1L, "ext-tps",
+                            null, null));
+            assertThat(provider.executeCalls.get()).isEqualTo(execBefore);
+            assertThat(fencedMidFlight.operation().getOutcome())
+                    .isEqualTo(ExternalPublicationOutcome.EXTERNAL_PUBLICATION_OUTCOME_FAILED);
+            assertThat(fencedMidFlight.operation().getFailureCode())
+                    .isEqualTo("FENCED_BY_NEWER_STATE");
+            assertThat(fencedMidFlight.operation().getProviderMayHoldObject()).isFalse();
+
+            // 2. Caller write access revoked mid-flight -> PERMISSION_DENIED, zero provider calls,
+            // and the pre-registered operation is marked FAILED rather than stranded in PENDING.
+            NodeAddress revokedMidFlight = sourceAddress("tenant-alpha", "doc-revoked-pre-send");
+            h.saveSourceDocument("save-rps-1", revokedMidFlight, 0L, "Shared initially",
+                    "alice", "bob");
+            afterPreRegister.set(() -> {
+                h.useCaller(h.alphaAlice);
+                h.saveSourceDocument("save-rps-2", revokedMidFlight, 1L, "Bob demoted",
+                        List.of("alice"), List.of("bob"));
+                h.useCaller(h.alphaBob);
+            });
+            h.useCaller(h.alphaBob);
+            assertGrpcCode(() -> interceptedCoordinator.publish(
+                            new ExternalPublicationCoordinator.PublishRequest(
+                                    "pub-rps-bob", revokedMidFlight, 1L, "rust-search", 1L,
+                                    "ext-rps", null, null)),
+                    Status.Code.PERMISSION_DENIED);
+            assertThat(provider.executeCalls.get()).isEqualTo(execBefore);
+            h.useCaller(h.alphaAlice);
+            ExternalPublicationOperationRecord cleanedUp = h.coordinator
+                    .getOperationRecord(revokedMidFlight, "rust-search", "pub-rps-bob")
+                    .orElseThrow();
+            assertThat(cleanedUp.getOutcome())
+                    .isEqualTo(ExternalPublicationOutcome.EXTERNAL_PUBLICATION_OUTCOME_FAILED);
+            assertThat(cleanedUp.getFailureCode()).isEqualTo("ACCESS_REVOKED_BEFORE_DISPATCH");
+            assertThat(cleanedUp.getProviderMayHoldObject()).isFalse();
         }
     }
 

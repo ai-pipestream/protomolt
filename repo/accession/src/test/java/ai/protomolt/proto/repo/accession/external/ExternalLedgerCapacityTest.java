@@ -170,10 +170,14 @@ class ExternalLedgerCapacityTest {
                 .setCurrentLink(ExternalLink.newBuilder().setExternalObjectId("current"))
                 .addOperations(ExternalPublicationOperationRecord.newBuilder()
                         .setIntent(ai.protomolt.proto.repo.external.v1.ExternalPublicationIntent.newBuilder()
-                                .setAction(ai.protomolt.proto.repo.external.v1.ExternalPublicationAction.EXTERNAL_PUBLICATION_ACTION_PUBLISH))
+                                .setAction(ai.protomolt.proto.repo.external.v1.ExternalPublicationAction
+                                        .EXTERNAL_PUBLICATION_ACTION_PUBLISH))
                         .setOutcome(ExternalPublicationOutcome.EXTERNAL_PUBLICATION_OUTCOME_PENDING))
                 .build();
-        assertExhausted(() -> ExternalLedgerStore.requireRoomForPublication(pending,
-                ai.protomolt.proto.repo.external.v1.ExternalSystemBinding.getDefaultInstance(), "next"), "cleanup");
+        var defaultBinding =
+                ai.protomolt.proto.repo.external.v1.ExternalSystemBinding.getDefaultInstance();
+        assertExhausted(
+                () -> ExternalLedgerStore.requireRoomForPublication(pending, defaultBinding, "next"),
+                "cleanup");
     }
 }

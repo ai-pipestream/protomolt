@@ -160,7 +160,7 @@ final class ExternalLedgerStore {
                     : ExpectedRevision.newBuilder().setNone(true).build();
 
             ExternalPublicationLedger next = mutator.apply(base);
-            if (next.equals(base) && existing.isPresent()) {
+            if (next.equals(base)) {
                 return next;
             }
             if (base.hasPurgeWithSourceStartedAt()) {
@@ -309,7 +309,7 @@ final class ExternalLedgerStore {
                     && link.getBindingRevision() > binding.getBindingRevision()
                     && link.getSourceRevision() >= sourceRevision
                     && link.getExternalObjectId().equals(externalObjectId)
-                    && ExternalDeletionLifecycle.sameExternalTarget(link.getBindingSnapshot(), binding)) {
+                    && ExternalDeleteTargets.sameExternalTarget(link.getBindingSnapshot(), binding)) {
                 return true;
             }
         }
@@ -319,7 +319,8 @@ final class ExternalLedgerStore {
                     && publication.getIntent().getBindingRevision() > binding.getBindingRevision()
                     && publication.getIntent().getSourceRevision() >= sourceRevision
                     && publication.getIntent().getExternalObjectId().equals(externalObjectId)
-                    && ExternalDeletionLifecycle.sameExternalTarget(publication.getBindingSnapshot(), binding)) {
+                    && ExternalDeleteTargets.sameExternalTarget(
+                            publication.getBindingSnapshot(), binding)) {
                 return true;
             }
         }
@@ -378,7 +379,8 @@ final class ExternalLedgerStore {
             if (publication.getIntent().getAction() == ExternalPublicationAction.EXTERNAL_PUBLICATION_ACTION_PUBLISH
                     && publication.getProviderMayHoldObject()
                     && publication.getIntent().getExternalObjectId().equals(externalObjectId)
-                    && ExternalDeletionLifecycle.sameExternalTarget(publication.getBindingSnapshot(), target)) {
+                    && ExternalDeleteTargets.sameExternalTarget(
+                            publication.getBindingSnapshot(), target)) {
                 covered.add(publication.getOperationId());
             }
         }
@@ -484,10 +486,14 @@ final class ExternalLedgerStore {
      */
     static boolean anotherSendIsUnresolved(ExternalPublicationOperationRecord op, int settledAttempt) {
         for (ExternalPublicationAttempt attempt : op.getAttemptsList()) {
-            boolean send = attempt.getTrigger() == ExternalAttemptTrigger.EXTERNAL_ATTEMPT_TRIGGER_INITIAL
-                    || attempt.getTrigger() == ExternalAttemptTrigger.EXTERNAL_ATTEMPT_TRIGGER_RETRY;
-            boolean unresolved = attempt.getOutcome() == ExternalPublicationOutcome.EXTERNAL_PUBLICATION_OUTCOME_PENDING
-                    || attempt.getOutcome() == ExternalPublicationOutcome.EXTERNAL_PUBLICATION_OUTCOME_DELETION_PENDING;
+            boolean send = attempt.getTrigger()
+                            == ExternalAttemptTrigger.EXTERNAL_ATTEMPT_TRIGGER_INITIAL
+                    || attempt.getTrigger()
+                            == ExternalAttemptTrigger.EXTERNAL_ATTEMPT_TRIGGER_RETRY;
+            boolean unresolved = attempt.getOutcome()
+                            == ExternalPublicationOutcome.EXTERNAL_PUBLICATION_OUTCOME_PENDING
+                    || attempt.getOutcome()
+                            == ExternalPublicationOutcome.EXTERNAL_PUBLICATION_OUTCOME_DELETION_PENDING;
             if (send && unresolved && attempt.getAttemptNumber() != settledAttempt) {
                 return true;
             }
@@ -497,8 +503,8 @@ final class ExternalLedgerStore {
 
     /**
      * The operation after attempt {@code attemptNumber} was refused, by the provider or here
-     * before it was sent. A refused first attempt fails the operation. A refused retry does not: see below. An operation already
-     * settled is returned unchanged.
+     * before it was sent. A refused first attempt fails the operation. A refused retry does not
+     * when an earlier send remains unresolved. An operation already settled is returned unchanged.
      */
     static ExternalPublicationOperationRecord withRefusedAttempt(
             ExternalPublicationOperationRecord op,
@@ -580,9 +586,7 @@ final class ExternalLedgerStore {
 
     /** Deleting history changes links in place; only a current link needs another history slot. */
     static void requireRoomForDeletion(ExternalPublicationLedger ledger) {
-        long pendingPublications = ledger.getOperationsList().stream()
-                .filter(op -> op.getIntent().getAction() == ExternalPublicationAction.EXTERNAL_PUBLICATION_ACTION_PUBLISH
-                        && !isTerminalOutcome(op.getOutcome())).count();
+        long pendingPublications = countPendingPublications(ledger);
         if (ledger.getOperationsCount() >= MAX_OPERATIONS
                 || ledger.getHistoricalLinksCount() + pendingPublications
                         + (ledger.hasCurrentLink() ? 1 : 0) > MAX_HISTORICAL_LINKS) {
@@ -600,19 +604,29 @@ final class ExternalLedgerStore {
     static void requireRoomForPublication(ExternalPublicationLedger ledger,
             ExternalSystemBinding binding, String externalObjectId) {
         requireRoomForNewOperation(ledger);
-        long pendingPublications = ledger.getOperationsList().stream()
-                .filter(op -> op.getIntent().getAction() == ExternalPublicationAction.EXTERNAL_PUBLICATION_ACTION_PUBLISH
-                        && !isTerminalOutcome(op.getOutcome())).count();
+        long pendingPublications = countPendingPublications(ledger);
         long eventualHistory = ledger.getHistoricalLinksCount() + pendingPublications
                 + (ledger.hasCurrentLink() ? 1 : 0) + 1;
         if (eventualHistory > MAX_HISTORICAL_LINKS) {
             throw Status.RESOURCE_EXHAUSTED
-                    .withDescription("External publication ledger reserves its remaining historical link slot for cleanup")
+                    .withDescription("External publication ledger reserves its remaining "
+                            + "historical link slot for cleanup")
                     .asRuntimeException();
         }
         Set<CleanupTarget> targets = cleanupTargets(ledger);
         targets.add(cleanupTarget(binding, externalObjectId));
         requireCleanupOperationRoom(ledger, targets.size());
+    }
+
+    private static long countPendingPublications(ExternalPublicationLedger ledger) {
+        long count = 0L;
+        for (ExternalPublicationOperationRecord op : ledger.getOperationsList()) {
+            if (op.getIntent().getAction() == ExternalPublicationAction.EXTERNAL_PUBLICATION_ACTION_PUBLISH
+                    && !isTerminalOutcome(op.getOutcome())) {
+                count++;
+            }
+        }
+        return count;
     }
 
     /** A local refusal must not consume the operation slots reserved for external cleanup. */
@@ -623,7 +637,8 @@ final class ExternalLedgerStore {
     private static void requireCleanupOperationRoom(ExternalPublicationLedger ledger, int targets) {
         if (ledger.getOperationsCount() + 1L + targets > MAX_OPERATIONS) {
             throw Status.RESOURCE_EXHAUSTED
-                    .withDescription("External publication ledger reserves remaining operation slots for cleanup")
+                    .withDescription("External publication ledger reserves remaining operation "
+                            + "slots for cleanup")
                     .asRuntimeException();
         }
     }

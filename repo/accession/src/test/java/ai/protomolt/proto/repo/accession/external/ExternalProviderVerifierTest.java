@@ -620,5 +620,16 @@ class ExternalProviderVerifierTest {
         assertThat(retried.getDispatchCredentialBindingSha256SList()).containsExactly(CRED_SHA, "9".repeat(64));
         assertThatCode(() -> verifier.verifyRecordedEvidence(receipt, retried, rotatedAuth))
                 .doesNotThrowAnyException();
+
+        // A recorded operation missing dispatch_credential_binding_sha256s fails closed with DATA_LOSS.
+        var missingDispatchIdentity = operation.toBuilder()
+                .setOperationId("op-missing-dispatch-id")
+                .clearDispatchCredentialBindingSha256S()
+                .build();
+        assertThatThrownBy(() -> verifier.verifyRecordedEvidence(receipt, missingDispatchIdentity, auth))
+                .isInstanceOfSatisfying(io.grpc.StatusRuntimeException.class, ex -> {
+                    assertThat(ex.getStatus().getCode()).isEqualTo(io.grpc.Status.Code.DATA_LOSS);
+                    assertThat(ex.getStatus().getDescription()).contains("dispatch_credential_binding_sha256s");
+                });
     }
 }

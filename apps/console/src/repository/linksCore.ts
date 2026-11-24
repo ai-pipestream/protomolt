@@ -586,7 +586,7 @@ export function externalLinkRow(link: ExternalLink): ExternalLinkRow {
     key: unambiguousKey([
       link.bindingId,
       link.bindingRevision,
-      link.sourceAddress?.accountId ?? '',
+      link.sourceAddress.accountId,
       sourceCall.graphId,
       sourceCall.graphAddressId,
       sourceCall.docId,

@@ -596,36 +596,82 @@ public final class ExternalPublicationCoordinator {
             // first's; this call reports the operation as it stands.
             return new OperationResult(savedPreOp, optionalCurrentLink(afterPreSave), true, false);
         }
+        return dispatchInitialPublish(
+                ledgerAddr,
+                securityForSave,
+                operationId,
+                intent,
+                intentSha256,
+                requestedBinding,
+                outboundAuth);
+    }
+
+    private OperationResult dispatchInitialPublish(
+            NodeAddress ledgerAddr,
+            LedgerAccess initialSecurity,
+            String operationId,
+            ExternalPublicationIntent intent,
+            String intentSha256,
+            ExternalSystemBinding requestedBinding,
+            ExternalProviderGateway.OutboundAuthContext outboundAuth) {
         // The source was read before the operation was registered, and reading it can take a
-        // while. If it was deleted or purged since, nothing is sent: the operation was only
-        // registered, so it fails here without any provider call.
+        // while. If it was deleted, purged, or had caller write access revoked since, nothing is
+        // sent to the provider.
+        LedgerAccess currentSecurity = initialSecurity;
         String removedCode = null;
         try {
-            sources.verifyCallerSourceAccessForMutation(request.sourceAddress());
-            if (sources.isCurrentlyTombstoned(request.sourceAddress())) {
+            currentSecurity = sources.verifyCallerSourceAccessForMutation(intent.getSourceAddress());
+            if (sources.isCurrentlyTombstoned(intent.getSourceAddress())) {
                 removedCode = "FENCED_BY_NEWER_STATE";
             }
-        } catch (StatusRuntimeException gone) {
-            if (gone.getStatus().getCode() != Status.Code.NOT_FOUND) {
-                throw gone;
+        } catch (StatusRuntimeException failure) {
+            Status.Code code = failure.getStatus().getCode();
+            if (code == Status.Code.NOT_FOUND) {
+                removedCode = "SOURCE_REMOVED_BEFORE_DISPATCH";
+            } else if (code == Status.Code.PERMISSION_DENIED) {
+                failNeverDispatchedBestEffort(
+                        ledgerAddr,
+                        operationId,
+                        intent,
+                        "ACCESS_REVOKED_BEFORE_DISPATCH",
+                        "Caller write access to the source document was revoked before dispatch");
+                throw failure;
+            } else {
+                throw failure;
             }
-            removedCode = "SOURCE_REMOVED_BEFORE_DISPATCH";
         }
         if (removedCode != null) {
             return attempts.failBeforeDispatch(
-                    ledgerAddr, securityForSave, operationId, intent, removedCode,
+                    ledgerAddr,
+                    currentSecurity,
+                    operationId,
+                    intent,
+                    removedCode,
                     "The source document was deleted or purged before the publication was sent");
         }
-
         return attempts.executeAndSettlePublishAttempt(
                 ledgerAddr,
-                securityForSave,
+                currentSecurity,
                 operationId,
                 1,
                 intent,
                 intentSha256,
                 requestedBinding,
                 outboundAuth);
+    }
+
+    private void failNeverDispatchedBestEffort(
+            NodeAddress ledgerAddr,
+            String operationId,
+            ExternalPublicationIntent intent,
+            String code,
+            String message) {
+        try {
+            attempts.failBeforeDispatch(
+                    ledgerAddr, LedgerAccess.keep(), operationId, intent, code, message);
+        } catch (StatusRuntimeException ignored) {
+            // Best-effort cleanup before propagating the caller's PERMISSION_DENIED refusal.
+        }
     }
 
     /**
@@ -686,7 +732,7 @@ public final class ExternalPublicationCoordinator {
         ExternalPublicationCoordinates.requireBindingId(bindingId);
         ExternalPublicationCoordinates.requireNonBlankCoordinate(operationId, "operationId");
 
-        LedgerAccess liveOrRetainedSecurity = sources.authorizeReadOrReconcile(sourceAddress, bindingId);
+        sources.authorizeReadOrReconcile(sourceAddress, bindingId);
         NodeAddress ledgerAddr = ExternalPublicationCoordinates.ledgerAddress(
                 sourceAddress.getAccountId(), bindingId, sourceAddress);
         ExternalLedgerStore.LoadedLedger loaded = ledgers.loadOptionalLedger(ledgerAddr, sourceAddress)
@@ -704,12 +750,27 @@ public final class ExternalPublicationCoordinator {
                     && op.getOutcome() == ExternalPublicationOutcome.EXTERNAL_PUBLICATION_OUTCOME_CONFIRMED
                     && ledger.hasCurrentLink()
                     && ledger.getCurrentLink().getConfirmedByOperationId().equals(operationId)) {
-                return serving.refreshServingObservation(
-                        ledgerAddr, liveOrRetainedSecurity, ledger, op);
+                LedgerAccess writeSecurity = sources.requireWriteForReconcile(sourceAddress, loaded);
+                return serving.refreshServingObservation(ledgerAddr, writeSecurity, ledger, op);
             }
-            return new OperationResult(op, optionalCurrentLink(ledger), true, false);
+            boolean purged = settlement.maybePurgeLedgerIfEligible(ledgerAddr, ledger);
+            return new OperationResult(
+                    op, purged ? Optional.empty() : optionalCurrentLink(ledger), true, purged);
         }
 
+        LedgerAccess writeSecurity = sources.requireWriteForReconcile(sourceAddress, loaded);
+        return reconcilePendingOperation(
+                ledgerAddr, sourceAddress, bindingId, writeSecurity, op, includeServingObservation);
+    }
+
+    private OperationResult reconcilePendingOperation(
+            NodeAddress ledgerAddr,
+            NodeAddress sourceAddress,
+            String bindingId,
+            LedgerAccess writeSecurity,
+            ExternalPublicationOperationRecord op,
+            boolean includeServingObservation) {
+        String operationId = op.getOperationId();
         ExternalProviderGateway.OutboundAuthContext outboundAuth =
                 bindingStore.resolveOutboundAuth(op.getBindingSnapshot());
         // A status query carries the operation's intent and credentials; it goes only to the
@@ -718,9 +779,59 @@ public final class ExternalPublicationCoordinator {
 
         Timestamp startedAt = timestamp(clock.instant());
         int nextAttemptNumber = op.getAttemptsCount() + 1;
-        ExternalProviderGateway.ProviderStatusResult statusResult;
+        ExternalProviderGateway.ProviderStatusResult statusResult =
+                queryProviderStatus(operationId, op, outboundAuth, includeServingObservation);
+
+        Timestamp finishedAt = timestamp(clock.instant());
+        if (statusResult instanceof ExternalProviderGateway.ProviderStatusResult.Unavailable unavailable) {
+            return appendUnsettledStatusAttempt(
+                    ledgerAddr,
+                    sourceAddress,
+                    bindingId,
+                    writeSecurity,
+                    op,
+                    nextAttemptNumber,
+                    startedAt,
+                    finishedAt,
+                    unavailable.diagnosticCode(),
+                    unavailable.diagnosticMessage());
+        }
+        if (statusResult instanceof ExternalProviderGateway.ProviderStatusResult.NoRecordedOutcome none) {
+            return appendUnsettledStatusAttempt(
+                    ledgerAddr,
+                    sourceAddress,
+                    bindingId,
+                    writeSecurity,
+                    op,
+                    nextAttemptNumber,
+                    startedAt,
+                    finishedAt,
+                    "NO_PROVIDER_OUTCOME_YET",
+                    none.diagnosticMessage());
+        }
+        ExternalProviderEvidence evidence =
+                ((ExternalProviderGateway.ProviderStatusResult.Receipt) statusResult).evidence();
+        return settlement.applyProviderReceipt(
+                ledgerAddr,
+                sourceAddress,
+                bindingId,
+                writeSecurity,
+                operationId,
+                nextAttemptNumber,
+                ExternalAttemptTrigger.EXTERNAL_ATTEMPT_TRIGGER_RECONCILIATION,
+                startedAt,
+                op.getIntentSha256(),
+                outboundAuth,
+                evidence);
+    }
+
+    private ExternalProviderGateway.ProviderStatusResult queryProviderStatus(
+            String operationId,
+            ExternalPublicationOperationRecord op,
+            ExternalProviderGateway.OutboundAuthContext outboundAuth,
+            boolean includeServingObservation) {
         try {
-            statusResult = gateway.queryStatus(new ExternalProviderGateway.ProviderStatusQuery(
+            return gateway.queryStatus(new ExternalProviderGateway.ProviderStatusQuery(
                     operationId,
                     op.getIntentSha256(),
                     op.getIntent(),
@@ -729,75 +840,44 @@ public final class ExternalPublicationCoordinator {
         } catch (StatusRuntimeException statusFailure) {
             Status.Code code = statusFailure.getStatus().getCode();
             if (code != Status.Code.UNAVAILABLE && code != Status.Code.DEADLINE_EXCEEDED) {
-                // The provider answered the status query with a refusal. That is not an
-                // outage to wait out: the caller is told, and the operation is left as it is.
                 throw statusFailure;
             }
-            statusResult = new ExternalProviderGateway.ProviderStatusResult.Unavailable(
+            return new ExternalProviderGateway.ProviderStatusResult.Unavailable(
                     "STATUS_ENDPOINT_" + code.name(),
                     sanitizeMessage(statusFailure.getMessage()));
         }
+    }
 
-        Timestamp finishedAt = timestamp(clock.instant());
-        if (statusResult instanceof ExternalProviderGateway.ProviderStatusResult.Unavailable unavailable) {
-            ExternalPublicationAttempt attempt = ExternalPublicationAttempt.newBuilder()
-                    .setAttemptNumber(nextAttemptNumber)
-                    .setTrigger(ExternalAttemptTrigger.EXTERNAL_ATTEMPT_TRIGGER_RECONCILIATION)
-                    .setOutcome(op.getOutcome())
-                    .setPendingPhase(
-                            op.getOutcome() == ExternalPublicationOutcome.EXTERNAL_PUBLICATION_OUTCOME_DELETION_PENDING
-                                    ? ExternalPendingPhase.EXTERNAL_PENDING_PHASE_DELETION_IN_FLIGHT
-                                    : ExternalPendingPhase.EXTERNAL_PENDING_PHASE_UNRESOLVED_LOST_REPLY)
-                    .setStartedAt(startedAt)
-                    .setFinishedAt(finishedAt)
-                    .setDiagnosticCode(unavailable.diagnosticCode())
-                    .setDiagnosticMessage(sanitizeMessage(unavailable.diagnosticMessage()))
-                    .build();
-            ExternalPublicationLedger updated = ledgers.appendReconciliationAttemptOnly(
-                    ledgerAddr, sourceAddress, bindingId, liveOrRetainedSecurity, operationId, attempt);
-            ExternalPublicationOperationRecord updatedOp =
-                    findOperation(updated, operationId).orElseThrow();
-            return new OperationResult(updatedOp, optionalCurrentLink(updated), false, false);
-        }
-
-        if (statusResult instanceof ExternalProviderGateway.ProviderStatusResult.NoRecordedOutcome none) {
-            ExternalPendingPhase phase =
-                    op.getOutcome() == ExternalPublicationOutcome.EXTERNAL_PUBLICATION_OUTCOME_DELETION_PENDING
-                            ? ExternalPendingPhase.EXTERNAL_PENDING_PHASE_DELETION_IN_FLIGHT
-                            : ExternalPendingPhase.EXTERNAL_PENDING_PHASE_UNRESOLVED_LOST_REPLY;
-            ExternalPublicationAttempt attempt = ExternalPublicationAttempt.newBuilder()
-                    .setAttemptNumber(nextAttemptNumber)
-                    .setTrigger(ExternalAttemptTrigger.EXTERNAL_ATTEMPT_TRIGGER_RECONCILIATION)
-                    .setOutcome(op.getOutcome())
-                    .setPendingPhase(phase)
-                    .setStartedAt(startedAt)
-                    .setFinishedAt(finishedAt)
-                    .setDiagnosticCode("NO_PROVIDER_OUTCOME_YET")
-                    .setDiagnosticMessage(sanitizeMessage(none.diagnosticMessage()))
-                    .build();
-            ExternalPublicationLedger updated = ledgers.appendReconciliationAttemptOnly(
-                    ledgerAddr, sourceAddress, bindingId, liveOrRetainedSecurity, operationId, attempt);
-            ExternalPublicationOperationRecord updatedOp =
-                    findOperation(updated, operationId).orElseThrow();
-            return new OperationResult(updatedOp, optionalCurrentLink(updated), false, false);
-        }
-
-        ExternalProviderEvidence evidence =
-                ((ExternalProviderGateway.ProviderStatusResult.Receipt) statusResult).evidence();
-        return settlement.applyProviderReceipt(
-                ledgerAddr,
-                sourceAddress,
-                bindingId,
-                liveOrRetainedSecurity,
-                operationId,
-                nextAttemptNumber,
-                ExternalAttemptTrigger.EXTERNAL_ATTEMPT_TRIGGER_RECONCILIATION,
-                startedAt,
-                op.getIntent(),
-                op.getIntentSha256(),
-                op.getBindingSnapshot(),
-                outboundAuth,
-                evidence);
+    private OperationResult appendUnsettledStatusAttempt(
+            NodeAddress ledgerAddr,
+            NodeAddress sourceAddress,
+            String bindingId,
+            LedgerAccess writeSecurity,
+            ExternalPublicationOperationRecord op,
+            int attemptNumber,
+            Timestamp startedAt,
+            Timestamp finishedAt,
+            String diagnosticCode,
+            String diagnosticMessage) {
+        ExternalPendingPhase phase =
+                op.getOutcome() == ExternalPublicationOutcome.EXTERNAL_PUBLICATION_OUTCOME_DELETION_PENDING
+                        ? ExternalPendingPhase.EXTERNAL_PENDING_PHASE_DELETION_IN_FLIGHT
+                        : ExternalPendingPhase.EXTERNAL_PENDING_PHASE_UNRESOLVED_LOST_REPLY;
+        ExternalPublicationAttempt attempt = ExternalPublicationAttempt.newBuilder()
+                .setAttemptNumber(attemptNumber)
+                .setTrigger(ExternalAttemptTrigger.EXTERNAL_ATTEMPT_TRIGGER_RECONCILIATION)
+                .setOutcome(op.getOutcome())
+                .setPendingPhase(phase)
+                .setStartedAt(startedAt)
+                .setFinishedAt(finishedAt)
+                .setDiagnosticCode(diagnosticCode)
+                .setDiagnosticMessage(sanitizeMessage(diagnosticMessage))
+                .build();
+        ExternalPublicationLedger updated = ledgers.appendReconciliationAttemptOnly(
+                ledgerAddr, sourceAddress, bindingId, writeSecurity, op.getOperationId(), attempt);
+        ExternalPublicationOperationRecord updatedOp =
+                findOperation(updated, op.getOperationId()).orElseThrow();
+        return new OperationResult(updatedOp, optionalCurrentLink(updated), false, false);
     }
 
     /**
