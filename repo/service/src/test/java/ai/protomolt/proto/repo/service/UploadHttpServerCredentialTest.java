@@ -52,6 +52,36 @@ class UploadHttpServerCredentialTest {
     }
 
     @Test
+    void aDisallowedMethodWithAValidCredentialIs405WithAllow() throws Exception {
+        // RFC 9110 section 15.5.6: a 405 names the methods the route does support.
+        for (String method : new String[] {"GET", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"}) {
+            HttpResponse<String> response = client.send(
+                    HttpRequest.newBuilder(URI.create(base + UploadHttpServer.ARCHIVE_UPLOAD_PATH))
+                            .header("api_token", TOKEN)
+                            .method(method, HttpRequest.BodyPublishers.noBody())
+                            .build(),
+                    HttpResponse.BodyHandlers.ofString());
+
+            assertThat(response.statusCode()).as(method).isEqualTo(405);
+            assertThat(response.headers().allValues("Allow")).as(method).containsExactly("POST");
+        }
+    }
+
+    @Test
+    void aDisallowedMethodWithoutACredentialStays401WithoutAllow() throws Exception {
+        // The credential check runs first; an unauthenticated probe learns nothing about the
+        // route, not even its method list.
+        HttpResponse<String> response = client.send(
+                HttpRequest.newBuilder(URI.create(base + UploadHttpServer.ARCHIVE_UPLOAD_PATH))
+                        .GET()
+                        .build(),
+                HttpResponse.BodyHandlers.ofString());
+
+        assertThat(response.statusCode()).isEqualTo(401);
+        assertThat(response.headers().firstValue("Allow")).isEmpty();
+    }
+
+    @Test
     void aRequestWithoutACredentialIsRefused() throws Exception {
         HttpResponse<String> response = post(UploadHttpServer.ARCHIVE_UPLOAD_PATH, null, null);
 

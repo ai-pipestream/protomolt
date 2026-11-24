@@ -317,6 +317,24 @@ class IntakeHttpServerTest {
                                 .build(),
                         HttpResponse.BodyHandlers.ofString());
         assertThat(response.statusCode()).isEqualTo(405);
+        // RFC 9110 section 15.5.6: a 405 names the methods the route does support.
+        assertThat(response.headers().allValues("Allow")).containsExactly("POST");
+    }
+
+    @Test
+    void every405CarriesTheRoutesAllowHeader() throws Exception {
+        for (String method : new String[] {"PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"}) {
+            HttpResponse<String> response =
+                    client.send(
+                            HttpRequest.newBuilder(URI.create(base + IntakeHttpServer.UPLOAD_PATH))
+                                    .header("x-api-key", KEY_UNRESTRICTED)
+                                    .method(method, HttpRequest.BodyPublishers.noBody())
+                                    .build(),
+                            HttpResponse.BodyHandlers.ofString());
+            assertThat(response.statusCode()).as(method).isEqualTo(405);
+            assertThat(response.headers().allValues("Allow")).as(method).containsExactly("POST");
+        }
+        assertThat(repo.saves).isEmpty();
     }
 
     @Test

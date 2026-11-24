@@ -134,6 +134,11 @@ public final class UploadHttpServer implements AutoCloseable {
         boolean allowsMethod(String method) {
             return method != null && httpMethods.contains(method.toUpperCase(Locale.ROOT));
         }
+
+        /** The {@code Allow} response header value RFC 9110 requires on a 405: the methods joined with {@code ", "}. */
+        String allowHeader() {
+            return String.join(", ", httpMethods);
+        }
     }
 
     private static final RouteContract DOCUMENTS_UPLOAD_ROUTE = new RouteContract(
@@ -597,7 +602,7 @@ public final class UploadHttpServer implements AutoCloseable {
                 throw new HttpError(404, "unknown route " + exchange.getRequestURI().getPath());
             }
             if (!ARCHIVE_UPLOAD_ROUTE.allowsMethod(exchange.getRequestMethod())) {
-                throw new HttpError(405, "method not allowed: " + exchange.getRequestMethod());
+                throw methodNotAllowed(exchange, ARCHIVE_UPLOAD_ROUTE.allowHeader());
             }
             archiveUpload(exchange, resolved);
         } catch (HttpError e) {
@@ -900,6 +905,16 @@ public final class UploadHttpServer implements AutoCloseable {
             super(message);
             this.status = status;
         }
+    }
+
+    /**
+     * Builds the 405 for a method the route does not declare. RFC 9110 section 15.5.6 requires
+     * the response to carry an {@code Allow} header listing the methods the route supports, so
+     * it is set on the exchange here, before the error is written.
+     */
+    private static HttpError methodNotAllowed(HttpExchange exchange, String allow) {
+        exchange.getResponseHeaders().set("Allow", allow);
+        return new HttpError(405, "method not allowed: " + exchange.getRequestMethod());
     }
 
     private static long contentLength(HttpExchange exchange) {
