@@ -13,6 +13,7 @@ import ai.protomolt.proto.repo.external.v1.ExternalProviderEvidence;
 import ai.protomolt.proto.repo.external.v1.ExternalProviderSettlement;
 import ai.protomolt.proto.repo.external.v1.ExternalPublicationAction;
 import ai.protomolt.proto.repo.external.v1.ExternalPublicationIntent;
+import ai.protomolt.proto.repo.external.v1.ExternalPublicationOperationRecord;
 import ai.protomolt.proto.repo.external.v1.ExternalSystemBinding;
 import ai.protomolt.proto.repo.external.v1.ManagedSearchIdentity;
 import ai.protomolt.proto.validate.ProtoValidator;
@@ -296,6 +297,27 @@ public final class ExternalProviderVerifier {
             ExternalProviderGateway.OutboundAuthContext expectedAuth,
             ExternalPublicationIntent expectedIntent,
             String expectedIntentSha256) {
+        verifyEvidence(evidence, expectedBinding, expectedAuth, expectedIntent, expectedIntentSha256,
+                List.of(expectedAuth.credentialBindingSha256()));
+    }
+
+    /** Verifies durable evidence against identities saved before dispatch, using live auth only for transport. */
+    void verifyRecordedEvidence(ExternalProviderEvidence evidence,
+            ExternalPublicationOperationRecord operation,
+            ExternalProviderGateway.OutboundAuthContext liveAuth) {
+        // Old ledgers did not retain dispatch identity. Preserve their original strict check;
+        // never accept an arbitrary fingerprint taken from the receipt itself.
+        var fingerprints = operation.getDispatchCredentialBindingSha256SList();
+        verifyEvidence(evidence, operation.getBindingSnapshot(), liveAuth,
+                operation.getIntent(), operation.getIntentSha256(), fingerprints.isEmpty()
+                        ? List.of(liveAuth.credentialBindingSha256()) : fingerprints);
+    }
+
+    private void verifyEvidence(ExternalProviderEvidence evidence,
+            ExternalSystemBinding expectedBinding,
+            ExternalProviderGateway.OutboundAuthContext expectedAuth,
+            ExternalPublicationIntent expectedIntent, String expectedIntentSha256,
+            List<String> dispatchFingerprints) {
         Objects.requireNonNull(evidence, "evidence");
         Objects.requireNonNull(expectedBinding, "expectedBinding");
         Objects.requireNonNull(expectedAuth, "expectedAuth");
@@ -310,7 +332,7 @@ public final class ExternalProviderVerifier {
         }
 
         verifyEnvelopeIdentity(
-                evidence, expectedBinding, expectedAuth, expectedIntent, expectedIntentSha256);
+                evidence, expectedBinding, expectedAuth, expectedIntent, expectedIntentSha256, dispatchFingerprints);
         verifySettlementMatchesAction(evidence.getSettlement(), expectedIntent.getAction());
 
         requireDeclaredIdentityProof(evidence, expectedBinding);
@@ -348,7 +370,7 @@ public final class ExternalProviderVerifier {
             ExternalSystemBinding expectedBinding,
             ExternalProviderGateway.OutboundAuthContext expectedAuth,
             ExternalPublicationIntent expectedIntent,
-            String expectedIntentSha256) {
+            String expectedIntentSha256, List<String> dispatchFingerprints) {
         if (!evidence.getProvider().equals(expectedBinding.getProvider())) {
             throw new ProviderVerificationException(
                     "PROVIDER_MISMATCH",
@@ -372,10 +394,10 @@ public final class ExternalProviderVerifier {
                     "SERVICE_ENDPOINT_MISMATCH",
                     "Evidence verified_service_endpoint_id does not match resolved endpoint");
         }
-        if (!evidence.getCredentialBindingSha256().equals(expectedAuth.credentialBindingSha256())) {
+        if (!dispatchFingerprints.contains(evidence.getCredentialBindingSha256())) {
             throw new ProviderVerificationException(
                     "CREDENTIAL_BINDING_MISMATCH",
-                    "Evidence credential_binding_sha256 does not match resolved profile credential reference");
+                    "Evidence credential_binding_sha256 does not match a recorded dispatch credential reference");
         }
         if (!evidence.getExternalObjectId().equals(expectedIntent.getExternalObjectId())) {
             throw new ProviderVerificationException(

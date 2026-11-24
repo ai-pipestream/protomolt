@@ -340,6 +340,11 @@ class ExternalPublicationContractTest {
                 .setUpdatedAt(TIME)
                 .build();
         checkBothDialects(confirmedOp, true);
+        checkBothDialects(confirmedOp.toBuilder().addDispatchCredentialBindingSha256S(SHA_A)
+                .addDispatchCredentialBindingSha256S(SHA_B).build(), true);
+        checkBothDialects(confirmedOp.toBuilder().addDispatchCredentialBindingSha256S("not-a-digest").build(), false);
+        checkBothDialects(confirmedOp.toBuilder().addDispatchCredentialBindingSha256S(SHA_A)
+                .addDispatchCredentialBindingSha256S(SHA_A).build(), false);
 
         // Mismatched request_intent_sha256 or missing terminal evidence cannot be CONFIRMED.
         checkBothDialects(confirmedOp.toBuilder().clearTerminalEvidence().build(), false);

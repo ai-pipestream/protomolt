@@ -587,4 +587,38 @@ class ExternalProviderVerifierTest {
                         ExternalProviderVerifier.ProviderVerificationException.class,
                         ex -> assertThat(ex.diagnosticCode()).isEqualTo(expectedCode));
     }
+    @Test
+    void historicalSignedReceiptUsesRecordedDispatchIdentityAfterCredentialRotation() {
+        var pair = RecordKeys.generate();
+        var signer = new RecordSigner("search-key-1", pair.getPrivate());
+        var verifier = new ExternalProviderVerifier(trustSnapshotFor(pair), true);
+        var binding = binding();
+        var auth = authContext(binding);
+        var intent = publishIntent();
+        var digest = ExternalOperationKeys.intentSha256(intent);
+        var unsigned = validPublishedEvidence(intent, digest);
+        var signed = signer.sign(ExternalProviderVerifier.buildBoundWorkRecord(
+                defaultIssuance("search-key-1"), unsigned, binding, digest));
+        var receipt = unsigned.toBuilder().setSignedWorkRecordBytes(signed.toByteString()).build();
+        verifier.verifyEvidence(receipt, binding, auth, intent, digest);
+        var endpoint = auth.serviceEndpoint().toBuilder().setCredentialRef("cred-search-b").build();
+        var profile = auth.serviceProfile().toBuilder().clearEndpoints().addEndpoints(endpoint).build();
+        var rotatedAuth = new ExternalProviderGateway.OutboundAuthContext(
+                binding, profile, endpoint, new Metadata(), "9".repeat(64));
+        var operation = ai.protomolt.proto.repo.external.v1.ExternalPublicationOperationRecord.newBuilder()
+                .setBindingSnapshot(binding).setIntent(intent).setIntentSha256(digest)
+                .addDispatchCredentialBindingSha256S(CRED_SHA).build();
+        assertThatCode(() -> verifier.verifyRecordedEvidence(receipt, operation, rotatedAuth))
+                .doesNotThrowAnyException();
+        // A fingerprint never dispatched is refused even if it is used by today's status query.
+        assertThatThrownBy(() -> verifier.verifyRecordedEvidence(
+                receipt.toBuilder().setCredentialBindingSha256("9".repeat(64)).build(), operation, rotatedAuth))
+                .isInstanceOf(ExternalProviderVerifier.ProviderVerificationException.class)
+                .hasMessageContaining("recorded dispatch");
+        // A retry may dispatch with the new identity, without forgetting the first send.
+        var retried = ExternalLedgerStore.withDispatchIdentity(operation, "9".repeat(64));
+        assertThat(retried.getDispatchCredentialBindingSha256SList()).containsExactly(CRED_SHA, "9".repeat(64));
+        assertThatCode(() -> verifier.verifyRecordedEvidence(receipt, retried, rotatedAuth))
+                .doesNotThrowAnyException();
+    }
 }

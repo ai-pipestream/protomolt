@@ -80,12 +80,7 @@ final class ExternalServingObservation {
                 (ExternalProviderGateway.ProviderStatusResult.Receipt) statusResult;
         // Every receipt is verified, including one that carries no serving identity: a
         // receipt that does not verify is not a successful refresh of anything.
-        verifier.verifyEvidence(
-                receipt.evidence(),
-                op.getBindingSnapshot(),
-                outboundAuth,
-                op.getIntent(),
-                op.getIntentSha256());
+        verifier.verifyRecordedEvidence(receipt.evidence(), op, outboundAuth);
 
         ExternalPublicationLedger updated = ledgers.updateLedgerWithCas(
                 ledgerAddr,

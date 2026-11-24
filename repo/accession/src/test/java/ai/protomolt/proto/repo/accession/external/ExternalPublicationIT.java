@@ -185,6 +185,111 @@ class ExternalPublicationIT {
     }
 
     @Test
+    void credentialRotationPreservesLostReplyReconciliationAndServingRefresh(@TempDir Path tempDir)
+            throws Exception {
+        SimulatedManagedSearchProvider provider = new SimulatedManagedSearchProvider();
+        try (Harness h = Harness.boot(tempDir, provider)) {
+            h.saveActiveBinding("tenant-alpha", "rust-search", "search-profile-v1", "ingest",
+                    "corpus-main", "ns-alpha", ExternalRetentionPolicy.EXTERNAL_RETENTION_POLICY_RETAIN_HISTORY,
+                    "bind-rotation");
+            NodeAddress source = sourceAddress("tenant-alpha", "rotation-lost-reply");
+            h.saveSourceDocument("save-rotation", source, 0L, "Rotation", "alice");
+            provider.nextExecuteBehavior = ctx -> {
+                provider.recordPublishedSilently(ctx, 1L, 101L, 15L, SHA_MANIFEST);
+                return new ExternalProviderGateway.ProviderCallResult.Unresolved("LOST_REPLY", "lost after commit");
+            };
+            var pending = h.coordinator.publish(new ExternalPublicationCoordinator.PublishRequest(
+                    "publish-rotation", source, 1L, "rust-search", 1L, "rotation-object", null, null));
+            assertThat(pending.operation().getDispatchCredentialBindingSha256SCount()).isEqualTo(1);
+            String originalFingerprint = pending.operation().getDispatchCredentialBindingSha256S(0);
+            h.profileRepo.save(serviceProfile("search-profile-v1", "ingest", "search-v1.internal", 9443,
+                    Transport.TRANSPORT_TLS, "env:PROTOMOLT_TEST_SEARCH_TOKEN_V2"));
+            // A fresh coordinator has to load the identity from the canonical ledger.
+            var restarted = new ExternalPublicationCoordinator(h.channel, h.bindingStore, provider,
+                    new ExternalProviderVerifier(provider.trustSnapshot, true), "default",
+                    () -> h.activeCaller.get().repoCaller(), Clock.systemUTC());
+            provider.nextStatusBehavior = query -> {
+                assertThat(query.auth().resolvedHeaders().get(SimulatedManagedSearchProvider.AUTHORIZATION_KEY))
+                        .isEqualTo("Bearer " + SECRET_TOKEN_V2);
+                assertThat(query.auth().credentialBindingSha256()).isNotEqualTo(originalFingerprint);
+                return new ExternalProviderGateway.ProviderStatusResult.Receipt(
+                        provider.recordedByOperation.get(query.operationId()));
+            };
+            var reconciled = restarted.reconcileOperation(source, "rust-search", "publish-rotation", false);
+            assertThat(reconciled.operation().getOutcome())
+                    .isEqualTo(ExternalPublicationOutcome.EXTERNAL_PUBLICATION_OUTCOME_CONFIRMED);
+            assertThat(reconciled.operation().getTerminalEvidence().getCredentialBindingSha256())
+                    .isEqualTo(originalFingerprint);
+            assertThat(restarted.reconcileOperation(source, "rust-search", "publish-rotation", true)
+                    .currentLink()).isPresent();
+            assertThat(provider.executeCalls.get()).isEqualTo(1);
+            h.stub.deleteDocument(DeleteDocumentRequest.newBuilder().setAddress(source)
+                    .setExpected(ExpectedRevision.newBuilder().setRevision(1L))
+                    .setOperationId("tombstone-rotation").setReason("rotation cleanup").build());
+            provider.nextExecuteBehavior = ctx -> {
+                provider.recordedByOperation.put(ctx.operationId(), provider.buildDeletedEvidence(ctx));
+                return new ExternalProviderGateway.ProviderCallResult.Unresolved("LOST_REPLY", "lost deletion reply");
+            };
+            var deletion = restarted.deleteForTombstone(new ExternalPublicationCoordinator.DeleteRequest(
+                    "delete-rotation", source, 2L, "rust-search", 0L, null));
+            assertThat(deletion.operation().getDispatchCredentialBindingSha256SList())
+                    .hasSize(1).doesNotContain(originalFingerprint);
+            h.profileRepo.save(serviceProfile("search-profile-v1", "ingest", "search-v1.internal", 9443,
+                    Transport.TRANSPORT_TLS, "env:PROTOMOLT_TEST_SEARCH_TOKEN_V1"));
+            var deleted = restarted.reconcileOperation(source, "rust-search", "delete-rotation", false);
+            assertThat(deleted.operation().getOutcome())
+                    .isEqualTo(ExternalPublicationOutcome.EXTERNAL_PUBLICATION_OUTCOME_DELETED);
+            assertThat(deleted.currentLink()).isEmpty();
+            assertThat(provider.executeCalls.get()).isEqualTo(2);
+        }
+    }
+
+    @Test
+    void publicationCapacityReservesRoomForPurgeCleanup(@TempDir Path tempDir) throws Exception {
+        SimulatedManagedSearchProvider provider = new SimulatedManagedSearchProvider();
+        try (Harness h = Harness.boot(tempDir, provider)) {
+            h.saveActiveBinding("tenant-alpha", "rust-search", "search-profile-v1", "ingest",
+                    "corpus-main", "ns-alpha", ExternalRetentionPolicy.EXTERNAL_RETENTION_POLICY_PURGE_WITH_SOURCE,
+                    "bind-capacity");
+            NodeAddress source = sourceAddress("tenant-alpha", "capacity-source");
+            h.saveSourceDocument("save-capacity", source, 0L, "Capacity", "alice");
+            var published = h.coordinator.publish(new ExternalPublicationCoordinator.PublishRequest(
+                    "publish-capacity", source, 1L, "rust-search", 1L, "capacity-object", null, null));
+            NodeAddress ledgerAddress = ExternalPublicationCoordinates.ledgerAddress("tenant-alpha", "rust-search", source);
+            // Seed the bounded history through the same typed DocumentService CAS path. The
+            // provider holds this one object; all prior projections name that same target.
+            var store = new ExternalLedgerStore(h.stub, "default", SaveOwner.newBuilder()
+                    .setIntake(IntakeOrigin.newBuilder().setDatasourceId(
+                            ExternalPublicationCoordinates.DEFAULT_PUBLICATIONS_DATASOURCE_ID)).build(), Clock.systemUTC());
+            store.updateLedgerWithCas(ledgerAddress, source, "rust-search", LedgerAccess.keep(), "seed-capacity",
+                    current -> {
+                        var next = current.toBuilder();
+                        for (int i = 0; i < 511; i++) {
+                            String id = "prior-capacity-" + i;
+                            next.addOperations(published.operation().toBuilder().setOperationId(id));
+                            next.addHistoricalLinks(published.currentLink().orElseThrow().toBuilder()
+                                    .setConfirmedByOperationId(id).setRetiredByOperationId("publish-capacity")
+                                    .setProjectionLifecycle(ExternalProjectionLifecycle.EXTERNAL_PROJECTION_LIFECYCLE_SUPERSEDED));
+                        }
+                        return next.build();
+                    });
+            int before = provider.executeCalls.get();
+            assertGrpcCode(() -> h.coordinator.publish(new ExternalPublicationCoordinator.PublishRequest(
+                    "one-too-many", source, 1L, "rust-search", 1L, "capacity-object", null, null)),
+                    Status.Code.RESOURCE_EXHAUSTED);
+            assertThat(provider.executeCalls.get()).isEqualTo(before);
+            h.coordinator.preparePurge(new ExternalPublicationCoordinator.PreparePurgeRequest(source, "purge-capacity", "rust-search"));
+            h.stub.purgeDocument(PurgeDocumentRequest.newBuilder().setAddress(source)
+                    .setPurgeId("purge-capacity").setReason("capacity cleanup").build());
+            var result = h.coordinator.handlePurge(new ExternalPublicationCoordinator.PurgeRequest(
+                    "delete-capacity", source, "purge-capacity", "rust-search", null));
+            assertThat(result.operation().getOutcome()).isEqualTo(ExternalPublicationOutcome.EXTERNAL_PUBLICATION_OUTCOME_DELETED);
+            assertThat(result.ledgerPurged()).isTrue();
+            assertThat(h.catalog.current(ledgerAddress)).isEmpty();
+        }
+    }
+
+    @Test
     void successfulPublicationSeparatesNlpReceiptAcceptancePublicationAndServingVisibilityWithoutMutatingSource(
             @TempDir Path tempDir) throws Exception {
         SimulatedManagedSearchProvider provider = new SimulatedManagedSearchProvider();
@@ -2201,6 +2306,9 @@ class ExternalPublicationIT {
                                     9443,
                                     Transport.TRANSPORT_TLS,
                                     "env:PROTOMOLT_TEST_SEARCH_TOKEN_V1"),
+                            new EnvProfileCredentialResolver.Binding(
+                                    "search-profile-v1", "ingest", "search-v1.internal", 9443,
+                                    Transport.TRANSPORT_TLS, "env:PROTOMOLT_TEST_SEARCH_TOKEN_V2"),
                             new EnvProfileCredentialResolver.Binding(
                                     "search-profile-v1",
                                     "ingest",

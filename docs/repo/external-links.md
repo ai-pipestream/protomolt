@@ -222,6 +222,23 @@ over the binding identity/revision, provider/dataset/namespace/contract version,
 service profile/endpoint/credential-ref digest, external object ID and version,
 provider receipt ID, settlement stage, and durable managed-search identities.
 
+Before every mutating provider call, the operation retains its non-secret
+`dispatch_credential_binding_sha256s`. Retries add the credential-reference fingerprint
+they actually use. Reconciliation and serving refresh authenticate with live credentials,
+but verify durable receipts against those retained dispatch fingerprints. Rotating a
+credential reference therefore does not invalidate an earlier signed receipt, and a
+fingerprint never recorded for a dispatch is refused. Ledgers written before this field
+existed retain the original strict live-reference check; missing historical identity is
+not inferred from provider evidence.
+
+Publication admission reserves room for cleanup within the existing ledger bounds:
+the current projection and pending publications retain space for their eventual historical
+links, and each distinct external target retains an operation slot for deletion. A new
+publication that would consume this reserve fails with `RESOURCE_EXHAUSTED` before any
+provider call. Deleting historical links updates them in place even when history is full.
+These are finite ledgers, not unbounded audit logs: repeated failed deletion operations
+can still exhaust the operation bound; the reserve covers a cleanup operation per target.
+
 When a reply is lost (`UNRESOLVED_LOST_REPLY`) or the coordinator restarts,
 `reconcileOperation` and `reconcilePendingForSource` reload durable ledgers from
 `DocumentService`, invoke `ExternalProviderGateway.queryStatus` with live

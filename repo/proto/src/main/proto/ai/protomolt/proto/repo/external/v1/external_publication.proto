@@ -1257,6 +1257,21 @@ message ExternalPublicationOperationRecord {
       items: {string: {min_len: 1, max_len: 200, pattern: ".*\\S.*"}}
     }
   ];
+  // Non-secret credential-reference fingerprints recorded before mutating provider calls.
+  // Retries may use rotated credentials; historical receipts must match one of the
+  // recorded dispatch identities, not the credentials used for a later status query.
+  repeated string dispatch_credential_binding_sha256s = 15 [
+    (ai.protomolt.proto.validate.v1.field).repeated = {
+      max_items: 256
+      unique: true
+      items: {string: {len: 64, sha256_hex: true, pattern: "^[0-9a-f]{64}$"}}
+    },
+    (buf.validate.field).repeated = {
+      max_items: 256
+      unique: true
+      items: {string: {len: 64, pattern: "^[0-9a-f]{64}$"}}
+    }
+  ];
 }
 
 // Per-(account, binding, source_address) ledger persisted as typed structured_data

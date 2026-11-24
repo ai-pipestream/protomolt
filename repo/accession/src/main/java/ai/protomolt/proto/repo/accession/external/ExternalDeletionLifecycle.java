@@ -450,7 +450,7 @@ final class ExternalDeletionLifecycle {
             return new DeletionRegistration(replaceOperation(next.build(), updatedOp), retryNum);
         }
 
-        ExternalLedgerStore.requireRoomForNewOperation(current);
+        ExternalLedgerStore.requireRoomForDeletion(current);
         claimLinksForDeletion(next, current, operationId, bindingSnapshot,
                 intent.getExternalObjectId(),
                 tombstoneRevision.orElse(ALL_REVISIONS));
@@ -537,7 +537,11 @@ final class ExternalDeletionLifecycle {
                             operationId, intentSha256, intent, bindingSnapshot,
                             tombstoneRevision, purgeId, startedAt);
                     attemptHolder[0] = registration.attemptNumber();
-                    return registration.ledger();
+                    ExternalPublicationOperationRecord registered =
+                            findOperation(registration.ledger(), operationId).orElseThrow();
+                    return isTerminalOutcome(registered.getOutcome()) ? registration.ledger()
+                            : replaceOperation(registration.ledger(), ExternalLedgerStore.withDispatchIdentity(
+                                    registered, outboundAuth.credentialBindingSha256()));
                 });
 
         ExternalPublicationOperationRecord preOp =

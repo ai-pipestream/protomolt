@@ -509,6 +509,7 @@ public final class ExternalPublicationCoordinator {
                 .setIntentSha256(intentSha256)
                 .setIntent(intent)
                 .setBindingSnapshot(requestedBinding)
+                .addDispatchCredentialBindingSha256S(outboundAuth.credentialBindingSha256())
                 .setOutcome(ExternalPublicationOutcome.EXTERNAL_PUBLICATION_OUTCOME_PENDING)
                 .setPendingPhase(ExternalPendingPhase.EXTERNAL_PENDING_PHASE_DISPATCHING)
                 .addAttempts(dispatchingAttempt)
@@ -539,7 +540,8 @@ public final class ExternalPublicationCoordinator {
                         return current;
                     }
                     registeredHere[0] = true;
-                    ExternalLedgerStore.requireRoomForNewOperation(current);
+                    ExternalLedgerStore.requireRoomForPublication(
+                            current, requestedBinding, intent.getExternalObjectId());
                     boolean fencedByState = isSourceRevisionFenced(current, request.sourceRevision());
                     boolean fencedByBinding = !fencedByState && ExternalLedgerStore.heldByNewerBinding(
                             current, requestedBinding, intent.getExternalObjectId(), request.sourceRevision());

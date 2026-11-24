@@ -75,8 +75,10 @@ final class ExternalReceiptSettlement {
             ExternalProviderEvidence evidence) {
         Timestamp finishedAt = timestamp(clock.instant());
         try {
-            verifier.verifyEvidence(
-                    evidence, bindingSnapshot, outboundAuth, intent, intentSha256);
+            ExternalPublicationOperationRecord recorded = findOperation(
+                    ledgers.loadOptionalLedger(ledgerAddr, sourceAddress).orElseThrow().ledger(),
+                    operationId).orElseThrow();
+            verifier.verifyRecordedEvidence(evidence, recorded, outboundAuth);
         } catch (ExternalProviderVerifier.ProviderVerificationException invalidEvidence) {
             ExternalPublicationLedger failedLedger = ledgers.updateLedgerWithCas(
                     ledgerAddr,

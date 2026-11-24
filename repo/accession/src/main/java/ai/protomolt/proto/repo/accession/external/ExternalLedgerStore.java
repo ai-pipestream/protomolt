@@ -1,6 +1,7 @@
 package ai.protomolt.proto.repo.accession.external;
 
 import ai.protomolt.proto.repo.external.v1.ExternalAttemptTrigger;
+import ai.protomolt.proto.repo.external.v1.ExternalEndpointSummary;
 import ai.protomolt.proto.repo.external.v1.ExternalLink;
 import ai.protomolt.proto.repo.external.v1.ExternalPendingPhase;
 import ai.protomolt.proto.repo.external.v1.ExternalProjectionLifecycle;
@@ -44,10 +45,12 @@ import java.security.NoSuchAlgorithmException;
 import java.time.Clock;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 import java.util.function.UnaryOperator;
 
@@ -382,6 +385,15 @@ final class ExternalLedgerStore {
         return covered;
     }
 
+    /** Retains each non-secret dispatch identity once, before any call can reach the provider. */
+    static ExternalPublicationOperationRecord withDispatchIdentity(
+            ExternalPublicationOperationRecord operation, String fingerprint) {
+        if (operation.getDispatchCredentialBindingSha256SList().contains(fingerprint)) {
+            return operation;
+        }
+        return operation.toBuilder().addDispatchCredentialBindingSha256S(fingerprint).build();
+    }
+
     static boolean isTerminalOutcome(ExternalPublicationOutcome outcome) {
         return outcome == ExternalPublicationOutcome.EXTERNAL_PUBLICATION_OUTCOME_CONFIRMED
                 || outcome == ExternalPublicationOutcome.EXTERNAL_PUBLICATION_OUTCOME_FAILED
@@ -564,6 +576,85 @@ final class ExternalLedgerStore {
                             + " historical links and cannot record the outcome of another operation")
                     .asRuntimeException();
         }
+    }
+
+    /** Deleting history changes links in place; only a current link needs another history slot. */
+    static void requireRoomForDeletion(ExternalPublicationLedger ledger) {
+        long pendingPublications = ledger.getOperationsList().stream()
+                .filter(op -> op.getIntent().getAction() == ExternalPublicationAction.EXTERNAL_PUBLICATION_ACTION_PUBLISH
+                        && !isTerminalOutcome(op.getOutcome())).count();
+        if (ledger.getOperationsCount() >= MAX_OPERATIONS
+                || ledger.getHistoricalLinksCount() + pendingPublications
+                        + (ledger.hasCurrentLink() ? 1 : 0) > MAX_HISTORICAL_LINKS) {
+            throw Status.RESOURCE_EXHAUSTED
+                    .withDescription("External publication ledger cannot record another deletion outcome")
+                    .asRuntimeException();
+        }
+    }
+
+    /**
+     * Publication admission also reserves a historical slot for retiring the current link,
+     * and one operation slot per external target still owed cleanup. These reservations are
+     * checked inside the same CAS as registration; deletions can consume the reserved room.
+     */
+    static void requireRoomForPublication(ExternalPublicationLedger ledger,
+            ExternalSystemBinding binding, String externalObjectId) {
+        requireRoomForNewOperation(ledger);
+        long pendingPublications = ledger.getOperationsList().stream()
+                .filter(op -> op.getIntent().getAction() == ExternalPublicationAction.EXTERNAL_PUBLICATION_ACTION_PUBLISH
+                        && !isTerminalOutcome(op.getOutcome())).count();
+        long eventualHistory = ledger.getHistoricalLinksCount() + pendingPublications
+                + (ledger.hasCurrentLink() ? 1 : 0) + 1;
+        if (eventualHistory > MAX_HISTORICAL_LINKS) {
+            throw Status.RESOURCE_EXHAUSTED
+                    .withDescription("External publication ledger reserves its remaining historical link slot for cleanup")
+                    .asRuntimeException();
+        }
+        Set<CleanupTarget> targets = cleanupTargets(ledger);
+        targets.add(cleanupTarget(binding, externalObjectId));
+        requireCleanupOperationRoom(ledger, targets.size());
+    }
+
+    /** A local refusal must not consume the operation slots reserved for external cleanup. */
+    static void requireRoomForLocalFailure(ExternalPublicationLedger ledger) {
+        requireCleanupOperationRoom(ledger, cleanupTargets(ledger).size());
+    }
+
+    private static void requireCleanupOperationRoom(ExternalPublicationLedger ledger, int targets) {
+        if (ledger.getOperationsCount() + 1L + targets > MAX_OPERATIONS) {
+            throw Status.RESOURCE_EXHAUSTED
+                    .withDescription("External publication ledger reserves remaining operation slots for cleanup")
+                    .asRuntimeException();
+        }
+    }
+
+    private record CleanupTarget(String provider, String dataset, String namespace,
+            ExternalEndpointSummary endpoint, String objectId) {
+    }
+
+    private static CleanupTarget cleanupTarget(ExternalSystemBinding binding, String objectId) {
+        return new CleanupTarget(binding.getProvider(), binding.getDataset(), binding.getNamespace(),
+                binding.getEndpointSummary(), objectId);
+    }
+
+    private static Set<CleanupTarget> cleanupTargets(ExternalPublicationLedger ledger) {
+        Set<CleanupTarget> targets = new HashSet<>();
+        for (ExternalLink link : ledger.getHistoricalLinksList()) {
+            if (link.getProjectionLifecycle() != ExternalProjectionLifecycle.EXTERNAL_PROJECTION_LIFECYCLE_DELETED) {
+                targets.add(cleanupTarget(link.getBindingSnapshot(), link.getExternalObjectId()));
+            }
+        }
+        if (ledger.hasCurrentLink()) {
+            ExternalLink link = ledger.getCurrentLink();
+            targets.add(cleanupTarget(link.getBindingSnapshot(), link.getExternalObjectId()));
+        }
+        for (int i = 0; i < ledger.getOperationsCount(); i++) {
+            if (publicationMayHoldObject(ledger, i)) {
+                var operation = ledger.getOperations(i);
+                targets.add(cleanupTarget(operation.getBindingSnapshot(), operation.getIntent().getExternalObjectId()));
+            }
+        }
+        return targets;
     }
 
     /**

@@ -60,6 +60,9 @@ final class ExternalPublishAttempts {
             ExternalPublicationIntent intent,
             String intentSha256) {
         String operationId = priorOp.getOperationId();
+        ExternalProviderGateway.OutboundAuthContext outboundAuth =
+                bindingStore.resolveOutboundAuth(priorOp.getBindingSnapshot());
+        ExternalDeletionLifecycle.requireEndpointUnmoved(priorOp.getBindingSnapshot(), outboundAuth);
         // The attempt number is taken inside the ledger update, from the operation as it is
         // then, so two retries that overlap never share one.
         final int[] attemptHolder = new int[] {priorOp.getAttemptsCount() + 1};
@@ -104,7 +107,8 @@ final class ExternalPublishAttempts {
                             .addAttempts(retryDispatch)
                             .setUpdatedAt(startedAt)
                             .build();
-                    return replaceOperation(current, dispatchingOp);
+                    return replaceOperation(current, ExternalLedgerStore.withDispatchIdentity(
+                            dispatchingOp, outboundAuth.credentialBindingSha256()));
                 });
 
         ExternalPublicationOperationRecord latestAfterPre =
@@ -114,10 +118,6 @@ final class ExternalPublishAttempts {
                     latestAfterPre, optionalCurrentLink(preUpdated), false, false);
         }
 
-        ExternalProviderGateway.OutboundAuthContext outboundAuth =
-                bindingStore.resolveOutboundAuth(latestAfterPre.getBindingSnapshot());
-        ExternalDeletionLifecycle.requireEndpointUnmoved(
-                latestAfterPre.getBindingSnapshot(), outboundAuth);
         return executeAndSettlePublishAttempt(
                 ledgerAddr,
                 retainedSecurity,
@@ -182,6 +182,7 @@ final class ExternalPublishAttempts {
                         }
                         return current;
                     }
+                    ExternalLedgerStore.requireRoomForLocalFailure(current);
                     return current.toBuilder().addOperations(failedRecord).build();
                 });
         return new ExternalPublicationCoordinator.OperationResult(

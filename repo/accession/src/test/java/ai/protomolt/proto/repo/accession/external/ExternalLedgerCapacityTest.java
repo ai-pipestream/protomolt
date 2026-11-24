@@ -135,4 +135,45 @@ class ExternalLedgerCapacityTest {
                 .getOutcome())
                 .isEqualTo(ExternalPublicationOutcome.EXTERNAL_PUBLICATION_OUTCOME_FAILED);
     }
+
+    @Test
+    void publicationLeavesTheLastHistorySlotForDeletingTheCurrentObject() {
+        var binding = ai.protomolt.proto.repo.external.v1.ExternalSystemBinding.getDefaultInstance();
+        var almostFull = ledger(512, 511).toBuilder()
+                .setCurrentLink(ExternalLink.newBuilder().setExternalObjectId("current")).build();
+        assertExhausted(() -> ExternalLedgerStore.requireRoomForPublication(almostFull, binding, "next"),
+                "cleanup");
+        assertThatCode(() -> ExternalLedgerStore.requireRoomForDeletion(almostFull)).doesNotThrowAnyException();
+        // After retiring the current link, cleanup of historical targets changes them in place.
+        var historyOnly = ledger(513, 512);
+        assertThatCode(() -> ExternalLedgerStore.requireRoomForDeletion(historyOnly)).doesNotThrowAnyException();
+    }
+
+    @Test
+    void publicationReservesOperationSlotsForEveryTargetStillOwedCleanup() {
+        var binding = ai.protomolt.proto.repo.external.v1.ExternalSystemBinding.getDefaultInstance();
+        var oneTarget = ledger(1022, 0).toBuilder()
+                .setCurrentLink(ExternalLink.newBuilder().setExternalObjectId("current")).build();
+        // Another publication of that object fits (1023 operations plus one eventual deletion).
+        assertThatCode(() -> ExternalLedgerStore.requireRoomForPublication(oneTarget, binding, "current"))
+                .doesNotThrowAnyException();
+        // A different object would leave two objects owed deletion, with only one slot left.
+        assertExhausted(() -> ExternalLedgerStore.requireRoomForPublication(oneTarget, binding, "new-object"),
+                "cleanup");
+        assertExhausted(() -> ExternalLedgerStore.requireRoomForLocalFailure(
+                oneTarget.toBuilder().addOperations(oneTarget.getOperations(0)).build()), "cleanup");
+    }
+
+    @Test
+    void inFlightPublicationsAlsoReserveTheirFutureDeletionHistorySlot() {
+        var pending = ledger(0, 510).toBuilder()
+                .setCurrentLink(ExternalLink.newBuilder().setExternalObjectId("current"))
+                .addOperations(ExternalPublicationOperationRecord.newBuilder()
+                        .setIntent(ai.protomolt.proto.repo.external.v1.ExternalPublicationIntent.newBuilder()
+                                .setAction(ai.protomolt.proto.repo.external.v1.ExternalPublicationAction.EXTERNAL_PUBLICATION_ACTION_PUBLISH))
+                        .setOutcome(ExternalPublicationOutcome.EXTERNAL_PUBLICATION_OUTCOME_PENDING))
+                .build();
+        assertExhausted(() -> ExternalLedgerStore.requireRoomForPublication(pending,
+                ai.protomolt.proto.repo.external.v1.ExternalSystemBinding.getDefaultInstance(), "next"), "cleanup");
+    }
 }
