@@ -32,7 +32,9 @@ mapper.mapInPlace(builder, List.of(
 | Append | `target += source` | Append to a repeated `target` |
 | Clear | `-field` | Clear the field |
 
-Paths are dotted field paths; sources may be paths or literals. The mapper
+Paths are dotted field paths; sources may be paths or literals. Assigning a
+list to a repeated field replaces its elements; appending a list adds each
+element. The mapper
 also exposes the underlying path operations directly (`getValue`,
 `setValue`, `appendValue`, `clearField`) for programmatic use.
 
@@ -98,6 +100,51 @@ are `input.enabled` and `input.name`, not protobuf wrapper-field accesses.
 This example starts no services. The repository's samples module has broader
 dependencies than the mapper itself; a library consumer needs only the mapper
 modules and their dependencies.
+
+A selector can build messages and lists of them, so one rule can fill a
+repeated message field. The ACL mappings below are proof-of-concept test
+configs under `transform/pipeline/src/test/resources/acl/` (provenance of
+their data is in that directory's `README.md`); no production pipeline runs
+them yet. The Confluence ACL mapping
+(`transform/pipeline/src/test/resources/acl/confluence-document-security.textproto`)
+turns the access records grpc-confluence Sync emits into a
+`DocumentSecurity` this way: space read grants become `permissions` and each
+view-restricted owner becomes one `required_rule_sets` entry. A second
+config (`confluence-identity-links.textproto`) turns Sync's users and group
+memberships into `IdentityLink`s from an `email` identity, and a third
+(`entra-identity-links.textproto`) produces `IdentityLinks` linking each
+enabled Entra user principal name to its verified directory addresses: its mail
+(or the user principal name when it has no mail) and its SMTP proxy addresses
+(excluding unverified `other_mails` contact entries).
+`confluence-access-class-links.textproto` links each Sync user record to the
+access classes its Confluence operations put it in (`use` on `application`
+to ALL_LICENSED_USERS, `administer` to ALL_PRODUCT_ADMINS).
+`CallerIdentityExpansion` follows the links to give an Entra caller the
+Atlassian account and groups that share its address; an address two accounts
+show links to both. The repository service reads links from the file named by
+`PROTOMOLT_IDENTITY_LINKS`: length-delimited `IdentityLink` messages, so the
+`IdentityLinks` the mappings produce must be flattened to one link per entry.
+Nothing in this repository writes that file yet. The test runs the mappings on
+records from a live Sync run.
+
+For SharePoint, `sharepoint-document-security.textproto` maps the `SiteAcl`
+an item's `acl_owner_id` names into `permissions`: each role assignment whose
+permission levels include ViewListItems and OpenItems becomes a read rule on the SharePoint
+group (`sharepoint-group:<site id>/<group id>`), user (`user-principal-name`,
+or `email`), Entra group (`entra-group`) or other claim (`sharepoint-claim`).
+Every complete ACL also lets `sharepoint-site-admin:<site id>` read, and the
+owners claim of a Microsoft 365 group maps to `entra-group-owner`. Org-wide
+claims such as Everyone stay `sharepoint-claim` rules no link mints, so content
+granted only to them is not readable, and anonymous Confluence space grants are
+not mapped. The ACL mappings produce only READ rules.
+`sharepoint-identity-links.textproto` links the members of each site group to
+that group, and `sharepoint-site-admin-links.textproto` links the site
+collection administrators Sync lists to `sharepoint-site-admin:<site id>`.
+`entra-group-owner-links.textproto` links each user owner ListGroupOwners
+streams to `entra-group-owner:<group id>`. `entra-group-links.textproto` links the
+members of each group in a full DeltaGroups pass (users by `entra-user` object
+id, nested groups by `entra-group`) to the group; the Entra user mapping links
+each user principal name to its `entra-user` object id.
 
 ## Where mapping sits
 

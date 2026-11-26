@@ -3,6 +3,7 @@ package ai.protomolt.proto.repo.service;
 import ai.protomolt.proto.actions.Caller;
 import ai.protomolt.proto.authz.AccountBinding;
 import ai.protomolt.proto.authz.AccountBindingResolver;
+import ai.protomolt.proto.authz.AclIdentity;
 import ai.protomolt.proto.authz.AuthenticatedCaller;
 import ai.protomolt.proto.authz.IntakeWriterScope;
 import ai.protomolt.proto.authz.grpc.CallerContexts;
@@ -10,8 +11,11 @@ import ai.protomolt.proto.config.ConceptSchemeMounts;
 import ai.protomolt.proto.repo.catalog.Catalog;
 import ai.protomolt.proto.repo.catalog.CatalogException;
 import ai.protomolt.proto.repo.catalog.CatalogRecords;
+import ai.protomolt.proto.repo.spi.CallerIdentityExpansion;
 import ai.protomolt.proto.repo.spi.RepositoryCaller;
 import ai.protomolt.proto.repo.spi.RepositoryCredentialBinding;
+import ai.protomolt.proto.repo.v1.IdentityLink;
+import ai.protomolt.proto.repo.v1.Principal;
 import ai.protomolt.proto.repo.v2.WriterGrant;
 import ai.protomolt.proto.types.Concept;
 import ai.protomolt.proto.types.ConceptScheme;
@@ -43,6 +47,42 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  * concept-scheme mounting from configuration (#615).
  */
 class RepoCallerBindingsTest {
+
+    @Test
+    void boundIdentitiesExpandAlongTheCurrentIdentityLinks() {
+        var binding = AccountBinding.newBuilder().setPrincipal("alice").addAccountIds("acct-1")
+                .addAclIdentities(AclIdentity.newBuilder().setIdentityType("user-principal-name")
+                        .setIdentity("Alice@Example.com"))
+                .build();
+        var bindings = new RepoCallerBindings();
+        bindings.use(authCaller -> "alice".equals(authCaller.caller().name()) ? Optional.of(binding) : Optional.empty());
+        var upn = principal("user-principal-name", "alice@example.com");
+        var account = principal("atlassian-account", "acc-1");
+        var group = principal("atlassian-group", "g-hr");
+        var links = new java.util.concurrent.atomic.AtomicReference<>(List.of(link(upn, account)));
+        bindings.expandIdentities(() -> new CallerIdentityExpansion(links.get()));
+
+        var alice = AuthenticatedCaller.unbound(Caller.scoped("alice", Set.of()));
+        assertThat(bindings.bind(alice).identities()).extracting(Principal::getIdentityType)
+                .containsExactlyInAnyOrder("user-principal-name", "atlassian-account");
+        assertThat(bindings.bind(alice).accountIds()).containsExactly("acct-1");
+
+        links.set(List.of(link(upn, account), link(account, group)));
+        assertThat(bindings.bind(alice).identities()).as("a refreshed link set applies to the next call")
+                .contains(group);
+        assertThat(bindings.bind(AuthenticatedCaller.unbound(Caller.scoped("bob", Set.of()))).identities())
+                .isEmpty();
+        assertThat(bindings.bind(AuthenticatedCaller.unbound(Caller.operator())).processAuthority())
+                .isTrue();
+    }
+
+    private static Principal principal(String type, String identity) {
+        return Principal.newBuilder().setIdentityType(type).setIdentity(identity).build();
+    }
+
+    private static IdentityLink link(Principal from, Principal to) {
+        return IdentityLink.newBuilder().setFrom(from).setTo(to).build();
+    }
 
     @Test
     void scopedGrpcCallerWithIntakeWritersReceivesBindingCredentialInBindAndCurrent() {

@@ -10,7 +10,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file ai/protomolt/proto/repo/v1/security.proto.
  */
 export const file_ai_protomolt_proto_repo_v1_security: GenFile = /*@__PURE__*/
-  fileDesc("CilhaS9wcm90b21vbHQvcHJvdG8vcmVwby92MS9zZWN1cml0eS5wcm90bxIaYWkucHJvdG9tb2x0LnByb3RvLnJlcG8udjEifwoKQWNjZXNzUnVsZRIQCghpZGVudGl0eRgBIAEoCRIVCg1pZGVudGl0eV90eXBlGAIgASgJEhQKDGRpc3BsYXlfbmFtZRgDIAEoCRIyCgZhY2Nlc3MYBCABKA4yIi5haS5wcm90b21vbHQucHJvdG8ucmVwby52MS5BY2Nlc3MibAoQRG9jdW1lbnRTZWN1cml0eRIbChNpbmhlcml0YW5jZV9lbmFibGVkGAEgASgIEjsKC3Blcm1pc3Npb25zGAIgAygLMiYuYWkucHJvdG9tb2x0LnByb3RvLnJlcG8udjEuQWNjZXNzUnVsZSJKCglQcmluY2lwYWwSEAoIaWRlbnRpdHkYASABKAkSFQoNaWRlbnRpdHlfdHlwZRgCIAEoCRIUCgxkaXNwbGF5X25hbWUYAyABKAkqVAoGQWNjZXNzEhYKEkFDQ0VTU19VTlNQRUNJRklFRBAAEg8KC0FDQ0VTU19SRUFEEAESEAoMQUNDRVNTX1dSSVRFEAISDwoLQUNDRVNTX0RFTlkQA0IeChphaS5wcm90b21vbHQucHJvdG8ucmVwby52MVABYgZwcm90bzM");
+  fileDesc("CilhaS9wcm90b21vbHQvcHJvdG8vcmVwby92MS9zZWN1cml0eS5wcm90bxIaYWkucHJvdG9tb2x0LnByb3RvLnJlcG8udjEifwoKQWNjZXNzUnVsZRIQCghpZGVudGl0eRgBIAEoCRIVCg1pZGVudGl0eV90eXBlGAIgASgJEhQKDGRpc3BsYXlfbmFtZRgDIAEoCRIyCgZhY2Nlc3MYBCABKA4yIi5haS5wcm90b21vbHQucHJvdG8ucmVwby52MS5BY2Nlc3MiVgoNQWNjZXNzUnVsZVNldBIOCgZzb3VyY2UYASABKAkSNQoFcnVsZXMYAiADKAsyJi5haS5wcm90b21vbHQucHJvdG8ucmVwby52MS5BY2Nlc3NSdWxlIrMBChBEb2N1bWVudFNlY3VyaXR5EhsKE2luaGVyaXRhbmNlX2VuYWJsZWQYASABKAgSOwoLcGVybWlzc2lvbnMYAiADKAsyJi5haS5wcm90b21vbHQucHJvdG8ucmVwby52MS5BY2Nlc3NSdWxlEkUKEnJlcXVpcmVkX3J1bGVfc2V0cxgDIAMoCzIpLmFpLnByb3RvbW9sdC5wcm90by5yZXBvLnYxLkFjY2Vzc1J1bGVTZXQiSgoJUHJpbmNpcGFsEhAKCGlkZW50aXR5GAEgASgJEhUKDWlkZW50aXR5X3R5cGUYAiABKAkSFAoMZGlzcGxheV9uYW1lGAMgASgJInYKDElkZW50aXR5TGluaxIzCgRmcm9tGAEgASgLMiUuYWkucHJvdG9tb2x0LnByb3RvLnJlcG8udjEuUHJpbmNpcGFsEjEKAnRvGAIgASgLMiUuYWkucHJvdG9tb2x0LnByb3RvLnJlcG8udjEuUHJpbmNpcGFsIkgKDUlkZW50aXR5TGlua3MSNwoFbGlua3MYASADKAsyKC5haS5wcm90b21vbHQucHJvdG8ucmVwby52MS5JZGVudGl0eUxpbmsqVAoGQWNjZXNzEhYKEkFDQ0VTU19VTlNQRUNJRklFRBAAEg8KC0FDQ0VTU19SRUFEEAESEAoMQUNDRVNTX1dSSVRFEAISDwoLQUNDRVNTX0RFTlkQA0IeChphaS5wcm90b21vbHQucHJvdG8ucmVwby52MVABYgZwcm90bzM");
 
 /**
  * One typed access rule (OIS-style: identity + identity type + display label).
@@ -56,6 +56,35 @@ export const AccessRuleSchema: GenMessage<AccessRule> = /*@__PURE__*/
   messageDesc(file_ai_protomolt_proto_repo_v1_security, 0);
 
 /**
+ * A set of access rules of which the caller must match at least one granting
+ * rule; evaluated like DocumentSecurity.permissions.
+ *
+ * @generated from message ai.protomolt.proto.repo.v1.AccessRuleSet
+ */
+export type AccessRuleSet = Message<"ai.protomolt.proto.repo.v1.AccessRuleSet"> & {
+  /**
+   * Where the set comes from (for example a restricted parent), for audit.
+   *
+   * @generated from field: string source = 1;
+   */
+  source: string;
+
+  /**
+   * The rules of the set.
+   *
+   * @generated from field: repeated ai.protomolt.proto.repo.v1.AccessRule rules = 2;
+   */
+  rules: AccessRule[];
+};
+
+/**
+ * Describes the message ai.protomolt.proto.repo.v1.AccessRuleSet.
+ * Use `create(AccessRuleSetSchema)` to create a new message.
+ */
+export const AccessRuleSetSchema: GenMessage<AccessRuleSet> = /*@__PURE__*/
+  messageDesc(file_ai_protomolt_proto_repo_v1_security, 1);
+
+/**
  * Document-level security. Extraction rides the document as first-class
  * metadata; evaluation is deny-wins with case-insensitive identity match
  * against the caller's principal + groups.
@@ -77,6 +106,14 @@ export type DocumentSecurity = Message<"ai.protomolt.proto.repo.v1.DocumentSecur
    * @generated from field: repeated ai.protomolt.proto.repo.v1.AccessRule permissions = 2;
    */
   permissions: AccessRule[];
+
+  /**
+   * Rule sets that must each also grant the requested access. A deny in any
+   * set denies. Empty means only permissions (and inherited rules) apply.
+   *
+   * @generated from field: repeated ai.protomolt.proto.repo.v1.AccessRuleSet required_rule_sets = 3;
+   */
+  requiredRuleSets: AccessRuleSet[];
 };
 
 /**
@@ -84,7 +121,7 @@ export type DocumentSecurity = Message<"ai.protomolt.proto.repo.v1.DocumentSecur
  * Use `create(DocumentSecuritySchema)` to create a new message.
  */
 export const DocumentSecuritySchema: GenMessage<DocumentSecurity> = /*@__PURE__*/
-  messageDesc(file_ai_protomolt_proto_repo_v1_security, 1);
+  messageDesc(file_ai_protomolt_proto_repo_v1_security, 2);
 
 /**
  * A person or service principal — same identity vocabulary as AccessRule
@@ -124,7 +161,59 @@ export type Principal = Message<"ai.protomolt.proto.repo.v1.Principal"> & {
  * Use `create(PrincipalSchema)` to create a new message.
  */
 export const PrincipalSchema: GenMessage<Principal> = /*@__PURE__*/
-  messageDesc(file_ai_protomolt_proto_repo_v1_security, 2);
+  messageDesc(file_ai_protomolt_proto_repo_v1_security, 3);
+
+/**
+ * One identity a caller holding `from` also holds: an account linked to the
+ * same person, or a group the identity is a member of. Expanding a caller's
+ * identities follows links transitively.
+ *
+ * @generated from message ai.protomolt.proto.repo.v1.IdentityLink
+ */
+export type IdentityLink = Message<"ai.protomolt.proto.repo.v1.IdentityLink"> & {
+  /**
+   * The identity the caller holds.
+   *
+   * @generated from field: ai.protomolt.proto.repo.v1.Principal from = 1;
+   */
+  from?: Principal | undefined;
+
+  /**
+   * The identity that comes with it.
+   *
+   * @generated from field: ai.protomolt.proto.repo.v1.Principal to = 2;
+   */
+  to?: Principal | undefined;
+};
+
+/**
+ * Describes the message ai.protomolt.proto.repo.v1.IdentityLink.
+ * Use `create(IdentityLinkSchema)` to create a new message.
+ */
+export const IdentityLinkSchema: GenMessage<IdentityLink> = /*@__PURE__*/
+  messageDesc(file_ai_protomolt_proto_repo_v1_security, 4);
+
+/**
+ * The identity links one source record yields, such as every address of one
+ * directory user.
+ *
+ * @generated from message ai.protomolt.proto.repo.v1.IdentityLinks
+ */
+export type IdentityLinks = Message<"ai.protomolt.proto.repo.v1.IdentityLinks"> & {
+  /**
+   * The links.
+   *
+   * @generated from field: repeated ai.protomolt.proto.repo.v1.IdentityLink links = 1;
+   */
+  links: IdentityLink[];
+};
+
+/**
+ * Describes the message ai.protomolt.proto.repo.v1.IdentityLinks.
+ * Use `create(IdentityLinksSchema)` to create a new message.
+ */
+export const IdentityLinksSchema: GenMessage<IdentityLinks> = /*@__PURE__*/
+  messageDesc(file_ai_protomolt_proto_repo_v1_security, 5);
 
 /**
  * Access decision of one ACL rule. Explicit DENY always wins over any grant.

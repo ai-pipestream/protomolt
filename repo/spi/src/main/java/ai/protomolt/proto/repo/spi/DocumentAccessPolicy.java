@@ -2,6 +2,7 @@ package ai.protomolt.proto.repo.spi;
 
 import ai.protomolt.proto.repo.v1.Access;
 import ai.protomolt.proto.repo.v1.AccessRule;
+import ai.protomolt.proto.repo.v1.AccessRuleSet;
 import ai.protomolt.proto.repo.v1.DocumentSecurity;
 import java.util.ArrayList;
 import java.util.List;
@@ -21,9 +22,24 @@ public final class DocumentAccessPolicy {
             throw new RepositoryException(RepositoryException.Code.FAILED_PRECONDITION, "Document ownership is missing");
         if (!caller.processAuthority() && !caller.accountIds().contains(owningAccount)) return false;
         if (security == null) return caller.processAuthority();
+        List<AccessRule> rules = validatedRules(security, inherited);
+        // Process authority is an explicit administrative bypass, never an inferred ACL identity.
+        if (caller.processAuthority()) return true;
+        Grant grant = evaluate(caller, rules, requested);
+        if (grant != Grant.ALLOW) return false;
+        for (AccessRuleSet set : security.getRequiredRuleSetsList()) {
+            if (evaluate(caller, set.getRulesList(), requested) != Grant.ALLOW) return false;
+        }
+        return true;
+    }
+
+    /**
+     * The document's own rules plus the inherited ones when inheritance is on, after checking
+     * every rule, including those of the required rule sets, is well formed.
+     */
+    static List<AccessRule> validatedRules(DocumentSecurity security, List<AccessRule> inherited) {
         if (!security.getUnknownFields().asMap().isEmpty())
             throw new RepositoryException(RepositoryException.Code.FAILED_PRECONDITION, "Document policy contains unknown fields");
-
         var rules = new ArrayList<>(security.getPermissionsList());
         if (security.getInheritanceEnabled()) {
             if (inherited == null)
@@ -31,8 +47,17 @@ public final class DocumentAccessPolicy {
             rules.addAll(inherited);
         }
         for (AccessRule rule : rules) requireValid(rule);
-        // Process authority is an explicit administrative bypass, never an inferred ACL identity.
-        if (caller.processAuthority()) return true;
+        for (AccessRuleSet set : security.getRequiredRuleSetsList()) {
+            if (!set.getUnknownFields().asMap().isEmpty())
+                throw new RepositoryException(RepositoryException.Code.FAILED_PRECONDITION, "Document policy contains unknown fields");
+            for (AccessRule rule : set.getRulesList()) requireValid(rule);
+        }
+        return rules;
+    }
+
+    private enum Grant { ALLOW, NONE, DENY }
+
+    private static Grant evaluate(RepositoryCaller caller, List<AccessRule> rules, Access requested) {
         boolean allowed = false;
         for (AccessRule rule : rules) {
             boolean matches = rule.getIdentityType().equalsIgnoreCase("public")
@@ -40,10 +65,10 @@ public final class DocumentAccessPolicy {
                         identity.getIdentityType().equalsIgnoreCase(rule.getIdentityType())
                         && identity.getIdentity().equalsIgnoreCase(rule.getIdentity()));
             if (!matches) continue;
-            if (rule.getAccess() == Access.ACCESS_DENY) return false;
+            if (rule.getAccess() == Access.ACCESS_DENY) return Grant.DENY;
             if (rule.getAccess() == requested) allowed = true;
         }
-        return allowed;
+        return allowed ? Grant.ALLOW : Grant.NONE;
     }
 
     private static void requireValid(AccessRule rule) {

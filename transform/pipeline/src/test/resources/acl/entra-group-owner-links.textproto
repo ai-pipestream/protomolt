@@ -1,0 +1,16 @@
+# proto-file: ai/protomolt/proto/grpc/workflow/v1/grpc_workflow.proto
+# proto-message: ai.protomolt.proto.grpc.workflow.v1.TypedEdge
+#
+# Maps one owner grpc-microsoft ListGroupOwners streams (source `owner`, an
+# ai.pipestream.microsoft.v1.DirectoryMember) of a group (source `group`, an
+# ai.pipestream.microsoft.v1.GraphGroup with its id) into an identity link: a
+# user owner (`entra-user` object id) links to `entra-group-owner:<group id>`.
+# Other owners map to no link.
+sources: "group"
+sources: "owner"
+produce_type: "ai.protomolt.proto.repo.v1.IdentityLinks"
+cel_rules {
+  filter: "group.id != '' && has(owner.user) && owner.user.id != ''"
+  selector: "[ai.protomolt.proto.repo.v1.IdentityLink{from: ai.protomolt.proto.repo.v1.Principal{identity_type: 'entra-user', identity: owner.user.id}, to: ai.protomolt.proto.repo.v1.Principal{identity_type: 'entra-group-owner', identity: group.id}}]"
+  target: "links"
+}

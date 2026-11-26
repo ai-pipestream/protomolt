@@ -1,0 +1,28 @@
+# proto-file: ai/protomolt/proto/grpc/workflow/v1/grpc_workflow.proto
+# proto-message: ai.protomolt.proto.grpc.workflow.v1.TypedEdge
+#
+# Maps the SharePoint role assignments that apply to one item into a protomolt
+# DocumentSecurity. Source `acl` is the ai.pipestream.microsoft.v1.SiteAcl
+# that the item's `acl_owner_id` names. An assignment grants read when one of
+# its permission levels holds both ViewListItems and OpenItems (bits 0x1 and
+# 0x20 of the low permission mask), so Limited Access, and a level that lists
+# items without opening them, grant nothing. A SharePoint group becomes a
+# `sharepoint-group` rule `<site id>/<group id>`, a user a
+# `user-principal-name` rule (or `email` when it has no user principal name),
+# a directory group with an object id an `entra-group` rule (`entra-group-owner`
+# for the owners claim of a Microsoft 365 group) and
+# any other claim a `sharepoint-claim` rule on its login name. Every complete
+# ACL also lets the site collection administrators of its site read
+# (`sharepoint-site-admin:<site id>`). Anything not COMPLETE maps to no rule,
+# which denies.
+# Org-wide claims (Everyone, Everyone except external users) stay
+# `sharepoint-claim` rules that no identity link mints, so content granted only
+# to them is not readable through search; opening it takes a link mapping that
+# gives tenant members the claim. Only ACCESS_READ rules are produced.
+sources: "acl"
+produce_type: "ai.protomolt.proto.repo.v1.DocumentSecurity"
+cel_rules {
+  filter: "acl.completeness == ai.pipestream.sync.v1.AclCompleteness.ACL_COMPLETENESS_COMPLETE"
+  selector: "acl.assignments.filter(a, a.roles.exists(r, r.base_permissions_low % 2u == 1u && (r.base_permissions_low / 32u) % 2u == 1u) && (a.member.principal_type == ai.pipestream.microsoft.v1.SitePrincipalType.SITE_PRINCIPAL_TYPE_SHAREPOINT_GROUP || a.member.principal_type == ai.pipestream.microsoft.v1.SitePrincipalType.SITE_PRINCIPAL_TYPE_SECURITY_GROUP || (a.member.principal_type == ai.pipestream.microsoft.v1.SitePrincipalType.SITE_PRINCIPAL_TYPE_USER && (a.member.user_principal_name != '' || a.member.email != '')))).map(a, ai.protomolt.proto.repo.v1.AccessRule{identity_type: a.member.principal_type == ai.pipestream.microsoft.v1.SitePrincipalType.SITE_PRINCIPAL_TYPE_SHAREPOINT_GROUP ? 'sharepoint-group' : a.member.principal_type == ai.pipestream.microsoft.v1.SitePrincipalType.SITE_PRINCIPAL_TYPE_USER ? (a.member.user_principal_name != '' ? 'user-principal-name' : 'email') : a.member.directory_object_id != '' ? (a.member.directory_group_owners ? 'entra-group-owner' : 'entra-group') : 'sharepoint-claim', identity: a.member.principal_type == ai.pipestream.microsoft.v1.SitePrincipalType.SITE_PRINCIPAL_TYPE_SHAREPOINT_GROUP ? (has(acl.securable.site_id) ? acl.securable.site_id : has(acl.securable.list) ? acl.securable.list.site_id : acl.securable.list_item.site_id) + '/' + string(a.member.id) : a.member.principal_type == ai.pipestream.microsoft.v1.SitePrincipalType.SITE_PRINCIPAL_TYPE_USER ? (a.member.user_principal_name != '' ? a.member.user_principal_name : a.member.email) : a.member.directory_object_id != '' ? a.member.directory_object_id : a.member.login_name, access: ai.protomolt.proto.repo.v1.Access.ACCESS_READ}) + [ai.protomolt.proto.repo.v1.AccessRule{identity_type: 'sharepoint-site-admin', identity: (has(acl.securable.site_id) ? acl.securable.site_id : has(acl.securable.list) ? acl.securable.list.site_id : acl.securable.list_item.site_id), access: ai.protomolt.proto.repo.v1.Access.ACCESS_READ}]"
+  target: "permissions"
+}
