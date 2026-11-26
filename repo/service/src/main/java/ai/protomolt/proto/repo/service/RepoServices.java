@@ -174,6 +174,34 @@ public final class RepoServices implements AutoCloseable {
         return this;
     }
 
+    /** Schema sources read over gRPC server reflection; none until a composition root supplies them. */
+    private volatile ReflectedSchemas reflectedSchemas;
+
+    /**
+     * Admits typed {@code Any} content whose message a named gRPC server defines, read from
+     * that server over server reflection at each admission that needs it. Types the
+     * repository contract or a co-mounted module defines are never asked of it. These
+     * services own the sources from here on and close them. Composition roots call this
+     * after {@code build} and before any transport starts serving.
+     *
+     * @param reflected the open reflection sources
+     * @return this instance, for chaining
+     */
+    public RepoServices withReflectedSchemas(ReflectedSchemas reflected) {
+        java.util.Objects.requireNonNull(reflected);
+        if (reflectedSchemas != null) {
+            throw new IllegalStateException("Reflected schema sources are already configured");
+        }
+        owned.add(reflected);
+        this.reflectedSchemas = reflected;
+        return this;
+    }
+
+    private ai.protomolt.proto.repo.admission.DocumentSchemaAdmission.Definition reflectedSchema(String typeUrl) {
+        ReflectedSchemas reflected = reflectedSchemas;
+        return reflected == null ? null : reflected.select(typeUrl);
+    }
+
     /** The host's mounted concept schemes; none until a composition root supplies them. */
     private volatile ai.protomolt.proto.config.ConceptSchemeMounts conceptSchemes =
             ai.protomolt.proto.config.ConceptSchemeMounts.empty();
@@ -483,7 +511,7 @@ public final class RepoServices implements AutoCloseable {
                     record -> pool.resolve(record).namespaces());
             this.driveOperations = new ai.protomolt.proto.repo.engine.DriveOperations(driveLedger, driveProvisioner);
             RepoV2Wiring.Wired v2 = RepoV2Wiring.wire(config, owned, driveLedger, pool,
-                    V2_CATALOG_SCHEMA, () -> admittedSchemas, auth -> ArchiveCallerHandoff.bindCaller(auth, stepSave::bindCaller), readBudget,
+                    V2_CATALOG_SCHEMA, () -> admittedSchemas, this::reflectedSchema, auth -> ArchiveCallerHandoff.bindCaller(auth, stepSave::bindCaller), readBudget,
                     () -> conceptSchemes);
             this.catalog = v2.catalog();
             this.v2Uploads = v2.uploads();
