@@ -74,7 +74,10 @@ import org.slf4j.LoggerFactory;
  * gRPC lanes' PERMISSION_DENIED; cap breaches are 413, checked against the
  * declared Content-Length BEFORE the body is buffered and again while
  * reading; a missing Content-Length is 411 (mirroring repo's route); non-POST
- * is 405. A failed repo save maps NOT_FOUND to 404, FAILED_PRECONDITION to
+ * is 405 with an {@code Allow: POST} header. The path and method are checked
+ * before the API key is read, so the 404 and 405 answers do not depend on a
+ * credential: the route and its one method are public contract, not a secret.
+ * A failed repo save maps NOT_FOUND to 404, FAILED_PRECONDITION to
  * 409, INVALID_ARGUMENT to 400, and anything else to 502. Every error body is
  * JSON: {@code {"error": "..."}}.
  *
@@ -131,6 +134,10 @@ public final class IntakeHttpServer implements AutoCloseable {
             Objects.requireNonNull(routeId, "routeId");
             Objects.requireNonNull(pathTemplate, "pathTemplate");
             httpMethods = List.copyOf(Objects.requireNonNull(httpMethods, "httpMethods"));
+            if (httpMethods.isEmpty()) {
+                // A route with no methods could only answer 405 with an empty Allow header.
+                throw new IllegalArgumentException("httpMethods must name at least one method");
+            }
             pathParameters = List.copyOf(Objects.requireNonNull(pathParameters, "pathParameters"));
             requiredQueryParameters = List.copyOf(
                     Objects.requireNonNull(requiredQueryParameters, "requiredQueryParameters"));

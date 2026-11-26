@@ -1019,6 +1019,28 @@ class StreamingUploadAndReadIT {
                             .build(),
                     HttpResponse.BodyHandlers.ofString());
             assertThat(wrongMethod.statusCode()).isEqualTo(405);
+            // RFC 9110 section 15.5.6: the 405 names the one method the route supports.
+            assertThat(wrongMethod.headers().allValues("Allow")).containsExactly("POST");
+
+            // The protobuf error variant carries the same header.
+            var wrongMethodProto = client.send(
+                    HttpRequest.newBuilder(URI.create(baseUrl + UploadHttpHandler.UPLOAD_PATH))
+                            .header("Authorization", "Bearer " + token)
+                            .header("Accept", "application/proto")
+                            .PUT(HttpRequest.BodyPublishers.noBody())
+                            .build(),
+                    HttpResponse.BodyHandlers.ofByteArray());
+            assertThat(wrongMethodProto.statusCode()).isEqualTo(405);
+            assertThat(wrongMethodProto.headers().allValues("Allow")).containsExactly("POST");
+
+            // The credential is checked first: a wrong method without one is a bare 401.
+            var wrongMethodUnauth = client.send(
+                    HttpRequest.newBuilder(URI.create(baseUrl + UploadHttpHandler.UPLOAD_PATH))
+                            .GET()
+                            .build(),
+                    HttpResponse.BodyHandlers.ofString());
+            assertThat(wrongMethodUnauth.statusCode()).isEqualTo(401);
+            assertThat(wrongMethodUnauth.headers().firstValue("Allow")).isEmpty();
 
             // 3. Chunked transfer (unknown Content-Length) -> 411 Length Required.
             var chunked = client.send(

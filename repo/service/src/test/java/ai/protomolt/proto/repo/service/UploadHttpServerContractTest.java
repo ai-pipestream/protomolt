@@ -76,7 +76,27 @@ class UploadHttpServerContractTest {
                     .build());
             assertThat(response.statusCode()).as(method).isEqualTo(405);
             assertThat(response.body()).contains("method not allowed");
+            // RFC 9110 section 15.5.6: a 405 names the methods the route does support.
+            assertThat(response.headers().allValues("Allow")).as(method).containsExactly("POST");
         }
+    }
+
+    @Test
+    void everyRouteDeclaresThe405ItAnswersAndAtLeastOneMethod() {
+        assertThat(UploadHttpServer.routeContracts()).allSatisfy(route -> {
+            assertThat(route.successStatusCodes()).as(route.routeId()).contains(405);
+            assertThat(route.httpMethods()).as(route.routeId()).isNotEmpty();
+        });
+        // A route with no methods could only answer 405 with an empty Allow header.
+        UploadHttpServer.RouteContract declared = UploadHttpServer.routeContracts().getFirst();
+        assertThatThrownBy(() -> new UploadHttpServer.RouteContract(
+                declared.routeId(), declared.pathTemplate(), java.util.List.of(),
+                declared.pathParameters(), declared.requiredQueryParameters(),
+                declared.requestMediaType(), declared.responseMediaType(),
+                declared.requestType(), declared.responseType(),
+                declared.successStatusCodes(), declared.authRequired(), declared.stability()))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("httpMethods");
     }
 
     @Test

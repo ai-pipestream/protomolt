@@ -322,6 +322,37 @@ class IntakeHttpServerTest {
     }
 
     @Test
+    void aNonPostWithoutAnApiKeyIsStill405WithAllow() throws Exception {
+        // Deliberate, and unlike the repository upload routes: this server checks the path
+        // and method before it reads the API key, so the 405 does not depend on a credential.
+        for (String method : new String[] {"GET", "PUT", "DELETE"}) {
+            HttpResponse<String> response =
+                    client.send(
+                            HttpRequest.newBuilder(URI.create(base + IntakeHttpServer.UPLOAD_PATH))
+                                    .method(method, HttpRequest.BodyPublishers.noBody())
+                                    .build(),
+                            HttpResponse.BodyHandlers.ofString());
+            assertThat(response.statusCode()).as(method).isEqualTo(405);
+            assertThat(response.headers().allValues("Allow")).as(method).containsExactly("POST");
+        }
+        assertThat(repo.saves).isEmpty();
+    }
+
+    @Test
+    void aRouteContractWithoutMethodsIsRefused() {
+        // A route with no methods could only answer 405 with an empty Allow header.
+        IntakeHttpServer.RouteContract declared = IntakeHttpServer.routeContracts().getFirst();
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> new IntakeHttpServer.RouteContract(
+                        declared.routeId(), declared.pathTemplate(), java.util.List.of(),
+                        declared.pathParameters(), declared.requiredQueryParameters(),
+                        declared.requestMediaType(), declared.responseMediaType(),
+                        declared.requestType(), declared.responseType(),
+                        declared.successStatusCodes(), declared.authRequired(), declared.stability()))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("httpMethods");
+    }
+
+    @Test
     void every405CarriesTheRoutesAllowHeader() throws Exception {
         for (String method : new String[] {"PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"}) {
             HttpResponse<String> response =

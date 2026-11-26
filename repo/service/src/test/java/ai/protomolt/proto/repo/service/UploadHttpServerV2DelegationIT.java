@@ -183,6 +183,25 @@ class UploadHttpServerV2DelegationIT {
         assertThat(receipt.getOperationId()).isNotBlank();
     }
 
+    @Test void aDisallowedMethodOnTheDocumentRouteIs405WithAllow() throws Exception {
+        URI target = URI.create("http://127.0.0.1:" + server.port() + UploadHttpServer.UPLOAD_PATH);
+        for (String method : new String[] {"GET", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"}) {
+            var response = client.send(HttpRequest.newBuilder(target)
+                    .header("api_token", TOKEN)
+                    .method(method, HttpRequest.BodyPublishers.noBody())
+                    .build(), HttpResponse.BodyHandlers.ofString());
+
+            assertThat(response.statusCode()).as(method).isEqualTo(405);
+            // RFC 9110 section 15.5.6: a 405 names the methods the route does support.
+            assertThat(response.headers().allValues("Allow")).as(method).containsExactly("POST");
+        }
+        // The credential check runs first, so a probe without one learns no method list.
+        var unauthenticated = client.send(HttpRequest.newBuilder(target).GET().build(),
+                HttpResponse.BodyHandlers.ofString());
+        assertThat(unauthenticated.statusCode()).isEqualTo(401);
+        assertThat(unauthenticated.headers().firstValue("Allow")).isEmpty();
+    }
+
     @Test void bothRoutesDemandTheOneOperatorCredential() throws Exception {
         byte[] body = "x".getBytes(StandardCharsets.UTF_8);
         var document = post(UploadHttpServer.UPLOAD_PATH

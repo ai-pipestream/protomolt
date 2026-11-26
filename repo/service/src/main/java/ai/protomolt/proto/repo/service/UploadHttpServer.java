@@ -119,6 +119,10 @@ public final class UploadHttpServer implements AutoCloseable {
             Objects.requireNonNull(routeId, "routeId");
             Objects.requireNonNull(pathTemplate, "pathTemplate");
             httpMethods = List.copyOf(Objects.requireNonNull(httpMethods, "httpMethods"));
+            if (httpMethods.isEmpty()) {
+                // A route with no methods could only answer 405 with an empty Allow header.
+                throw new IllegalArgumentException("httpMethods must name at least one method");
+            }
             pathParameters = List.copyOf(Objects.requireNonNull(pathParameters, "pathParameters"));
             requiredQueryParameters = List.copyOf(
                     Objects.requireNonNull(requiredQueryParameters, "requiredQueryParameters"));
@@ -151,7 +155,7 @@ public final class UploadHttpServer implements AutoCloseable {
             "application/json; charset=utf-8",
             "bytes",
             "ai.protomolt.proto.repo.v2.UploadDocumentResponse",
-            List.of(200, 400, 401, 403, 404, 409, 411, 429, 503),
+            List.of(200, 400, 401, 403, 404, 405, 409, 411, 429, 503),
             true,
             StabilityTier.STABLE);
 
@@ -165,7 +169,7 @@ public final class UploadHttpServer implements AutoCloseable {
             "application/protobuf",
             "bytes",
             "ai.protomolt.proto.repo.archive.v1.UploadRenditionResponse",
-            List.of(200, 400, 401, 403, 404, 409, 411, 429, 502, 503),
+            List.of(200, 400, 401, 403, 404, 405, 409, 411, 429, 502, 503),
             true,
             StabilityTier.STABLE);
 

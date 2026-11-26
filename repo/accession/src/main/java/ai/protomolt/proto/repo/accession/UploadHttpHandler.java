@@ -60,6 +60,7 @@ public final class UploadHttpHandler implements HttpHandler {
     public static final String UPLOAD_PATH = "/v1/documents:upload";
 
     private static final String METHOD_POST = "POST";
+    private static final String HEADER_ALLOW = "Allow";
     private static final String HEADER_API_TOKEN = "api_token";
     private static final String HEADER_AUTHORIZATION = "Authorization";
     private static final String BEARER_PREFIX = "Bearer ";
@@ -197,6 +198,9 @@ public final class UploadHttpHandler implements HttpHandler {
                 return;
             }
             if (!METHOD_POST.equalsIgnoreCase(exchange.getRequestMethod())) {
+                // RFC 9110 section 15.5.6: a 405 names the methods the route supports. The
+                // caller is already resolved here, so an unauthenticated probe never sees it.
+                exchange.getResponseHeaders().set(HEADER_ALLOW, METHOD_POST);
                 sendError(exchange, proto, HTTP_METHOD_NOT_ALLOWED, Status.Code.UNIMPLEMENTED, "Method not allowed");
                 return;
             }
