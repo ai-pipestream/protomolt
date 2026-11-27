@@ -167,6 +167,30 @@ class SharePointSecurityMappingTest {
     }
 
     @Test
+    void ofTheGroupsOfSharingLinksOnlyALinkForNamedPeopleLinksItsMembers() throws Exception {
+        String group = """
+                site_id: "host,coll,web"
+                group { id: 43 title: "SharingLinks.i-1.%s.s-43"
+                  sharing_link { item_unique_id: "i-1" kind: "%s" share_id: "s-43" scope: "%s" } }
+                members { id: 20 principal_type: SITE_PRINCIPAL_TYPE_USER user_principal_name: "ada@contoso.com" }
+                members { id: 30 principal_type: SITE_PRINCIPAL_TYPE_SECURITY_GROUP directory_object_id: "g-1" }
+                completeness: ACL_COMPLETENESS_COMPLETE
+                """;
+        assertThat(mapIdentityLinks(registry, links, Map.of("group", parseText(siteGroupMembers,
+                group.formatted("Flexible", "Flexible", "users"))), "sp-links"))
+                .extracting(l -> l.getFrom().getIdentityType() + ":" + l.getFrom().getIdentity() + " -> "
+                        + l.getTo().getIdentityType() + ":" + l.getTo().getIdentity())
+                .containsExactly("user-principal-name:ada@contoso.com -> sharepoint-group:host,coll,web/43",
+                        "entra-group:g-1 -> sharepoint-group:host,coll,web/43");
+        for (String[] link : List.of(new String[] {"OrganizationView", "organization"},
+                new String[] {"OrganizationEdit", "organization"}, new String[] {"AnonymousView", "anonymous"},
+                new String[] {"LaterKind", ""})) {
+            assertThat(mapIdentityLinks(registry, links, Map.of("group", parseText(siteGroupMembers,
+                    group.formatted(link[0], link[0], link[1]))), "sp-links")).as(link[0]).isEmpty();
+        }
+    }
+
+    @Test
     void groupMembersAndNestedGroupsLinkToTheEntraGroup() throws Exception {
         String change = """
                 group { id: "g-parent" }
