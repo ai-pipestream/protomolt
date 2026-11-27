@@ -259,6 +259,9 @@ unless disabled, the HTTP upload route. To embed in-JVM instead, use
 | `DOCUMENT_PLATFORM_KAFKA_TOPIC` | `document-events` | The document-events topic the v2 outbox relay publishes to |
 | `DOCUMENT_PLATFORM_SCHEMA_REGISTRY_URL` | _(none)_ | Confluent-compatible schema registry for the relay's serde; unset = registry-free (frames stamp schema id 0, which only protomolt consumers resolve) |
 | `DOCUMENT_PLATFORM_SEED_ACCOUNT_ID` | _(none)_ | Standalone default account: at boot the service idempotently ensures this account's `intake` and `pipeline` drives exist; unset = no seeding. Permanent namespace once used — never change it against an existing store (see below) |
+| `DOCUMENT_PLATFORM_REFLECTED_SCHEMA_TARGETS` | _(none)_ | Comma-separated `host:port` gRPC servers whose message types the repository admits by reading their descriptors over server reflection (see below); unset = only compiled-in and module-contributed types resolve |
+| `DOCUMENT_PLATFORM_REFLECTED_SCHEMA_TLS` | `false` | `true` dials every reflected schema target with TLS |
+| `DOCUMENT_PLATFORM_REFLECTED_SCHEMA_TIMEOUT_MS` | `5000` | Deadline of one reflection lookup, 1 to 60000 ms |
 
 ### Standalone default account
 
@@ -279,6 +282,39 @@ pre-creates the drives, it never defaults request fields. Embedded hosts
 been used. The account id is baked into identity hashes and S3 prefixes —
 changing it against an existing store strands every object and row written
 under the old id. Pick it once and keep it.
+
+### Schemas read over server reflection
+
+A typed `Any` resolves only against a definition the host holds: the repository
+contract, a co-mounted module's contributed descriptors, or, with
+`DOCUMENT_PLATFORM_REFLECTED_SCHEMA_TARGETS` set, a message type one of the named
+gRPC servers defines. The last lets a producing service that owns its document
+model (a parser saving `parser_results[<name>].document.shape`) save typed content
+without its `.proto` files being copied into this build: the server already
+describes itself over the gRPC server-reflection protocol, and the repository
+reads the type's descriptor closure from it.
+
+- The host names the servers; a save never does. A type the contract or a module
+  defines is never asked of them, so a reflection source cannot redefine it.
+- Every admission that needs such a type asks again (`ReflectionClient.closure`,
+  one exchange per file of the closure). The save is validated against the
+  descriptor the server serves at that save, so a schema the producer has
+  extended is not decoded with a stale copy, and an older repository process
+  needs no restart. Built definitions are kept by the SHA-256 of the closure,
+  never by type name.
+- The revision retains that descriptor closure like any other schema artifact,
+  so history decodes with the schema of its save whatever the server serves later.
+  The asset's provenance records the origin as an imported descriptor read over
+  reflection, and names the target.
+- A server that answers it does not know the type leaves the save
+  `SCHEMA_MISSING`. A server that cannot be asked, or whose descriptors do not
+  link or do not declare the type, fails the save `UNAVAILABLE` ("Schema registry
+  unavailable"); an outage is never recorded as a missing schema.
+- A bad setting fails the boot. An unreachable target does not: it fails only
+  the saves that need it. Each of those redials the target instead of waiting
+  out the channel's reconnect backoff, so saves resume when the server does;
+  the save that started the dial is still answered `UNAVAILABLE` and commits
+  on its retry.
 
 ## API surface
 
