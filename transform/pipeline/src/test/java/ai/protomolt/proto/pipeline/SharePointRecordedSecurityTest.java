@@ -34,6 +34,7 @@ import static ai.protomolt.proto.pipeline.AclMappingTestSupport.mapSecurity;
 import static ai.protomolt.proto.pipeline.AclMappingTestSupport.parseText;
 import static ai.protomolt.proto.pipeline.AclMappingTestSupport.principal;
 import static ai.protomolt.proto.pipeline.AclMappingTestSupport.readDelimited;
+import static ai.protomolt.proto.pipeline.AclMappingTestSupport.reads;
 import static ai.protomolt.proto.pipeline.AclMappingTestSupport.writeAndVerifySearchFixture;
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -182,6 +183,90 @@ class SharePointRecordedSecurityTest {
     }
 
     @Test
+    void theRecordedSharedFileIsReadThroughItsLinkForNamedPeopleAndItsInvitedGroupOnly() throws Exception {
+        List<DynamicMessage> records = readDelimited(entity, "acl/sharepoint-sync-records.binpb");
+        Map<String, DynamicMessage> shared = new LinkedHashMap<>();
+        List<String> owners = new ArrayList<>();
+        Map<String, DynamicMessage> linkGroups = new LinkedHashMap<>();
+        for (DynamicMessage record : records) {
+            FieldDescriptor arm = record.getOneofFieldDescriptor(entity.getOneofs().getFirst());
+            Message value = (Message) record.getField(arm);
+            switch (arm.getName()) {
+                case "site_acl" -> {
+                    if (assignments(value).stream().anyMatch(a -> linkScope(member(a)) != null)) {
+                        shared.put(field(record, "entity_id").toString(), (DynamicMessage) value);
+                    }
+                }
+                case "site_group" -> {
+                    Message group = (Message) field(value, "group");
+                    if (linkScope(group) != null) {
+                        linkGroups.put(field(group, "id").toString(), (DynamicMessage) value);
+                    }
+                }
+                case "drive_item" -> owners.add(field(value, "acl_owner_id").toString());
+                default -> {
+                }
+            }
+        }
+        assertThat(shared).as("role assignment sets that name a link group").hasSize(1);
+        String aclId = shared.keySet().iterator().next();
+        DynamicMessage acl = shared.get(aclId);
+        assertThat(aclId).as("the shared file has role assignments of its own").contains("/list_item/");
+        assertThat(owners).as("a file under those role assignments").contains(aclId);
+
+        String site = siteOf(acl);
+        Map<String, String> groupOfScope = new LinkedHashMap<>();
+        String invited = null;
+        for (Message assignment : assignments(acl)) {
+            Message member = member(assignment);
+            String scope = linkScope(member);
+            if (scope != null) {
+                assertThat(levels(assignment)).as("the level of the %s link group", scope).containsExactly("Read");
+                groupOfScope.put(scope, field(member, "id").toString());
+            } else if (!field(member, "directory_object_id").toString().isEmpty()) {
+                invited = field(member, "directory_object_id").toString();
+                assertThat(levels(assignment)).as("the level of the invited group").containsExactly("Contribute");
+            }
+        }
+        assertThat(groupOfScope).containsOnlyKeys("organization", "users");
+        assertThat(invited).as("the invited directory group").isNotNull();
+        String namedPeople = "sharepoint-group:" + site + "/" + groupOfScope.get("users");
+        String organization = "sharepoint-group:" + site + "/" + groupOfScope.get("organization");
+
+        DocumentSecurity security = map(acl);
+        assertThat(security.getPermissionsList()).extracting(r -> r.getIdentityType() + ":" + r.getIdentity())
+                .contains(namedPeople, "entra-group:" + invited)
+                .doesNotContain(organization);
+        assertThat(reads(security, namedPeople)).as("the link for named people").isTrue();
+        assertThat(reads(security, organization)).as("the organization link").isFalse();
+        assertThat(reads(security, "entra-group:" + invited)).as("the invited group on the file").isTrue();
+
+        String upn = entraUpns().getFirst();
+        List<IdentityLink> throughTheLink = new ArrayList<>(entraLinksOfRecordedUsers());
+        throughTheLink.addAll(mapIdentityLinks(registry, links,
+                Map.of("group", linkGroups.get(groupOfScope.get("users"))), "sp-identity"));
+        assertThat(throughTheLink).as("the user granted on the link is a member of its group")
+                .anySatisfy(l -> assertThat(l.getTo()).isEqualTo(principal(namedPeople)));
+        assertThat(allows(new CallerIdentityExpansion(throughTheLink).expand(caller("user-principal-name:" + upn)),
+                security)).as("the granted user through the link's group alone").isTrue();
+
+        List<IdentityLink> redeemed = new ArrayList<>(entraLinksOfRecordedUsers());
+        redeemed.add(IdentityLink.newBuilder().setFrom(principal("user-principal-name:" + upn))
+                .setTo(principal(organization)).build());
+        assertThat(allows(new CallerIdentityExpansion(redeemed).expand(caller("user-principal-name:" + upn)),
+                security)).as("a member of the organization link's group and nothing else").isFalse();
+
+        DynamicMessage siteAclRecord = recordedSiteAcl();
+        String invitedGroup = invited;
+        assertThat(assignments(siteAclRecord)).as("the invited group on the site")
+                .filteredOn(a -> field(member(a), "directory_object_id").toString().equals(invitedGroup))
+                .singleElement()
+                .satisfies(a -> assertThat(levels(a)).containsExactly("Limited Access"));
+        assertThat(reads(map(siteAclRecord), "entra-group:" + invited))
+                .as("Limited Access on the site lets the invited group read nothing there").isFalse();
+    }
+
+    @Test
     void writesTheSearchFixtureFromTheRecordedLiveRecords(@TempDir Path out) throws Exception {
         Recorded recorded = recorded();
         Map<String, RepositoryCaller> callers = callers(recorded, entraUpns().getFirst());
@@ -319,6 +404,26 @@ class SharePointRecordedSecurityTest {
             out.addAll(mapIdentityLinks(registry, entraLinks, Map.of("user", user), "entra-identity"));
         }
         return out;
+    }
+
+    private static List<Message> assignments(Message acl) {
+        return ((List<?>) field(acl, "assignments")).stream().map(Message.class::cast).toList();
+    }
+
+    private static Message member(Message assignment) {
+        return (Message) field(assignment, "member");
+    }
+
+    private static List<String> levels(Message assignment) {
+        return ((List<?>) field(assignment, "roles")).stream()
+                .map(r -> field((Message) r, "name").toString()).toList();
+    }
+
+    /** Scope of the sharing link a group or principal stands for; {@code null} when it stands for none. */
+    private static String linkScope(Message groupOrPrincipal) {
+        FieldDescriptor link = groupOrPrincipal.getDescriptorForType().findFieldByName("sharing_link");
+        return groupOrPrincipal.hasField(link)
+                ? field((Message) groupOrPrincipal.getField(link), "scope").toString() : null;
     }
 
     private static String siteOf(Message acl) {
