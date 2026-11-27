@@ -322,20 +322,69 @@ class IntakeHttpServerTest {
     }
 
     @Test
-    void aNonPostWithoutAnApiKeyIsStill405WithAllow() throws Exception {
-        // Deliberate, and unlike the repository upload routes: this server checks the path
-        // and method before it reads the API key, so the 405 does not depend on a credential.
+    void aNonPostWithoutAValidApiKeyIs401WithoutAllow() throws Exception {
+        // The API key is checked before the method, as on the repository upload routes, so
+        // a caller without a valid key never learns the route's method list.
         for (String method : new String[] {"GET", "PUT", "DELETE"}) {
-            HttpResponse<String> response =
+            HttpResponse<String> missing =
                     client.send(
                             HttpRequest.newBuilder(URI.create(base + IntakeHttpServer.UPLOAD_PATH))
                                     .method(method, HttpRequest.BodyPublishers.noBody())
                                     .build(),
                             HttpResponse.BodyHandlers.ofString());
-            assertThat(response.statusCode()).as(method).isEqualTo(405);
-            assertThat(response.headers().allValues("Allow")).as(method).containsExactly("POST");
+            assertThat(missing.statusCode()).as(method).isEqualTo(401);
+            assertThat(missing.headers().firstValue("Allow")).as(method).isEmpty();
+
+            HttpResponse<String> unknown =
+                    client.send(
+                            HttpRequest.newBuilder(URI.create(base + IntakeHttpServer.UPLOAD_PATH))
+                                    .header("x-api-key", "no-such-key")
+                                    .method(method, HttpRequest.BodyPublishers.noBody())
+                                    .build(),
+                            HttpResponse.BodyHandlers.ofString());
+            assertThat(unknown.statusCode()).as(method).isEqualTo(401);
+            assertThat(unknown.headers().firstValue("Allow")).as(method).isEmpty();
         }
         assertThat(repo.saves).isEmpty();
+    }
+
+    @Test
+    void theApiKeyIsCheckedBeforeTheRouteIsMatched() throws Exception {
+        // The handler is reached for any path under the registered prefix. Without a valid
+        // key a probe of one answers the same 401 as the route itself, not 404; with one,
+        // the inexact path is the 404 it always was.
+        URI inexact = URI.create(base + IntakeHttpServer.UPLOAD_PATH + "/probe");
+        HttpResponse<String> unauthenticated =
+                client.send(
+                        HttpRequest.newBuilder(inexact)
+                                .POST(HttpRequest.BodyPublishers.ofString("x"))
+                                .build(),
+                        HttpResponse.BodyHandlers.ofString());
+        assertThat(unauthenticated.statusCode()).isEqualTo(401);
+
+        HttpResponse<String> authenticated =
+                client.send(
+                        HttpRequest.newBuilder(inexact)
+                                .header("x-api-key", KEY_UNRESTRICTED)
+                                .POST(HttpRequest.BodyPublishers.ofString("x"))
+                                .build(),
+                        HttpResponse.BodyHandlers.ofString());
+        assertThat(authenticated.statusCode()).isEqualTo(404);
+        assertThat(authenticated.body()).contains("unknown route");
+        assertThat(repo.saves).isEmpty();
+    }
+
+    @Test
+    void aKeyStoreFailureOnANonPostIs500NotA405() throws Exception {
+        HttpResponse<String> response =
+                client.send(
+                        HttpRequest.newBuilder(URI.create(base + IntakeHttpServer.UPLOAD_PATH))
+                                .header("x-api-key", KEY_BOOM)
+                                .GET()
+                                .build(),
+                        HttpResponse.BodyHandlers.ofString());
+        assertThat(response.statusCode()).isEqualTo(500);
+        assertThat(response.headers().firstValue("Allow")).isEmpty();
     }
 
     @Test

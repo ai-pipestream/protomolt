@@ -74,10 +74,11 @@ import org.slf4j.LoggerFactory;
  * gRPC lanes' PERMISSION_DENIED; cap breaches are 413, checked against the
  * declared Content-Length BEFORE the body is buffered and again while
  * reading; a missing Content-Length is 411 (mirroring repo's route); non-POST
- * is 405 with an {@code Allow: POST} header. The path and method are checked
- * before the API key is read, so the 404 and 405 answers do not depend on a
- * credential: the route and its one method are public contract, not a secret.
- * A failed repo save maps NOT_FOUND to 404, FAILED_PRECONDITION to
+ * is 405 with an {@code Allow: POST} header. The API key is checked before
+ * the path and the method, as on the repository upload routes: a request
+ * without a valid key is 401 (500 when the key store fails) whatever its path
+ * or method, so the 404 and 405 answers, and the {@code Allow} header, are
+ * only ever sent to an authenticated caller. A failed repo save maps NOT_FOUND to 404, FAILED_PRECONDITION to
  * 409, INVALID_ARGUMENT to 400, and anything else to 502. Every error body is
  * JSON: {@code {"error": "..."}}.
  *
@@ -291,6 +292,10 @@ public final class IntakeHttpServer implements AutoCloseable {
 
     private void handle(HttpExchange exchange) throws IOException {
         try {
+            // The API key comes first, as on the repository upload routes: a request without
+            // a valid key answers 401 (or 500 when the key store fails) whatever its path or
+            // method, so it learns neither whether the path is the route nor its method list.
+            IntakeScope scope = authenticate(exchange);
             // createContext prefix-matches; only the exact path is the route.
             if (!INTAKE_UPLOAD_ROUTE.pathTemplate().equals(exchange.getRequestURI().getPath())) {
                 throw new HttpError(404, "unknown route " + exchange.getRequestURI().getPath());
@@ -298,7 +303,7 @@ public final class IntakeHttpServer implements AutoCloseable {
             if (!INTAKE_UPLOAD_ROUTE.allowsMethod(exchange.getRequestMethod())) {
                 throw methodNotAllowed(exchange, INTAKE_UPLOAD_ROUTE.allowHeader());
             }
-            writeJson(exchange, 200, upload(exchange));
+            writeJson(exchange, 200, upload(exchange, scope));
         } catch (HttpError e) {
             writeError(exchange, e.status, e.getMessage());
         } catch (StatusRuntimeException e) {
@@ -313,8 +318,7 @@ public final class IntakeHttpServer implements AutoCloseable {
         }
     }
 
-    private IngestDocumentResponse upload(HttpExchange exchange) throws IOException {
-        IntakeScope scope = authenticate(exchange);
+    private IngestDocumentResponse upload(HttpExchange exchange, IntakeScope scope) throws IOException {
         Map<String, String> query = parseQuery(exchange.getRequestURI().getRawQuery());
         requireNoAccountParam(exchange, query);
         String datasourceId = identity(exchange, query, "datasource_id", "x-datasource-id");
