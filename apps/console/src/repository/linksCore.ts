@@ -8,6 +8,12 @@
 import { create } from '@bufbuild/protobuf'
 import type { NodeAddress } from '@/gen/ai/protomolt/proto/repo/v1/address_pb'
 import {
+  ExternalBindingLifecycleSchema,
+  ExternalProjectionLifecycleSchema,
+  ExternalServingVisibilitySchema,
+  type ExternalLink,
+} from '@/gen/ai/protomolt/proto/repo/external/v1/external_publication_pb'
+import {
   DocumentSortFieldSchema,
   ListBacklinksRequestSchema,
   ListLinksRequestSchema,
@@ -28,20 +34,89 @@ import { enumLabel, instant } from './formatCore'
 /** Targets per ResolveLink page and backlinks per ListBacklinks page. */
 export const LINK_PAGE_SIZE = 50
 
+const FORBIDDEN_EXTERNAL_QUERY_KEYS = new Set([
+  'access_token',
+  'bearer',
+  'token',
+  'id_token',
+  'api_key',
+  'apikey',
+  'client_secret',
+  'password',
+  'secret',
+  'sig',
+  'x-amz-signature',
+  'x-amz-credential',
+  'x-goog-signature',
+])
+
 /**
- * The href an extension relation or concept URI may carry: the URL itself when
- * it parses as an absolute `http:` or `https:` URL, otherwise null and the
- * value is shown as text. `javascript:`, `data:`, `vbscript:`, relative and
- * unparseable values never become a link.
+ * The href an extension relation, concept URI, or external display URL may
+ * carry: the URL itself when it parses as an absolute `http:` or `https:` URL
+ * with no embedded userinfo and no bearer/credential query parameters,
+ * otherwise null and the value is shown as text. `javascript:`, `data:`,
+ * `vbscript:`, bearer URLs, relative and unparseable values never become a link.
  */
 export function safeExternalHref(raw: string): string | null {
+  if (raw.length === 0 || raw.trim() !== raw) return null
   let url: URL
   try {
     url = new URL(raw)
   } catch {
     return null
   }
-  return url.protocol === 'https:' || url.protocol === 'http:' ? url.href : null
+  if (url.protocol !== 'https:' && url.protocol !== 'http:') return null
+  if (url.username !== '' || url.password !== '') return null
+  if (carriesCredentialKey(url.searchParams)) return null
+  // A fragment carries tokens as readily as a query does, either as the whole fragment or
+  // after a '?' inside it (a single-page route).
+  const fragment = url.hash.startsWith('#') ? url.hash.slice(1) : url.hash
+  if (carriesCredentialKey(new URLSearchParams(fragment))) return null
+  const routeQuery = fragment.indexOf('?')
+  if (routeQuery >= 0 && carriesCredentialKey(new URLSearchParams(fragment.slice(routeQuery + 1)))) {
+    return null
+  }
+  return url.href
+}
+
+function carriesCredentialKey(params: URLSearchParams): boolean {
+  for (const [key, value] of params) {
+    if (FORBIDDEN_EXTERNAL_QUERY_KEYS.has(key.toLowerCase())) return true
+    if (isCredentialMaterial(value)) return true
+  }
+  return false
+}
+
+/**
+ * Recognizes a parameter value that is itself a credential, whatever its key is called: an HTTP
+ * Bearer or Basic authorization value, a PEM block, or a compact JWT. This catches the plain
+ * cases; it cannot prove a value is not a secret. Mirrors the server's display URL validator.
+ */
+function isCredentialMaterial(value: string): boolean {
+  const lower = value.toLowerCase()
+  if (lower.includes('-----begin ')) return true
+  for (const scheme of ['bearer ', 'basic ']) {
+    if (lower.startsWith(scheme)) {
+      const token = value.slice(scheme.length)
+      if (token !== '' && !token.includes(' ') && token.length >= 8) return true
+    }
+  }
+  return looksLikeCompactJwt(value)
+}
+
+/** Three dot-separated base64url segments, the first beginning as an encoded JSON object. */
+function looksLikeCompactJwt(value: string): boolean {
+  if (!value.startsWith('eyJ')) return false
+  const segments = value.split('.')
+  if (segments.length !== 3) return false
+  return segments.every((segment) => {
+    for (let i = 0; i < segment.length; i++) {
+      const c = segment.charCodeAt(i)
+      const alphaNum = (c >= 0x30 && c <= 0x39) || (c >= 0x41 && c <= 0x5a) || (c >= 0x61 && c <= 0x7a)
+      if (!alphaNum && c !== 0x2d && c !== 0x5f) return false
+    }
+    return true
+  })
 }
 
 /**
@@ -439,4 +514,107 @@ export function buildLinkNeighborhoodGraph(
   })
 
   return { width, height, nodes, edges }
+}
+
+/**
+ * Joins key components so that different component lists never give the same key, whatever
+ * characters the components hold: each is written with its length, and an absent component
+ * is marked apart from an empty one.
+ */
+export function unambiguousKey(parts: readonly (string | bigint | null)[]): string {
+  return parts
+    .map((part) => {
+      if (part === null) return '~'
+      const text = part.toString()
+      return `${text.length}:${text}`
+    })
+    .join('|')
+}
+
+/**
+ * One confirmed external-system derived artifact projection.
+ * Canonical identity comes exclusively from bindingId + bindingRevision +
+ * externalObjectId (+ optional externalVersion) and exact sourceRevision.
+ * displayHref is optional guarded navigation metadata, never identity or auth.
+ */
+export interface ExternalLinkRow {
+  key: string
+  bindingId: string
+  bindingRevision: bigint
+  provider: string
+  dataset: string
+  namespace: string
+  contractVersion: string
+  endpointSummary: string | null
+  bindingLifecycle: string
+  externalObjectId: string
+  externalVersion: string | null
+  sourceCall: CallNumber
+  sourceRevision: bigint
+  projectionLifecycle: string
+  confirmedByOperationId: string
+  confirmedAt: string | null
+  providerReceiptId: string
+  servingVisibility: string | null
+  displayHref: string | null
+}
+
+export function externalLinkRow(link: ExternalLink): ExternalLinkRow {
+  if (link.sourceAddress === undefined) {
+    throw new Error(`ExternalLink for binding ${link.bindingId} is missing sourceAddress.`)
+  }
+  if (link.bindingSnapshot === undefined) {
+    throw new Error(`ExternalLink for binding ${link.bindingId} is missing bindingSnapshot.`)
+  }
+  if (link.confirmationEvidence === undefined) {
+    throw new Error(`ExternalLink for binding ${link.bindingId} is missing confirmationEvidence.`)
+  }
+  const sourceCall = callNumberOf(link.sourceAddress)
+  const snapshot = link.bindingSnapshot
+  const endpoint = snapshot.endpointSummary
+  const endpointSummary =
+    endpoint === undefined
+      ? null
+      : `${endpoint.tlsEnabled ? 'tls' : 'plaintext'}://${endpoint.host}:${endpoint.port}`
+  const servingVisibility =
+    link.managedSearch === undefined
+      ? null
+      : enumLabel(ExternalServingVisibilitySchema, link.managedSearch.servingVisibility)
+  return {
+    // Everything that tells two projections apart: the same source and binding revision can
+    // have been projected to different objects or object versions, and in different accounts.
+    key: unambiguousKey([
+      link.bindingId,
+      link.bindingRevision,
+      link.sourceAddress.accountId,
+      sourceCall.graphId,
+      sourceCall.graphAddressId,
+      sourceCall.docId,
+      link.sourceRevision,
+      link.externalObjectId,
+      link.externalVersion ?? null,
+    ]),
+    bindingId: link.bindingId,
+    bindingRevision: link.bindingRevision,
+    provider: snapshot.provider,
+    dataset: snapshot.dataset,
+    namespace: snapshot.namespace,
+    contractVersion: snapshot.contractVersion,
+    endpointSummary,
+    bindingLifecycle: enumLabel(ExternalBindingLifecycleSchema, snapshot.lifecycle),
+    externalObjectId: link.externalObjectId,
+    externalVersion: link.externalVersion ?? null,
+    sourceCall,
+    sourceRevision: link.sourceRevision,
+    projectionLifecycle: enumLabel(ExternalProjectionLifecycleSchema, link.projectionLifecycle),
+    confirmedByOperationId: link.confirmedByOperationId,
+    confirmedAt: instant(link.confirmedAt),
+    providerReceiptId: link.confirmationEvidence.providerReceiptId,
+    servingVisibility,
+    displayHref: link.displayUrl !== undefined ? safeExternalHref(link.displayUrl) : null,
+  }
+}
+
+export function externalLinkRows(links: readonly ExternalLink[]): ExternalLinkRow[] {
+  return links.map(externalLinkRow)
 }

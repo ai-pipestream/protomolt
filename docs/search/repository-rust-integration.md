@@ -69,7 +69,9 @@ transport exists.
 **Identity and progress.** Use a collision-free encoding of the complete account
 and repository address as the logical search key. Persist the association between
 repository revision, mapping/policy generation and search history ID, allocated
-version and accepted sequence. Repository and search version numbers are different
+version and accepted sequence (see
+[versioned external-system bindings and ExternalLink publication receipts](../repo/external-links.md)).
+Repository and search version numbers are different
 domains. Pin history before writes; use stable operation IDs and a stable authorized
 actor for retries. Serialize each logical document's revisions, prevent delayed old
 work replacing newer content, and fence competing consumers. Keep accepted progress

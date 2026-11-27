@@ -1,0 +1,604 @@
+package ai.protomolt.proto.repo.accession.external;
+
+import static ai.protomolt.proto.repo.accession.external.ExternalLedgerStore.sha256Hex;
+
+import ai.protomolt.proto.repo.external.v1.ExternalPartDigest;
+import ai.protomolt.proto.repo.external.v1.ExternalProcessingIdentity;
+import ai.protomolt.proto.repo.semantic.v1.EmbeddingSetKey;
+import ai.protomolt.proto.repo.spi.DocumentAccessPolicy;
+import ai.protomolt.proto.repo.spi.RepositoryCaller;
+import ai.protomolt.proto.repo.spi.RepositoryException;
+import ai.protomolt.proto.repo.v1.Access;
+import ai.protomolt.proto.repo.v1.Document;
+import ai.protomolt.proto.repo.v1.DocumentSecurity;
+import ai.protomolt.proto.repo.v1.NodeAddress;
+import ai.protomolt.proto.repo.v1.OwnershipContext;
+import ai.protomolt.proto.repo.v1.RepositorySchemaAssetReference;
+import ai.protomolt.proto.repo.v2.DocumentManifest;
+import ai.protomolt.proto.repo.v2.DocumentPart;
+import ai.protomolt.proto.repo.v2.DocumentServiceGrpc;
+import ai.protomolt.proto.repo.v2.GetDocumentRequest;
+import ai.protomolt.proto.repo.v2.GetDocumentResponse;
+import ai.protomolt.proto.repo.v2.GetManifestRequest;
+import ai.protomolt.proto.repo.v2.GetManifestResponse;
+import ai.protomolt.proto.repo.v2.GetSchemaDescriptorRequest;
+import ai.protomolt.proto.repo.v2.GetSchemaDescriptorResponse;
+import ai.protomolt.proto.repo.v2.ListRevisionsRequest;
+import ai.protomolt.proto.repo.v2.ListRevisionsResponse;
+import ai.protomolt.proto.repo.v2.PartData;
+import ai.protomolt.proto.repo.v2.PartManifestEntry;
+import ai.protomolt.proto.repo.v2.PartSelection;
+import ai.protomolt.proto.repo.v2.PartSelector;
+import ai.protomolt.proto.repo.v2.PartState;
+import ai.protomolt.proto.repo.v2.ReadDocumentRequest;
+import ai.protomolt.proto.repo.v2.ReadDocumentResponse;
+import ai.protomolt.proto.repo.v2.RevisionSelector;
+import ai.protomolt.proto.repo.v2.RevisionValidation;
+import com.google.protobuf.ByteString;
+import com.google.protobuf.Descriptors;
+import com.google.protobuf.Message;
+import io.grpc.Status;
+import io.grpc.StatusRuntimeException;
+
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.HashMap;
+import java.util.HexFormat;
+import java.util.Iterator;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.Optional;
+import java.util.Set;
+
+/**
+ * Reads source documents through {@code DocumentService} on the caller's authority:
+ * verified exact-revision reads with streamed part digests, tombstone checks, and the
+ * read, mutation and reconcile access checks the coordinator applies before touching a
+ * ledger.
+ */
+final class ExternalSourceAccess {
+
+    private static final PartSelector CORE_SELECTOR =
+            PartSelector.newBuilder().setPart(DocumentPart.DOCUMENT_PART_CORE).build();
+
+    private static final PartSelection CORE_SELECTION =
+            PartSelection.newBuilder().addSelectors(CORE_SELECTOR).build();
+
+    private final DocumentServiceGrpc.DocumentServiceBlockingStub documents;
+    private final ExternalLedgerStore ledgers;
+    private final ExternalPublicationCaller caller;
+
+    ExternalSourceAccess(DocumentServiceGrpc.DocumentServiceBlockingStub documents,
+            ExternalLedgerStore ledgers, ExternalPublicationCaller caller) {
+        this.documents = documents;
+        this.ledgers = ledgers;
+        this.caller = caller;
+    }
+
+    ExternalPublicationCoordinator.VerifiedSourceSnapshot inspectSourceRevision(
+            NodeAddress sourceAddress, long sourceRevision) {
+        ExternalPublicationCoordinates.requireSourceAddress(sourceAddress);
+        if (sourceRevision <= 0L) {
+            throw Status.INVALID_ARGUMENT
+                    .withDescription("sourceRevision must be > 0")
+                    .asRuntimeException();
+        }
+        RevisionSelector exact = RevisionSelector.newBuilder()
+                .setRevision(sourceRevision)
+                .build();
+
+        GetManifestResponse manifestResp = documents.getManifest(
+                GetManifestRequest.newBuilder()
+                        .setAddress(sourceAddress)
+                        .setRevision(exact)
+                        .build());
+        DocumentManifest manifest = manifestResp.getManifest();
+        if (manifest.getTombstone()) {
+            throw Status.FAILED_PRECONDITION
+                    .withDescription("Source revision " + sourceRevision + " is a tombstone")
+                    .asRuntimeException();
+        }
+
+        Iterator<ReadDocumentResponse> stream = documents.readDocument(
+                ReadDocumentRequest.newBuilder()
+                        .setAddress(sourceAddress)
+                        .setRevision(exact)
+                        .build());
+
+        DocumentManifest streamedManifest = null;
+        boolean sawComplete = false;
+        // Digest each part as its chunks arrive; a part's bytes are never held in memory.
+        Map<PartSelector, StreamedPartDigest> digests = new HashMap<>();
+        while (stream.hasNext()) {
+            ReadDocumentResponse frame = stream.next();
+            if (frame.hasManifest()) {
+                streamedManifest = frame.getManifest();
+            } else if (frame.hasPartData()) {
+                PartData data = frame.getPartData();
+                StreamedPartDigest digest = digests.computeIfAbsent(
+                        data.getSelector(), ignored -> new StreamedPartDigest());
+                if (digest.length != data.getOffset()) {
+                    throw Status.DATA_LOSS
+                            .withDescription("Non-contiguous part stream offset")
+                            .asRuntimeException();
+                }
+                digest.update(data.getData());
+            } else if (frame.hasComplete()) {
+                sawComplete = true;
+            }
+        }
+        if (streamedManifest == null || !sawComplete) {
+            throw Status.DATA_LOSS
+                    .withDescription("ReadDocument ended without manifest and ReadComplete")
+                    .asRuntimeException();
+        }
+
+        List<ExternalPartDigest> verifiedParts = new ArrayList<>();
+        for (PartManifestEntry entry : streamedManifest.getPartsList()) {
+            if (entry.getState() != PartState.PART_STATE_PRESENT) {
+                continue;
+            }
+            StreamedPartDigest digest = digests.computeIfAbsent(
+                    entry.getSelector(), ignored -> new StreamedPartDigest());
+            if (digest.length != entry.getSizeBytes()) {
+                throw Status.DATA_LOSS
+                        .withDescription("Streamed part byte length mismatch on " + entry.getSelector())
+                        .asRuntimeException();
+            }
+            String actualSha = digest.sha256Hex();
+            if (!actualSha.equals(entry.getSha256())) {
+                throw Status.DATA_LOSS
+                        .withDescription("Streamed part SHA-256 mismatch on " + entry.getSelector())
+                        .asRuntimeException();
+            }
+            verifiedParts.add(toExternalPartDigest(entry.getSelector(), actualSha, digest.length));
+        }
+
+        Set<String> retainedSchemas = collectRetainedSchemaDigests(manifestResp.getValidation());
+        List<String> sortedSchemas = new ArrayList<>(retainedSchemas);
+        sortedSchemas.sort(Comparator.naturalOrder());
+        for (String schemaDigest : sortedSchemas) {
+            GetSchemaDescriptorResponse schemaResp = documents.getSchemaDescriptor(
+                    GetSchemaDescriptorRequest.newBuilder()
+                            .setAddress(sourceAddress)
+                            .setRevision(exact)
+                            .setDescriptorSha256(schemaDigest)
+                            .build());
+            String verifiedDigest = sha256Hex(schemaResp.getDescriptorSet().toByteArray());
+            if (!verifiedDigest.equals(schemaDigest)) {
+                throw Status.DATA_LOSS
+                        .withDescription("Retained schema descriptor digest mismatch: " + schemaDigest)
+                        .asRuntimeException();
+            }
+        }
+
+        GetDocumentResponse coreAtRevision = documents.getDocument(
+                GetDocumentRequest.newBuilder()
+                        .setAddress(sourceAddress)
+                        .setRevision(exact)
+                        .setSelection(CORE_SELECTION)
+                        .build());
+        DocumentSecurity security = coreAtRevision.getDocument()
+                .getOwnership()
+                .getSecurity();
+
+        return new ExternalPublicationCoordinator.VerifiedSourceSnapshot(
+                sourceAddress,
+                sourceRevision,
+                verifiedParts,
+                sortedSchemas,
+                security);
+    }
+
+    /** Running SHA-256 and byte count of one streamed part. */
+    private static final class StreamedPartDigest {
+        private final MessageDigest sha256;
+        private long length;
+
+        private StreamedPartDigest() {
+            try {
+                sha256 = MessageDigest.getInstance("SHA-256");
+            } catch (NoSuchAlgorithmException impossible) {
+                throw new IllegalStateException("SHA-256 unavailable", impossible);
+            }
+        }
+
+        private void update(ByteString chunk) {
+            for (java.nio.ByteBuffer buffer : chunk.asReadOnlyByteBufferList()) {
+                sha256.update(buffer);
+            }
+            length += chunk.size();
+        }
+
+        private String sha256Hex() {
+            return HexFormat.of().formatHex(sha256.digest());
+        }
+    }
+
+    LedgerAccess verifyCallerSourceAccessForMutation(NodeAddress sourceAddress) {
+        ListRevisionsResponse revisions = documents.listRevisions(
+                ListRevisionsRequest.newBuilder()
+                        .setAddress(sourceAddress)
+                        .setPageSize(1)
+                        .build());
+        if (revisions.getRevisionsCount() == 0) {
+            throw Status.NOT_FOUND
+                    .withDescription("Source document has no revisions")
+                    .asRuntimeException();
+        }
+        long latestRev = revisions.getRevisions(0).getRevision();
+        if (revisions.getRevisions(0).getTombstone()) {
+            // A tombstone carries no rules of its own. The source's last live revision decides
+            // who may publish, and its rules are the ones a ledger written now takes: a ledger
+            // first written here with no rules would be readable by nobody.
+            OwnershipContext lastLive = latestLiveOwnership(sourceAddress).ownership();
+            requireWrite(lastLive);
+            return LedgerAccess.liveSource(lastLive.getSecurity());
+        }
+        GetDocumentResponse latestCore = documents.getDocument(
+                GetDocumentRequest.newBuilder()
+                        .setAddress(sourceAddress)
+                        .setRevision(RevisionSelector.newBuilder().setRevision(latestRev))
+                        .setSelection(CORE_SELECTION)
+                        .build());
+        OwnershipContext ownership = latestCore.getDocument().getOwnership();
+        requireWrite(ownership);
+        return LedgerAccess.liveSource(ownership.getSecurity());
+    }
+
+    /**
+     * Publishing a document sends it outside the repository under the account's binding, so it
+     * takes the same right as editing it: WRITE on the source, as search engines tie indexing to
+     * write access on the index. Reading the source is not enough. Preparing its purge, which
+     * replaces the rules on its ledger, takes the same.
+     */
+    private void requireWrite(OwnershipContext ownership) {
+        requireAccess(ownership, Access.ACCESS_WRITE,
+                "Publishing requires WRITE access to the source document");
+    }
+
+    /**
+     * Checks {@code access} for the caller against {@code ownership}, the rules of a source
+     * revision the coordinator judges by, rather than leaving the decision to whatever
+     * document the coordinator reads next.
+     */
+    private void requireAccess(OwnershipContext ownership, Access access, String deniedDescription) {
+        requireSecurityAccess(ownership.getAccountId(), ownership.getSecurity(), access,
+                deniedDescription);
+    }
+
+    void requireLedgerWrite(
+            String accountId, DocumentSecurity security, String deniedDescription) {
+        requireSecurityAccess(accountId, security, Access.ACCESS_WRITE, deniedDescription);
+    }
+
+    private void requireSecurityAccess(
+            String accountId,
+            DocumentSecurity security,
+            Access access,
+            String deniedDescription) {
+        RepositoryCaller current = Objects.requireNonNull(caller.current(), "caller.current()");
+        boolean allowed;
+        try {
+            allowed = DocumentAccessPolicy.allows(current, accountId, security, null, access);
+        } catch (RepositoryException unresolved) {
+            throw Status.FAILED_PRECONDITION
+                    .withDescription("The source's access rules cannot be evaluated here: "
+                            + unresolved.getMessage())
+                    .asRuntimeException();
+        }
+        if (!allowed) {
+            throw Status.PERMISSION_DENIED
+                    .withDescription(deniedDescription)
+                    .asRuntimeException();
+        }
+    }
+
+    /** Access rules of the latest live source revision, and that revision. */
+    record SourceAccessRules(long sourceRevision, DocumentSecurity security) {
+    }
+
+    /**
+     * Reads the access rules a purge must leave on the ledger: those of the source's latest live
+     * revision, or, when the latest revision is a tombstone, of the live revision before it. The
+     * read is made as the caller, so a caller who may not read the source is refused by the
+     * repository; preparing a purge also takes WRITE on that revision, as publishing does.
+     *
+     * @throws StatusRuntimeException FAILED_PRECONDITION once the source is purged, or when no
+     *         live revision is within reach of the latest
+     */
+    SourceAccessRules accessRulesBeforePurge(NodeAddress sourceAddress) {
+        LiveRevision live;
+        try {
+            live = latestLiveOwnership(sourceAddress);
+        } catch (StatusRuntimeException e) {
+            if (e.getStatus().getCode() == Status.Code.NOT_FOUND) {
+                throw Status.FAILED_PRECONDITION
+                        .withDescription("Source document is already purged; a purge is prepared "
+                                + "before PurgeDocument removes it")
+                        .asRuntimeException();
+            }
+            throw e;
+        }
+        requireWrite(live.ownership());
+        return new SourceAccessRules(live.sourceRevision(), live.ownership().getSecurity());
+    }
+
+    private record LiveRevision(long sourceRevision, OwnershipContext ownership) {
+    }
+
+    /**
+     * The ownership of the source's latest live revision: the latest revision, or the one before
+     * it when the latest is a tombstone. Read as the caller.
+     *
+     * @throws StatusRuntimeException NOT_FOUND when the source is purged, or FAILED_PRECONDITION
+     *         when no live revision is within reach of the latest
+     */
+    private LiveRevision latestLiveOwnership(NodeAddress sourceAddress) {
+        ListRevisionsResponse revisions = documents.listRevisions(
+                ListRevisionsRequest.newBuilder()
+                        .setAddress(sourceAddress)
+                        .setPageSize(2)
+                        .build());
+        for (var summary : revisions.getRevisionsList()) {
+            if (summary.getTombstone()) {
+                continue;
+            }
+            GetDocumentResponse live = documents.getDocument(GetDocumentRequest.newBuilder()
+                    .setAddress(sourceAddress)
+                    .setRevision(RevisionSelector.newBuilder().setRevision(summary.getRevision()))
+                    .setSelection(CORE_SELECTION)
+                    .build());
+            return new LiveRevision(summary.getRevision(), live.getDocument().getOwnership());
+        }
+        throw Status.FAILED_PRECONDITION
+                .withDescription("Source document has no live revision next to its latest one; "
+                        + "there are no access rules to judge the caller by")
+                .asRuntimeException();
+    }
+
+    /** Whether the source's latest revision is a tombstone: the document is deleted now. */
+    boolean isCurrentlyTombstoned(NodeAddress sourceAddress) {
+        ListRevisionsResponse revisions = documents.listRevisions(
+                ListRevisionsRequest.newBuilder()
+                        .setAddress(sourceAddress)
+                        .setPageSize(1)
+                        .build());
+        return revisions.getRevisionsCount() > 0 && revisions.getRevisions(0).getTombstone();
+    }
+
+    LedgerAccess verifyTombstoneRevision(
+            NodeAddress sourceAddress, long tombstoneRevision) {
+        GetManifestResponse manifestResp = documents.getManifest(
+                GetManifestRequest.newBuilder()
+                        .setAddress(sourceAddress)
+                        .setRevision(RevisionSelector.newBuilder()
+                                .setRevision(tombstoneRevision))
+                        .build());
+        if (!manifestResp.getManifest().getTombstone()) {
+            throw Status.FAILED_PRECONDITION
+                    .withDescription("Source revision " + tombstoneRevision
+                            + " is not a tombstone")
+                    .asRuntimeException();
+        }
+        // Deleting the publications of a source changes what the provider serves for it, so it
+        // takes WRITE on the source's last live revision, as publishing does; a writer demoted
+        // to READ since the last publication is refused before anything is sent.
+        LiveRevision live = latestLiveOwnership(sourceAddress);
+        requireAccess(live.ownership(), Access.ACCESS_WRITE,
+                "Deleting this publication requires WRITE access to the source document's "
+                        + "last live revision");
+        return LedgerAccess.liveSource(live.ownership().getSecurity());
+    }
+
+    /**
+     * Requires that the source document no longer exists. Handling a purge deletes the external
+     * projection and fences the ledger for good, so it runs only once the repository has
+     * actually removed the document; a caller-supplied purge ID proves nothing by itself.
+     *
+     * @throws StatusRuntimeException FAILED_PRECONDITION while the document still has
+     *         revisions, or the repository's own refusal when the caller may not ask
+     */
+    void requireSourcePurged(NodeAddress sourceAddress) {
+        try {
+            documents.listRevisions(ListRevisionsRequest.newBuilder()
+                    .setAddress(sourceAddress)
+                    .setPageSize(1)
+                    .build());
+        } catch (StatusRuntimeException e) {
+            if (e.getStatus().getCode() == Status.Code.NOT_FOUND) {
+                return;
+            }
+            throw e;
+        }
+        throw Status.FAILED_PRECONDITION
+                .withDescription("Source document still exists; a purge is handled only after "
+                        + "PurgeDocument has removed it")
+                .asRuntimeException();
+    }
+
+    LedgerAccess authorizeReadOrReconcile(
+            NodeAddress sourceAddress, String bindingId) {
+        try {
+            ListRevisionsResponse revs = documents.listRevisions(
+                    ListRevisionsRequest.newBuilder()
+                            .setAddress(sourceAddress)
+                            .setPageSize(1)
+                            .build());
+            if (revs.getRevisionsCount() > 0 && !revs.getRevisions(0).getTombstone()) {
+                GetDocumentResponse latest = documents.getDocument(
+                        GetDocumentRequest.newBuilder()
+                                .setAddress(sourceAddress)
+                                .setRevision(RevisionSelector.newBuilder()
+                                        .setRevision(revs.getRevisions(0).getRevision()))
+                                .setSelection(CORE_SELECTION)
+                                .build());
+                return LedgerAccess.liveSource(latest.getDocument().getOwnership().getSecurity());
+            }
+            if (revs.getRevisionsCount() > 0) {
+                // Deleted, not yet purged. The ledger may still carry rules from an older
+                // publication; the caller is judged by the source's last live revision, which
+                // may have revoked them, and a ledger saved now takes those rules.
+                OwnershipContext lastLive = latestLiveOwnership(sourceAddress).ownership();
+                requireAccess(lastLive, Access.ACCESS_READ,
+                        "Reading this publication requires READ access to the source document's "
+                                + "last live revision");
+                return LedgerAccess.liveSource(lastLive.getSecurity());
+            }
+            return LedgerAccess.keep();
+        } catch (StatusRuntimeException e) {
+            if (e.getStatus().getCode() != Status.Code.NOT_FOUND) {
+                throw e;
+            }
+            NodeAddress ledgerAddr = ExternalPublicationCoordinates.ledgerAddress(
+                    sourceAddress.getAccountId(), bindingId, sourceAddress);
+            Optional<ExternalLedgerStore.LoadedLedger> retained = ledgers.loadOptionalLedger(ledgerAddr, sourceAddress);
+            if (retained.isPresent() && retained.get().ledger().getSourcePurged()) {
+                return LedgerAccess.keep();
+            }
+            throw e;
+        }
+    }
+
+    /**
+     * Requires WRITE access before a reconciliation or serving-visibility refresh queries the
+     * outbound provider or mutates the ledger. Evaluates the latest live source revision when the
+     * source exists (or the last live revision before a tombstone), and the ledger's retained
+     * {@link DocumentSecurity} once the source has been purged.
+     */
+    LedgerAccess requireWriteForReconcile(
+            NodeAddress sourceAddress, ExternalLedgerStore.LoadedLedger loaded) {
+        try {
+            return verifyCallerSourceAccessForMutation(sourceAddress);
+        } catch (StatusRuntimeException e) {
+            if (e.getStatus().getCode() == Status.Code.NOT_FOUND
+                    && loaded.ledger().getSourcePurged()) {
+                requireLedgerWrite(sourceAddress.getAccountId(), loaded.security(),
+                        "Reconciling an external operation requires WRITE access to the source "
+                                + "document's retained rules");
+                return LedgerAccess.keep();
+            }
+            throw e;
+        }
+    }
+
+    boolean canCallerReadSource(NodeAddress sourceAddress) {
+        try {
+            documents.listRevisions(ListRevisionsRequest.newBuilder()
+                    .setAddress(sourceAddress)
+                    .setPageSize(1)
+                    .build());
+            return true;
+        } catch (StatusRuntimeException failure) {
+            Status.Code code = failure.getStatus().getCode();
+            if (code == Status.Code.PERMISSION_DENIED || code == Status.Code.NOT_FOUND) {
+                return false;
+            }
+            throw failure;
+        }
+    }
+
+    static void verifyDeclaredProcessingMatchesSource(
+            ExternalProcessingIdentity declared,
+            ExternalPublicationCoordinator.VerifiedSourceSnapshot verifiedSource) {
+        if (declared == null) {
+            return;
+        }
+        if (declared.getSourcePartDigestsCount() > 0) {
+            Map<String, ExternalPartDigest> actualByKey = new HashMap<>();
+            for (ExternalPartDigest part : verifiedSource.partDigests()) {
+                actualByKey.put(part.getPartValue() + ":" + part.getSubKey(), part);
+            }
+            for (ExternalPartDigest claimed : declared.getSourcePartDigestsList()) {
+                ExternalPartDigest actual = actualByKey.get(
+                        claimed.getPartValue() + ":" + claimed.getSubKey());
+                if (actual == null
+                        || !actual.getSha256().equals(claimed.getSha256())
+                        || actual.getSizeBytes() != claimed.getSizeBytes()) {
+                    throw Status.FAILED_PRECONDITION
+                            .withDescription("Declared source_part_digests mismatch verified source revision "
+                                    + verifiedSource.sourceRevision())
+                            .asRuntimeException();
+                }
+            }
+        }
+        if (declared.getRetainedSchemaSha256SCount() > 0) {
+            Set<String> actualSchemas = Set.copyOf(verifiedSource.retainedSchemaSha256s());
+            for (String claimedSchema : declared.getRetainedSchemaSha256SList()) {
+                if (!actualSchemas.contains(claimedSchema)) {
+                    throw Status.FAILED_PRECONDITION
+                            .withDescription("Declared retained_schema_sha256 '" + claimedSchema
+                                    + "' is not retained on source revision "
+                                    + verifiedSource.sourceRevision())
+                            .asRuntimeException();
+                }
+            }
+        }
+    }
+
+    static ExternalPartDigest toExternalPartDigest(
+            PartSelector selector, String sha256, long sizeBytes) {
+        if (selector.hasPart()) {
+            ai.protomolt.proto.repo.v1.DocumentPart v1Part = switch (selector.getPart()) {
+                case DOCUMENT_PART_CORE -> ai.protomolt.proto.repo.v1.DocumentPart.DOCUMENT_PART_CORE;
+                case DOCUMENT_PART_BLOBS -> ai.protomolt.proto.repo.v1.DocumentPart.DOCUMENT_PART_BLOBS;
+                case DOCUMENT_PART_PARSED -> ai.protomolt.proto.repo.v1.DocumentPart.DOCUMENT_PART_PARSED;
+                default -> throw new IllegalArgumentException("Unexpected direct part: " + selector);
+            };
+            return ExternalPartDigest.newBuilder()
+                    .setPart(v1Part)
+                    .setSubKey("")
+                    .setSha256(sha256)
+                    .setSizeBytes(sizeBytes)
+                    .build();
+        }
+        if (selector.hasSegmentationId()) {
+            return ExternalPartDigest.newBuilder()
+                    .setPart(ai.protomolt.proto.repo.v1.DocumentPart.DOCUMENT_PART_CHUNKS)
+                    .setSubKey(selector.getSegmentationId())
+                    .setSha256(sha256)
+                    .setSizeBytes(sizeBytes)
+                    .build();
+        }
+        if (selector.hasEmbeddingSet()) {
+            EmbeddingSetKey key = selector.getEmbeddingSet();
+            return ExternalPartDigest.newBuilder()
+                    .setPart(ai.protomolt.proto.repo.v1.DocumentPart.DOCUMENT_PART_EMBEDDINGS)
+                    .setSubKey(key.getSegmentationId() + ":" + key.getEmbeddingSetId())
+                    .setSha256(sha256)
+                    .setSizeBytes(sizeBytes)
+                    .build();
+        }
+        throw new IllegalArgumentException("Unrecognized PartSelector: " + selector);
+    }
+
+    static Set<String> collectRetainedSchemaDigests(RevisionValidation validation) {
+        Set<String> digests = new LinkedHashSet<>();
+        walkSchemaRefs(validation, digests);
+        return digests;
+    }
+
+    static void walkSchemaRefs(Message message, Set<String> digests) {
+        if (message instanceof RepositorySchemaAssetReference ref) {
+            digests.add(ref.getDescriptorSha256());
+            return;
+        }
+        for (Map.Entry<Descriptors.FieldDescriptor, Object> entry :
+                message.getAllFields().entrySet()) {
+            if (entry.getKey().getJavaType() != Descriptors.FieldDescriptor.JavaType.MESSAGE) {
+                continue;
+            }
+            if (entry.getKey().isRepeated()) {
+                for (Object elem : (List<?>) entry.getValue()) {
+                    walkSchemaRefs((Message) elem, digests);
+                }
+            } else {
+                walkSchemaRefs((Message) entry.getValue(), digests);
+            }
+        }
+    }
+}
