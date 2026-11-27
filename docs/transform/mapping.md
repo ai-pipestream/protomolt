@@ -133,7 +133,13 @@ permission levels include ViewListItems and OpenItems becomes a read rule on the
 group (`sharepoint-group:<site id>/<group id>`), user (`user-principal-name`,
 or `email`), Entra group (`entra-group`) or other claim (`sharepoint-claim`).
 Every complete ACL also lets `sharepoint-site-admin:<site id>` read, and the
-owners claim of a Microsoft 365 group maps to `entra-group-owner`. Org-wide
+owners claim of a Microsoft 365 group maps to `entra-group-owner`. SharePoint
+keeps a hidden group for each sharing link; the connector marks it
+(`sharing_link`) with the link's scope. Only the group of a link for named
+people (`users`) becomes a rule, so the people granted on that link read
+through their membership; the group of an organization or anyone link grants
+nothing, whoever has opened the link, and the identity link mapping gives its
+members no link to it either. Org-wide
 claims such as Everyone stay `sharepoint-claim` rules no link mints, so content
 granted only to them is not readable, and anonymous Confluence space grants are
 not mapped. The ACL mappings produce only READ rules.

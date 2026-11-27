@@ -102,6 +102,40 @@ class SharePointSecurityMappingTest {
     }
 
     @Test
+    void ofTheGroupsOfSharingLinksOnlyALinkForNamedPeopleGrantsRead() throws Exception {
+        String link = """
+                assignments { member { id: %d principal_type: SITE_PRINCIPAL_TYPE_SHAREPOINT_GROUP
+                    login_name: "SharingLinks.i-1.%s.s-%d"
+                    sharing_link { item_unique_id: "i-1" kind: "%s" share_id: "s-%d" scope: "%s" } }
+                  roles { name: "%s" base_permissions_low: %d } }
+                """;
+        DocumentSecurity security = map(parseText(siteAcl, """
+                securable { list_item { site_id: "host,coll,web" list_id: "L" item_id: "8" } }
+                assignments { member { id: 4 principal_type: SITE_PRINCIPAL_TYPE_SHAREPOINT_GROUP login_name: "Visitors" }
+                  roles { name: "Read" base_permissions_low: 138612833 } }
+                """
+                + link.formatted(40, "OrganizationView", 40, "OrganizationView", 40, "organization", "Read", 138612833)
+                + link.formatted(41, "OrganizationEdit", 41, "OrganizationEdit", 41, "organization", "Contribute",
+                        1011028719)
+                + link.formatted(42, "AnonymousView", 42, "AnonymousView", 42, "anonymous", "Read", 138612833)
+                + link.formatted(43, "Flexible", 43, "Flexible", 43, "users", "Read", 138612833)
+                + link.formatted(44, "Flexible", 44, "Flexible", 44, "users", "Limited Access", 134287360)
+                + link.formatted(45, "LaterKind", 45, "LaterKind", 45, "", "Read", 138612833)
+                + "completeness: ACL_COMPLETENESS_COMPLETE\n"));
+
+        assertThat(security.getPermissionsList()).extracting(r -> r.getIdentityType() + ":" + r.getIdentity())
+                .containsExactly("sharepoint-group:host,coll,web/4", "sharepoint-group:host,coll,web/43",
+                        "sharepoint-site-admin:host,coll,web");
+        assertThat(reads(security, "sharepoint-group:host,coll,web/43")).as("a link for named people").isTrue();
+        assertThat(reads(security, "sharepoint-group:host,coll,web/40")).as("an organization view link").isFalse();
+        assertThat(reads(security, "sharepoint-group:host,coll,web/41")).as("an organization edit link").isFalse();
+        assertThat(reads(security, "sharepoint-group:host,coll,web/42")).as("a link for anyone").isFalse();
+        assertThat(reads(security, "sharepoint-group:host,coll,web/44"))
+                .as("a link for named people that holds only Limited Access").isFalse();
+        assertThat(reads(security, "sharepoint-group:host,coll,web/45")).as("a link of an unknown kind").isFalse();
+    }
+
+    @Test
     void anIncompleteAclMapsToNoRuleAndDenies() throws Exception {
         for (String completeness : List.of("ACL_COMPLETENESS_UNAVAILABLE", "ACL_COMPLETENESS_UNSPECIFIED")) {
             DocumentSecurity security = map(parseText(siteAcl, ACL.replace("ACL_COMPLETENESS_COMPLETE", completeness)));
@@ -130,6 +164,30 @@ class SharePointSecurityMappingTest {
                         "entra-group:g-1 -> sharepoint-group:host,coll,web/4");
         assertThat(mapIdentityLinks(registry, links, Map.of("group", parseText(siteGroupMembers,
                 group.replace("ACL_COMPLETENESS_COMPLETE", "ACL_COMPLETENESS_UNAVAILABLE"))), "sp-links")).isEmpty();
+    }
+
+    @Test
+    void ofTheGroupsOfSharingLinksOnlyALinkForNamedPeopleLinksItsMembers() throws Exception {
+        String group = """
+                site_id: "host,coll,web"
+                group { id: 43 title: "SharingLinks.i-1.%s.s-43"
+                  sharing_link { item_unique_id: "i-1" kind: "%s" share_id: "s-43" scope: "%s" } }
+                members { id: 20 principal_type: SITE_PRINCIPAL_TYPE_USER user_principal_name: "ada@contoso.com" }
+                members { id: 30 principal_type: SITE_PRINCIPAL_TYPE_SECURITY_GROUP directory_object_id: "g-1" }
+                completeness: ACL_COMPLETENESS_COMPLETE
+                """;
+        assertThat(mapIdentityLinks(registry, links, Map.of("group", parseText(siteGroupMembers,
+                group.formatted("Flexible", "Flexible", "users"))), "sp-links"))
+                .extracting(l -> l.getFrom().getIdentityType() + ":" + l.getFrom().getIdentity() + " -> "
+                        + l.getTo().getIdentityType() + ":" + l.getTo().getIdentity())
+                .containsExactly("user-principal-name:ada@contoso.com -> sharepoint-group:host,coll,web/43",
+                        "entra-group:g-1 -> sharepoint-group:host,coll,web/43");
+        for (String[] link : List.of(new String[] {"OrganizationView", "organization"},
+                new String[] {"OrganizationEdit", "organization"}, new String[] {"AnonymousView", "anonymous"},
+                new String[] {"LaterKind", ""})) {
+            assertThat(mapIdentityLinks(registry, links, Map.of("group", parseText(siteGroupMembers,
+                    group.formatted(link[0], link[0], link[1]))), "sp-links")).as(link[0]).isEmpty();
+        }
     }
 
     @Test
