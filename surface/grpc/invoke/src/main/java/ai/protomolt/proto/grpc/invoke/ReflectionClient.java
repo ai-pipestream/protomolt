@@ -16,6 +16,7 @@ import java.util.Deque;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.TimeUnit;
@@ -93,25 +94,90 @@ public final class ReflectionClient {
                 descriptorBytes = addFiles(stream.fileContainingSymbol(service), files, pending,
                         descriptorBytes);
             }
-            while (!pending.isEmpty()) {
-                FileDescriptorProto file = files.get(pending.poll());
-                for (String dependency : file.getDependencyList()) {
-                    if (files.containsKey(dependency)) {
-                        continue;
-                    }
-                    descriptorBytes = addFiles(stream.fileByFilename(dependency), files, pending,
-                            descriptorBytes);
-                }
-            }
-            FileDescriptorSet descriptorSet = FileDescriptorSet.newBuilder()
-                    .addAllFile(files.values()).build();
-            if (descriptorSet.getSerializedSize() > MAX_DESCRIPTOR_SET_BYTES) {
-                throw new ReflectionException("Reflected descriptor set exceeds "
-                        + MAX_DESCRIPTOR_SET_BYTES + " bytes");
-            }
+            FileDescriptorSet descriptorSet = closed(stream, files, pending, descriptorBytes);
             stream.markCompleted();
             return new Result(services, descriptorSet);
         }
+    }
+
+    /**
+     * The descriptor closure of one symbol: the file that declares {@code symbol} (a fully
+     * qualified message, enum, service or method name) and every transitive dependency of that
+     * file, asked of the server reachable on {@code channel}. Unlike {@link #discover} this does
+     * not list services, so it also reaches a type no advertised service refers to and costs
+     * one exchange per file of the closure.
+     *
+     * @return the closed descriptor set, or empty when the server answers that it does not
+     *         know the symbol ({@code NOT_FOUND})
+     * @throws ReflectionException on any other reflection error response, a stream failure,
+     *         or timeout; an unreachable server is never reported as an unknown symbol
+     */
+    public static Optional<FileDescriptorSet> closure(Channel channel, String symbol, long timeoutMs)
+            throws ReflectionException {
+        if (symbol == null || symbol.isBlank()) {
+            throw new IllegalArgumentException("symbol must not be blank");
+        }
+        if (timeoutMs < 1 || timeoutMs > MAX_TIMEOUT_MS) {
+            throw new ReflectionException("Reflection timeout must be from 1 to "
+                    + MAX_TIMEOUT_MS + "ms");
+        }
+        long deadlineNanos = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(timeoutMs);
+        try {
+            return closure(new V1Stream(channel, timeoutMs, deadlineNanos), symbol);
+        } catch (ReflectionException stableFailure) {
+            if (Status.fromThrowable(stableFailure).getCode() != Status.Code.UNIMPLEMENTED) {
+                throw stableFailure;
+            }
+            return closure(new V1AlphaStream(channel, timeoutMs, deadlineNanos), symbol);
+        }
+    }
+
+    private static Optional<FileDescriptorSet> closure(ReflectionStream stream, String symbol)
+            throws ReflectionException {
+        try (stream) {
+            Map<String, FileDescriptorProto> files = new LinkedHashMap<>();
+            Deque<String> pending = new ArrayDeque<>();
+            List<FileDescriptorProto> declaring;
+            try {
+                declaring = stream.fileContainingSymbol(symbol);
+            } catch (ReflectionException refused) {
+                // Only the server's own answer about this symbol is "unknown". A failure while
+                // walking the dependencies of a symbol it does know stays a failure.
+                if (Status.fromThrowable(refused).getCode() == Status.Code.NOT_FOUND) {
+                    stream.markCompleted();
+                    return Optional.empty();
+                }
+                throw refused;
+            }
+            long descriptorBytes = addFiles(declaring, files, pending, 0);
+            FileDescriptorSet descriptorSet = closed(stream, files, pending, descriptorBytes);
+            stream.markCompleted();
+            return Optional.of(descriptorSet);
+        }
+    }
+
+    /** Resolves every pending file's dependencies by filename into one bounded descriptor set. */
+    private static FileDescriptorSet closed(ReflectionStream stream,
+                                            Map<String, FileDescriptorProto> files,
+                                            Deque<String> pending, long descriptorBytes)
+            throws ReflectionException {
+        long total = descriptorBytes;
+        while (!pending.isEmpty()) {
+            FileDescriptorProto file = files.get(pending.poll());
+            for (String dependency : file.getDependencyList()) {
+                if (files.containsKey(dependency)) {
+                    continue;
+                }
+                total = addFiles(stream.fileByFilename(dependency), files, pending, total);
+            }
+        }
+        FileDescriptorSet descriptorSet = FileDescriptorSet.newBuilder()
+                .addAllFile(files.values()).build();
+        if (descriptorSet.getSerializedSize() > MAX_DESCRIPTOR_SET_BYTES) {
+            throw new ReflectionException("Reflected descriptor set exceeds "
+                    + MAX_DESCRIPTOR_SET_BYTES + " bytes");
+        }
+        return descriptorSet;
     }
 
     /**

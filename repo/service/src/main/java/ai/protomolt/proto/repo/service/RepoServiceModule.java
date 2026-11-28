@@ -81,6 +81,9 @@ public final class RepoServiceModule implements ServiceModule {
         services = RepoServices.build(config)
                 .withAccountBindings(accounts)
                 .withRenderers(RepoServices.defaultSaveAsRenderers());
+        IdentityLinkFile.fromEnvironment(context.environment()).ifPresent(services::withIdentityExpansion);
+        // Types a producing service defines, read from it over server reflection at admission.
+        ReflectedSchemas.fromEnvironment(context.environment()).ifPresent(services::withReflectedSchemas);
         if (config.conceptSchemePaths().isEmpty()) {
             var envConceptPaths = RepoServiceConfig.parseConceptSchemePaths(context.environment());
             if (!envConceptPaths.isEmpty()) {

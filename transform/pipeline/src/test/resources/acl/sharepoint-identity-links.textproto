@@ -1,0 +1,20 @@
+# proto-file: ai/protomolt/proto/grpc/workflow/v1/grpc_workflow.proto
+# proto-message: ai.protomolt.proto.grpc.workflow.v1.TypedEdge
+#
+# Maps one SharePoint group with its members (ai.pipestream.microsoft.v1.SiteGroupMembers,
+# source `group`) into identity links for caller expansion: each user member
+# (by user principal name, or email when it has none) and each directory group
+# member with an object id (`entra-group`) links to `sharepoint-group`
+# `<site id>/<group id>`. A membership that is not COMPLETE maps to no link.
+# The hidden group of a sharing link (`group.sharing_link`) maps to links only
+# when the link is for named people (scope `users`), as in
+# sharepoint-document-security.textproto; the members of the group of an
+# organization or anyone link, or of a kind the connector does not know, get
+# no link.
+sources: "group"
+produce_type: "ai.protomolt.proto.repo.v1.IdentityLinks"
+cel_rules {
+  filter: "group.completeness == ai.pipestream.sync.v1.AclCompleteness.ACL_COMPLETENESS_COMPLETE && (!has(group.group.sharing_link) || group.group.sharing_link.scope == 'users')"
+  selector: "group.members.filter(m, m.principal_type == ai.pipestream.microsoft.v1.SitePrincipalType.SITE_PRINCIPAL_TYPE_USER && (m.user_principal_name != '' || m.email != '')).map(m, ai.protomolt.proto.repo.v1.IdentityLink{from: ai.protomolt.proto.repo.v1.Principal{identity_type: m.user_principal_name != '' ? 'user-principal-name' : 'email', identity: m.user_principal_name != '' ? m.user_principal_name : m.email}, to: ai.protomolt.proto.repo.v1.Principal{identity_type: 'sharepoint-group', identity: group.site_id + '/' + string(group.group.id)}}) + group.members.filter(m, m.principal_type == ai.pipestream.microsoft.v1.SitePrincipalType.SITE_PRINCIPAL_TYPE_SECURITY_GROUP && m.directory_object_id != '').map(m, ai.protomolt.proto.repo.v1.IdentityLink{from: ai.protomolt.proto.repo.v1.Principal{identity_type: 'entra-group', identity: m.directory_object_id}, to: ai.protomolt.proto.repo.v1.Principal{identity_type: 'sharepoint-group', identity: group.site_id + '/' + string(group.group.id)}})"
+  target: "links"
+}
