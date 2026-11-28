@@ -128,8 +128,8 @@ be rebuilt; an authoritative store must not be discarded or silently redirected.
 
 ## Server qualification
 
-The default integration target is `valkey/valkey:9.1.3-alpine`, pinned from the
-[official stable 9.1 release page](https://valkey.io/download/9.1/).
+The default integration target is `valkey/valkey:9.2.0-alpine`, pinned from the
+[official stable 9.2 release page](https://valkey.io/download/9.2/).
 Keep its Lua engine enabled: EVAL and cmsgpack are required. The same tests can
 exercise a Redis server with explicit environment overrides, including the server
 executable used by the crash test:

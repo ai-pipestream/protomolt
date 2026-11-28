@@ -17,7 +17,7 @@ final class ApicurioRegistryContainer extends GenericContainer<ApicurioRegistryC
     // The root build injects the catalog's apicurio version as a system property;
     // the literal is only the fallback for IDE runs outside Gradle.
     static final String IMAGE =
-            System.getProperty("protomolt.test.apicurio.image", "apicurio/apicurio-registry:3.3.3");
+            System.getProperty("protomolt.test.apicurio.image", "apicurio/apicurio-registry:3.3.5");
 
     private static final int REGISTRY_PORT = 8080; // inside the container
 

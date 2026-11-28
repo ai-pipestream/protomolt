@@ -15,7 +15,7 @@ import redis.clients.jedis.exceptions.JedisDataException;
  */
 public final class RedisTestServers {
     /** Pinned default; matches {@code deploy/document-platform/compose.valkey.yml}. */
-    public static final String DEFAULT_IMAGE = "valkey/valkey:9.1.3-alpine";
+    public static final String DEFAULT_IMAGE = "valkey/valkey:9.2.0-alpine";
     /** Server command inside {@link #DEFAULT_IMAGE}. */
     public static final String DEFAULT_SERVER = "valkey-server";
     /** The RESP port every suite maps from the container. */
