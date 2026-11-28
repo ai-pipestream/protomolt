@@ -108,4 +108,41 @@ class ParquetInputChecksTest {
         assertThatCode(() -> ParquetInputChecks.validateRowSchemaAndColumns(root, Set.of()))
                 .doesNotThrowAnyException();
     }
+
+    @Test
+    void compatibilityChecksSharedDescriptorPairsOnlyOnce() throws Exception {
+        Descriptor expected = doublingSchema(40);
+        Descriptor actual = doublingSchema(40);
+        assertTimeoutPreemptively(Duration.ofSeconds(10), () ->
+                assertThatCode(() -> ParquetInputChecks.verifyFieldsCompatible(expected, actual))
+                        .doesNotThrowAnyException());
+    }
+
+    @Test
+    void compatibilityWalkRefusesTooManyDistinctFieldsWithoutRecursion() throws Exception {
+        Descriptor expected = chainSchema(ParquetInputChecks.MAX_SCHEMA_FIELDS + 1);
+        Descriptor actual = chainSchema(ParquetInputChecks.MAX_SCHEMA_FIELDS + 1);
+        assertThatThrownBy(() -> ParquetInputChecks.verifyFieldsCompatible(expected, actual))
+                .isInstanceOfSatisfying(RenderFailure.class, failure -> {
+                    assertThat(failure.kind()).isEqualTo(RenderFailure.Kind.LIMIT);
+                    assertThat(failure.getMessage()).contains("Source compatibility check");
+                });
+    }
+
+    @Test
+    void compatibilityWalkTerminatesOnIndependentlyLinkedRecursiveDescriptors() throws Exception {
+        FileDescriptorProto file = FileDescriptorProto.newBuilder()
+                .setName("recursive.proto").setSyntax("proto3")
+                .addMessageType(DescriptorProto.newBuilder().setName("Node")
+                        .addField(FieldDescriptorProto.newBuilder().setName("next").setNumber(1)
+                                .setLabel(Label.LABEL_OPTIONAL).setType(Type.TYPE_MESSAGE)
+                                .setTypeName("Node")))
+                .build();
+        Descriptor expected = FileDescriptor.buildFrom(file, new FileDescriptor[0]).getMessageTypes().getFirst();
+        Descriptor actual = FileDescriptor.buildFrom(file, new FileDescriptor[0]).getMessageTypes().getFirst();
+        assertTimeoutPreemptively(Duration.ofSeconds(10), () ->
+                assertThatCode(() -> ParquetInputChecks.verifyFieldsCompatible(expected, actual))
+                        .doesNotThrowAnyException());
+    }
+
 }
