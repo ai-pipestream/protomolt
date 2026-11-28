@@ -303,4 +303,73 @@ class ReflectionClientTest {
             server.shutdownNow();
         }
     }
+
+    @Test
+    void closureOfASymbolIsItsFileAndEveryDependencyAndLinks() throws Exception {
+        String serverName = InProcessServerBuilder.generateName();
+        Server server = InProcessServerBuilder.forName(serverName)
+                .addService(io.grpc.protobuf.services.ProtoReflectionServiceV1.newInstance())
+                .addService(new io.grpc.protobuf.services.HealthStatusManager().getHealthService())
+                .build().start();
+        ManagedChannel channel = InProcessChannelBuilder.forName(serverName).build();
+        try {
+            // A message, not a service: discover() would only reach it through a service.
+            var closure = ReflectionClient.closure(channel, "grpc.health.v1.HealthCheckResponse", 5_000);
+
+            assertThat(closure).isPresent();
+            var expected = io.grpc.health.v1.HealthCheckResponse.getDescriptor().getFile();
+            assertThat(closure.get().getFileList())
+                    .extracting(com.google.protobuf.DescriptorProtos.FileDescriptorProto::getName)
+                    .contains(expected.getName());
+            assertThat(closure.get().getFileList().stream()
+                    .filter(file -> file.getName().equals(expected.getName())).findFirst().orElseThrow())
+                    .isEqualTo(expected.toProto());
+            // Closed: every import of every file is in the set.
+            var names = closure.get().getFileList().stream()
+                    .map(com.google.protobuf.DescriptorProtos.FileDescriptorProto::getName).toList();
+            for (var file : closure.get().getFileList()) {
+                assertThat(names).containsAll(file.getDependencyList());
+            }
+        } finally {
+            channel.shutdownNow();
+            server.shutdownNow();
+        }
+    }
+
+    @Test
+    void closureOfASymbolTheServerDoesNotKnowIsEmptyNotAFailure() throws Exception {
+        String serverName = InProcessServerBuilder.generateName();
+        Server server = InProcessServerBuilder.forName(serverName)
+                .addService(io.grpc.protobuf.services.ProtoReflectionServiceV1.newInstance())
+                .build().start();
+        ManagedChannel channel = InProcessChannelBuilder.forName(serverName).build();
+        try {
+            assertThat(ReflectionClient.closure(channel, "grpc.health.v1.HealthCheckResponse", 5_000))
+                    .isEmpty();
+        } finally {
+            channel.shutdownNow();
+            server.shutdownNow();
+        }
+    }
+
+    @Test
+    void closureFromAServerThatCannotBeAskedIsAFailureNeverAnUnknownSymbol() {
+        // No server is registered under this name.
+        ManagedChannel channel = InProcessChannelBuilder.forName(InProcessServerBuilder.generateName()).build();
+        try {
+            assertThatThrownBy(() -> ReflectionClient.closure(channel, "grpc.health.v1.HealthCheckResponse", 2_000))
+                    .isInstanceOf(ReflectionException.class);
+        } finally {
+            channel.shutdownNow();
+        }
+    }
+
+    @Test
+    void closureRejectsABlankSymbolAndAnUnboundedTimeout() {
+        assertThatThrownBy(() -> ReflectionClient.closure(null, " ", 1_000))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> ReflectionClient.closure(null, "a.B", ReflectionClient.MAX_TIMEOUT_MS + 1))
+                .isInstanceOf(ReflectionException.class)
+                .hasMessageContaining("must be from 1 to");
+    }
 }

@@ -7,6 +7,7 @@ import ai.protomolt.proto.authz.AuthenticatedCaller;
 import ai.protomolt.proto.authz.CredentialBinding;
 import ai.protomolt.proto.authz.IntakeWriterScope;
 import ai.protomolt.proto.authz.grpc.CallerContexts;
+import ai.protomolt.proto.repo.spi.CallerIdentityExpansion;
 import ai.protomolt.proto.repo.spi.RepositoryCaller;
 import ai.protomolt.proto.repo.spi.RepositoryCredentialBinding;
 import ai.protomolt.proto.repo.v1.Principal;
@@ -15,6 +16,7 @@ import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
+import java.util.function.Supplier;
 
 /**
  * The repository host's one mapping from an authenticated caller to a {@link RepositoryCaller}.
@@ -32,6 +34,7 @@ final class RepoCallerBindings {
 
     private volatile AccountBindingResolver accounts = AccountBindingResolver.none();
     private volatile Optional<RepoBindingWriters> writers = Optional.empty();
+    private volatile Optional<Supplier<CallerIdentityExpansion>> expansion = Optional.empty();
 
     /** Replaces the binding source; composition roots set it before serving. */
     void use(AccountBindingResolver resolver) {
@@ -41,6 +44,11 @@ final class RepoCallerBindings {
     /** Provisions the writers bindings declare; the composition root sets it before serving. */
     void provisionWriters(RepoBindingWriters writers) {
         this.writers = Optional.of(Objects.requireNonNull(writers, "writers"));
+    }
+
+    /** Expands every bound caller's ACL identities along the links {@code source} supplies at bind time. */
+    void expandIdentities(Supplier<CallerIdentityExpansion> source) {
+        this.expansion = Optional.of(Objects.requireNonNull(source, "source"));
     }
 
     /** The repository caller of the current gRPC call; in-process calls carry no context and run as the operator. */
@@ -110,6 +118,8 @@ final class RepoCallerBindings {
                         .setIdentity(identity.getIdentity()).build());
             }
         });
-        return new RepositoryCaller(caller.name(), false, accountIds, identities, credential);
+        var bound = new RepositoryCaller(caller.name(), false, accountIds, identities, credential);
+        return expansion.map(source -> Objects.requireNonNull(source.get(), "identity expansion").expand(bound))
+                .orElse(bound);
     }
 }

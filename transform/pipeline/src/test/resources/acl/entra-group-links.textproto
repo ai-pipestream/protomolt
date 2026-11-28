@@ -1,0 +1,15 @@
+# proto-file: ai/protomolt/proto/grpc/workflow/v1/grpc_workflow.proto
+# proto-message: ai.protomolt.proto.grpc.workflow.v1.TypedEdge
+#
+# Maps one group of a full grpc-microsoft DeltaGroups pass with members
+# (ai.pipestream.microsoft.v1.GroupChange, source `change`) into identity
+# links for caller expansion: each user member (`entra-user` object id) and
+# each nested group (`entra-group`) links to the group (`entra-group`).
+# Removed groups and removed members map to no link.
+sources: "change"
+produce_type: "ai.protomolt.proto.repo.v1.IdentityLinks"
+cel_rules {
+  filter: "!change.removed && change.group.id != ''"
+  selector: "change.member_changes.filter(m, !m.removed && m.id != '' && (m.type == 'user' || m.type == 'group')).map(m, ai.protomolt.proto.repo.v1.IdentityLink{from: ai.protomolt.proto.repo.v1.Principal{identity_type: m.type == 'user' ? 'entra-user' : 'entra-group', identity: m.id}, to: ai.protomolt.proto.repo.v1.Principal{identity_type: 'entra-group', identity: change.group.id}})"
+  target: "links"
+}

@@ -1,0 +1,30 @@
+# proto-file: ai/protomolt/proto/grpc/workflow/v1/grpc_workflow.proto
+# proto-message: ai.protomolt.proto.grpc.workflow.v1.TypedEdge
+#
+# Maps the Confluence ACL records Sync emits for one item into a protomolt
+# DocumentSecurity. Sources: `space` is the space's `space:<id>/access`
+# entity, `item` is the item's `<kind>:<id>/access` entity (both
+# ai.pipestream.confluence.v1.ConfluenceEntity), required to carry matching
+# non-blank `space_id` values. Read access in Confluence is a space read grant
+# AND an explicit READ or UPDATE grant on every view-restricted owner. A space
+# grant to an access class (for example ALL_LICENSED_USERS) becomes an
+# `atlassian-access-class` rule, which a caller matches only if its identities
+# carry that class. Anything incomplete, missing its access arm, or mismatched
+# on `space_id` maps to no rule, which denies.
+# A view-restricted owner without an ID, or whose grants are all to principal
+# types other than user and group, contributes an empty (deny-all) gate.
+# Space grants to anonymous users are not mapped, so public spaces are not
+# readable through search. Only ACCESS_READ rules are produced.
+sources: "space"
+sources: "item"
+produce_type: "ai.protomolt.proto.repo.v1.DocumentSecurity"
+cel_rules {
+  filter: "space.security_completeness == ai.pipestream.sync.v1.AclCompleteness.ACL_COMPLETENESS_COMPLETE && item.security_completeness == ai.pipestream.sync.v1.AclCompleteness.ACL_COMPLETENESS_COMPLETE && has(space.space_access) && has(item.access_chain) && space.space_access.space_id != '' && space.space_access.space_id == item.access_chain.space_id"
+  selector: "space.space_access.permissions.filter(p, p.principal.id != '' && p.operation.key == ai.pipestream.confluence.v1.SpacePermissionOperationKey.SPACE_PERMISSION_OPERATION_KEY_READ && p.operation.target_type == ai.pipestream.confluence.v1.SpacePermissionOperationTargetType.SPACE_PERMISSION_OPERATION_TARGET_TYPE_SPACE && (p.principal.type == ai.pipestream.confluence.v1.SpacePermissionPrincipalType.SPACE_PERMISSION_PRINCIPAL_TYPE_USER || p.principal.type == ai.pipestream.confluence.v1.SpacePermissionPrincipalType.SPACE_PERMISSION_PRINCIPAL_TYPE_GROUP || p.principal.type == ai.pipestream.confluence.v1.SpacePermissionPrincipalType.SPACE_PERMISSION_PRINCIPAL_TYPE_ACCESS_CLASS)).map(p, ai.protomolt.proto.repo.v1.AccessRule{identity: p.principal.id, identity_type: p.principal.type == ai.pipestream.confluence.v1.SpacePermissionPrincipalType.SPACE_PERMISSION_PRINCIPAL_TYPE_USER ? 'atlassian-account' : p.principal.type == ai.pipestream.confluence.v1.SpacePermissionPrincipalType.SPACE_PERMISSION_PRINCIPAL_TYPE_GROUP ? 'atlassian-group' : 'atlassian-access-class', access: ai.protomolt.proto.repo.v1.Access.ACCESS_READ})"
+  target: "permissions"
+}
+cel_rules {
+  filter: "space.security_completeness == ai.pipestream.sync.v1.AclCompleteness.ACL_COMPLETENESS_COMPLETE && item.security_completeness == ai.pipestream.sync.v1.AclCompleteness.ACL_COMPLETENESS_COMPLETE && has(space.space_access) && has(item.access_chain) && space.space_access.space_id != '' && space.space_access.space_id == item.access_chain.space_id"
+  selector: "item.access_chain.owners.filter(o, o.restriction_state.state == ai.pipestream.confluence.v1.ContentRestrictionState.CONTENT_RESTRICTION_STATE_VIEW_RESTRICTED).map(o, ai.protomolt.proto.repo.v1.AccessRuleSet{source: 'confluence-owner:' + o.content.id, rules: o.content.id.trim() == '' ? [] : o.permissions.filter(p, p.principal.principal_id != '' && (p.operation == ai.pipestream.confluence.v1.ContentPermissionOperation.CONTENT_PERMISSION_OPERATION_READ || p.operation == ai.pipestream.confluence.v1.ContentPermissionOperation.CONTENT_PERMISSION_OPERATION_UPDATE) && (p.principal.principal_type == ai.pipestream.confluence.v1.ContentPermissionPrincipalType.CONTENT_PERMISSION_PRINCIPAL_TYPE_USER || p.principal.principal_type == ai.pipestream.confluence.v1.ContentPermissionPrincipalType.CONTENT_PERMISSION_PRINCIPAL_TYPE_GROUP)).map(p, ai.protomolt.proto.repo.v1.AccessRule{identity: p.principal.principal_id, identity_type: p.principal.principal_type == ai.pipestream.confluence.v1.ContentPermissionPrincipalType.CONTENT_PERMISSION_PRINCIPAL_TYPE_USER ? 'atlassian-account' : 'atlassian-group', access: ai.protomolt.proto.repo.v1.Access.ACCESS_READ})})"
+  target: "required_rule_sets"
+}

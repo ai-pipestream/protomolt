@@ -31,7 +31,8 @@ but blank text value, an out-of-range or non-integer number, and a
 non-strict-flag boolean all fail fast naming the variable. The console
 sign-in variables (`PROTOMOLT_CONSOLE_*`) are read by `OidcConsoleSettings`
 when the HTTP port is on: all five or none, and a subset fails the boot
-naming the missing ones.
+naming the missing ones. `IdentityLinkFile.fromEnvironment` reads
+`PROTOMOLT_IDENTITY_LINKS` in `RepoServiceMain` and `RepoServiceModule`.
 
 | Variable | Default | Accepted |
 |---|---|---|
@@ -63,6 +64,9 @@ naming the missing ones.
 | `DOCUMENT_PLATFORM_CONCEPT_SCHEMES` | unset = no startup concept schemes, unless the alias below is set | comma- or semicolon-separated files, directories, or `schemeId=path` entries; trims whitespace and ignores empty entries; a nonblank value takes precedence over `PROTOMOLT_REPO_CONCEPT_SCHEME_PATHS` |
 | `PROTOMOLT_REPO_CONCEPT_SCHEME_PATHS` | unset = no startup concept schemes | same syntax as `DOCUMENT_PLATFORM_CONCEPT_SCHEMES`; used only when that variable is absent or blank |
 | `DOCUMENT_PLATFORM_SEED_ACCOUNT_ID` | unset = no boot-time drive seeding | text; treat as permanent once used |
+| `DOCUMENT_PLATFORM_REFLECTED_SCHEMA_TARGETS` | unset = no reflected schema sources | comma-separated `host:port` gRPC targets, at most 16, none blank or repeated; a typed `Any` whose message nothing compiled in defines is asked of them over server reflection at each admission that needs it, in this order. A target that does not know the type leaves it `SCHEMA_MISSING`; one that cannot be asked fails the save `UNAVAILABLE`, never as missing |
+| `DOCUMENT_PLATFORM_REFLECTED_SCHEMA_TLS` | `false` (plaintext) | `true` or `false`; applies to every reflected schema target |
+| `DOCUMENT_PLATFORM_REFLECTED_SCHEMA_TIMEOUT_MS` | `5000` | integer from 1 to 60000; the deadline of one reflection lookup |
 | `DOCUMENT_PLATFORM_READ_BUDGET_BYTES` | `268435456` (256 MiB) | integer >= 1; sizes both the verified-read budget and a separate v2 save-admission budget of the same capacity (up to `2 * DOCUMENT_PLATFORM_READ_BUDGET_BYTES` across concurrent reads and saves) |
 | `DOCUMENT_PLATFORM_PURGE_QUEUE` | `jdbc` | `jdbc` or `kafka`; `kafka` requires the bootstrap servers or the config fails fast |
 | `DOCUMENT_PLATFORM_KAFKA_PURGE_TOPIC` | `document-purges` | non-blank text; used only with the kafka purge queue |
@@ -71,6 +75,7 @@ naming the missing ones.
 | `PROTOMOLT_CONSOLE_OIDC_CLIENT_SECRET` | required with the issuer | text |
 | `PROTOMOLT_CONSOLE_OIDC_REDIRECT_URI` | required with the issuer | the host's `/console/session/callback` as the provider reaches it, registered at the provider exactly |
 | `PROTOMOLT_CONSOLE_SESSION_TTL` | required with the issuer | ISO-8601 duration, one second to seven days (`PT8H`) |
+| `PROTOMOLT_IDENTITY_LINKS` | unset = no caller identity expansion | path to a regular file (up to 64 MiB and 500,000 entries) of length-delimited `IdentityLink` protobuf messages; trimmed, blank or unreadable/malformed files fail startup, and runtime changes reload when file metadata stabilizes; a file that later becomes unreadable or malformed fails every caller-bound request (logged once) until fixed, and one caller's expansion past 10,000 identities fails that request |
 
 Valkey is the preferred Redis-compatible server, selected explicitly. S3 stays the
 default authoritative streaming store; the bounded Valkey/Redis adapter does not

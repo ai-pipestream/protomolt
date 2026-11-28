@@ -45,6 +45,10 @@ public record HttpRouteContract(
         Objects.requireNonNull(routeId, "routeId");
         Objects.requireNonNull(pathTemplate, "pathTemplate");
         httpMethods = List.copyOf(Objects.requireNonNull(httpMethods, "httpMethods"));
+        if (httpMethods.isEmpty()) {
+            // A route with no methods could only answer 405 with an empty Allow header.
+            throw new IllegalArgumentException("httpMethods must name at least one method");
+        }
         pathParameters = List.copyOf(Objects.requireNonNull(pathParameters, "pathParameters"));
         requiredQueryParameters = List.copyOf(
                 Objects.requireNonNull(requiredQueryParameters, "requiredQueryParameters"));
@@ -64,6 +68,7 @@ public record HttpRouteContract(
      * @param method request method, may be {@code null}
      * @return {@code true} when the route declares this method; {@code false} for {@code null}
      */
+    @ApiStability(StabilityTier.INTERNAL)
     public boolean allowsMethod(String method) {
         return method != null && httpMethods.contains(method.toUpperCase(Locale.ROOT));
     }
@@ -73,6 +78,7 @@ public record HttpRouteContract(
      *
      * @return declared methods joined with {@code ", "}
      */
+    @ApiStability(StabilityTier.INTERNAL)
     public String allowHeader() {
         return String.join(", ", httpMethods);
     }
@@ -84,6 +90,7 @@ public record HttpRouteContract(
      * @param requestSegments non-empty, already-split request path segments
      * @return {@code true} when every literal segment matches and the counts agree
      */
+    @ApiStability(StabilityTier.INTERNAL)
     public boolean matchesSegments(List<String> requestSegments) {
         Objects.requireNonNull(requestSegments, "requestSegments");
         List<String> templateSegments = nonEmptySegments(pathTemplate);

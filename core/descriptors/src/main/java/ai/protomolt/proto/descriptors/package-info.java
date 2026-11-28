@@ -1,5 +1,8 @@
 /**
- * Descriptor lookup for protobuf types, and the loader SPI that feeds it.
+ * Descriptor lookup for protobuf types and the loader SPI that feeds it, along
+ * with the shared API-stability vocabulary ({@link ApiStability},
+ * {@link StabilityTier}) and {@link HttpRouteContract} record used across HTTP
+ * services and compatibility snapshots.
  *
  * <p>{@link DescriptorRegistry} — also published under the name
  * {@link DescriptorCatalog} — is the entry point. It aggregates any number of

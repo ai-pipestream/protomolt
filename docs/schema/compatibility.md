@@ -164,7 +164,7 @@ protected contract cannot silently shed gate enforcement.
    drive live HTTP request dispatch directly (along with `responseMediaType` in
    `IntakeHttpServer`), while `successStatusCodes`, `requestType`/`responseType`,
    and media types on the other standalone handlers record declared contract
-   metadata on the same `RouteContract` definitions read by the baseline
+   metadata on the same `HttpRouteContract` definitions read by the baseline
    generator. `RestRouteCompatibilityChecker` checks route presence, path
    templates, `{param}` path parameter sequences, accepted HTTP verbs, required
    query parameters, request/response media types and message types, 2xx success

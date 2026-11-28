@@ -114,4 +114,45 @@ class DocumentAccessPolicyTest {
                 .isInstanceOf(IllegalArgumentException.class);
         assertThat(new RepositoryCaller("alice", false).identities()).isEmpty();
     }
+
+    private static AccessRuleSet set(String source, AccessRule... rules) {
+        return AccessRuleSet.newBuilder().setSource(source).addAllRules(List.of(rules)).build();
+    }
+
+    @Test void requiredRuleSetsMustEachGrantInAdditionToPermissions() {
+        var spaceViewers = rule("oauth-group", "editors", Access.ACCESS_READ);
+        var hrOnly = set("page:salaries", rule("oauth-group", "hr", Access.ACCESS_READ));
+        var aliceListed = set("page:team", rule("cmis-user", "alice", Access.ACCESS_READ));
+        assertThat(read(policy(spaceViewers).toBuilder().addRequiredRuleSets(aliceListed).build())).isTrue();
+        assertThat(read(policy(spaceViewers).toBuilder().addRequiredRuleSets(hrOnly).build())).isFalse();
+        assertThat(read(policy(spaceViewers).toBuilder().addRequiredRuleSets(aliceListed)
+                .addRequiredRuleSets(hrOnly).build())).isFalse();
+        assertThat(read(policy().toBuilder().addRequiredRuleSets(aliceListed).build())).isFalse();
+        assertThat(read(policy(spaceViewers).toBuilder().addRequiredRuleSets(set("page:empty")).build())).isFalse();
+    }
+
+    @Test void requiredRuleSetsKeepDenyWinsAndSeparateReadWrite() {
+        var deny = set("page:blocked", rule("cmis-user", "alice", Access.ACCESS_DENY),
+                rule("public", "public", Access.ACCESS_READ));
+        assertThat(read(policy(READ).toBuilder().addRequiredRuleSets(deny).build())).isFalse();
+        var writeOnly = set("page:edit", rule("cmis-user", "alice", Access.ACCESS_WRITE));
+        assertThat(read(policy(READ).toBuilder().addRequiredRuleSets(writeOnly).build())).isFalse();
+        var publicSet = set("space:open", rule("public", "public", Access.ACCESS_READ));
+        assertThat(read(policy(READ).toBuilder().addRequiredRuleSets(publicSet).build())).isTrue();
+    }
+
+    @Test void malformedOrUnknownRequiredRuleSetsFailClosed() {
+        assertThatThrownBy(() -> read(policy(READ).toBuilder()
+                .addRequiredRuleSets(set("page:x", AccessRule.getDefaultInstance())).build()))
+                .isInstanceOf(RepositoryException.class);
+        var unknown = com.google.protobuf.UnknownFieldSet.newBuilder().addField(100,
+                com.google.protobuf.UnknownFieldSet.Field.newBuilder().addVarint(1).build()).build();
+        assertThatThrownBy(() -> read(policy(READ).toBuilder()
+                .addRequiredRuleSets(set("page:x", READ).toBuilder().setUnknownFields(unknown)).build()))
+                .isInstanceOf(RepositoryException.class);
+        var operator = new RepositoryCaller("operator", true);
+        assertThatThrownBy(() -> DocumentAccessPolicy.allows(operator, "account-a", policy(READ).toBuilder()
+                .addRequiredRuleSets(set("page:x", AccessRule.getDefaultInstance())).build(), null, Access.ACCESS_READ))
+                .isInstanceOf(RepositoryException.class);
+    }
 }

@@ -107,4 +107,27 @@ class HttpRouteContractTest {
         assertThatThrownBy(() -> contract.matchesSegments(null))
                 .isInstanceOf(NullPointerException.class).hasMessage("requestSegments");
     }
+
+    @Test
+    void constructorRejectsEmptyHttpMethods() {
+        assertThatThrownBy(() -> route("/a", List.of()))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("httpMethods must name at least one method");
+    }
+
+    @Test
+    void recordIsStableWhileDispatchHelpersAreInternal() throws NoSuchMethodException {
+        assertThat(ApiStabilityResolver.resolve(HttpRouteContract.class))
+                .isEqualTo(StabilityTier.STABLE);
+        assertThat(ApiStabilityResolver.resolve(HttpRouteContract.class.getMethod("routeId")))
+                .isEqualTo(StabilityTier.STABLE);
+        assertThat(ApiStabilityResolver.resolve(
+                HttpRouteContract.class.getMethod("allowsMethod", String.class)))
+                .isEqualTo(StabilityTier.INTERNAL);
+        assertThat(ApiStabilityResolver.resolve(HttpRouteContract.class.getMethod("allowHeader")))
+                .isEqualTo(StabilityTier.INTERNAL);
+        assertThat(ApiStabilityResolver.resolve(
+                HttpRouteContract.class.getMethod("matchesSegments", List.class)))
+                .isEqualTo(StabilityTier.INTERNAL);
+    }
 }
