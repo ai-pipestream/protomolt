@@ -1,0 +1,103 @@
+// Language-neutral conformance fixture schema for MessageProjection (#981, #988).
+// Consumed identically by Java (protomolt) and Rust (protomolt-rs) test suites.
+syntax = "proto3";
+
+package ai.protomolt.proto.projection.fixture.v1;
+
+option java_multiple_files = true;
+option java_package = "ai.protomolt.proto.projection.fixture";
+option java_outer_classname = "ProjectionFixtureProto";
+
+import "google/protobuf/field_mask.proto";
+
+// Lifecycle phase in which a projection error is expected to occur.
+enum ProjectionPhase {
+  // Default unspecified phase.
+  PROJECTION_PHASE_UNSPECIFIED = 0;
+  // Error raised when building/compiling the MessageProjection for target_type.
+  PROJECTION_PHASE_COMPILE = 1;
+  // Error raised when projecting source_bytes into target_type.
+  PROJECTION_PHASE_PROJECT = 2;
+}
+
+// Language-neutral classification of expected projection failures.
+enum ProjectionErrorKind {
+  // Default unspecified error kind.
+  PROJECTION_ERROR_KIND_UNSPECIFIED = 0;
+  // Target or child CEL rule compiles against none of its declared sources.
+  PROJECTION_ERROR_KIND_CEL_COMPILES_NOWHERE = 1;
+  // Runtime source type is not listed in the target's (sources) option.
+  PROJECTION_ERROR_KIND_UNDECLARED_SOURCE = 2;
+  // CEL expression failed during runtime evaluation.
+  PROJECTION_ERROR_KIND_CEL_EVALUATION = 3;
+  // Scalar, collection, Struct, or literal shape/range coercion failed.
+  PROJECTION_ERROR_KIND_TYPE_COERCION = 4;
+  // Distinct source keys collided onto the same target map key after coercion.
+  PROJECTION_ERROR_KIND_DUPLICATE_MAP_KEY = 5;
+  // Map key or non-Value map entry value evaluated to null.
+  PROJECTION_ERROR_KIND_NULL_MAP_ENTRY = 6;
+  // Nested message value is neither the target field type nor a declared child source.
+  PROJECTION_ERROR_KIND_UNDECLARED_CHILD_SOURCE = 7;
+  // Child projection re-entered an open (target, source) pair.
+  PROJECTION_ERROR_KIND_CYCLE_DETECTED = 8;
+  // Open child projection stack exceeded MAX_NESTING_DEPTH (64).
+  PROJECTION_ERROR_KIND_MAX_DEPTH_EXCEEDED = 9;
+}
+
+// Self-contained cross-language projection test bundle.
+message ProjectionFixtureBundle {
+  // Raw FileDescriptorSet bytes containing google/protobuf/*, projection.proto,
+  // and all fixture schemas with (ai.protomolt.proto.projection.v1.*) options preserved.
+  bytes descriptor_set_bytes = 1;
+  // Ordered conformance cases executed against descriptor_set_bytes.
+  repeated ProjectionFixtureCase cases = 2;
+}
+
+// One self-contained projection test case.
+message ProjectionFixtureCase {
+  // Stable case identifier shared across Java and Rust runners.
+  string name = 1;
+  // Human-readable contract behavior exercised by this case.
+  string description = 2;
+  // Fully-qualified target message type name.
+  string target_type = 3;
+  // Fully-qualified source types supplied to SourceResolver at compile time.
+  repeated string resolvable_source_types = 4;
+  // Fully-qualified runtime input source message type name.
+  string source_type = 5;
+  // Wire-encoded input source protobuf bytes.
+  bytes source_bytes = 6;
+  // Expected compile/project outcome.
+  oneof outcome {
+    // Expected projected output, masks, and field presence assertions.
+    ProjectionExpectedSuccess success = 7;
+    // Expected compile-time or project-time refusal.
+    ProjectionExpectedError error = 8;
+  }
+}
+
+// Expected output and derived mask assertions for a valid projection case.
+message ProjectionExpectedSuccess {
+  // Deterministic protobuf serialization of the projected target message.
+  bytes deterministic_target_bytes = 1;
+  // Expected targetMask() paths emitted by the compiled projection.
+  google.protobuf.FieldMask target_mask = 2;
+  // Expected sourceMask(source_type).fieldMask() paths.
+  google.protobuf.FieldMask source_mask = 3;
+  // Expected sourceMask(source_type).complete() flag.
+  bool source_mask_complete = 4;
+  // Target fields that must be present (hasField == true or repeated/map count > 0).
+  repeated string present_fields = 5;
+  // Target fields that must be absent (hasField == false or repeated/map count == 0).
+  repeated string absent_fields = 6;
+}
+
+// Expected refusal details for an invalid projection case.
+message ProjectionExpectedError {
+  // Phase in which refusal must occur.
+  ProjectionPhase phase = 1;
+  // Semantic category of the refusal.
+  ProjectionErrorKind kind = 2;
+  // Substring (such as the target field FQN) that the diagnostic must contain.
+  string message_contains = 3;
+}

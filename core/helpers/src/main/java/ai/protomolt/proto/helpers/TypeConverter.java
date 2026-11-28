@@ -179,9 +179,16 @@ public class TypeConverter {
         }
 
         return switch (field.getJavaType()) {
-            case INT, FLOAT, DOUBLE -> Value.newBuilder().setNumberValue(((Number) value).doubleValue()).build();
-            // int64 encodes as a string per the proto3 JSON convention (doubles lose precision above 2^53)
-            case LONG -> Value.newBuilder().setStringValue(Long.toString(((Number) value).longValue())).build();
+            case INT -> Value.newBuilder().setNumberValue(
+                    NumericCoercion.isUnsigned32(field)
+                            ? (double) Integer.toUnsignedLong(((Number) value).intValue())
+                            : ((Number) value).doubleValue()).build();
+            case FLOAT, DOUBLE -> Value.newBuilder().setNumberValue(((Number) value).doubleValue()).build();
+            // 64-bit integers encode as decimal strings per ProtoJSON (doubles lose precision above 2^53).
+            case LONG -> Value.newBuilder().setStringValue(
+                    NumericCoercion.isUnsigned64(field)
+                            ? Long.toUnsignedString(((Number) value).longValue())
+                            : Long.toString(((Number) value).longValue())).build();
             case BOOLEAN -> Value.newBuilder().setBoolValue((Boolean) value).build();
             case STRING -> Value.newBuilder().setStringValue((String) value).build();
             case ENUM -> {
@@ -248,28 +255,57 @@ public class TypeConverter {
 
         switch (field.getJavaType()) {
             case INT:
-                // Accept the string encoding and reject non-integral numbers, mirroring LONG.
                 if (value.getKindCase() == Value.KindCase.STRING_VALUE) {
                     try {
-                        return Integer.parseInt(value.getStringValue());
+                        return NumericCoercion.toFieldInt(value.getStringValue(), field);
                     } catch (NumberFormatException e) {
                         throw new IllegalArgumentException(
-                                "Value \"" + value.getStringValue() + "\" is not a valid int32 for field "
+                                "Value \"" + value.getStringValue() + "\" is not a valid integer for field "
                                         + field.getFullName(), e);
                     }
                 }
-                return numberToInt(value.getNumberValue(), field);
-            case LONG:
-                // Accept the string encoding (proto3 JSON convention) and, for backward
-                // compatibility, numbers that are exactly representable as int64.
-                if (value.getKindCase() == Value.KindCase.STRING_VALUE) {
-                    return Long.parseLong(value.getStringValue());
+                if (value.getKindCase() == Value.KindCase.NUMBER_VALUE) {
+                    return NumericCoercion.toFieldInt(value.getNumberValue(), field);
                 }
-                return numberToLong(value.getNumberValue(), field);
+                throw new IllegalArgumentException(
+                        "Expected a number or string value for field " + field.getFullName()
+                                + " but got " + value.getKindCase());
+            case LONG:
+                if (value.getKindCase() == Value.KindCase.STRING_VALUE) {
+                    try {
+                        return NumericCoercion.toFieldLong(value.getStringValue(), field);
+                    } catch (NumberFormatException e) {
+                        throw new IllegalArgumentException(
+                                "Value \"" + value.getStringValue() + "\" is not a valid integer for field "
+                                        + field.getFullName(), e);
+                    }
+                }
+                if (value.getKindCase() == Value.KindCase.NUMBER_VALUE) {
+                    return NumericCoercion.toFieldLong(value.getNumberValue(), field);
+                }
+                throw new IllegalArgumentException(
+                        "Expected a number or string value for field " + field.getFullName()
+                                + " but got " + value.getKindCase());
             case FLOAT:
-                return (float) value.getNumberValue();
+                if (value.getKindCase() == Value.KindCase.STRING_VALUE) {
+                    return Float.parseFloat(value.getStringValue());
+                }
+                if (value.getKindCase() == Value.KindCase.NUMBER_VALUE) {
+                    return (float) value.getNumberValue();
+                }
+                throw new IllegalArgumentException(
+                        "Expected a number value for field " + field.getFullName()
+                                + " but got " + value.getKindCase());
             case DOUBLE:
-                return value.getNumberValue();
+                if (value.getKindCase() == Value.KindCase.STRING_VALUE) {
+                    return Double.parseDouble(value.getStringValue());
+                }
+                if (value.getKindCase() == Value.KindCase.NUMBER_VALUE) {
+                    return value.getNumberValue();
+                }
+                throw new IllegalArgumentException(
+                        "Expected a number value for field " + field.getFullName()
+                                + " but got " + value.getKindCase());
             case BOOLEAN:
                 if (value.getKindCase() != Value.KindCase.BOOL_VALUE) {
                     throw new IllegalArgumentException(
@@ -310,95 +346,11 @@ public class TypeConverter {
     }
 
     /**
-     * Converts a JSON number to a long, rejecting values that cannot be represented exactly.
-     *
-     * @param number The number to convert
-     * @param field The target field descriptor (used for error reporting)
-     * @return The exact long value
-     * @throws IllegalArgumentException if the number is non-integral or outside long range
-     */
-    private static long numberToLong(double number, FieldDescriptor field) {
-        long result = (long) number;
-        if ((double) result != number) {
-            throw new IllegalArgumentException(
-                    "Value " + number + " cannot be represented exactly as int64 for field "
-                            + field.getFullName());
-        }
-        return result;
-    }
-
-    /**
-     * Converts a JSON number to an int, rejecting NaN, non-integral values, and values outside
-     * int32 range.
-     *
-     * @param number The number to convert
-     * @param field The target field descriptor (used for error reporting)
-     * @return The exact int value
-     * @throws IllegalArgumentException if the number is non-integral or outside int32 range
-     */
-    private static int numberToInt(double number, FieldDescriptor field) {
-        long asLong = (long) number;
-        if ((double) asLong != number) {
-            throw new IllegalArgumentException(
-                    "Value " + number + " cannot be represented exactly as int32 for field "
-                            + field.getFullName());
-        }
-        int result = (int) asLong;
-        if (result != asLong) {
-            throw new IllegalArgumentException(
-                    "Value " + number + " is out of int32 range for field " + field.getFullName());
-        }
-        return result;
-    }
-
-    /**
-     * Converts a Java number to a long, rejecting values that cannot be represented exactly.
-     *
-     * @param number The number to convert
-     * @param field The target field descriptor (used for error reporting)
-     * @return The exact long value
-     * @throws IllegalArgumentException if the number is non-integral or outside int64 range
-     */
-    private static long numberToLong(Number number, FieldDescriptor field) {
-        if (number instanceof Long || number instanceof Integer
-                || number instanceof Short || number instanceof Byte) {
-            return number.longValue();
-        }
-        if (number instanceof java.math.BigInteger big) {
-            try {
-                return big.longValueExact();
-            } catch (ArithmeticException e) {
-                throw new IllegalArgumentException(
-                        "Value " + number + " is out of int64 range for field " + field.getFullName(), e);
-            }
-        }
-        return numberToLong(number.doubleValue(), field);
-    }
-
-    /**
-     * Converts a Java number to an int, rejecting values that cannot be represented exactly.
-     *
-     * @param number The number to convert
-     * @param field The target field descriptor (used for error reporting)
-     * @return The exact int value
-     * @throws IllegalArgumentException if the number is non-integral or outside int32 range
-     */
-    private static int numberToInt(Number number, FieldDescriptor field) {
-        long asLong = numberToLong(number, field);
-        int result = (int) asLong;
-        if (result != asLong) {
-            throw new IllegalArgumentException(
-                    "Value " + number + " is out of int32 range for field " + field.getFullName());
-        }
-        return result;
-    }
-
-    /**
      * Attempts to convert a value to match the expected type of a field.
      *
-     * <p>Numeric conversions to int32 and int64 fields are exact: a value that is non-integral or
-     * outside the target range is rejected rather than truncated, matching the Struct conversion
-     * path.</p>
+     * <p>Numeric conversions to signed and unsigned 32-bit and 64-bit integer fields are exact:
+     * a value that is non-integral or outside the target field's signed/unsigned range is rejected
+     * rather than truncated, matching the Struct conversion path.</p>
      *
      * <p>An enum value of another enum type converts by number, the value the wire carries, never
      * by name; a number converts to the enum value with that number. Either fails when the target
@@ -423,12 +375,14 @@ public class TypeConverter {
         // Attempt type conversions
         switch (field.getJavaType()) {
             case INT:
-                if (value instanceof Number) return numberToInt((Number) value, field);
-                if (value instanceof String) return Integer.parseInt((String) value);
+                if (value instanceof Number || value instanceof String) {
+                    return NumericCoercion.toFieldInt(value, field);
+                }
                 break;
             case LONG:
-                if (value instanceof Number) return numberToLong((Number) value, field);
-                if (value instanceof String) return Long.parseLong((String) value);
+                if (value instanceof Number || value instanceof String) {
+                    return NumericCoercion.toFieldLong(value, field);
+                }
                 break;
             case FLOAT:
                 if (value instanceof Number) return ((Number) value).floatValue();
@@ -448,7 +402,7 @@ public class TypeConverter {
                     return alignEnum(enumValue, field);
                 }
                 if (value instanceof Number number) {
-                    int enumNumber = numberToInt(number, field);
+                    int enumNumber = NumericCoercion.toSignedInt32(number, field);
                     EnumValueDescriptor byNumber = field.getEnumType().findValueByNumber(enumNumber);
                     if (byNumber == null) {
                         throw new IllegalArgumentException("Number " + number + " is not a value of "
@@ -483,8 +437,12 @@ public class TypeConverter {
      */
     private boolean isCompatibleType(Object value, FieldDescriptor field) {
         return switch (field.getJavaType()) {
-            case INT -> value instanceof Integer;
-            case LONG -> value instanceof Long;
+            case INT -> NumericCoercion.isUnsigned32(field)
+                    ? (value instanceof Integer i && i >= 0)
+                    : (value instanceof Integer);
+            case LONG -> NumericCoercion.isUnsigned64(field)
+                    ? (value instanceof Long l && l >= 0L)
+                    : (value instanceof Long);
             case FLOAT -> value instanceof Float;
             case DOUBLE -> value instanceof Double;
             case BOOLEAN -> value instanceof Boolean;

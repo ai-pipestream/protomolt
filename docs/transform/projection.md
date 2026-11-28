@@ -69,21 +69,26 @@ backend sees the same stored value and no backend needs its own expression
 runtime. Runtime CEL failures remain projection failures; a calculated default
 does not silently disappear.
 
-Values are coerced to the target field type with the usual rules
-(`TypeConverter`): exact types pass through, scalars widen, messages re-parse
-across descriptor instances of the same type, repeated fields copy
-element-wise. An enum value of another enum type converts by number, then by
-name, and a number (a CEL enum, or a `number_value` literal) converts to the
-enum value with that number; a value the target enum lacks fails. A message
-of a different type goes through a nested projection, described next.
+Values are coerced to the target field type with exact rules
+(`TypeConverter`): exact types pass through, signed and unsigned scalars widen
+or parse within exact bounds (non-integral numbers and out-of-range signed or
+unsigned integers fail rather than truncating), messages re-parse across
+descriptor instances of the same type, repeated fields copy element-wise, and
+`map<K, V>` fields coerce keys and values entry by entry (refusing post-coercion
+duplicate keys, null keys, and null non-`Value` values). An enum value of
+another enum type converts strictly by wire number, and a number (a CEL enum,
+or a `number_value` literal) converts to the enum value with that number; a
+value the target enum lacks fails. A message of a different type goes through a
+nested projection, described next.
 
 ## Nested projections
 
-A mapped message field whose own type declares `(sources)` gets a child
-projection, compiled together with the parent. A source value of a declared
-child source type is projected through the child: a singular value once, a
-repeated value element by element. This is how a list of one message type
-builds a list of another:
+A mapped message field — singular, `repeated`, or `map<K, Message>` — whose
+message type declares `(sources)` gets a child projection, compiled together
+with the parent. A source value of a declared child source type is projected
+through the child: a singular value once, a repeated value element by element,
+and a map value entry by entry while coercing keys. This is how a list or map
+of one message type builds a list or map of another:
 
 ```proto
 message Rendition {
@@ -149,11 +154,12 @@ projection returns. At most 64 projections may be open at once, which stops
 chains that never repeat a value.
 
 In `sourceMask`, a path that feeds a child stays as written (here
-`blob_bag.blobs.blob`). A FieldMask path names the whole subtree below it, and
-a path ending in a repeated field cannot be extended, so the parent path
-already covers every field the child reads; child CEL never makes the parent
-mask incomplete. The child's own `sourceMask` over its source type reports
-its reads in detail.
+`blob_bag.blobs.blob`, or a whole map path such as `blobs_by_id`). A FieldMask
+path names the whole subtree below it, and a path cannot extend below a
+repeated, map, or `google.protobuf.Struct` field, so the truncated container
+path covers every field the child or `Struct` lookup reads; child CEL never
+makes the parent mask incomplete. The child's own `sourceMask` over its source
+type reports its reads in detail.
 
 ## Usage
 
@@ -204,18 +210,28 @@ request-time field-selection APIs where FieldMask is the right mechanism.
 ## Limits and sharp edges (v1)
 
 - **Source masks take plain dotted names.** `sourceMask` ignores whitespace
-  around a path and leaves out a path with an empty segment (a leading,
-  trailing or doubled dot), since it names no field.
-- **Map fields are not supported.** Projection fails with a deliberate error
-  naming the field rather than guessing at generated-vs-dynamic runtime shapes.
+  around a path, leaves out paths with empty segments (leading, trailing or
+  doubled dots), and truncates valid paths at any `repeated`, `map`, or
+  `google.protobuf.Struct` boundary so emitted `FieldMask`s remain valid.
+- **Map fields require explicit map inputs.** A `map<K, V>` target accepts
+  protobuf `map` paths, CEL maps, and `struct_value` literals (all 12 protobuf
+  map-key scalar types plus scalar, enum, or child-projected message values).
+  Empty protobuf source maps read via `paths` count as absent (falling through
+  candidate paths and triggering `default_from`), whereas explicit empty CEL
+  maps (`{}`) and `struct_value: {}` literals count as present-empty. Ordinary
+  `repeated` lists, `google.protobuf.Struct` source fields via `paths`, null
+  keys/values (except `google.protobuf.Value` / `NullValue`), and duplicate
+  keys produced by key coercion fail with `ProjectionException`.
 - **Proto3 implicit defaults count as absent.** A source field at its default
-  (`0`, `""`, `false`) does not project, even if application code set it
-  explicitly, because proto3 cannot tell the difference. Use a CEL rule
-  (`source.count`) when the zero value is meaningful.
-- **Coercion follows `TypeConverter`.** Widening (`int32`→`int64`, numbers to
-  strings, string parsing back to numbers) is safe; narrowing a fractional
-  double into an integer target truncates. One failed field fails the whole
-  projection with the field named in the error.
+  (`0`, `""`, `false`, or an empty protobuf `map`) does not project via `paths`,
+  even if application code set it explicitly, because wire encoding cannot tell
+  the difference. Use a CEL rule (`source.count`) when the default value is
+  meaningful.
+- **Coercion follows `TypeConverter`.** Widening (`int32`→`int64`, `uint32`→`int64`
+  or `uint64`, numbers to strings, string parsing back to signed or unsigned
+  numbers) is exact; fractional doubles and out-of-range signed/unsigned values
+  fail rather than truncating. One failed field fails the whole projection with
+  the field named in the error.
 - **CEL sees real values**, including proto3 defaults, so path fallback and CEL
   can legitimately disagree about "absent" for the same field.
 - **Defaults apply during projection, not mutation.** `default_from` fills a

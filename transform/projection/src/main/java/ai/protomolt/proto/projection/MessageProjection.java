@@ -6,7 +6,6 @@ import ai.protomolt.proto.cel.CelEvaluationException;
 import ai.protomolt.proto.cel.CelEvaluator;
 import ai.protomolt.proto.descriptors.DescriptorRegistry;
 import ai.protomolt.proto.helpers.TypeConverter;
-import ai.protomolt.proto.mapper.MappingException;
 import ai.protomolt.proto.mapper.ProtoFieldMapper;
 import ai.protomolt.proto.mapper.ProtoFieldMapperImpl;
 import com.google.protobuf.DescriptorProtos.FieldOptions;
@@ -57,13 +56,12 @@ import java.util.concurrent.ConcurrentHashMap;
  *       projection; guard presence-dependent logic with {@code has()}.</li>
  * </ul>
  *
- * <p>A mapped message field whose own type declares {@code (sources)} gets a
- * child projection, compiled with this one. A source value of another message
- * type, singular or element by element for a repeated field, is projected
- * through the child when the child declares that type; a value of the field's
- * own type is copied as is; any other message type fails the projection. This
- * is how a list of one message type (stored blobs, say) builds a list of
- * another (renditions). Child CEL rules are validated with the parent. One
+ * <p>A mapped message field — singular, {@code repeated}, or {@code map<K, V>}
+ * value — whose message type declares {@code (sources)} gets a child
+ * projection, compiled with this one. A source value of another message type is
+ * projected through the child when the child declares that type; a value of the
+ * field's own type is copied as is; any other message type fails the
+ * projection. Child CEL rules are validated with the parent. One
  * {@link #project(Message)} call refuses to re-enter a (target type, source
  * value) pair it is still projecting, and refuses more than
  * {@value #MAX_NESTING_DEPTH} open projections, so a schema whose child
@@ -244,10 +242,14 @@ public final class MessageProjection {
         compiled.put(target, projection);
         for (FieldRule rule : rules) {
             FieldDescriptor field = rule.field();
-            if (field.getJavaType() != FieldDescriptor.JavaType.MESSAGE || field.isMapField()) {
+            FieldDescriptor valueField = field.isMapField()
+                    ? MapFieldProjector.valueFieldOf(field)
+                    : field;
+            if (valueField.getJavaType() != FieldDescriptor.JavaType.MESSAGE) {
                 continue;
             }
-            MessageProjection child = compile(field.getMessageType(), sources, fieldMapper, compiled);
+            MessageProjection child = compile(
+                    valueField.getMessageType(), sources, fieldMapper, compiled);
             if (child != null) {
                 projection.children.put(field, child);
             }
@@ -387,9 +389,7 @@ public final class MessageProjection {
     private boolean addSourceReads(Rule rule, Descriptor sourceType, Set<String> paths) {
         if (rule instanceof PathRule pathRule) {
             for (String path : pathRule.paths()) {
-                if (resolves(sourceType, path)) {
-                    paths.add(path);
-                }
+                SourcePathSupport.sourceMaskPath(sourceType, path).ifPresent(paths::add);
             }
         } else if (rule instanceof CelRule celRule
                 && compilesFor(sourceType, celRule.expression())) {
@@ -410,33 +410,11 @@ public final class MessageProjection {
     /**
      * Whether a dotted path resolves against {@code type}. Surrounding
      * whitespace is ignored; an empty segment (a leading, trailing or doubled
-     * dot) does not resolve. Map fields end the check: their keys are dynamic,
-     * so anything below a map counts as resolvable.
+     * dot) does not resolve. Map fields end descriptor traversal once segment
+     * syntax is checked.
      */
     static boolean resolves(Descriptor type, String path) {
-        String trimmed = path.trim();
-        Descriptor current = type;
-        int start = 0;
-        while (true) {
-            int dot = trimmed.indexOf('.', start);
-            String segment = dot < 0 ? trimmed.substring(start) : trimmed.substring(start, dot);
-            if (current == null || segment.isEmpty()) {
-                return false;
-            }
-            FieldDescriptor field = current.findFieldByName(segment);
-            if (field == null) {
-                return false;
-            }
-            if (field.isMapField()) {
-                return true;
-            }
-            if (dot < 0) {
-                return true;
-            }
-            current = field.getJavaType() == FieldDescriptor.JavaType.MESSAGE
-                    ? field.getMessageType() : null;
-            start = dot + 1;
-        }
+        return SourcePathSupport.resolves(type, path);
     }
 
     /**
@@ -458,13 +436,14 @@ public final class MessageProjection {
      * Projects {@code source} with {@code open} holding the (target, source)
      * pairs of the projections this call is inside, innermost first. Projection
      * is deterministic, so meeting an open pair again means the recursion would
-     * never end. Source values compare by protobuf field equality, so a
-     * CEL-built copy of an open source counts as the same value. A pair leaves
-     * the stack when its projection returns, so siblings may project equal
-     * values. The depth bound is checked before any source is compared, and
-     * comparison never hashes or recursively compares a source, so a source
-     * nested far deeper than the bound fails with a {@link ProjectionException}
-     * rather than overflowing the stack.
+     * never end. Source values compare by protobuf field equality (with map
+     * entries compared order-independently by key), so a CEL-built copy of an
+     * open source counts as the same value. A pair leaves the stack when its
+     * projection returns, so siblings may project equal values. The depth bound
+     * is checked before any source is compared, and comparison never hashes or
+     * recursively compares a source, so a source nested far deeper than the
+     * bound fails with a {@link ProjectionException} rather than overflowing
+     * the stack.
      */
     private DynamicMessage project(Message source, ArrayDeque<OpenProjection> open) {
         Descriptor sourceType = source.getDescriptorForType();
@@ -479,7 +458,8 @@ public final class MessageProjection {
                     + " nested projections; a child mapping does not descend");
         }
         for (OpenProjection pair : open) {
-            if (pair.target() == targetType && sameValue(pair.source(), source)) {
+            if (pair.target() == targetType
+                    && MessageValueEquality.sameValue(pair.source(), source)) {
                 throw new ProjectionException("Projection " + targetType.getFullName()
                         + " re-enters itself with an equal " + sourceType.getFullName()
                         + " source; a child mapping does not descend");
@@ -489,72 +469,20 @@ public final class MessageProjection {
         try {
             DynamicMessage.Builder out = DynamicMessage.newBuilder(targetType);
             for (FieldRule rule : rules) {
-                Object value = resolve(rule.from(), source, sourceType);
+                Rule activeRule = rule.from();
+                Object value = resolve(activeRule, source, sourceType);
                 if (value == null) {
-                    value = resolve(rule.defaultFrom(), source, sourceType);
+                    activeRule = rule.defaultFrom();
+                    value = resolve(activeRule, source, sourceType);
                 }
                 if (value != null) {
-                    assign(out, rule.field(), value, open);
+                    assign(out, rule.field(), value, activeRule instanceof LiteralRule, open);
                 }
             }
             return out.build();
         } finally {
             open.pop();
         }
-    }
-
-    /**
-     * Whether two messages are equal field by field, as {@link Message#equals}
-     * decides, but walked with an explicit work list: {@code equals} and
-     * {@code hashCode} recurse once per nesting level, so a deeply nested
-     * source would overflow the stack before the depth bound could refuse it.
-     * Map fields compare as their entry lists in order, so a reordered map
-     * reads as a different value and only the depth bound stops that cycle.
-     */
-    private static boolean sameValue(Message left, Message right) {
-        ArrayDeque<Message> pending = new ArrayDeque<>();
-        pending.push(left);
-        pending.push(right);
-        while (!pending.isEmpty()) {
-            Message b = pending.pop();
-            Message a = pending.pop();
-            if (a == b) {
-                continue;
-            }
-            if (a.getDescriptorForType() != b.getDescriptorForType()
-                    || !a.getUnknownFields().equals(b.getUnknownFields())) {
-                return false;
-            }
-            Map<FieldDescriptor, Object> aFields = a.getAllFields();
-            Map<FieldDescriptor, Object> bFields = b.getAllFields();
-            if (!aFields.keySet().equals(bFields.keySet())) {
-                return false;
-            }
-            for (Map.Entry<FieldDescriptor, Object> entry : aFields.entrySet()) {
-                FieldDescriptor field = entry.getKey();
-                Object aValue = entry.getValue();
-                Object bValue = bFields.get(field);
-                if (field.getJavaType() != FieldDescriptor.JavaType.MESSAGE) {
-                    if (!aValue.equals(bValue)) {
-                        return false;
-                    }
-                } else if (field.isRepeated()) {
-                    List<?> aList = (List<?>) aValue;
-                    List<?> bList = (List<?>) bValue;
-                    if (aList.size() != bList.size()) {
-                        return false;
-                    }
-                    for (int i = 0; i < aList.size(); i++) {
-                        pending.push((Message) aList.get(i));
-                        pending.push((Message) bList.get(i));
-                    }
-                } else {
-                    pending.push((Message) aValue);
-                    pending.push((Message) bValue);
-                }
-            }
-        }
-        return true;
     }
 
     private Object resolve(Rule rule, Message source, Descriptor sourceType) {
@@ -564,7 +492,7 @@ public final class MessageProjection {
             case null -> null;
             case PathRule pathRule -> {
                 for (String path : pathRule.paths()) {
-                    Object value = tryGet(source, path);
+                    Object value = SourcePathSupport.tryRead(source, path, fieldMapper);
                     if (value != null) {
                         yield value;
                     }
@@ -573,8 +501,9 @@ public final class MessageProjection {
             }
             case CelRule celRule -> {
                 try {
-                    yield evaluatorFor(sourceType)
-                            .evaluateValue(celRule.expression(), Map.of("source", source));
+                    yield MapFieldProjector.normalizeCelResult(
+                            evaluatorFor(sourceType)
+                                    .evaluateValue(celRule.expression(), Map.of("source", source)));
                 } catch (CelCompilationException e) {
                     // Does not compile against this source type: absent, per the join semantics.
                     yield null;
@@ -584,26 +513,37 @@ public final class MessageProjection {
                             + sourceType.getFullName() + ": " + celRule.expression(), e);
                 }
             }
-            case LiteralRule literalRule -> typeConverter.fromValue(literalRule.literal());
+            case LiteralRule literalRule -> resolveLiteral(literalRule);
         };
     }
 
-    private Object tryGet(Message source, String path) {
-        try {
-            return fieldMapper.getValue(source, path, false);
-        } catch (MappingException e) {
-            // Unresolvable against this source type: absent, per the join semantics.
-            return null;
+    private Object resolveLiteral(LiteralRule literalRule) {
+        Value literal = literalRule.literal();
+        FieldDescriptor field = literalRule.field();
+        if (field.isMapField()) {
+            return switch (literal.getKindCase()) {
+                case NULL_VALUE -> null;
+                case STRUCT_VALUE -> new MapInput.StructLiteral(literal.getStructValue());
+                default -> throw new ProjectionException("Literal for map projection field "
+                        + field.getFullName() + " must be a struct_value, got "
+                        + literal.getKindCase());
+            };
         }
+        return typeConverter.fromValue(literal);
     }
 
     private void assign(
-            DynamicMessage.Builder out, FieldDescriptor field, Object value, ArrayDeque<OpenProjection> open) {
+            DynamicMessage.Builder out,
+            FieldDescriptor field,
+            Object value,
+            boolean fromLiteral,
+            ArrayDeque<OpenProjection> open) {
         if (field.isMapField()) {
-            // Map values arrive as java.util.Map from generated sources but as MapEntry
-            // lists from DynamicMessage sources; support them deliberately, not by accident.
-            throw new ProjectionException(
-                    "Map fields are not yet supported by projection: " + field.getFullName());
+            MapFieldProjector.assignMap(
+                    out, field, value, typeConverter,
+                    (ownerField, valueField, rawValue, literalEntry) ->
+                            convertValue(ownerField, valueField, rawValue, literalEntry, open));
+            return;
         }
         try {
             if (field.isRepeated()) {
@@ -612,14 +552,22 @@ public final class MessageProjection {
                             + field.getFullName() + " is not a list: " + value.getClass().getName());
                 }
                 for (Object element : elements) {
-                    out.addRepeatedField(field, convert(field, element, open));
+                    if (MapFieldProjector.isNullLike(element)) {
+                        throw new ProjectionException(
+                                "Null element for repeated projection field " + field.getFullName());
+                    }
+                    out.addRepeatedField(field, convertValue(field, field, element, fromLiteral, open));
                 }
             } else {
                 if (value instanceof List<?>) {
                     throw new ProjectionException("Value for singular projection field "
                             + field.getFullName() + " is a list");
                 }
-                out.setField(field, convert(field, value, open));
+                if (value instanceof MapInput || value instanceof Map<?, ?>) {
+                    throw new ProjectionException("Value for singular projection field "
+                            + field.getFullName() + " is a map");
+                }
+                out.setField(field, convertValue(field, field, value, fromLiteral, open));
             }
         } catch (IllegalArgumentException e) {
             throw new ProjectionException(
@@ -628,27 +576,47 @@ public final class MessageProjection {
     }
 
     /**
-     * Converts one value (a singular value or one element of a list) for
-     * {@code field}. A message of another type goes through the field's child
-     * projection; everything else, including a message of the field's own type,
-     * follows {@link TypeConverter}.
+     * Converts one value (singular, repeated element, or map entry value) for
+     * {@code targetValueField}. A message of another type goes through
+     * {@code ownerField}'s child projection; everything else, including a
+     * message of the field's own type, follows {@link TypeConverter}.
      */
-    private Object convert(FieldDescriptor field, Object value, ArrayDeque<OpenProjection> open) {
-        MessageProjection child = children.get(field);
-        if (child != null && value instanceof Message message) {
-            Descriptor valueType = message.getDescriptorForType();
-            if (!valueType.getFullName().equals(field.getMessageType().getFullName())) {
-                if (!child.supports(valueType)) {
-                    throw new ProjectionException("Value of type " + valueType.getFullName()
-                            + " for projection field " + field.getFullName() + " is neither "
-                            + field.getMessageType().getFullName()
-                            + " nor a declared source of its projection (declared: "
-                            + String.join(", ", child.declaredSources()) + ")");
+    private Object convertValue(
+            FieldDescriptor ownerField,
+            FieldDescriptor targetValueField,
+            Object value,
+            boolean fromLiteral,
+            ArrayDeque<OpenProjection> open) {
+        MapFieldProjector.rejectStructuredScalar(value, targetValueField, ownerField);
+        if (targetValueField.getJavaType() == FieldDescriptor.JavaType.MESSAGE) {
+            if (value instanceof List<?> || value instanceof Map<?, ?> || value instanceof MapInput) {
+                throw new ProjectionException("Cannot coerce collection of type "
+                        + value.getClass().getName() + " into message projection field "
+                        + ownerField.getFullName());
+            }
+            MessageProjection child = children.get(ownerField);
+            if (child != null && value instanceof Message message) {
+                Descriptor valueType = message.getDescriptorForType();
+                if (!valueType.getFullName().equals(targetValueField.getMessageType().getFullName())) {
+                    if (!child.supports(valueType)) {
+                        throw new ProjectionException("Value of type " + valueType.getFullName()
+                                + " for projection field " + ownerField.getFullName() + " is neither "
+                                + targetValueField.getMessageType().getFullName()
+                                + " nor a declared source of its projection (declared: "
+                                + String.join(", ", child.declaredSources()) + ")");
+                    }
+                    return child.project(message, open);
                 }
-                return child.project(message, open);
+            }
+            if (!fromLiteral
+                    && value instanceof com.google.protobuf.Struct
+                    && !SourcePathSupport.isStructDescriptor(targetValueField.getMessageType())) {
+                throw new ProjectionException("Value of type google.protobuf.Struct for projection field "
+                        + ownerField.getFullName() + " cannot implicitly populate "
+                        + targetValueField.getMessageType().getFullName());
             }
         }
-        return typeConverter.convertToFieldType(value, field);
+        return typeConverter.convertToFieldType(value, targetValueField);
     }
 
     private synchronized CelEvaluator evaluatorFor(Descriptor sourceType) {

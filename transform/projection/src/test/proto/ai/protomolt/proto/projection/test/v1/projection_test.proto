@@ -342,14 +342,13 @@ message BadParseDoc {
   }];
 }
 
-// Map targets are refused outright. The refusal is a declared limitation
-// rather than an oversight, so it is pinned here.
+// Map target populated directly from a source map field.
 message MapDoc {
   option (ai.protomolt.proto.projection.v1.sources) = {
     source: "ai.protomolt.proto.projection.test.v1.ScalarZoo"
   };
 
-  // A map target, which the engine must reject with an unsupported error.
+  // Copies the string-to-int32 map entries from ScalarZoo.counts.
   map<string, int32> counts = 1 [(ai.protomolt.proto.projection.v1.from) = {
     paths: {path: "counts"}
   }];

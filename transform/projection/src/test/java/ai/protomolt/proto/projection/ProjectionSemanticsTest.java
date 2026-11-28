@@ -182,10 +182,11 @@ class ProjectionSemanticsTest {
     }
 
     @Test
-    void rejectsMapFieldsWithADeliberateError() {
-        assertThatThrownBy(() -> projection(MapDoc.getDescriptor()).project(zoo().build()))
-                .isInstanceOf(ProjectionException.class)
-                .hasMessageContaining("Map fields are not yet supported");
+    void projectsMapFieldsFromSource() throws Exception {
+        DynamicMessage out = projection(MapDoc.getDescriptor())
+                .project(zoo().putCounts("b", 2).build());
+        MapDoc projected = MapDoc.parseFrom(out.toByteString());
+        assertThat(projected.getCountsMap()).containsEntry("a", 1).containsEntry("b", 2);
     }
 
     @Test
