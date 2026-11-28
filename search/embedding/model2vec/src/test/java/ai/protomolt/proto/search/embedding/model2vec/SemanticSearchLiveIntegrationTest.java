@@ -58,7 +58,7 @@ class SemanticSearchLiveIntegrationTest {
     @Container
     static final OpenSearchContainer<?> OPENSEARCH = new OpenSearchContainer<>(
             DockerImageName.parse(System.getProperty(
-                    "protomolt.test.opensearch.image", "opensearchproject/opensearch:3.9.0")));
+                    "protomolt.test.opensearch.image", "opensearchproject/opensearch:3.10.0")));
 
     private static final ObjectMapper JSON = new ObjectMapper();
     private static final HttpClient HTTP = HttpClient.newBuilder()

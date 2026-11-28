@@ -223,7 +223,7 @@ for the ledger, LocalStack for S3, the full stack booted through
 - `SeedAccountDrivesIT` — the seeded default account: `intake`/`pipeline`
   drives appear with the provisioning defaults, seeding is idempotent across
   repeat runs, and an unset variable is a no-op.
-- `RedisBlobStoreIT` — the shared byte adapter against pinned `valkey/valkey:9.1.3-alpine`:
+- `RedisBlobStoreIT` — the shared byte adapter against pinned `valkey/valkey:9.2.0-alpine`:
   verified writes, the two-entries-per-object mapping, 1000-key pipelined
   deletes, SCAN listing, TTL expiry.
 - `CacheCloseTest` / `CacheProviderIT` — the caching decorator's
