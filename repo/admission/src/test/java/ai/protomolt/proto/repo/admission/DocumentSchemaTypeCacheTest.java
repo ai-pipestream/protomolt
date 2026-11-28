@@ -45,16 +45,19 @@ class DocumentSchemaTypeCacheTest {
 
     @Test
     void admittingAnArtifactCopiesItOnce() {
-        int size = 16 * 1024 * 1024;
+        // Stay below a 16 MiB power-of-two boundary so the array header never pushes a single
+        // copy into an extra 8 MiB / 16 MiB G1 humongous region on high-memory hosts.
+        int size = 15 * 1024 * 1024;
         ByteString slice = ByteString.copyFrom(new byte[size + 1]).substring(1);
+        var type = StringValue.getDescriptor();
         var cache = cache();
         var threads = (com.sun.management.ThreadMXBean) ManagementFactory.getThreadMXBean();
         long thread = Thread.currentThread().threadId();
         long before = threads.getThreadAllocatedBytes(thread);
 
-        cache.put(KEY, StringValue.getDescriptor(), slice, "sha");
+        cache.put(KEY, type, slice, "sha");
 
-        // One copy is 16 MiB. Two would be 32 MiB.
+        // One copy is 15 MiB (<= 16 MiB with G1 humongous rounding). Two copies would be >= 30 MiB.
         assertThat(threads.getThreadAllocatedBytes(thread) - before).isLessThan(size + size / 2);
     }
 }

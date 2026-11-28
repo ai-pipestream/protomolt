@@ -52,6 +52,14 @@ public final class RepoServiceMain {
         RepoServices services = RepoServices.build(config)
                 .withAccountBindings(callers.bindings())
                 .withRenderers(RepoServices.defaultSaveAsRenderers());
+        IdentityLinkFile.fromEnvironment(System.getenv()).ifPresent(services::withIdentityExpansion);
+        // Types a producing service defines (DOCUMENT_PLATFORM_REFLECTED_SCHEMA_TARGETS),
+        // read from it over server reflection at admission. A bad value fails the boot;
+        // an unreachable target does not, it fails the saves that need it.
+        ReflectedSchemas.fromEnvironment(System.getenv()).ifPresent(reflected -> {
+            LOG.info("reflected schema sources: {}", reflected.targets());
+            services.withReflectedSchemas(reflected);
+        });
         // Seeded default account (DOCUMENT_PLATFORM_SEED_ACCOUNT_ID): ensure
         // the account's intake/pipeline drives exist before serving. No-op
         // when unset; embedded hosts opt in by calling it themselves.

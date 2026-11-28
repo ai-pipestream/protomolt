@@ -62,6 +62,8 @@ dependencies {
     api project(':protomolt-http-connect')
     // Descriptor closures/fingerprints and stability contracts for module-contributed admission schemas and HTTP routes.
     api project(':protomolt-descriptors')
+    // Server reflection as a schema source for admission (ReflectedSchemas).
+    implementation project(':protomolt-grpc-invoke')
 
     runtimeOnly libs.slf4j.simple
 

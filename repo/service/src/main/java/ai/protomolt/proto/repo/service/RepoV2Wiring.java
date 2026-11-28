@@ -66,6 +66,9 @@ final class RepoV2Wiring {
      *
      * @param catalogSchema the schema the catalog migrates into on the ledger database
      * @param admittedSchemas the module-contributed schema definitions, read per admission
+     * @param reflectedSchemas the definition of a type URL nothing compiled in defines, as a
+     *        configured reflection source serves it at this admission; {@code null} when no
+     *        source knows the type or none is configured
      * @param bindCaller the composition's v2 caller binding
      * @param readBudget the host read byte budget verified reads reserve on
      * @param conceptSchemes the host's mounted concept schemes, read per save and per
@@ -74,6 +77,7 @@ final class RepoV2Wiring {
     static Wired wire(RepoServiceConfig config, OwnedResources owned, DriveLedger driveLedger,
             DriveBackingPool pool, String catalogSchema,
             Supplier<Map<String, DocumentSchemaAdmission.Definition>> admittedSchemas,
+            Function<String, DocumentSchemaAdmission.Definition> reflectedSchemas,
             Function<AuthenticatedCaller, RepositoryCaller> bindCaller, ReadByteBudget readBudget,
             Supplier<ConceptSchemeMounts> conceptSchemes) {
         // The parts-based v2 document service. The catalog shares the ledger's
@@ -91,7 +95,11 @@ final class RepoV2Wiring {
                         return BuiltinDocumentSchema.definition(
                                 ai.protomolt.proto.repo.v1.SearchMetadata.getDescriptor());
                     // Module-contributed schemas (the fleet document model).
-                    return admittedSchemas.get().get(selection.typeUrl());
+                    var contributed = admittedSchemas.get().get(selection.typeUrl());
+                    if (contributed != null) return contributed;
+                    // A type only a producing service defines, read from that service
+                    // over server reflection. Compiled-in definitions always win.
+                    return reflectedSchemas.apply(selection.typeUrl());
                 };
         // Bound concept tags are decided against the mounts the host has at
         // the save (requirements §17); with none mounted they refuse
