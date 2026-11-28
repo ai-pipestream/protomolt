@@ -190,6 +190,177 @@ describe('Save-as job store', () => {
     },
   )
 
+  it('surfaces a missing job on refresh after an unsettled publish while keeping reconciliation open', async () => {
+    let gets = 0
+    const client = routerClients((r) =>
+      r.service(RepositorySinkService, {
+        publishRepositorySink() {
+          throw new ConnectError('publish reply lost', Code.Unavailable)
+        },
+        getRepositorySinkJob(req) {
+          gets += 1
+          if (gets === 1) return create(GetRepositorySinkJobResponseSchema)
+          if (gets === 2) throw new ConnectError('no such job yet', Code.NotFound)
+          return create(GetRepositorySinkJobResponseSchema, {
+            job: job(req.operationId, RepositorySinkJobState.SUCCEEDED),
+          })
+        },
+      }),
+    ).repositorySink
+    const jobs = createSaveAsJobStore()
+    try {
+      await jobs.publish(client, request('op-unsettled-empty'), true)
+      await jobs.refresh('op-unsettled-empty')
+      const entry = jobs.find('op-unsettled-empty')!
+      expect(entry.summary).toBeNull()
+      expect(entry.error).toMatchObject({
+        kind: 'unsettled',
+        codeLabel: 'EmptyJobResponse',
+        canReconcile: true,
+      })
+      expect(entry.error?.message).toContain('publish reply lost')
+      expect(entry.error?.message).toContain('no job for the status request')
+      expect(entry.request.operationId).toBe('op-unsettled-empty')
+
+      await jobs.refresh('op-unsettled-empty')
+      expect(entry.summary).toBeNull()
+      expect(entry.error?.kind).toBe('unsettled')
+      expect(entry.error?.canReconcile).toBe(true)
+
+      await jobs.refresh('op-unsettled-empty')
+      expect(entry.summary?.phase).toBe('succeeded')
+      expect(entry.error).toBeNull()
+    } finally {
+      jobs.dispose()
+    }
+  })
+
+  it.each(['running', 'cancelled'] as const)(
+    'orders an empty-cancel warning against a pre-cancel %s status sample',
+    async (preCancelPhase) => {
+      let releasePreCancelGet = () => {}
+      const preCancelGate = new Promise<void>((resolve) => {
+        releasePreCancelGet = resolve
+      })
+      let gets = 0
+      const client = routerClients((r) =>
+        r.service(RepositorySinkService, {
+          publishRepositorySink(req) {
+            return create(PublishRepositorySinkResponseSchema, {
+              job: job(req.operationId, RepositorySinkJobState.RUNNING),
+            })
+          },
+          async getRepositorySinkJob(req) {
+            gets += 1
+            if (gets === 1) {
+              await preCancelGate
+              return create(GetRepositorySinkJobResponseSchema, {
+                job: job(
+                  req.operationId,
+                  preCancelPhase === 'cancelled'
+                    ? RepositorySinkJobState.CANCELLED
+                    : RepositorySinkJobState.RUNNING,
+                ),
+              })
+            }
+            return create(GetRepositorySinkJobResponseSchema, {
+              job: job(req.operationId, RepositorySinkJobState.RUNNING),
+            })
+          },
+          cancelRepositorySinkJob() {
+            return create(CancelRepositorySinkJobResponseSchema)
+          },
+        }),
+      ).repositorySink
+      const jobs = createSaveAsJobStore()
+      try {
+        await jobs.publish(client, request('op-cancel-seq'), true)
+        const preCancelGet = jobs.refresh('op-cancel-seq')
+        await jobs.cancel('op-cancel-seq', 'stop')
+        const entry = jobs.find('op-cancel-seq')!
+        expect(entry.error?.codeLabel).toBe('EmptyJobResponse')
+
+        releasePreCancelGet()
+        await preCancelGet
+        if (preCancelPhase === 'cancelled') {
+          expect(entry.summary?.phase).toBe('cancelled')
+          expect(entry.error).toBeNull()
+          return
+        }
+        expect(entry.summary?.phase).toBe('running')
+        expect(entry.error?.codeLabel).toBe('EmptyJobResponse')
+        expect(entry.error?.message).toContain('no job for the cancel request')
+
+        await jobs.refresh('op-cancel-seq')
+        expect(entry.summary?.phase).toBe('running')
+        expect(entry.error).toBeNull()
+      } finally {
+        jobs.dispose()
+      }
+    },
+  )
+
+  it.each(['empty', 'unavailable'] as const)(
+    'does not inflate poll backoff when an obsolete %s status sample finishes after cancel',
+    async (failureKind) => {
+      vi.useFakeTimers()
+      let releaseObsoleteGet = () => {}
+      const obsoleteGate = new Promise<void>((resolve) => {
+        releaseObsoleteGet = resolve
+      })
+      let gets = 0
+      const client = routerClients((r) =>
+        r.service(RepositorySinkService, {
+          publishRepositorySink(req) {
+            return create(PublishRepositorySinkResponseSchema, {
+              job: job(req.operationId, RepositorySinkJobState.RUNNING),
+            })
+          },
+          async getRepositorySinkJob(req) {
+            gets += 1
+            if (gets === 1) {
+              await obsoleteGate
+              if (failureKind === 'unavailable') {
+                throw new ConnectError('stale blip', Code.Unavailable)
+              }
+              return create(GetRepositorySinkJobResponseSchema)
+            }
+            return create(GetRepositorySinkJobResponseSchema, {
+              job: job(req.operationId, RepositorySinkJobState.SUCCEEDED),
+            })
+          },
+          cancelRepositorySinkJob(req) {
+            return create(CancelRepositorySinkJobResponseSchema, {
+              job: job(req.operationId, RepositorySinkJobState.RUNNING),
+            })
+          },
+        }),
+      ).repositorySink
+      const jobs = createSaveAsJobStore()
+      try {
+        await jobs.publish(client, request('op-obsolete-backoff'), true)
+        const obsoleteGet = jobs.refresh('op-obsolete-backoff')
+        await jobs.cancel('op-obsolete-backoff', 'stop')
+        // Consume the 500 ms timer scheduled by cancel while the obsolete Get is still running.
+        await vi.advanceTimersByTimeAsync(500)
+        expect(gets).toBe(1)
+
+        releaseObsoleteGet()
+        await obsoleteGet
+        const entry = jobs.find('op-obsolete-backoff')!
+        expect(entry.error).toBeNull()
+
+        await vi.advanceTimersByTimeAsync(499)
+        expect(gets).toBe(1)
+        await vi.advanceTimersByTimeAsync(1)
+        expect(gets).toBe(2)
+        expect(entry.summary?.phase).toBe('succeeded')
+      } finally {
+        jobs.dispose()
+      }
+    },
+  )
+
   it('keeps polling an active job after a status call fails', async () => {
     vi.useFakeTimers()
     let gets = 0

@@ -103,6 +103,8 @@ interface JobCalls {
   started: number
   /** Sequence number of the call whose job summary the entry currently shows. */
   shown: number
+  /** Sequence number of the call whose lookup diagnostic `entry.error` currently shows. */
+  diagnosticShown: number
   /** Sequence number of the most recently started publish (a retry starts a new attempt). */
   publishStarted: number
   /** Status calls that have failed in a row. */
@@ -112,6 +114,8 @@ interface JobCalls {
    * stands until the server describes the job, whatever later calls fail with.
    */
   unknownOutcome: ClassifiedSinkError | null
+  /** Latest lookup diagnostic newer than `shown`, kept if an older non-terminal sample lands. */
+  lookupDiagnostic: ClassifiedSinkError | null
 }
 
 export function createSaveAsJobStore(): SaveAsJobStore {
@@ -125,7 +129,15 @@ export function createSaveAsJobStore(): SaveAsJobStore {
   function callsFor(operationId: string): JobCalls {
     let state = calls.get(operationId)
     if (state === undefined) {
-      state = { started: 0, shown: 0, publishStarted: 0, failedPolls: 0, unknownOutcome: null }
+      state = {
+        started: 0,
+        shown: 0,
+        diagnosticShown: 0,
+        publishStarted: 0,
+        failedPolls: 0,
+        unknownOutcome: null,
+        lookupDiagnostic: null,
+      }
       calls.set(operationId, state)
     }
     return state
@@ -204,10 +216,16 @@ export function createSaveAsJobStore(): SaveAsJobStore {
     state.shown = Math.max(state.shown, sequence)
     entry.summary = summary
     entry.updatedBy = source
-    // The server has answered for this job, so an earlier call's failure no longer describes it.
-    entry.error = null
-    callsFor(entry.operationId).failedPolls = 0
-    callsFor(entry.operationId).unknownOutcome = null
+    state.failedPolls = 0
+    state.unknownOutcome = null
+    if (summary.terminal || sequence >= state.diagnosticShown) {
+      // A confirmed terminal outcome, or a sample at/after the latest diagnostic, clears it.
+      state.diagnosticShown = 0
+      state.lookupDiagnostic = null
+      entry.error = null
+    } else {
+      entry.error = state.lookupDiagnostic
+    }
     if (isActive(summary)) {
       schedulePoll(entry)
     } else {
@@ -219,6 +237,12 @@ export function createSaveAsJobStore(): SaveAsJobStore {
   function answeredSince(operationId: string, sequence: number): boolean {
     const state = callsFor(operationId)
     return sequence < state.shown || sequence < state.publishStarted
+  }
+
+  /** True when a status or cancel outcome from `sequence` has been superseded. */
+  function staleLookup(operationId: string, sequence: number): boolean {
+    const state = callsFor(operationId)
+    return answeredSince(operationId, sequence) || sequence < state.diagnosticShown
   }
 
   /** Records that the publish call itself failed, unless a later call has shown the job. */
@@ -243,15 +267,38 @@ export function createSaveAsJobStore(): SaveAsJobStore {
   }
 
   /**
-   * Records a failed status or cancel call. It says only that the lookup failed: while the
-   * publish is still in flight, or its outcome is unknown, the lookup failing (even with "not
-   * found", since admission may be pending) settles nothing, so the publish's own state stands
-   * and the same request can still be retried.
+   * Records a failed status or cancel call. Transport/lookup errors while the publish outcome is
+   * unknown settle nothing, so the publish's own state stands; an empty protocol envelope on a
+   * reconciliation lookup keeps that unknown outcome while surfacing why reconciliation failed.
    */
-  function failLookup(entry: SaveAsJobEntry, error: ClassifiedSinkError, sequence: number) {
-    if (answeredSince(entry.operationId, sequence)) return
-    if (entry.submitting) return
-    if (entry.summary === null && entry.error?.kind === 'unsettled') return
+  function failLookup(
+    entry: SaveAsJobEntry,
+    error: ClassifiedSinkError,
+    sequence: number,
+    options: { countFailedPoll?: boolean; protocolFailure?: boolean } = {},
+  ) {
+    if (staleLookup(entry.operationId, sequence) || entry.submitting) return
+    const state = callsFor(entry.operationId)
+    if (options.countFailedPoll) {
+      state.failedPolls += 1
+    }
+    if (entry.summary === null && state.unknownOutcome !== null) {
+      if (!options.protocolFailure) return
+      state.diagnosticShown = sequence
+      state.lookupDiagnostic = error
+      entry.error = {
+        kind: 'unsettled',
+        codeLabel: error.codeLabel,
+        message: `${state.unknownOutcome.message} ${error.message}`,
+        canReconcile: true,
+      }
+      return
+    }
+    if (entry.summary === null && entry.error?.kind === 'unsettled' && !options.protocolFailure) {
+      return
+    }
+    state.diagnosticShown = sequence
+    state.lookupDiagnostic = error
     entry.error = error
   }
 
@@ -302,7 +349,10 @@ export function createSaveAsJobStore(): SaveAsJobStore {
     clearTimer(entry.operationId)
     const signal = signalFor(entry.operationId)
     const sequence = beginCall(entry.operationId)
-    callsFor(entry.operationId).publishStarted = sequence
+    const state = callsFor(entry.operationId)
+    state.publishStarted = sequence
+    state.diagnosticShown = 0
+    state.lookupDiagnostic = null
     entry.submitting = true
     entry.error = null
     // Publishing again starts a new attempt on the server. What was known about the last one
@@ -375,7 +425,6 @@ export function createSaveAsJobStore(): SaveAsJobStore {
         { signal, timeoutMs: LOOKUP_TIMEOUT_MS },
       )
       if (response.job === undefined) {
-        callsFor(operationId).failedPolls += 1
         failLookup(
           entry,
           {
@@ -385,14 +434,14 @@ export function createSaveAsJobStore(): SaveAsJobStore {
             canReconcile: true,
           },
           sequence,
+          { countFailedPoll: true, protocolFailure: true },
         )
       } else {
         apply(entry, describeSinkJob(response.job), 'refresh', sequence)
       }
     } catch (error) {
       if (!isOwnCancellation(error, signal)) {
-        callsFor(operationId).failedPolls += 1
-        failLookup(entry, classifySinkRpcError(error), sequence)
+        failLookup(entry, classifySinkRpcError(error), sequence, { countFailedPoll: true })
       }
     } finally {
       entry.reconciling = false
@@ -428,6 +477,7 @@ export function createSaveAsJobStore(): SaveAsJobStore {
             canReconcile: true,
           },
           sequence,
+          { protocolFailure: true },
         )
       } else {
         apply(entry, describeSinkJob(response.job), 'cancel', sequence)
