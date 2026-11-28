@@ -1,0 +1,385 @@
+// Fixtures for protobuf map projection semantics (#981) and unsigned/FieldMask parity (#987).
+syntax = "proto3";
+
+package ai.protomolt.proto.projection.test.v1;
+
+option java_multiple_files = true;
+option java_package = "ai.protomolt.proto.projection.test";
+option java_outer_classname = "MapProjectionTestProto";
+
+import "ai/protomolt/proto/projection/test/v1/projection_test.proto";
+import "ai/protomolt/proto/projection/v1/projection.proto";
+import "google/protobuf/struct.proto";
+import "google/protobuf/timestamp.proto";
+
+// Source message carrying all 12 protobuf map-key scalar domains, nested map
+// message values, enums, unsigned scalars, and candidate fallback maps.
+message MapZoo {
+  // Boolean-keyed flags.
+  map<bool, string> by_bool = 1;
+  // Signed 32-bit keyed labels.
+  map<int32, string> by_i32 = 2;
+  // ZigZag 32-bit keyed labels.
+  map<sint32, int64> by_si32 = 3;
+  // Fixed signed 32-bit keyed labels.
+  map<sfixed32, string> by_sf32 = 4;
+  // Signed 64-bit keyed labels.
+  map<int64, string> by_i64 = 5;
+  // ZigZag 64-bit keyed labels.
+  map<sint64, string> by_si64 = 6;
+  // Fixed signed 64-bit keyed labels.
+  map<sfixed64, string> by_sf64 = 7;
+  // Unsigned 32-bit keyed counts, exercising keys above Integer.MAX_VALUE.
+  map<uint32, uint64> by_u32 = 8;
+  // Fixed unsigned 32-bit keyed labels.
+  map<fixed32, string> by_f32 = 9;
+  // Unsigned 64-bit keyed labels, exercising keys above Long.MAX_VALUE.
+  map<uint64, string> by_u64 = 10;
+  // Fixed unsigned 64-bit keyed labels.
+  map<fixed64, bytes> by_f64 = 11;
+  // String-keyed numeric text for parsing/coercion tests.
+  map<string, string> text_map = 12;
+  // String-keyed enum values of PartState, projected by wire number.
+  map<string, PartState> part_states = 13;
+  // String-keyed Blob messages, projected through Rendition's child projection.
+  map<string, Blob> blobs_by_key = 14;
+  // String-keyed Rendition messages already in target view shape.
+  map<string, Rendition> carried_by_key = 15;
+  // String-keyed Note messages, incompatible with Rendition's declared sources.
+  map<string, Note> notes_by_key = 16;
+  // String-keyed Timestamp well-known values.
+  map<string, google.protobuf.Timestamp> timestamps_by_key = 17;
+  // Secondary map candidate used when primary_labels is empty.
+  map<string, int32> primary_labels = 18;
+  // Fallback map candidate read when primary_labels has zero entries.
+  map<string, int32> secondary_labels = 19;
+  // Repeated scalar list for negative list-into-map tests.
+  repeated int32 raw_scores = 20;
+  // Dynamic Struct field for Struct sub-path mask and non-implicit-map tests.
+  google.protobuf.Struct metadata = 21;
+  // Unsigned 32-bit scalar for widening/text projection tests.
+  optional uint32 high_u32 = 22;
+  // Unsigned 64-bit scalar for unsigned boundary projection tests.
+  optional uint64 high_u64 = 23;
+  // Signed 32-bit scalar for negative-into-unsigned refusal tests.
+  optional int32 signed_val = 24;
+}
+
+// Exercises all 12 protobuf map key types, unsigned coercions, enum value
+// conversion, WKT values, pass-through messages, and child-projected values.
+message AllKeyMapView {
+  option (ai.protomolt.proto.projection.v1.sources) = {
+    source: "ai.protomolt.proto.projection.test.v1.MapZoo"
+  };
+
+  // Boolean keys preserved.
+  map<bool, string> by_bool = 1 [(ai.protomolt.proto.projection.v1.from) = {
+    paths: {path: "by_bool"}
+  }];
+  // Signed int32 keys widened to int64 keys.
+  map<int64, string> by_i32_widened = 2 [(ai.protomolt.proto.projection.v1.from) = {
+    paths: {path: "by_i32"}
+  }];
+  // ZigZag sint32 keys preserved.
+  map<sint32, int64> by_si32 = 3 [(ai.protomolt.proto.projection.v1.from) = {
+    paths: {path: "by_si32"}
+  }];
+  // Fixed sfixed32 keys preserved.
+  map<sfixed32, string> by_sf32 = 4 [(ai.protomolt.proto.projection.v1.from) = {
+    paths: {path: "by_sf32"}
+  }];
+  // Signed int64 keys rendered as string keys.
+  map<string, string> by_i64_text = 5 [(ai.protomolt.proto.projection.v1.from) = {
+    paths: {path: "by_i64"}
+  }];
+  // ZigZag sint64 keys preserved.
+  map<sint64, string> by_si64 = 6 [(ai.protomolt.proto.projection.v1.from) = {
+    paths: {path: "by_si64"}
+  }];
+  // Fixed sfixed64 keys preserved.
+  map<sfixed64, string> by_sf64 = 7 [(ai.protomolt.proto.projection.v1.from) = {
+    paths: {path: "by_sf64"}
+  }];
+  // Unsigned uint32 keys (> 2^31 - 1) and uint64 values (> 2^63 - 1) preserved.
+  map<uint32, uint64> by_u32 = 8 [(ai.protomolt.proto.projection.v1.from) = {
+    paths: {path: "by_u32"}
+  }];
+  // Fixed unsigned 32-bit keys preserved.
+  map<fixed32, string> by_f32 = 9 [(ai.protomolt.proto.projection.v1.from) = {
+    paths: {path: "by_f32"}
+  }];
+  // Unsigned 64-bit keys (> 2^63 - 1) preserved.
+  map<uint64, string> by_u64 = 10 [(ai.protomolt.proto.projection.v1.from) = {
+    paths: {path: "by_u64"}
+  }];
+  // Fixed unsigned 64-bit keys and raw bytes values preserved.
+  map<fixed64, bytes> by_f64 = 11 [(ai.protomolt.proto.projection.v1.from) = {
+    paths: {path: "by_f64"}
+  }];
+  // String keys and values parsed into uint32 keys and int64 values.
+  map<uint32, int64> parsed_numbers = 12 [(ai.protomolt.proto.projection.v1.from) = {
+    paths: {path: "text_map"}
+  }];
+  // Enum map values converted by wire number from PartState to RenditionState.
+  map<string, RenditionState> states = 13 [(ai.protomolt.proto.projection.v1.from) = {
+    paths: {path: "part_states"}
+  }];
+  // Nested Blob map values projected through Rendition's child projection.
+  map<string, Rendition> renditions = 14 [(ai.protomolt.proto.projection.v1.from) = {
+    paths: {path: "blobs_by_key"}
+  }];
+  // Same-type Rendition map values copied unchanged without re-projection.
+  map<string, Rendition> carried = 15 [(ai.protomolt.proto.projection.v1.from) = {
+    paths: {path: "carried_by_key"}
+  }];
+  // Well-known Timestamp map values copied unchanged.
+  map<string, google.protobuf.Timestamp> timestamps = 16 [(ai.protomolt.proto.projection.v1.from) = {
+    paths: {path: "timestamps_by_key"}
+  }];
+  // Unsigned 32-bit scalar widened to signed int64 without sign extension.
+  optional int64 widened_u32 = 17 [(ai.protomolt.proto.projection.v1.from) = {
+    paths: {path: "high_u32"}
+  }];
+  // Unsigned 64-bit scalar formatted as unsigned decimal text.
+  optional string u64_text = 18 [(ai.protomolt.proto.projection.v1.from) = {
+    paths: {path: "high_u64"}
+  }];
+  // Key inside a Struct field read by path; sourceMask must truncate to metadata.
+  string author = 19 [(ai.protomolt.proto.projection.v1.from) = {
+    paths: {path: "metadata.author"}
+  }];
+}
+
+// Exercises empty-vs-absent fallback, CEL map construction, Value null entries,
+// and struct_value map literals.
+message MapFallbackAndCelView {
+  option (ai.protomolt.proto.projection.v1.sources) = {
+    source: "ai.protomolt.proto.projection.test.v1.MapZoo"
+  };
+
+  // Empty primary_labels falls through to secondary_labels; if both are empty,
+  // default_from supplies a constant struct_value map.
+  map<string, int32> resolved_labels = 1 [
+    (ai.protomolt.proto.projection.v1.from) = {
+      paths: {
+        path: "primary_labels"
+        path: "secondary_labels"
+      }
+    },
+    (ai.protomolt.proto.projection.v1.default_from) = {
+      literal: {
+        struct_value: {
+          fields: {
+            key: "default"
+            value: {number_value: 99}
+          }
+        }
+      }
+    }
+  ];
+  // Explicit empty CEL map wins as present-empty without evaluating default_from.
+  map<string, int32> explicit_empty_cel = 2 [
+    (ai.protomolt.proto.projection.v1.from) = {cel: "{}"},
+    (ai.protomolt.proto.projection.v1.default_from) = {cel: "{'boom': 1 / 0}"}
+  ];
+  // Explicit empty struct_value literal wins without evaluating default_from.
+  map<string, int32> explicit_empty_literal = 3 [
+    (ai.protomolt.proto.projection.v1.from) = {
+      literal: {
+        struct_value: {}
+      }
+    },
+    (ai.protomolt.proto.projection.v1.default_from) = {cel: "{'boom': 1 / 0}"}
+  ];
+  // CEL map with uint keys (> 2^31 - 1) coerced into map<uint32, string>.
+  map<uint32, string> cel_unsigned_map = 4 [(ai.protomolt.proto.projection.v1.from) = {
+    cel: "{3000000000u: 'high', 7u: 'low'}"
+  }];
+  // CEL map carrying null into google.protobuf.Value, where NullValue is legal.
+  map<string, google.protobuf.Value> cel_dynamic_values = 5 [(ai.protomolt.proto.projection.v1.from) = {
+    cel: "{'present': 'ok', 'missing': null}"
+  }];
+  // Literal struct_value coerced into integer-keyed map<int32, string>.
+  map<int32, string> literal_int_keys = 6 [(ai.protomolt.proto.projection.v1.from) = {
+    literal: {
+      struct_value: {
+        fields: {
+          key: "10"
+          value: {string_value: "ten"}
+        }
+        fields: {
+          key: "20"
+          value: {string_value: "twenty"}
+        }
+      }
+    }
+  }];
+}
+
+// Paths-only parent feeding a map whose child Rendition uses CEL; parent
+// sourceMask must remain complete.
+message MapChildMaskView {
+  option (ai.protomolt.proto.projection.v1.sources) = {
+    source: "ai.protomolt.proto.projection.test.v1.MapZoo"
+  };
+
+  // Whole-map path covers all nested Blob fields read by Rendition's CEL rules.
+  map<string, Rendition> renditions = 1 [(ai.protomolt.proto.projection.v1.from) = {
+    paths: {path: "blobs_by_key"}
+  }];
+  // Struct sub-path read truncates to metadata in sourceMask.
+  string author = 2 [(ai.protomolt.proto.projection.v1.from) = {
+    paths: {path: "metadata.author"}
+  }];
+}
+
+// Parent map target whose child BrokenRendition fails eager CEL validation.
+message BrokenMapChildParent {
+  option (ai.protomolt.proto.projection.v1.sources) = {
+    source: "ai.protomolt.proto.projection.test.v1.MapZoo"
+  };
+
+  // Must fail MessageProjection.forTarget eagerly because BrokenRendition's CEL compiles nowhere.
+  map<string, BrokenRendition> broken = 1 [(ai.protomolt.proto.projection.v1.from) = {
+    paths: {path: "blobs_by_key"}
+  }];
+}
+
+// Feeds string keys ("1" and "01") into int32 keys to test duplicate-key refusal.
+message DuplicateCoercedKeyDoc {
+  option (ai.protomolt.proto.projection.v1.sources) = {
+    source: "ai.protomolt.proto.projection.test.v1.MapZoo"
+  };
+
+  // Colliding parsed integer keys must fail rather than overwrite.
+  map<int32, string> by_int = 1 [(ai.protomolt.proto.projection.v1.from) = {
+    paths: {path: "text_map"}
+  }];
+}
+
+// Feeds a CEL null map value into a non-Value map<string, string>.
+message NullMapValueDoc {
+  option (ai.protomolt.proto.projection.v1.sources) = {
+    source: "ai.protomolt.proto.projection.test.v1.MapZoo"
+  };
+
+  // Null string entry value must fail with ProjectionException.
+  map<string, string> bad = 1 [(ai.protomolt.proto.projection.v1.from) = {
+    cel: "{'a': null}"
+  }];
+}
+
+// Feeds Note map values into a Rendition map where Note is not a declared child source.
+message UndeclaredMapChildDoc {
+  option (ai.protomolt.proto.projection.v1.sources) = {
+    source: "ai.protomolt.proto.projection.test.v1.MapZoo"
+  };
+
+  // Note is neither Rendition nor Blob, so projection must refuse it.
+  map<string, Rendition> renditions = 1 [(ai.protomolt.proto.projection.v1.from) = {
+    paths: {path: "notes_by_key"}
+  }];
+}
+
+// Feeds a repeated scalar list into a map target.
+message MapFromRepeatedDoc {
+  option (ai.protomolt.proto.projection.v1.sources) = {
+    source: "ai.protomolt.proto.projection.test.v1.MapZoo"
+  };
+
+  // Repeated list cannot populate a map target.
+  map<string, int32> bad = 1 [(ai.protomolt.proto.projection.v1.from) = {
+    paths: {path: "raw_scores"}
+  }];
+}
+
+// Feeds a protobuf map source into a repeated list target.
+message RepeatedFromMapDoc {
+  option (ai.protomolt.proto.projection.v1.sources) = {
+    source: "ai.protomolt.proto.projection.test.v1.MapZoo"
+  };
+
+  // Protobuf map cannot populate an ordinary repeated field.
+  repeated string bad = 1 [(ai.protomolt.proto.projection.v1.from) = {
+    paths: {path: "by_i32"}
+  }];
+}
+
+// Feeds a protobuf map source into a singular target.
+message SingularFromMapDoc {
+  option (ai.protomolt.proto.projection.v1.sources) = {
+    source: "ai.protomolt.proto.projection.test.v1.MapZoo"
+  };
+
+  // Protobuf map cannot populate a singular field.
+  string bad = 1 [(ai.protomolt.proto.projection.v1.from) = {
+    paths: {path: "by_i32"}
+  }];
+}
+
+// Feeds a google.protobuf.Struct source field via paths into a typed map target.
+message MapFromStructPathDoc {
+  option (ai.protomolt.proto.projection.v1.sources) = {
+    source: "ai.protomolt.proto.projection.test.v1.MapZoo"
+  };
+
+  // Struct source fields keep Struct semantics and are not implicitly unpacked into map<K, V>.
+  map<string, string> bad = 1 [(ai.protomolt.proto.projection.v1.from) = {
+    paths: {path: "metadata"}
+  }];
+}
+
+// Declares a non-struct literal on a map target.
+message BadMapLiteralDoc {
+  option (ai.protomolt.proto.projection.v1.sources) = {
+    source: "ai.protomolt.proto.projection.test.v1.MapZoo"
+  };
+
+  // A string literal cannot populate a map field.
+  map<string, string> bad = 1 [(ai.protomolt.proto.projection.v1.from) = {
+    literal: {string_value: "not-a-map"}
+  }];
+}
+
+// Feeds a negative signed integer into an unsigned uint32 target field.
+message NegativeIntoUnsignedDoc {
+  option (ai.protomolt.proto.projection.v1.sources) = {
+    source: "ai.protomolt.proto.projection.test.v1.MapZoo"
+  };
+
+  // Negative signed_val must fail unsigned range validation.
+  uint32 bad_u32 = 1 [(ai.protomolt.proto.projection.v1.from) = {
+    paths: {path: "signed_val"}
+  }];
+}
+
+// Feeds an overflowing uint64 (> Long.MAX_VALUE) into a signed int64 target field.
+message OverflowUint64IntoInt64Doc {
+  option (ai.protomolt.proto.projection.v1.sources) = {
+    source: "ai.protomolt.proto.projection.test.v1.MapZoo"
+  };
+
+  // high_u64 above Long.MAX_VALUE must fail signed int64 range validation.
+  int64 bad_i64 = 1 [(ai.protomolt.proto.projection.v1.from) = {
+    paths: {path: "high_u64"}
+  }];
+}
+
+// Recursive source carrying a string-to-int32 map for order-independent cycle tests.
+message MapCycleSource {
+  // Map entries whose wire order can be permuted while representing the same protobuf value.
+  map<string, int32> tags = 1;
+}
+
+// Recursive target whose child map rebuilds an equal MapCycleSource in reversed key order.
+message MapCycleTarget {
+  option (ai.protomolt.proto.projection.v1.sources) = {
+    source: "ai.protomolt.proto.projection.test.v1.MapCycleSource"
+  };
+
+  // Reconstructs the same MapCycleSource with reversed entry insertion so only
+  // order-independent map equality catches the cycle on the immediate re-entry.
+  map<string, MapCycleTarget> children = 1 [(ai.protomolt.proto.projection.v1.from) = {
+    cel: "{'self': ai.protomolt.proto.projection.test.v1.MapCycleSource{tags: {'b': source.tags['b'], 'a': source.tags['a']}}}"
+  }];
+}
